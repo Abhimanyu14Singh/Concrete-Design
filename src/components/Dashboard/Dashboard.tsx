@@ -97,9 +97,7 @@ export default function Dashboard({ project, onSelectMember }: Props) {
                   <td className="px-3 py-2.5 text-gray-400 capitalize">{member.memberType}</td>
                   <td className="px-3 py-2.5 text-gray-400 font-mono">{member.material.fc / 1000}k</td>
                   <td className="px-3 py-2.5 text-gray-400 font-mono">
-                    {member.section.type === 'circular_column'
-                      ? `Ø${member.section.diameter}"`
-                      : `${member.section.b}"×${member.section.h}"`}
+                    {`${member.section.b}"×${member.section.h}"`}
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={`font-mono font-bold ${
@@ -128,10 +126,7 @@ export default function Dashboard({ project, onSelectMember }: Props) {
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Project Stats</h3>
             <div className="space-y-2">
               {[
-                ['Total Members', project.members.length],
-                ['Beams', project.members.filter(m => m.memberType === 'beam').length],
-                ['Columns', project.members.filter(m => m.memberType === 'column').length],
-                ['Walls', project.members.filter(m => m.memberType === 'wall').length],
+                ['Total Beams', project.members.length],
                 ['Load Cases', project.members.reduce((s, m) => s + m.loads.length, 0)],
                 ['Avg Max DCR', (summaries.reduce((s, m) => s + m.maxDCR, 0) / summaries.length).toFixed(3)],
               ].map(([label, val]) => (

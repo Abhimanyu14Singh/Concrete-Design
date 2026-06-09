@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs   = require('fs');
 const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow() {
@@ -13,6 +14,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
     backgroundColor: '#030712',
     show: false,
@@ -27,7 +29,6 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  // Simple menu
   const menu = Menu.buildFromTemplate([
     {
       label: 'File',
@@ -54,6 +55,30 @@ function createWindow() {
   ]);
   Menu.setApplicationMenu(menu);
 }
+
+// ── IPC: native file dialogs ─────────────────────────────────────────────────
+
+ipcMain.handle('save-file', async (_, { content, defaultName }) => {
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName,
+    filters: [{ name: 'S-Concrete Project', extensions: ['scdb'] }],
+  });
+  if (canceled || !filePath) return { success: false };
+  fs.writeFileSync(filePath, content, 'utf8');
+  return { success: true };
+});
+
+ipcMain.handle('open-file', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'S-Concrete Project', extensions: ['scdb', 'json'] }],
+  });
+  if (canceled || !filePaths.length) return null;
+  const content = fs.readFileSync(filePaths[0], 'utf8');
+  return { content };
+});
+
+// ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(createWindow);
 

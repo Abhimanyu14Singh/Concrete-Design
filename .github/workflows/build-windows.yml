@@ -1,0 +1,87 @@
+name: Build Windows Installer
+
+on:
+  # Run manually from the Actions tab in GitHub
+  workflow_dispatch:
+    inputs:
+      release_note:
+        description: 'What changed in this build? (optional)'
+        required: false
+        default: ''
+
+  # Run automatically when a version tag is pushed (e.g. v1.0.1)
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to create/update releases
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets (Vite)
+        run: npm run build
+
+      - name: Package Windows installer (electron-builder)
+        run: npx electron-builder --win --publish never
+        env:
+          # Prevents electron-builder from trying to sign the installer
+          # (no certificate configured). Remove when a code-signing cert is added.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Find installer path
+        id: find_exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path release -Filter "*.exe" | Select-Object -First 1
+          echo "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          echo "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+
+      # Always upload as a downloadable artifact (visible under the workflow run)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SConcrete-Design-Windows
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 90
+
+      # On manual dispatch: create/update a "Latest Build" pre-release
+      - name: Create Latest pre-release (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: "Latest Build"
+          prerelease: true
+          body: |
+            **Automatically updated on every manual workflow run.**
+
+            Download `${{ steps.find_exe.outputs.name }}` below and run it to install S-Concrete Design on Windows.
+
+            ${{ github.event.inputs.release_note }}
+          files: release/*.exe
+
+      # On version tag push: create a proper versioned release
+      - name: Create versioned release (tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "S-Concrete Design ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: release/*.exe

@@ -17,9 +17,11 @@
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
+    "pdf-lib": "^1.17.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "recharts": "^3.8.1"
+    "recharts": "^3.8.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -43,33 +45,32 @@
   "build": {
     "appId": "com.sconcrete.design",
     "productName": "S-Concrete Design",
-    "copyright": "S-Concrete Design",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "requestedExecutionLevel": "asInvoker"
+      "target": [
+        "nsis"
+      ]
     },
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
-      "category": "public.app-category.productivity"
+      "target": [
+        "dmg"
+      ]
     },
     "linux": {
-      "target": [{ "target": "AppImage", "arch": ["x64"] }],
-      "category": "Science"
+      "target": [
+        "AppImage"
+      ]
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "S-Concrete Design",
-      "uninstallDisplayName": "S-Concrete Design",
-      "deleteAppDataOnUninstall": false,
-      "installerLanguages": ["en_US"],
-      "license": null,
-      "include": null
+      "allowToChangeInstallationDirectory": true
     }
   }
 }

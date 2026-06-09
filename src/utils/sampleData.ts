@@ -57,51 +57,5 @@ export const defaultProject: Project = {
         { id: '1.4D', label: '1.4D', Mu_pos: 240, Mu_neg: 165, Vu: 72, Tu: 6, Pu: 0 },
       ],
     },
-    {
-      id: 'C1',
-      label: 'Column C1 - Grid A1 (Rect)',
-      memberType: 'column',
-      span: 12,
-      material: { fc: 5000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0 },
-      section: {
-        type: 'rectangular_column',
-        b: 18,
-        h: 18,
-        coverClear: 1.5,
-        stirrupDia: 4,
-      },
-      rebar: {
-        topBars: [{ numBars: 4, barSize: 9 }],
-        botBars: [{ numBars: 4, barSize: 9 }],
-        ties: { barSize: 4, spacing: 9, legs: 4 },
-      },
-      loads: [
-        { id: '1.2D+1.6L', label: '1.2D + 1.6L', Mu_pos: 85, Mu_neg: 0, Vu: 22, Tu: 0, Pu: 420 },
-        { id: '1.2D+1.0E', label: '1.2D + 1.0E', Mu_pos: 120, Mu_neg: 0, Vu: 35, Tu: 0, Pu: 380 },
-      ],
-    },
-    {
-      id: 'C2',
-      label: 'Column C2 - Grid B2 (Circular)',
-      memberType: 'column',
-      span: 14,
-      material: { fc: 6000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0 },
-      section: {
-        type: 'circular_column',
-        b: 20,
-        h: 20,
-        diameter: 20,
-        coverClear: 1.5,
-        stirrupDia: 4,
-      },
-      rebar: {
-        topBars: [{ numBars: 6, barSize: 9 }],
-        botBars: [{ numBars: 6, barSize: 9 }],
-        ties: { barSize: 4, spacing: 8, legs: 6 },
-      },
-      loads: [
-        { id: '1.2D+1.6L', label: '1.2D + 1.6L', Mu_pos: 95, Mu_neg: 0, Vu: 28, Tu: 0, Pu: 520 },
-      ],
-    },
   ],
 };
