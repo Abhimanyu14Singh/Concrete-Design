@@ -1,91 +1,46 @@
-export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam';
-export type DesignCode = 'ACI318-19' | 'ACI318-14';
-export type MemberType = 'beam';
-export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
+/**
+ * Public type surface for the concrete design application.
+ *
+ * All imports from '../types' or '../../types' still resolve here.
+ * Actual definitions live in the focused sub-files:
+ *
+ *   common.ts  — shared primitives (material, bar tables, warnings)
+ *   beam.ts    — beam section / rebar / load / results types
+ *   column.ts  — column stubs (implement when ready)
+ *   wall.ts    — wall stubs    (implement when ready)
+ *   member.ts  — discriminated-union Member + MemberType
+ */
 
-export interface MaterialProps {
-  fc: number;       // Concrete compressive strength (psi)
-  fy: number;       // Steel yield strength (psi)
-  fyt: number;      // Transverse steel yield strength (psi)
-  Es: number;       // Steel modulus (psi)
-  lambdaConcrete: number; // Lightweight factor (1.0 normal, 0.75 lightweight)
-}
+// ── Shared ───────────────────────────────────────────────────────────────────
+export type { DesignCode, ExposureClass } from './common';
+export type { MaterialProps, BarGroup, TieLayout } from './common';
+export type { DesignWarning, BaseDesignResults, BaseLoadCase, BaseMember } from './common';
 
-export interface SectionDimensions {
-  type: SectionType;
-  b: number;        // Width (in)
-  h: number;        // Total height/depth (in)
-  bw?: number;      // Web width for T/L beam (in)
-  hf?: number;      // Flange thickness (in)
-  coverClear: number; // Clear cover to stirrups (in)
-  stirrupDia: number; // Stirrup bar diameter (in)
-}
+// ── Beam ─────────────────────────────────────────────────────────────────────
+export type { BeamSectionType, BeamSection, BeamRebar, BeamLoadCase, BeamResults, BeamMember } from './beam';
 
-export interface RebarLayout {
-  topBars: BarGroup[];
-  botBars: BarGroup[];
-  sideBars?: BarGroup[];  // skin reinforcement
-  ties?: TieLayout;
-}
+// ── Column stubs ─────────────────────────────────────────────────────────────
+export type { ColumnSectionType, ColumnSection, ColumnRebar, ColumnLoadCase, ColumnResults, ColumnMember } from './column';
 
-export interface BarGroup {
-  numBars: number;
-  barSize: number; // #3 = 3, #8 = 8, etc.
-  rows?: number;
-  rowSpacing?: number;
-}
+// ── Wall stubs ───────────────────────────────────────────────────────────────
+export type { WallSectionType, WallSection, WallRebar, WallLoadCase, WallResults, WallMember } from './wall';
 
-export interface TieLayout {
-  barSize: number;
-  spacing: number; // in
-  legs: number;
-}
+// ── Member union ─────────────────────────────────────────────────────────────
+export type { Member, MemberType } from './member';
 
-export interface LoadCase {
-  id: string;
-  label: string;
-  Mu_pos: number;  // Positive moment (kip-ft)
-  Mu_neg: number;  // Negative moment (kip-ft)
-  Vu: number;      // Shear (kips)
-  Tu: number;      // Torsion (kip-ft)
-  Pu: number;      // Axial (kips)
-}
+// ── Backwards-compatible aliases (existing code uses these names) ─────────────
+// SectionType, SectionDimensions, RebarLayout, LoadCase, DesignResults are the
+// beam-specific types exposed under their original names so existing imports
+// (concreteDesign.ts, calcBreakdown.ts, tests, components) need no changes.
+export type { BeamSectionType as SectionType }     from './beam';
+export type { BeamSection     as SectionDimensions } from './beam';
+export type { BeamRebar       as RebarLayout }       from './beam';
+export type { BeamLoadCase    as LoadCase }           from './beam';
+export type { BeamResults     as DesignResults }      from './beam';
 
-export interface DesignWarning {
-  code: string;      // ACI section, e.g. "ACI §9.7.6.2.2"
-  message: string;   // Human-readable description with actual numbers
-  severity: 'error' | 'warning';
-}
-
-export interface DesignResults {
-  loadCaseId: string;
-  // Flexure
-  Mn_pos: number;
-  Mn_neg: number;
-  phi_Mn_pos: number;
-  phi_Mn_neg: number;
-  DCR_flex_pos: number;
-  DCR_flex_neg: number;
-  // Shear
-  Vc: number;
-  Vs: number;
-  phi_Vn: number;
-  DCR_shear: number;
-  // Torsion
-  Tcr: number;
-  Tu_threshold: number;
-  phi_Tn: number;
-  DCR_torsion: number;
-  // Steel
-  As_req_pos: number;
-  As_req_neg: number;
-  As_min: number;
-  As_max: number;
-  Av_req: number;
-  Av_min_per_s: number;
-  warnings: DesignWarning[];
-  status: 'OK' | 'NG' | 'Warning';
-}
+// ── Project ───────────────────────────────────────────────────────────────────
+import type { Member } from './member';
+import type { DesignCode } from './common';
 
 export interface Project {
   id: string;
@@ -95,16 +50,4 @@ export interface Project {
   engineer: string;
   date: string;
   members: Member[];
-}
-
-export interface Member {
-  id: string;
-  label: string;
-  memberType: MemberType;
-  material: MaterialProps;
-  section: SectionDimensions;
-  rebar: RebarLayout;
-  loads: LoadCase[];
-  results?: DesignResults[];
-  span?: number;  // ft
 }
