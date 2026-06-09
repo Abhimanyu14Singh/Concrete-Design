@@ -33,7 +33,9 @@ function createWindow() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => win.webContents.send('new-project') },
+        { label: 'New Project',    accelerator: 'CmdOrCtrl+N', click: () => win.webContents.send('new-project')   },
+        { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: () => win.webContents.send('trigger-open') },
+        { label: 'Save Project',  accelerator: 'CmdOrCtrl+S', click: () => win.webContents.send('trigger-save') },
         { type: 'separator' },
         { role: 'quit' },
       ],
