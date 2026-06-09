@@ -101,9 +101,7 @@ export async function exportPDF(project: Project): Promise<void> {
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
     const bg = project.members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
-    const sec = m.section.type === 'circular_column'
-      ? `Ø${m.section.diameter}"`
-      : `${m.section.b}"×${m.section.h}"`;
+    const sec = `${m.section.b}"×${m.section.h}"`;
     const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
       `${m.material.fc / 1000}k`,
       r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2),
@@ -125,9 +123,7 @@ export async function exportPDF(project: Project): Promise<void> {
     // Member header
     rect(ctx, margin, y - 34, w - 2 * margin, 38, C.navy);
     text(ctx, `${m.id} — ${m.label}`, margin + 8, y - 14, 13, C.white, bold);
-    const secStr = m.section.type === 'circular_column'
-      ? `Ø${m.section.diameter}"`
-      : `${m.section.b}"×${m.section.h ?? m.section.diameter}"`;
+    const secStr = `${m.section.b}"×${m.section.h}"`;
     text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${m.material.fc}psi  fy=${m.material.fy / 1000}ksi  span=${m.span}ft`,
       margin + 8, y - 28, 8, C.mid);
     y -= 50;

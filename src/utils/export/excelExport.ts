@@ -28,9 +28,7 @@ export function exportExcel(project: Project): void {
   for (const m of project.members) {
     const r = worstResult(m);
     if (!r) continue;
-    const sec = m.section.type === 'circular_column'
-      ? `Ø${m.section.diameter}"`
-      : `${m.section.b}"×${m.section.h ?? m.section.diameter}"`;
+    const sec = `${m.section.b}"×${m.section.h}"`;
     summaryData.push([
       m.id, m.label, m.memberType, sec,
       m.material.fc, m.material.fy / 1000,
@@ -49,7 +47,7 @@ export function exportExcel(project: Project): void {
       [`Member: ${m.id} — ${m.label}`],
       ['Type', m.memberType, 'Section Type', m.section.type],
       ['f\'c (psi)', m.material.fc, 'fy (ksi)', m.material.fy / 1000, 'fyt (ksi)', m.material.fyt / 1000],
-      ['Width b (in)', m.section.b, 'Depth h (in)', m.section.h ?? m.section.diameter ?? 0,
+      ['Width b (in)', m.section.b, 'Depth h (in)', m.section.h ?? 0,
         'Clear Cover (in)', m.section.coverClear],
       [],
       ['LOAD CASE RESULTS'],
