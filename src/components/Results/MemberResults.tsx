@@ -1,187 +1,169 @@
 import { useState } from 'react';
-import type { Member, DesignResults } from '../../types';
+import type { Member, DesignResults, RebarLayout } from '../../types';
 import { designMember } from '../../utils/concreteDesign';
-import DCRBar from '../common/DCRBar';
-import StatusBadge from '../common/StatusBadge';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import CalcBreakdownModal from './CalcBreakdownModal';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell } from 'recharts';
 
 interface Props {
   member: Member;
+  onRebarChange?: (updated: Member) => void;
 }
 
-export default function MemberResults({ member }: Props) {
-  const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id);
+function KV({ k, v, dcr }: { k: string; v: string; dcr?: number }) {
+  const dcrColor = dcr !== undefined ? (dcr > 1 ? '#dc2626' : dcr > 0.9 ? '#d97706' : '#16a34a') : undefined;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 8, minWidth: 0 }}>
+      <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>{k}</span>
+      <span style={{ fontSize: 11, color: dcrColor ?? '#111827', fontFamily: 'monospace', fontWeight: dcr !== undefined ? 700 : 400 }}>{v}</span>
+    </div>
+  );
+}
+
+function Section({ title }: { title: string }) {
+  return <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 4px' }}>{title}</div>;
+}
+
+export default function MemberResults({ member, onRebarChange }: Props) {
+  const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
+
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
   const result: DesignResults = designMember(member.section, member.material, member.rebar, load, member.span);
 
-  const dcrData = [
-    { name: 'Flex+', dcr: result.DCR_flex_pos },
-    { name: 'Flex-', dcr: result.DCR_flex_neg },
-    { name: 'Shear', dcr: result.DCR_shear },
-    { name: 'Torsion', dcr: result.DCR_torsion },
-  ];
+  function handleRebarChange(rebar: RebarLayout) {
+    onRebarChange?.({ ...member, rebar });
+  }
+
+  const statusColor = result.status === 'OK' ? '#16a34a' : result.status === 'NG' ? '#dc2626' : '#d97706';
+  const statusBg    = result.status === 'OK' ? '#f0fdf4' : result.status === 'NG' ? '#fef2f2' : '#fffbeb';
+  const s = member.section;
+  const t = member.rebar.ties;
 
   return (
-    <div className="space-y-4">
+    <div style={{ background: 'white', borderRadius: 12, padding: 16 }}>
       {showCalc && (
         <CalcBreakdownModal
           member={member}
-          loadId={activeLoad ?? member.loads[0]?.id}
+          loadId={activeLoad || member.loads[0]?.id}
           onClose={() => setShowCalc(false)}
         />
       )}
 
-      {/* Load case selector + calc breakdown button */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div className="flex gap-2 flex-wrap">
-          {member.loads.map(l => (
-            <button
-              key={l.id}
-              onClick={() => setActiveLoad(l.id)}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-                activeLoad === l.id
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              {l.label}
-            </button>
-          ))}
+      {/* Top bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        {/* Load case dropdown */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>Load Case</span>
+          <select
+            value={activeLoad}
+            onChange={e => setActiveLoad(e.target.value)}
+            style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', cursor: 'pointer' }}
+          >
+            {member.loads.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+          </select>
         </div>
+
+        {/* Status pill */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 20, background: statusBg, border: `1px solid ${statusColor}40` }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
+            {result.status === 'OK' ? 'All checks pass' : result.status === 'NG' ? 'Section inadequate' : 'Near capacity — review'}
+          </span>
+        </div>
+
         <button
           onClick={() => setShowCalc(true)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(139,92,246,0.4)',
-            color: '#a78bfa', borderRadius: 8, padding: '6px 14px',
-            fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
-          }}
+          style={{ marginLeft: 'auto', padding: '5px 12px', border: '1px solid #e5e7eb', borderRadius: 6, background: 'white', fontSize: 11, cursor: 'pointer', color: '#374151', fontWeight: 600 }}
         >
-          <span style={{ fontSize: 14 }}>∑</span> Show Calculations
+          ∑ Calc Sheet
         </button>
       </div>
 
-      {/* Overall status */}
-      <div className={`rounded-xl p-3 flex items-center gap-3 ${
-        result.status === 'OK' ? 'bg-emerald-500/10 border border-emerald-500/30'
-        : result.status === 'NG' ? 'bg-red-500/10 border border-red-500/30'
-        : 'bg-amber-400/10 border border-amber-400/30'
-      }`}>
-        <StatusBadge status={result.status} />
-        <span className="text-sm text-gray-300">
-          {result.status === 'OK' ? 'All checks pass' : result.status === 'NG' ? 'Section inadequate – see DCRs' : 'Near capacity – review'}
-        </span>
-      </div>
+      {/* 3-column layout: properties | section SVG | results */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        {/* Left: member properties + applied loads */}
+        <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
+          <Section title="Member" />
+          <KV k="f'c" v={`${member.material.fc} psi`} />
+          <KV k="fy" v={`${(member.material.fy / 1000).toFixed(0)} ksi`} />
+          <KV k="λ" v={member.material.lambdaConcrete.toFixed(2)} />
+          <KV k="b" v={`${s.b}"`} />
+          <KV k="h" v={`${s.h}"`} />
+          {s.bw && <KV k="bw" v={`${s.bw}"`} />}
+          {s.hf && <KV k="hf" v={`${s.hf}"`} />}
+          <KV k="Cover" v={`${s.coverClear}"`} />
+          {t && <KV k="Stirrups" v={`#${t.barSize}@${t.spacing}"`} />}
+          {member.span && <KV k="Span" v={`${member.span} ft`} />}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Left: Section + Elevation */}
-        <div className="space-y-3">
-          <div className="bg-gray-800 rounded-xl p-3">
-            <h4 className="text-xs font-bold text-gray-400 uppercase mb-2 tracking-wide">Section Detailing</h4>
-            <div className="flex justify-center">
-              <SectionView section={member.section} rebar={member.rebar} width={280} height={240} />
-            </div>
-          </div>
+          <Section title="Applied Loads" />
+          {load.Mu_pos > 0 && <KV k="Mu+" v={`${load.Mu_pos.toFixed(1)} k-ft`} />}
+          {load.Mu_neg > 0 && <KV k="Mu−" v={`${load.Mu_neg.toFixed(1)} k-ft`} />}
+          <KV k="Vu" v={`${load.Vu.toFixed(1)} kips`} />
+          {load.Tu > 0 && <KV k="Tu" v={`${load.Tu.toFixed(1)} k-ft`} />}
+          {load.Pu !== 0 && <KV k="Pu" v={`${load.Pu.toFixed(1)} kips`} />}
+        </div>
+
+        {/* Center: Section diagram */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <SectionView
+            section={member.section}
+            rebar={member.rebar}
+            width={300}
+            height={250}
+            onRebarChange={onRebarChange ? handleRebarChange : undefined}
+          />
           {member.memberType === 'beam' && (
-            <div className="bg-gray-800 rounded-xl p-3">
-              <h4 className="text-xs font-bold text-gray-400 uppercase mb-2 tracking-wide">Elevation</h4>
-              <ElevationView member={member} width={400} height={120} />
-            </div>
+            <ElevationView member={member} width={300} height={90} />
+          )}
+          {onRebarChange && (
+            <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>
+              Click bar labels to change count • Left = +1, Right-click = −1
+            </p>
           )}
         </div>
 
-        {/* Right: DCRs + details */}
-        <div className="space-y-3">
-          {/* DCR Bar chart */}
-          <div className="bg-gray-800 rounded-xl p-4">
-            <h4 className="text-xs font-bold text-gray-400 uppercase mb-3 tracking-wide">Demand-Capacity Ratios</h4>
-            <ResponsiveContainer width="100%" height={140}>
-              <BarChart data={dcrData} layout="vertical" margin={{ left: 10, right: 30 }}>
-                <CartesianGrid horizontal={false} stroke="#1e293b" />
-                <XAxis type="number" domain={[0, Math.max(1.2, ...dcrData.map(d => d.dcr + 0.1))]}
-                  tick={{ fill: '#64748b', fontSize: 10 }} />
-                <YAxis dataKey="name" type="category" tick={{ fill: '#94a3b8', fontSize: 11 }} width={55} />
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6 }}
-                  formatter={(v) => [Number(v).toFixed(3), 'DCR']}
-                  labelStyle={{ color: '#94a3b8' }}
-                />
-                <ReferenceLine x={1.0} stroke="#ef4444" strokeDasharray="4,2" strokeWidth={2} />
-                <Bar dataKey="dcr" radius={[0, 4, 4, 0]}>
-                  {dcrData.map((entry, idx) => (
-                    <Cell key={idx} fill={entry.dcr > 1 ? '#ef4444' : entry.dcr > 0.9 ? '#f59e0b' : '#10b981'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-            {/* Individual DCR bars */}
-            <div className="mt-4 space-y-1">
-              {(
-                <>
-                  <DCRBar label="Positive Flexure" dcr={result.DCR_flex_pos}
-                    demand={load.Mu_pos} capacity={result.phi_Mn_pos} />
-                  <DCRBar label="Negative Flexure" dcr={result.DCR_flex_neg}
-                    demand={load.Mu_neg} capacity={result.phi_Mn_neg} />
-                </>
-              )}
-              <DCRBar label="Shear" dcr={result.DCR_shear}
-                demand={load.Vu} capacity={result.phi_Vn} unit="kips" />
-              {(
-                <DCRBar label="Torsion" dcr={result.DCR_torsion}
-                  demand={load.Tu} capacity={result.phi_Tn} />
-              )}
-            </div>
-          </div>
+        {/* Right: design results */}
+        <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
+          <Section title="Flexure" />
+          <KV k="φMn+" v={`${result.phi_Mn_pos.toFixed(1)} k-ft`} />
+          <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} />
+          <KV k="φMn−" v={`${result.phi_Mn_neg.toFixed(1)} k-ft`} />
+          <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg} />
+          <KV k="As req+" v={`${result.As_req_pos.toFixed(2)} in²`} />
+          <KV k="As req−" v={`${result.As_req_neg.toFixed(2)} in²`} />
+          <KV k="As min" v={`${result.As_min.toFixed(2)} in²`} />
+          <KV k="As max" v={`${result.As_max.toFixed(2)} in²`} />
 
-          {/* Key values table */}
-          <div className="bg-gray-800 rounded-xl p-4">
-            <h4 className="text-xs font-bold text-gray-400 uppercase mb-3 tracking-wide">Design Summary</h4>
-            <table className="w-full text-xs">
-              <tbody className="divide-y divide-gray-700">
-                {[
-                  ['f\'c', `${member.material.fc} psi`],
-                  ['fy', `${member.material.fy / 1000} ksi`],
-                  ['φMn+ (pos)', `${result.phi_Mn_pos.toFixed(1)} kip-ft`],
-                  ['φMn- (neg)', `${result.phi_Mn_neg.toFixed(1)} kip-ft`],
-                  ['φVn', `${result.phi_Vn.toFixed(1)} kips`],
-                  ['  Vc', `${result.Vc.toFixed(1)} kips`],
-                  ['  Vs', `${result.Vs.toFixed(1)} kips`],
-                  ['As_req+', `${result.As_req_pos.toFixed(2)} in²`],
-                  ['As_req-', `${result.As_req_neg.toFixed(2)} in²`],
-                  ['As_min', `${result.As_min.toFixed(2)} in²`],
-                  ['As_max', `${result.As_max.toFixed(2)} in²`],
-                  ['Av_req', `${result.Av_req.toFixed(4)} in²/in`],
-                  ['Tcr', `${result.Tcr.toFixed(1)} kip-ft`],
-                ].filter((x): x is string[] => Boolean(x)).map(([k, v], i) => (
-                  <tr key={i} className="hover:bg-gray-700/50">
-                    <td className="py-1 pr-3 text-gray-400 font-mono">{k}</td>
-                    <td className="py-1 text-white font-mono text-right">{v}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Section title="Shear" />
+          <KV k="Vc" v={`${result.Vc.toFixed(1)} kips`} />
+          <KV k="Vs" v={`${result.Vs.toFixed(1)} kips`} />
+          <KV k="φVn" v={`${result.phi_Vn.toFixed(1)} kips`} />
+          <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
+          <KV k="Av req" v={`${result.Av_req.toFixed(4)} in²/in`} />
+          <KV k="Av min/s" v={`${result.Av_min_per_s.toFixed(4)} in²/in`} />
 
-          {/* Warnings */}
-          {result.warnings.length > 0 && (
-            <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-3">
-              <h4 className="text-xs font-bold text-red-400 uppercase mb-2">Warnings / Code Checks</h4>
-              <ul className="space-y-1">
-                {result.warnings.map((w, i) => (
-                  <li key={i} className="text-xs flex gap-2" style={{ color: w.severity === 'error' ? '#fca5a5' : '#fde68a' }}>
-                    <span>{w.severity === 'error' ? '✗' : '⚠'}</span>
-                    <span><strong style={{ fontFamily: 'monospace', marginRight: 4 }}>[{w.code}]</strong>{w.message}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <Section title="Torsion" />
+          <KV k="Tcr" v={`${result.Tcr.toFixed(1)} k-ft`} />
+          <KV k="φTn" v={`${result.phi_Tn.toFixed(1)} k-ft`} />
+          <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion} />
         </div>
       </div>
+
+      {/* Warnings */}
+      {result.warnings.length > 0 && (
+        <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Code Checks / Warnings</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {result.warnings.map((w, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 8px', borderRadius: 6, background: w.severity === 'error' ? '#fef2f2' : '#fffbeb' }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: w.severity === 'error' ? '#dc2626' : '#d97706', flexShrink: 0, marginTop: 1 }}>{w.code}</span>
+                <span style={{ fontSize: 11, color: '#374151' }}>{w.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
