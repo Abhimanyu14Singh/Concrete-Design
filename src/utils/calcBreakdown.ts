@@ -3,7 +3,7 @@
  * as a structured array of steps with equation, substitution, and result.
  */
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
-import { getBarArea, getBarDiam } from './concreteDesign';
+import { getBarArea, getBarDiam, beta1, effectiveDepth, effectiveFlange, steelLimits, dPrime } from './concreteDesign';
 
 export interface CalcStep {
   ref: string;       // ACI 318-19 section reference
@@ -23,33 +23,6 @@ function fmt(n: number, dec = 2): string {
   return n.toFixed(dec);
 }
 
-function beta1(fc: number): number {
-  if (fc <= 4000) return 0.85;
-  return Math.max(0.65, 0.85 - 0.05 * (fc - 4000) / 1000);
-}
-
-function effectiveDepth(section: SectionDimensions): number {
-  const cover = section.coverClear;
-  const stirrupR = getBarDiam(section.stirrupDia) / 2;
-  return (section.h ?? section.diameter ?? 12) - cover - stirrupR - 0.5;
-}
-
-function effectiveFlange(section: SectionDimensions, span: number): number {
-  if (section.type === 'T_beam') {
-    const bw = section.bw ?? section.b;
-    return Math.min(
-      bw + 2 * 8 * (section.hf ?? 4),
-      span * 12 / 4,
-      section.b
-    );
-  }
-  if (section.type === 'L_beam') {
-    const bw = section.bw ?? section.b;
-    return Math.min(bw + 6 * (section.hf ?? 4), span * 12 / 12, section.b);
-  }
-  return section.b;
-}
-
 export function generateBreakdown(
   section: SectionDimensions,
   material: MaterialProps,
@@ -61,9 +34,12 @@ export function generateBreakdown(
   const h = section.h ?? section.diameter ?? 12;
   const b = section.b;
   const bw = section.bw ?? b;
-  const d = effectiveDepth(section);
-  const b1 = beta1(fc);
-  const beff = effectiveFlange(section, span);
+  const botBarSize = rebar.botBars[0]?.barSize ?? 8;
+  const topBarSize = rebar.topBars[0]?.barSize ?? 8;
+  const d     = effectiveDepth(section, botBarSize);
+  const d_top = effectiveDepth(section, topBarSize);
+  const b1    = beta1(fc);
+  const beff  = effectiveFlange(section, span);
 
   const As_top = rebar.topBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
   const As_bot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
@@ -85,9 +61,9 @@ export function generateBreakdown(
       ref: 'ACI 318-19 §22.2.2',
       label: 'Effective depth',
       equation: 'd = h − cc − d_stirrup/2 − d_bar/2',
-      substitution: `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia) / 2)} − 0.50`,
+      substitution: `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − ${fmt(getBarDiam(botBarSize)/2)} (d_bar/2)`,
       result: `${fmt(d)} in`,
-      note: 'Using assumed bar radius of 0.5" for outermost bar',
+      note: `Bottom bar #${botBarSize}, diam=${getBarDiam(botBarSize)}"`,
     },
     {
       ref: 'ACI 318-19 §22.2.2.4.3',
@@ -175,8 +151,7 @@ export function generateBreakdown(
 
   // Steel limits
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
-  const As_min = rho_min * bw * d;
-  const As_max = 0.75 * b1 * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
+  const { As_min, As_max } = steelLimits(section, material, d);
 
   rebarSteps.push(
     {
@@ -296,7 +271,7 @@ export function generateBreakdown(
 
   // ── Shear ─────────────────────────────────────────────────────────────
   const rho_w = As_bot / (bw * d);
-  const lambda_s = Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d)));
+  const lambda_s = Math.min(1.0, Math.sqrt(2 / (1 + d / 10)));
   const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(rho_w, 1 / 3) * Math.sqrt(fc) + 0) * bw * d / 1000;
   const Vs = sv > 0 ? (Av * fyt * d) / (sv * 1000) : 0;
   const phi_v = 0.75;

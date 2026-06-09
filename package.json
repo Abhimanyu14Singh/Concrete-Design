@@ -43,14 +43,33 @@
   "build": {
     "appId": "com.sconcrete.design",
     "productName": "S-Concrete Design",
+    "copyright": "S-Concrete Design",
     "directories": { "output": "release" },
     "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "win": { "target": ["nsis"] },
-    "mac": { "target": ["dmg"] },
-    "linux": { "target": ["AppImage"] },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "category": "Science"
+    },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "S-Concrete Design",
+      "uninstallDisplayName": "S-Concrete Design",
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": ["en_US"],
+      "license": null,
+      "include": null
     }
   }
 }
