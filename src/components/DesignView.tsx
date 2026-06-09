@@ -5,11 +5,10 @@
  *   Right : Results (DCRs, code checks, calc breakdown)
  */
 import { useState } from 'react';
-import type { Member, SectionType, MemberType } from '../types';
-import { getBarArea, getBarDiam, designMember, computeInteractionDiagram } from '../utils/concreteDesign';
+import type { Member, SectionType } from '../types';
+import { getBarArea, getBarDiam, designMember } from '../utils/concreteDesign';
 import SectionView from './Detailing/SectionView';
 import ElevationView from './Detailing/ElevationView';
-import InteractionDiagram from './Detailing/InteractionDiagram';
 import CalcBreakdownModal from './Results/CalcBreakdownModal';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -23,14 +22,11 @@ interface Props {
 
 const BAR_SIZES = [3, 4, 5, 6, 7, 8, 9, 10, 11];
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
-  { value: 'rectangular_beam',  label: 'Rect. Beam'   },
-  { value: 'T_beam',            label: 'T-Beam'        },
-  { value: 'L_beam',            label: 'L-Beam'        },
-  { value: 'rectangular_column',label: 'Rect. Column'  },
-  { value: 'circular_column',   label: 'Circ. Column'  },
+  { value: 'rectangular_beam', label: 'Rect. Beam' },
+  { value: 'T_beam',           label: 'T-Beam'     },
+  { value: 'L_beam',           label: 'L-Beam'     },
 ];
 
-// ── Tiny input components ─────────────────────────────────────────────────
 const FLD: React.CSSProperties = {
   background: '#0a1628', border: '1px solid #1e293b', borderRadius: 5,
   padding: '5px 8px', color: '#e2e8f0', fontSize: 11, width: '100%',
@@ -74,7 +70,6 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-// ── DCR coloring ─────────────────────────────────────────────────────────────
 function dcrColor(dcr: number) {
   return dcr > 1 ? '#ef4444' : dcr > 0.9 ? '#f59e0b' : '#10b981';
 }
@@ -106,17 +101,13 @@ function DCRRow({ label, dcr, demand, capacity, unit = 'kip-ft' }: { label: stri
   );
 }
 
-// ── Main component ─────────────────────────────────────────────────────────
-
 export default function DesignView({ member, onUpdate }: Props) {
   const [activeLoadId, setActiveLoadId] = useState(member.loads[0]?.id);
   const [showCalc, setShowCalc] = useState(false);
 
   const load = member.loads.find(l => l.id === activeLoadId) ?? member.loads[0];
   const result = designMember(member.section, member.material, member.rebar, load, member.span);
-  const isCol  = member.memberType === 'column';
 
-  // ── Update helpers ────────────────────────────────────────────────────────
   const upd  = (patch: Partial<Member>) => onUpdate({ ...member, ...patch });
   const updS = (patch: Partial<Member['section']>) => upd({ section: { ...member.section, ...patch } });
   const updM = (patch: Partial<Member['material']>) => upd({ material: { ...member.material, ...patch } });
@@ -129,14 +120,12 @@ export default function DesignView({ member, onUpdate }: Props) {
     onUpdate({ ...member, rebar: { ...member.rebar, botBars: [{ ...member.rebar.botBars[0], ...patch }] } });
   }
 
-  const dcrs = isCol
-    ? [{ name: 'Shear', dcr: result.DCR_shear }]
-    : [
-        { name: 'Flex+',   dcr: result.DCR_flex_pos },
-        { name: 'Flex–',   dcr: result.DCR_flex_neg },
-        { name: 'Shear',   dcr: result.DCR_shear    },
-        { name: 'Torsion', dcr: result.DCR_torsion  },
-      ];
+  const dcrs = [
+    { name: 'Flex+',   dcr: result.DCR_flex_pos },
+    { name: 'Flex–',   dcr: result.DCR_flex_neg },
+    { name: 'Shear',   dcr: result.DCR_shear    },
+    { name: 'Torsion', dcr: result.DCR_torsion  },
+  ];
 
   const statusColor = result.status === 'OK' ? '#10b981' : result.status === 'NG' ? '#ef4444' : '#f59e0b';
   const statusBg    = result.status === 'OK' ? 'rgba(16,185,129,0.08)' : result.status === 'NG' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)';
@@ -153,14 +142,8 @@ export default function DesignView({ member, onUpdate }: Props) {
           {member.id} — Input
         </div>
 
-        {/* General */}
         <Row label="Label">
           <input value={member.label} onChange={e => upd({ label: e.target.value })} style={{ ...FLD }} />
-        </Row>
-        <Row label="Member type">
-          <Sel value={member.memberType}
-            options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }, { value: 'wall', label: 'Wall' }]}
-            onChange={v => upd({ memberType: v as MemberType })} />
         </Row>
         <Row label="Span" unit="ft">
           <Num value={member.span ?? 20} onChange={v => upd({ span: v })} min={1} />
@@ -170,34 +153,26 @@ export default function DesignView({ member, onUpdate }: Props) {
         <Row label="Type">
           <Sel value={member.section.type} options={SECTION_TYPES} onChange={v => updS({ type: v as SectionType })} />
         </Row>
-        {member.section.type === 'circular_column' ? (
-          <Row label="Diameter" unit="in">
-            <Num value={member.section.diameter ?? 20} onChange={v => updS({ diameter: v, b: v, h: v })} min={8} />
-          </Row>
-        ) : (
+        <Row label={member.section.type === 'T_beam' || member.section.type === 'L_beam' ? 'Flange width b' : 'Width b'} unit="in">
+          <Num value={member.section.b} onChange={v => updS({ b: v })} min={4} />
+        </Row>
+        <Row label="Total depth h" unit="in">
+          <Num value={member.section.h ?? 24} onChange={v => updS({ h: v })} min={4} />
+        </Row>
+        {(member.section.type === 'T_beam' || member.section.type === 'L_beam') && (
           <>
-            <Row label={member.section.type.includes('T') || member.section.type.includes('L') ? 'Flange width b' : 'Width b'} unit="in">
-              <Num value={member.section.b} onChange={v => updS({ b: v })} min={4} />
+            <Row label="Web width bw" unit="in">
+              <Num value={member.section.bw ?? 14} onChange={v => updS({ bw: v })} min={4} />
             </Row>
-            <Row label="Total depth h" unit="in">
-              <Num value={member.section.h ?? 24} onChange={v => updS({ h: v })} min={4} />
+            <Row label="Flange depth hf" unit="in">
+              <Num value={member.section.hf ?? 5} onChange={v => updS({ hf: v })} min={2} />
             </Row>
-            {(member.section.type === 'T_beam' || member.section.type === 'L_beam') && (
-              <>
-                <Row label="Web width bw" unit="in">
-                  <Num value={member.section.bw ?? 14} onChange={v => updS({ bw: v })} min={4} />
-                </Row>
-                <Row label="Flange depth hf" unit="in">
-                  <Num value={member.section.hf ?? 5} onChange={v => updS({ hf: v })} min={2} />
-                </Row>
-              </>
-            )}
           </>
         )}
         <Row label="Clear cover cc" unit="in">
           <Num value={member.section.coverClear} step={0.25} onChange={v => updS({ coverClear: v })} min={0.75} />
         </Row>
-        <Row label="Stirrup / tie size">
+        <Row label="Stirrup size">
           <Sel value={member.section.stirrupDia}
             options={[3,4,5].map(s => ({ value: s, label: `#${s} (Ø${getBarDiam(s)}")` }))}
             onChange={v => updS({ stirrupDia: +v })} />
@@ -272,7 +247,7 @@ export default function DesignView({ member, onUpdate }: Props) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
               {[
                 ['Mu+', 'Mu_pos', 'k-ft'], ['Mu–', 'Mu_neg', 'k-ft'],
-                ['Vu', 'Vu', 'k'], ['Tu', 'Tu', 'k-ft'], ['Pu', 'Pu', 'k'],
+                ['Vu', 'Vu', 'k'], ['Tu', 'Tu', 'k-ft'],
               ].map(([label, key, unit]) => (
                 <div key={key}>
                   <label style={{ ...LBL }}>{label} <span style={{ color: '#1e293b' }}>{unit}</span></label>
@@ -313,20 +288,20 @@ export default function DesignView({ member, onUpdate }: Props) {
               ['ρ top', (() => {
                 const As = member.rebar.topBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
                 const bw = member.section.bw ?? member.section.b;
-                const h  = (member.section.h ?? member.section.diameter ?? 12);
+                const h  = member.section.h ?? 12;
                 return `${(As / (bw * h) * 100).toFixed(3)}%`;
               })()],
               ['ρ bot', (() => {
                 const As = member.rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
                 const bw = member.section.bw ?? member.section.b;
-                const h  = (member.section.h ?? member.section.diameter ?? 12);
+                const h  = member.section.h ?? 12;
                 return `${(As / (bw * h) * 100).toFixed(3)}%`;
               })()],
               ['d (bot)', (() => {
                 const { coverClear, stirrupDia } = member.section;
                 const dBar = getBarDiam(member.rebar.botBars[0]?.barSize ?? 8);
                 const dStir = getBarDiam(stirrupDia);
-                const h = member.section.h ?? member.section.diameter ?? 12;
+                const h = member.section.h ?? 12;
                 return `${(h - coverClear - dStir - dBar / 2).toFixed(2)}"`;
               })()],
               ["f'c / fy", `${member.material.fc / 1000}k / ${member.material.fy / 1000}k`],
@@ -339,22 +314,13 @@ export default function DesignView({ member, onUpdate }: Props) {
           </div>
         </div>
 
-        {/* Elevation (beams only) */}
-        {member.memberType === 'beam' && (
-          <div style={{ padding: '8px 12px', borderTop: '1px solid #0f172a' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
-              Elevation
-            </div>
-            <ElevationView member={member} width={296} height={100} />
+        {/* Elevation */}
+        <div style={{ padding: '8px 12px', borderTop: '1px solid #0f172a' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+            Elevation
           </div>
-        )}
-
-        {/* P-M diagram (columns) */}
-        {isCol && (
-          <div style={{ padding: '8px 12px', borderTop: '1px solid #0f172a' }}>
-            <InteractionDiagram member={member} />
-          </div>
-        )}
+          <ElevationView member={member} width={296} height={100} />
+        </div>
       </div>
 
       {/* ══ RIGHT — Results Panel ═══════════════════════════════════════════ */}
@@ -366,13 +332,10 @@ export default function DesignView({ member, onUpdate }: Props) {
             <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>{member.label}</div>
             <div style={{ fontSize: 10, color: '#334155', marginTop: 2 }}>
               {member.section.type.replace(/_/g, ' ')} &bull;{' '}
-              {member.section.type === 'circular_column'
-                ? `Ø${member.section.diameter}"`
-                : `${member.section.b}"×${member.section.h}"`} &bull;{' '}
+              {`${member.section.b}"×${member.section.h}"`} &bull;{' '}
               f'c={member.material.fc}psi  fy={member.material.fy / 1000}ksi  span={member.span}ft
             </div>
           </div>
-          {/* Status pill */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ background: statusBg, border: `1px solid ${statusColor}`, borderRadius: 20, padding: '4px 12px', fontSize: 12, fontWeight: 700, color: statusColor }}>
               {result.status}
@@ -436,20 +399,14 @@ export default function DesignView({ member, onUpdate }: Props) {
             <div style={{ fontSize: 10, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
               Check Results
             </div>
-            {!isCol && (
-              <>
-                <DCRRow label="Positive Flexure" dcr={result.DCR_flex_pos}
-                  demand={load.Mu_pos} capacity={result.phi_Mn_pos} />
-                <DCRRow label="Negative Flexure" dcr={result.DCR_flex_neg}
-                  demand={load.Mu_neg} capacity={result.phi_Mn_neg} />
-              </>
-            )}
+            <DCRRow label="Positive Flexure" dcr={result.DCR_flex_pos}
+              demand={load.Mu_pos} capacity={result.phi_Mn_pos} />
+            <DCRRow label="Negative Flexure" dcr={result.DCR_flex_neg}
+              demand={load.Mu_neg} capacity={result.phi_Mn_neg} />
             <DCRRow label="Shear" dcr={result.DCR_shear}
               demand={load.Vu} capacity={result.phi_Vn} unit="kips" />
-            {!isCol && (
-              <DCRRow label="Torsion" dcr={result.DCR_torsion}
-                demand={load.Tu} capacity={result.phi_Tn} />
-            )}
+            <DCRRow label="Torsion" dcr={result.DCR_torsion}
+              demand={load.Tu} capacity={result.phi_Tn} />
           </div>
 
           {/* Key values */}
@@ -458,18 +415,18 @@ export default function DesignView({ member, onUpdate }: Props) {
               Design Values
             </div>
             {[
-              !isCol && ['φMn+ (pos)', `${result.phi_Mn_pos.toFixed(1)} kip-ft`],
-              !isCol && ['φMn– (neg)', `${result.phi_Mn_neg.toFixed(1)} kip-ft`],
+              ['φMn+ (pos)', `${result.phi_Mn_pos.toFixed(1)} kip-ft`],
+              ['φMn– (neg)', `${result.phi_Mn_neg.toFixed(1)} kip-ft`],
               ['φVn', `${result.phi_Vn.toFixed(1)} kips`],
               ['  Vc', `${result.Vc.toFixed(1)} kips`],
               ['  Vs', `${result.Vs.toFixed(1)} kips`],
-              !isCol && ['As,req+', `${result.As_req_pos.toFixed(2)} in²`],
-              !isCol && ['As,min', `${result.As_min.toFixed(2)} in²`],
-              !isCol && ['As,max', `${result.As_max.toFixed(2)} in²`],
-              !isCol && ['Av,req', `${result.Av_req.toFixed(4)} in²/in`],
-              !isCol && ['Tcr', `${result.Tcr.toFixed(1)} kip-ft`],
-              !isCol && ['Tu,thresh', `${result.Tu_threshold.toFixed(1)} kip-ft`],
-            ].filter((x): x is string[] => Boolean(x)).map(([k, v]) => (
+              ['As,req+', `${result.As_req_pos.toFixed(2)} in²`],
+              ['As,min', `${result.As_min.toFixed(2)} in²`],
+              ['As,max', `${result.As_max.toFixed(2)} in²`],
+              ['Av,req', `${result.Av_req.toFixed(4)} in²/in`],
+              ['Tcr', `${result.Tcr.toFixed(1)} kip-ft`],
+              ['Tu,thresh', `${result.Tu_threshold.toFixed(1)} kip-ft`],
+            ].map(([k, v]) => (
               <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', borderBottom: '1px solid #0f172a' }}>
                 <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{k}</span>
                 <span style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'monospace', fontWeight: 600 }}>{v}</span>
@@ -501,7 +458,6 @@ export default function DesignView({ member, onUpdate }: Props) {
         )}
       </div>
 
-      {/* Calc breakdown modal */}
       {showCalc && (
         <CalcBreakdownModal
           member={member}

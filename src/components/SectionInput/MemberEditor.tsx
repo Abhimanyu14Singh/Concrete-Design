@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Member, SectionType, MemberType } from '../../types';
+import type { Member, SectionType } from '../../types';
 
 interface Props {
   member: Member;
@@ -10,8 +10,6 @@ const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'rectangular_beam', label: 'Rect. Beam' },
   { value: 'T_beam', label: 'T-Beam' },
   { value: 'L_beam', label: 'L-Beam' },
-  { value: 'rectangular_column', label: 'Rect. Column' },
-  { value: 'circular_column', label: 'Circ. Column' },
 ];
 
 const BAR_SIZES = [3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18];
@@ -84,10 +82,7 @@ export default function MemberEditor({ member, onUpdate }: Props) {
         <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">General</h4>
         <InputRow label="Label" value={m.label} type="text" onChange={v => update({ label: v })} />
         <InputRow label="Span" value={m.span ?? 20} unit="ft" onChange={v => update({ span: +v })} />
-        <SelectRow label="Type" value={m.memberType}
-          options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }, { value: 'wall', label: 'Wall' }]}
-          onChange={v => update({ memberType: v as MemberType })}
-        />
+        <InputRow label="Type" value="Beam" type="text" onChange={() => {}} />
       </div>
 
       {/* Materials */}
@@ -106,20 +101,16 @@ export default function MemberEditor({ member, onUpdate }: Props) {
           options={SECTION_TYPES}
           onChange={v => updateSection({ type: v as SectionType })}
         />
-        {m.section.type === 'circular_column' ? (
-          <InputRow label="Diameter" value={m.section.diameter ?? 20} unit="in" onChange={v => updateSection({ diameter: +v, b: +v, h: +v })} />
-        ) : (
-          <>
-            <InputRow label={m.section.type.includes('T') || m.section.type.includes('L') ? 'Flange width' : 'Width b'} value={m.section.b} unit="in" onChange={v => updateSection({ b: +v })} />
-            <InputRow label="Depth h" value={m.section.h ?? 24} unit="in" onChange={v => updateSection({ h: +v })} />
-            {(m.section.type === 'T_beam' || m.section.type === 'L_beam') && (
-              <>
-                <InputRow label="Web width bw" value={m.section.bw ?? 14} unit="in" onChange={v => updateSection({ bw: +v })} />
-                <InputRow label="Flange thick hf" value={m.section.hf ?? 5} unit="in" onChange={v => updateSection({ hf: +v })} />
-              </>
-            )}
-          </>
-        )}
+        <>
+          <InputRow label={m.section.type === 'T_beam' || m.section.type === 'L_beam' ? 'Flange width' : 'Width b'} value={m.section.b} unit="in" onChange={v => updateSection({ b: +v })} />
+          <InputRow label="Depth h" value={m.section.h ?? 24} unit="in" onChange={v => updateSection({ h: +v })} />
+          {(m.section.type === 'T_beam' || m.section.type === 'L_beam') && (
+            <>
+              <InputRow label="Web width bw" value={m.section.bw ?? 14} unit="in" onChange={v => updateSection({ bw: +v })} />
+              <InputRow label="Flange thick hf" value={m.section.hf ?? 5} unit="in" onChange={v => updateSection({ hf: +v })} />
+            </>
+          )}
+        </>
         <InputRow label="Clear cover" value={m.section.coverClear} unit="in" onChange={v => updateSection({ coverClear: +v })} />
         <SelectRow label="Stirrup size" value={m.section.stirrupDia}
           options={BAR_SIZES.map(s => ({ value: s, label: `#${s}` }))}

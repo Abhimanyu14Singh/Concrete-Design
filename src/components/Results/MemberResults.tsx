@@ -5,7 +5,6 @@ import DCRBar from '../common/DCRBar';
 import StatusBadge from '../common/StatusBadge';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
-import InteractionDiagram from '../Detailing/InteractionDiagram';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell } from 'recharts';
 
@@ -19,19 +18,12 @@ export default function MemberResults({ member }: Props) {
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
   const result: DesignResults = designMember(member.section, member.material, member.rebar, load, member.span);
 
-  const isColumn = member.memberType === 'column';
-
-  const dcrData = isColumn
-    ? [
-        { name: 'Shear', dcr: result.DCR_shear },
-        { name: 'P-M', dcr: result.DCR_PM ?? result.DCR_axial ?? 0 },
-      ]
-    : [
-        { name: 'Flex+', dcr: result.DCR_flex_pos },
-        { name: 'Flex-', dcr: result.DCR_flex_neg },
-        { name: 'Shear', dcr: result.DCR_shear },
-        { name: 'Torsion', dcr: result.DCR_torsion },
-      ];
+  const dcrData = [
+    { name: 'Flex+', dcr: result.DCR_flex_pos },
+    { name: 'Flex-', dcr: result.DCR_flex_neg },
+    { name: 'Shear', dcr: result.DCR_shear },
+    { name: 'Torsion', dcr: result.DCR_torsion },
+  ];
 
   return (
     <div className="space-y-4">
@@ -100,7 +92,6 @@ export default function MemberResults({ member }: Props) {
               <ElevationView member={member} width={400} height={120} />
             </div>
           )}
-          {isColumn && <InteractionDiagram member={member} />}
         </div>
 
         {/* Right: DCRs + details */}
@@ -129,7 +120,7 @@ export default function MemberResults({ member }: Props) {
             </ResponsiveContainer>
             {/* Individual DCR bars */}
             <div className="mt-4 space-y-1">
-              {!isColumn && (
+              {(
                 <>
                   <DCRBar label="Positive Flexure" dcr={result.DCR_flex_pos}
                     demand={load.Mu_pos} capacity={result.phi_Mn_pos} />
@@ -139,7 +130,7 @@ export default function MemberResults({ member }: Props) {
               )}
               <DCRBar label="Shear" dcr={result.DCR_shear}
                 demand={load.Vu} capacity={result.phi_Vn} unit="kips" />
-              {!isColumn && (
+              {(
                 <DCRBar label="Torsion" dcr={result.DCR_torsion}
                   demand={load.Tu} capacity={result.phi_Tn} />
               )}
@@ -154,17 +145,17 @@ export default function MemberResults({ member }: Props) {
                 {[
                   ['f\'c', `${member.material.fc} psi`],
                   ['fy', `${member.material.fy / 1000} ksi`],
-                  !isColumn && ['φMn+ (pos)', `${result.phi_Mn_pos.toFixed(1)} kip-ft`],
-                  !isColumn && ['φMn- (neg)', `${result.phi_Mn_neg.toFixed(1)} kip-ft`],
+                  ['φMn+ (pos)', `${result.phi_Mn_pos.toFixed(1)} kip-ft`],
+                  ['φMn- (neg)', `${result.phi_Mn_neg.toFixed(1)} kip-ft`],
                   ['φVn', `${result.phi_Vn.toFixed(1)} kips`],
                   ['  Vc', `${result.Vc.toFixed(1)} kips`],
                   ['  Vs', `${result.Vs.toFixed(1)} kips`],
-                  !isColumn && ['As_req+', `${result.As_req_pos.toFixed(2)} in²`],
-                  !isColumn && ['As_req-', `${result.As_req_neg.toFixed(2)} in²`],
-                  !isColumn && ['As_min', `${result.As_min.toFixed(2)} in²`],
-                  !isColumn && ['As_max', `${result.As_max.toFixed(2)} in²`],
-                  !isColumn && ['Av_req', `${result.Av_req.toFixed(4)} in²/in`],
-                  !isColumn && ['Tcr', `${result.Tcr.toFixed(1)} kip-ft`],
+                  ['As_req+', `${result.As_req_pos.toFixed(2)} in²`],
+                  ['As_req-', `${result.As_req_neg.toFixed(2)} in²`],
+                  ['As_min', `${result.As_min.toFixed(2)} in²`],
+                  ['As_max', `${result.As_max.toFixed(2)} in²`],
+                  ['Av_req', `${result.Av_req.toFixed(4)} in²/in`],
+                  ['Tcr', `${result.Tcr.toFixed(1)} kip-ft`],
                 ].filter((x): x is string[] => Boolean(x)).map(([k, v], i) => (
                   <tr key={i} className="hover:bg-gray-700/50">
                     <td className="py-1 pr-3 text-gray-400 font-mono">{k}</td>

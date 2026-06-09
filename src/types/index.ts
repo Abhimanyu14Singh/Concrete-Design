@@ -1,6 +1,6 @@
-export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column';
+export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam';
 export type DesignCode = 'ACI318-19' | 'ACI318-14';
-export type MemberType = 'beam' | 'column' | 'wall';
+export type MemberType = 'beam';
 export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
 
 export interface MaterialProps {
@@ -17,7 +17,6 @@ export interface SectionDimensions {
   h: number;        // Total height/depth (in)
   bw?: number;      // Web width for T/L beam (in)
   hf?: number;      // Flange thickness (in)
-  diameter?: number; // Circular section diameter (in)
   coverClear: number; // Clear cover to stirrups (in)
   stirrupDia: number; // Stirrup bar diameter (in)
 }
@@ -49,9 +48,7 @@ export interface LoadCase {
   Mu_neg: number;  // Negative moment (kip-ft)
   Vu: number;      // Shear (kips)
   Tu: number;      // Torsion (kip-ft)
-  Pu: number;      // Axial (kips, + compression)
-  Mux?: number;    // Moment about x for column (kip-ft)
-  Muy?: number;    // Moment about y for column (kip-ft)
+  Pu: number;      // Axial (kips)
 }
 
 export interface DesignWarning {
@@ -63,34 +60,29 @@ export interface DesignWarning {
 export interface DesignResults {
   loadCaseId: string;
   // Flexure
-  Mn_pos: number;       // Positive moment capacity (kip-ft)
-  Mn_neg: number;       // Negative moment capacity (kip-ft)
+  Mn_pos: number;
+  Mn_neg: number;
   phi_Mn_pos: number;
   phi_Mn_neg: number;
   DCR_flex_pos: number;
   DCR_flex_neg: number;
   // Shear
-  Vc: number;           // Concrete shear (kips)
-  Vs: number;           // Steel shear (kips)
-  phi_Vn: number;       // Total shear capacity
+  Vc: number;
+  Vs: number;
+  phi_Vn: number;
   DCR_shear: number;
   // Torsion
-  Tcr: number;          // Cracking torsion (kip-ft)
+  Tcr: number;
   Tu_threshold: number;
-  phi_Tn: number;       // Torsion capacity
+  phi_Tn: number;
   DCR_torsion: number;
-  // Axial (columns)
-  phi_Pn?: number;
-  phi_Mn_col?: number;
-  DCR_axial?: number;
-  DCR_PM?: number;      // Combined P-M interaction
-  // Additional
-  As_req_pos: number;   // Required steel (in²)
+  // Steel
+  As_req_pos: number;
   As_req_neg: number;
   As_min: number;
   As_max: number;
-  Av_req: number;       // Required stirrup area (in²/in)
-  Av_min_per_s: number; // Min required stirrup area per unit length (in²/in)
+  Av_req: number;
+  Av_min_per_s: number;
   warnings: DesignWarning[];
   status: 'OK' | 'NG' | 'Warning';
 }

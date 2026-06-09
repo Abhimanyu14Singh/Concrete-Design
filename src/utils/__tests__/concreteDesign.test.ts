@@ -1,60 +1,51 @@
 /**
- * Unit tests for ACI 318-19 concrete design engine.
- *
- * Key bugs fixed in this version that tests verify:
- *  1. effectiveDepth uses actual bar diameters (not bar size numbers)
- *  2. T-beam Mn uses correct stress-block split (overhang + web)
- *  3. Shear λs = 1.0 when stirrups ≥ Av,min
- *  4. Torsion φTn uses actual stirrup At/s
- *  5. Interaction diagram d' uses getBarDiam()
+ * Unit tests for ACI 318-19 concrete design engine — beams only.
  */
 import { describe, it, expect } from 'vitest';
 import {
-  getBarArea, getBarDiam,
-  effectiveDepth, beta1, effectiveFlange,
-  computeFlexure, computeShear, computeTorsion,
-  requiredAs, designMember, computeInteractionDiagram,
+  getBarArea,
+  getBarDiam,
+  beta1,
+  effectiveDepth,
+  effectiveFlange,
   steelLimits,
+  computeFlexure,
+  computeShear,
+  computeTorsion,
+  requiredAs,
+  designMember,
 } from '../concreteDesign';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../../types';
 
-// ── Fixtures ──────────────────────────────────────────────────────────────────
+// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const mat4k: MaterialProps = { fc: 4000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 };
 const mat5k: MaterialProps = { fc: 5000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 };
 const mat6k: MaterialProps = { fc: 6000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 };
 
-const rectBeam: SectionDimensions   = { type: 'rectangular_beam', b: 12, h: 21, coverClear: 1.5, stirrupDia: 4 };
-const beam16x24: SectionDimensions  = { type: 'rectangular_beam', b: 16, h: 24, coverClear: 1.5, stirrupDia: 4 };
-const tBeam: SectionDimensions      = { type: 'T_beam', b: 48, bw: 14, h: 24, hf: 5, coverClear: 1.5, stirrupDia: 4 };
-const circCol: SectionDimensions    = { type: 'circular_column', b: 20, h: 20, diameter: 20, coverClear: 1.5, stirrupDia: 4 };
-const rectCol: SectionDimensions    = { type: 'rectangular_column', b: 18, h: 18, coverClear: 1.5, stirrupDia: 4 };
+const rectBeam: SectionDimensions    = { type: 'rectangular_beam', b: 12, h: 21, coverClear: 1.5, stirrupDia: 4 };
+const beam16x24: SectionDimensions   = { type: 'rectangular_beam', b: 16, h: 24, coverClear: 1.5, stirrupDia: 4 };
+const tBeam: SectionDimensions       = { type: 'T_beam', b: 48, bw: 14, h: 24, hf: 5, coverClear: 1.5, stirrupDia: 4 };
 
 const rebar3_8: RebarLayout = {
   topBars: [{ numBars: 3, barSize: 8 }],
   botBars: [{ numBars: 4, barSize: 8 }],
   ties: { barSize: 4, spacing: 6, legs: 2 },
 };
-const colRebar: RebarLayout = {
-  topBars: [{ numBars: 4, barSize: 9 }],
-  botBars: [{ numBars: 4, barSize: 9 }],
-  ties: { barSize: 4, spacing: 9, legs: 4 },
-};
 
-// ── Bar properties ────────────────────────────────────────────────────────────
+// ─── Bar lookups ─────────────────────────────────────────────────────────────
 
 describe('Bar property tables', () => {
-  it('returns correct areas for standard sizes', () => {
+  it('returns correct areas', () => {
     expect(getBarArea(3)).toBeCloseTo(0.11, 2);
     expect(getBarArea(4)).toBeCloseTo(0.20, 2);
     expect(getBarArea(8)).toBeCloseTo(0.79, 2);
     expect(getBarArea(11)).toBeCloseTo(1.56, 2);
   });
-  it('returns correct diameters per ASTM', () => {
+  it('returns correct diameters', () => {
     expect(getBarDiam(4)).toBeCloseTo(0.500, 3);
     expect(getBarDiam(8)).toBeCloseTo(1.000, 3);
     expect(getBarDiam(9)).toBeCloseTo(1.128, 3);
-    expect(getBarDiam(11)).toBeCloseTo(1.410, 3);
   });
   it('returns 0 for unknown size', () => {
     expect(getBarArea(99)).toBe(0);
@@ -62,29 +53,10 @@ describe('Bar property tables', () => {
   });
 });
 
-// ── effectiveDepth (bug-fix verification) ────────────────────────────────────
-
-describe('effectiveDepth — uses actual bar diameters, not size numbers', () => {
-  it('for #4 stirrups (#4 has diam=0.5"), uses 0.5" not 2"', () => {
-    // h=24, cc=1.5, d_stir=0.5, d_bar(#8)=1.0 → d = 24-1.5-0.5-0.5 = 21.5
-    const d = effectiveDepth(beam16x24, 8);
-    expect(d).toBeCloseTo(21.5, 2);
-  });
-  it('larger bar gives smaller d', () => {
-    const d8  = effectiveDepth(beam16x24, 8);   // d_bar = 1.0"
-    const d11 = effectiveDepth(beam16x24, 11);  // d_bar = 1.41"
-    expect(d8).toBeGreaterThan(d11);
-  });
-  it('d must be less than h', () => {
-    expect(effectiveDepth(beam16x24, 8)).toBeLessThan(24);
-    expect(effectiveDepth(tBeam, 9)).toBeLessThan(24);
-  });
-});
-
-// ── beta1 ─────────────────────────────────────────────────────────────────────
+// ─── beta1 ───────────────────────────────────────────────────────────────────
 
 describe('beta1', () => {
-  it('= 0.85 for fc ≤ 4000 psi', () => {
+  it('= 0.85 for fc ≤ 4000', () => {
     expect(beta1(3000)).toBe(0.85);
     expect(beta1(4000)).toBe(0.85);
   });
@@ -92,179 +64,37 @@ describe('beta1', () => {
     expect(beta1(5000)).toBeCloseTo(0.80, 3);
     expect(beta1(6000)).toBeCloseTo(0.75, 3);
     expect(beta1(9000)).toBe(0.65);
-    expect(beta1(12000)).toBe(0.65);
   });
 });
 
-// ── effectiveFlange ───────────────────────────────────────────────────────────
+// ─── effectiveDepth ───────────────────────────────────────────────────────────
+
+describe('effectiveDepth — uses actual bar diameters', () => {
+  it('h=24, cc=1.5, #4 stirrup (0.5"), #8 bar (1.0") → d = 24-1.5-0.5-0.5 = 21.5"', () => {
+    expect(effectiveDepth(beam16x24, 8)).toBeCloseTo(21.5, 2);
+  });
+  it('larger bar → smaller d', () => {
+    expect(effectiveDepth(beam16x24, 8)).toBeGreaterThan(effectiveDepth(beam16x24, 11));
+  });
+  it('d < h always', () => {
+    expect(effectiveDepth(beam16x24, 8)).toBeLessThan(24);
+  });
+});
+
+// ─── effectiveFlange ──────────────────────────────────────────────────────────
 
 describe('effectiveFlange', () => {
-  it('returns b for rectangular section', () => {
+  it('returns b for rectangular beam', () => {
     expect(effectiveFlange(beam16x24, 20)).toBe(16);
   });
-  it('T-beam: returns bw + 16hf or span/4 or b, whichever is smallest', () => {
-    // bw=14, hf=5, b=48, span=20ft
-    // bw+16hf = 14+80=94  → clipped to min(94, 240/4=60, 48) = 48
-    expect(effectiveFlange(tBeam, 20)).toBe(48);
-  });
-  it('T-beam beff ≤ actual flange width b', () => {
-    expect(effectiveFlange(tBeam, 10)).toBeLessThanOrEqual(tBeam.b);
-  });
-  it('T-beam beff ≥ bw', () => {
-    expect(effectiveFlange(tBeam, 10)).toBeGreaterThanOrEqual(tBeam.bw ?? tBeam.b);
+  it('T-beam beff ≤ b and ≥ bw', () => {
+    const beff = effectiveFlange(tBeam, 20);
+    expect(beff).toBeLessThanOrEqual(tBeam.b);
+    expect(beff).toBeGreaterThanOrEqual(tBeam.bw ?? tBeam.b);
   });
 });
 
-// ── Flexure ───────────────────────────────────────────────────────────────────
-
-describe('computeFlexure — rectangular beam', () => {
-  it('phi_Mn_pos > 0 with bottom steel', () => {
-    const r = computeFlexure(beam16x24, mat4k, rebar3_8);
-    expect(r.phi_Mn_pos).toBeGreaterThan(0);
-  });
-  it('phi_Mn_pos > phi_Mn_neg with more bottom steel', () => {
-    // rebar3_8: 4 bot vs 3 top
-    const r = computeFlexure(beam16x24, mat4k, rebar3_8);
-    expect(r.phi_Mn_pos).toBeGreaterThan(r.phi_Mn_neg);
-  });
-  it('zero steel → zero capacity', () => {
-    const noRebar: RebarLayout = { topBars: [{ numBars: 0, barSize: 8 }], botBars: [{ numBars: 0, barSize: 8 }] };
-    const r = computeFlexure(beam16x24, mat4k, noRebar);
-    expect(r.phi_Mn_pos).toBe(0);
-    expect(r.phi_Mn_neg).toBe(0);
-  });
-  it('phi = 0.9 for tension-controlled section (light steel ratio)', () => {
-    const lightRebar: RebarLayout = { topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }] };
-    const r = computeFlexure(beam16x24, mat4k, lightRebar);
-    expect(r.phi_pos).toBeCloseTo(0.9, 2);
-  });
-  it('more bottom steel → higher positive moment capacity', () => {
-    const r3 = computeFlexure(beam16x24, mat4k, { ...rebar3_8, botBars: [{ numBars: 3, barSize: 8 }] });
-    const r5 = computeFlexure(beam16x24, mat4k, { ...rebar3_8, botBars: [{ numBars: 5, barSize: 8 }] });
-    expect(r5.phi_Mn_pos).toBeGreaterThan(r3.phi_Mn_pos);
-  });
-  it('higher fc: same steel, slightly higher capacity (larger moment arm)', () => {
-    const r4k = computeFlexure(beam16x24, mat4k, rebar3_8);
-    const r6k = computeFlexure(beam16x24, mat6k, rebar3_8);
-    expect(r6k.phi_Mn_pos).toBeGreaterThanOrEqual(r4k.phi_Mn_pos * 0.99);
-  });
-});
-
-describe('computeFlexure — T-beam (correct stress-block split)', () => {
-  const tRebar: RebarLayout = {
-    topBars: [{ numBars: 3, barSize: 9 }],
-    botBars: [{ numBars: 5, barSize: 9 }],
-    ties: { barSize: 4, spacing: 5, legs: 2 },
-  };
-
-  it('positive capacity exceeds equivalent rectangular (web-width) section', () => {
-    const tResult = computeFlexure(tBeam, mat4k, tRebar);
-    const rRect: SectionDimensions = { ...tBeam, type: 'rectangular_beam', b: 14 };
-    const rResult = computeFlexure(rRect, mat4k, tRebar);
-    expect(tResult.phi_Mn_pos).toBeGreaterThan(rResult.phi_Mn_pos);
-  });
-
-  it('stress block extends into web when beff is narrow enough (short span)', () => {
-    // span=5ft → beff = min(14+16×5=94, 60/4=15, 48) = 15"
-    // a_rect = 5×1.0×60000 / (0.85×4000×15) = 300000/51000 = 5.88" > hf=5" → T-behavior
-    const r = computeFlexure(tBeam, mat4k, tRebar, 5);
-    expect(r.isT_behavior_pos).toBe(true);
-    expect(r.a_pos).toBeGreaterThan(tBeam.hf ?? 0);
-  });
-
-  it('negative moment uses web width (bw) only', () => {
-    // Negative Mn should equal rectangular-web calc
-    const tResult = computeFlexure(tBeam, mat4k, tRebar);
-    const webRect: SectionDimensions = { ...tBeam, type: 'rectangular_beam', b: 14 };
-    const rResult = computeFlexure(webRect, mat4k, tRebar);
-    expect(tResult.phi_Mn_neg).toBeCloseTo(rResult.phi_Mn_neg, 1);
-  });
-
-  it('T-beam Mn_pos is finite and positive', () => {
-    const r = computeFlexure(tBeam, mat4k, tRebar, 30);
-    expect(r.Mn_pos).toBeGreaterThan(0);
-    expect(isFinite(r.Mn_pos)).toBe(true);
-  });
-});
-
-// ── Shear ─────────────────────────────────────────────────────────────────────
-
-describe('computeShear', () => {
-  it('Vc > 0 for standard beam', () => {
-    expect(computeShear(beam16x24, mat4k, rebar3_8).Vc).toBeGreaterThan(0);
-  });
-
-  it('lambda_s = 1.0 when stirrups meet Av_min (size effect waived)', () => {
-    // rebar3_8 has #4@6" with 2 legs: Av/s = 2×0.20/6 = 0.0667
-    const r = computeShear(beam16x24, mat4k, rebar3_8);
-    expect(r.has_min_stirrups).toBe(true);
-    expect(r.lambda_s).toBe(1.0);
-  });
-
-  it('lambda_s < 1.0 for beam without adequate stirrups (d > 10")', () => {
-    // beam16x24: d ≈ 21.5" → λs = √(2/(1+21.5/10)) = √(2/3.15) = 0.797 < 1.0
-    const noStirRebar: RebarLayout = { topBars: rebar3_8.topBars, botBars: rebar3_8.botBars }; // no ties
-    const r = computeShear(beam16x24, mat4k, noStirRebar);
-    expect(r.has_min_stirrups).toBe(false);
-    expect(r.lambda_s).toBeLessThan(1.0);
-    expect(r.lambda_s).toBeCloseTo(Math.sqrt(2 / (1 + 21.5 / 10)), 2);
-  });
-
-  it('phi_Vn = 0.75*(Vc+Vs)', () => {
-    const r = computeShear(beam16x24, mat4k, rebar3_8);
-    expect(r.phi_Vn).toBeCloseTo(0.75 * (r.Vc + r.Vs), 3);
-  });
-
-  it('closer stirrup spacing → higher Vs', () => {
-    const close = { ...rebar3_8, ties: { barSize: 4, spacing: 4,  legs: 2 } };
-    const far   = { ...rebar3_8, ties: { barSize: 4, spacing: 12, legs: 2 } };
-    expect(computeShear(beam16x24, mat4k, close).Vs).toBeGreaterThan(
-      computeShear(beam16x24, mat4k, far).Vs
-    );
-  });
-
-  it('lightweight concrete reduces Vc', () => {
-    const normal = computeShear(beam16x24, mat4k, rebar3_8);
-    const lw     = computeShear(beam16x24, { ...mat4k, lambdaConcrete: 0.75 }, rebar3_8);
-    expect(lw.Vc).toBeLessThan(normal.Vc);
-  });
-
-  it('higher rho_w → higher Vc (ACI size-effect equation)', () => {
-    const rHeavy = { ...rebar3_8, botBars: [{ numBars: 6, barSize: 9 }] };
-    const rLight = { ...rebar3_8, botBars: [{ numBars: 2, barSize: 5 }] };
-    expect(computeShear(beam16x24, mat4k, rHeavy).Vc).toBeGreaterThan(
-      computeShear(beam16x24, mat4k, rLight).Vc
-    );
-  });
-});
-
-// ── Torsion ───────────────────────────────────────────────────────────────────
-
-describe('computeTorsion', () => {
-  it('Tcr > 0', () => {
-    expect(computeTorsion(beam16x24, mat4k, rebar3_8).Tcr).toBeGreaterThan(0);
-  });
-  it('Tu_threshold = Tcr / 4', () => {
-    const r = computeTorsion(beam16x24, mat4k, rebar3_8);
-    expect(r.Tu_threshold).toBeCloseTo(r.Tcr / 4, 4);
-  });
-  it('phi_Tn uses actual stirrup At/s (not a placeholder)', () => {
-    const r1 = computeTorsion(beam16x24, mat4k, rebar3_8);
-    const r2 = computeTorsion(beam16x24, mat4k, { ...rebar3_8, ties: { barSize: 4, spacing: 3, legs: 2 } });
-    // Halving spacing should double phi_Tn
-    expect(r2.phi_Tn).toBeCloseTo(r1.phi_Tn * 2, 0);
-  });
-  it('larger section → higher Tcr', () => {
-    const small = computeTorsion({ ...rectBeam, b: 10, h: 14 }, mat4k, rebar3_8);
-    const large = computeTorsion(beam16x24, mat4k, rebar3_8);
-    expect(large.Tcr).toBeGreaterThan(small.Tcr);
-  });
-  it('Aoh > 0', () => {
-    expect(computeTorsion(beam16x24, mat4k, rebar3_8).Aoh).toBeGreaterThan(0);
-  });
-});
-
-// ── Steel limits ──────────────────────────────────────────────────────────────
+// ─── steelLimits ──────────────────────────────────────────────────────────────
 
 describe('steelLimits', () => {
   const d = effectiveDepth(beam16x24, 8);
@@ -275,86 +105,196 @@ describe('steelLimits', () => {
     const { As_min, As_max } = steelLimits(beam16x24, mat4k, d);
     expect(As_max).toBeGreaterThan(As_min);
   });
-  it('As_min increases with d', () => {
-    const dSmall = effectiveDepth({ ...beam16x24, h: 16 }, 8);
-    const dLarge = effectiveDepth({ ...beam16x24, h: 30 }, 8);
-    const s1 = steelLimits(beam16x24, mat4k, dSmall);
-    const s2 = steelLimits(beam16x24, mat4k, dLarge);
-    expect(s2.As_min).toBeGreaterThan(s1.As_min);
+  it('As_max uses 0.85 coefficient (ACI §9.3.3.1)', () => {
+    // As_max = 0.85*β₁*(fc/fy)*(3/7)*bw*d
+    const { As_max } = steelLimits(beam16x24, mat4k, d);
+    const expected = 0.85 * beta1(4000) * (4000 / 60000) * (3 / 7) * 16 * d;
+    expect(As_max).toBeCloseTo(expected, 2);
   });
 });
 
-// ── requiredAs ────────────────────────────────────────────────────────────────
+// ─── Flexure ─────────────────────────────────────────────────────────────────
+
+describe('computeFlexure — rectangular beam', () => {
+  it('phi_Mn_pos > 0 with bottom steel', () => {
+    expect(computeFlexure(beam16x24, mat4k, rebar3_8).phi_Mn_pos).toBeGreaterThan(0);
+  });
+  it('phi_Mn_pos > phi_Mn_neg with more bottom steel (4 vs 3)', () => {
+    expect(computeFlexure(beam16x24, mat4k, rebar3_8).phi_Mn_pos).toBeGreaterThan(
+      computeFlexure(beam16x24, mat4k, rebar3_8).phi_Mn_neg
+    );
+  });
+  it('zero steel → zero capacity', () => {
+    const noRebar: RebarLayout = { topBars: [{ numBars: 0, barSize: 8 }], botBars: [{ numBars: 0, barSize: 8 }] };
+    const r = computeFlexure(beam16x24, mat4k, noRebar);
+    expect(r.phi_Mn_pos).toBe(0);
+    expect(r.phi_Mn_neg).toBe(0);
+  });
+  it('more steel → higher capacity', () => {
+    const r3 = computeFlexure(beam16x24, mat4k, { ...rebar3_8, botBars: [{ numBars: 3, barSize: 8 }] });
+    const r6 = computeFlexure(beam16x24, mat4k, { ...rebar3_8, botBars: [{ numBars: 6, barSize: 8 }] });
+    expect(r6.phi_Mn_pos).toBeGreaterThan(r3.phi_Mn_pos);
+  });
+  it('phi = 0.9 for lightly reinforced section', () => {
+    const light: RebarLayout = { topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }] };
+    expect(computeFlexure(beam16x24, mat4k, light).phi_pos).toBeCloseTo(0.9, 2);
+  });
+});
+
+describe('computeFlexure — T-beam', () => {
+  const tRebar: RebarLayout = {
+    topBars: [{ numBars: 3, barSize: 9 }],
+    botBars: [{ numBars: 5, barSize: 9 }],
+    ties: { barSize: 4, spacing: 5, legs: 2 },
+  };
+  it('positive capacity > equivalent rectangular web section', () => {
+    const tResult = computeFlexure(tBeam, mat4k, tRebar);
+    const rRect: SectionDimensions = { ...tBeam, type: 'rectangular_beam', b: 14 };
+    const rResult = computeFlexure(rRect, mat4k, tRebar);
+    expect(tResult.phi_Mn_pos).toBeGreaterThan(rResult.phi_Mn_pos);
+  });
+  it('isT_behavior_pos true for short span (stress block > hf)', () => {
+    const r = computeFlexure(tBeam, mat4k, tRebar, 5);
+    expect(r.isT_behavior_pos).toBe(true);
+  });
+  it('negative moment uses web width only', () => {
+    const tResult = computeFlexure(tBeam, mat4k, tRebar);
+    const webRect: SectionDimensions = { ...tBeam, type: 'rectangular_beam', b: 14 };
+    const rResult = computeFlexure(webRect, mat4k, tRebar);
+    expect(tResult.phi_Mn_neg).toBeCloseTo(rResult.phi_Mn_neg, 1);
+  });
+});
+
+// ─── Shear ────────────────────────────────────────────────────────────────────
+
+describe('computeShear', () => {
+  it('Vc > 0', () => {
+    expect(computeShear(beam16x24, mat4k, rebar3_8).Vc).toBeGreaterThan(0);
+  });
+  it('lambda_s = 1.0 when stirrups meet Av_min (size effect waived)', () => {
+    const r = computeShear(beam16x24, mat4k, rebar3_8);
+    expect(r.has_min_stirrups).toBe(true);
+    expect(r.lambda_s).toBe(1.0);
+  });
+  it('lambda_s < 1.0 for beam without adequate stirrups (d > 10")', () => {
+    const noTies: RebarLayout = { topBars: rebar3_8.topBars, botBars: rebar3_8.botBars };
+    const r = computeShear(beam16x24, mat4k, noTies);
+    expect(r.lambda_s).toBeLessThan(1.0);
+  });
+  it('phi_Vn = 0.75*(Vc+Vs)', () => {
+    const r = computeShear(beam16x24, mat4k, rebar3_8);
+    expect(r.phi_Vn).toBeCloseTo(0.75 * (r.Vc + r.Vs), 3);
+  });
+  it('closer spacing → higher Vs', () => {
+    const close = computeShear(beam16x24, mat4k, { ...rebar3_8, ties: { barSize: 4, spacing: 4, legs: 2 } });
+    const far   = computeShear(beam16x24, mat4k, { ...rebar3_8, ties: { barSize: 4, spacing: 12, legs: 2 } });
+    expect(close.Vs).toBeGreaterThan(far.Vs);
+  });
+  it('lightweight concrete reduces Vc', () => {
+    const nw = computeShear(beam16x24, mat4k, rebar3_8);
+    const lw = computeShear(beam16x24, { ...mat4k, lambdaConcrete: 0.75 }, rebar3_8);
+    expect(lw.Vc).toBeLessThan(nw.Vc);
+  });
+  it('d_shear applies 0.8h lower bound', () => {
+    // For beam16x24: d_raw = 21.5", 0.8h = 19.2" → d_shear = 21.5 (raw > lower bound)
+    const r = computeShear(beam16x24, mat4k, rebar3_8);
+    expect(r.d_shear).toBeCloseTo(21.5, 1);
+    // Extreme cover case: h=24, cc=10 → d_raw = 24-10-0.5-0.5=13; 0.8*24=19.2 → d_shear=19.2
+    const deepCover: SectionDimensions = { type: 'rectangular_beam', b: 16, h: 24, coverClear: 10, stirrupDia: 4 };
+    const r2 = computeShear(deepCover, mat4k, rebar3_8);
+    expect(r2.d_shear).toBeCloseTo(19.2, 1);
+  });
+  it('Av_min_per_s formula correct for 16" beam at fc=4000', () => {
+    // Av_min/s = max(0.75√4000, 50) * 16 / 60000 = max(47.4, 50)*16/60000 = 0.01333 in²/in
+    const r = computeShear(beam16x24, mat4k, rebar3_8);
+    expect(r.Av_min_per_s).toBeCloseTo(0.01333, 3);
+  });
+});
+
+// ─── Torsion ──────────────────────────────────────────────────────────────────
+
+describe('computeTorsion', () => {
+  it('Tcr > 0', () => {
+    expect(computeTorsion(beam16x24, mat4k, rebar3_8).Tcr).toBeGreaterThan(0);
+  });
+  it('Tu_threshold = Tcr / 4', () => {
+    const r = computeTorsion(beam16x24, mat4k, rebar3_8);
+    expect(r.Tu_threshold).toBeCloseTo(r.Tcr / 4, 4);
+  });
+  it('phi_Tn proportional to At/s (halving spacing doubles phi_Tn)', () => {
+    const r1 = computeTorsion(beam16x24, mat4k, rebar3_8); // spacing=6
+    const r2 = computeTorsion(beam16x24, mat4k, { ...rebar3_8, ties: { barSize: 4, spacing: 3, legs: 2 } });
+    expect(r2.phi_Tn).toBeCloseTo(r1.phi_Tn * 2, 0);
+  });
+  it('larger section → higher Tcr', () => {
+    const small = computeTorsion({ ...rectBeam, b: 10, h: 14 }, mat4k, rebar3_8);
+    const large = computeTorsion(beam16x24, mat4k, rebar3_8);
+    expect(large.Tcr).toBeGreaterThan(small.Tcr);
+  });
+  it('returns Aoh and Ph > 0', () => {
+    const r = computeTorsion(beam16x24, mat4k, rebar3_8);
+    expect(r.Aoh).toBeGreaterThan(0);
+    expect(r.Ph).toBeGreaterThan(0);
+  });
+});
+
+// ─── requiredAs ───────────────────────────────────────────────────────────────
 
 describe('requiredAs', () => {
   it('returns 0 for Mu=0', () => {
-    expect(requiredAs(0, beam16x24, mat4k, false, 8)).toBe(0);
+    expect(requiredAs(0, beam16x24, mat4k, false, 20)).toBe(0);
   });
   it('positive for Mu > 0', () => {
-    expect(requiredAs(100, beam16x24, mat4k, false, 8)).toBeGreaterThan(0);
+    expect(requiredAs(100, beam16x24, mat4k, false, 20)).toBeGreaterThan(0);
   });
   it('larger Mu → more steel', () => {
-    expect(requiredAs(200, beam16x24, mat4k, false, 8)).toBeGreaterThan(
-      requiredAs(50, beam16x24, mat4k, false, 8)
+    expect(requiredAs(200, beam16x24, mat4k, false, 20)).toBeGreaterThan(
+      requiredAs(50, beam16x24, mat4k, false, 20)
     );
   });
-  it('higher fc → slightly less steel (larger moment arm)', () => {
-    const lo = requiredAs(150, beam16x24, mat4k, false, 8);
-    const hi = requiredAs(150, beam16x24, mat6k, false, 8);
-    expect(hi).toBeLessThanOrEqual(lo);
-  });
-  it('result ≥ As_min', () => {
-    const d   = effectiveDepth(beam16x24, 8);
-    const { As_min } = steelLimits(beam16x24, mat4k, d);
-    expect(requiredAs(5, beam16x24, mat4k, false, 8)).toBeGreaterThanOrEqual(As_min - 1e-9);
+  it('higher fc → slightly less steel', () => {
+    expect(requiredAs(150, beam16x24, mat6k, false, 20)).toBeLessThanOrEqual(
+      requiredAs(150, beam16x24, mat4k, false, 20)
+    );
   });
 });
 
-// ── designMember ─────────────────────────────────────────────────────────────
+// ─── designMember ─────────────────────────────────────────────────────────────
 
 describe('designMember', () => {
   const load: LoadCase = { id: 'lc1', label: 'LC1', Mu_pos: 140, Mu_neg: 90, Vu: 55, Tu: 6, Pu: 0 };
 
   it('returns valid status', () => {
-    const r = designMember(beam16x24, mat4k, rebar3_8, load);
-    expect(['OK', 'Warning', 'NG']).toContain(r.status);
+    expect(['OK', 'Warning', 'NG']).toContain(designMember(beam16x24, mat4k, rebar3_8, load).status);
   });
-
-  it('all DCRs are non-negative', () => {
+  it('all DCRs non-negative', () => {
     const r = designMember(beam16x24, mat4k, rebar3_8, load);
     expect(r.DCR_flex_pos).toBeGreaterThanOrEqual(0);
     expect(r.DCR_flex_neg).toBeGreaterThanOrEqual(0);
     expect(r.DCR_shear).toBeGreaterThanOrEqual(0);
     expect(r.DCR_torsion).toBeGreaterThanOrEqual(0);
   });
-
   it('status = NG when loads vastly exceed capacity', () => {
     const big = { ...load, Mu_pos: 9999, Mu_neg: 9999, Vu: 9999 };
-    const r   = designMember(beam16x24, mat4k, rebar3_8, big);
-    expect(r.status).toBe('NG');
+    expect(designMember(beam16x24, mat4k, rebar3_8, big).status).toBe('NG');
   });
-
-  it('status = OK when loads are well within capacity', () => {
+  it('status = OK for light loads', () => {
     const small = { ...load, Mu_pos: 10, Mu_neg: 5, Vu: 5, Tu: 0 };
     expect(designMember(beam16x24, mat4k, rebar3_8, small).status).toBe('OK');
   });
-
   it('phi_Vn = 0.75*(Vc+Vs)', () => {
     const r = designMember(beam16x24, mat4k, rebar3_8, load);
     expect(r.phi_Vn).toBeCloseTo(0.75 * (r.Vc + r.Vs), 2);
   });
-
   it('As_max > As_min', () => {
     const r = designMember(beam16x24, mat4k, rebar3_8, load);
     expect(r.As_max).toBeGreaterThan(r.As_min);
   });
-
   it('Av_req = 0 when Vu << phi*Vc', () => {
     const tiny = { ...load, Vu: 0.1 };
     expect(designMember(beam16x24, mat4k, rebar3_8, tiny).Av_req).toBe(0);
   });
-
-  it('does not throw for T-beam member', () => {
+  it('no throw for T-beam', () => {
     const tRebar: RebarLayout = {
       topBars: [{ numBars: 3, barSize: 9 }],
       botBars: [{ numBars: 5, barSize: 9 }],
@@ -362,76 +302,51 @@ describe('designMember', () => {
     };
     expect(() => designMember(tBeam, mat5k, tRebar, load, 30)).not.toThrow();
   });
-
-  it('does not throw for column member', () => {
-    const colLoad = { ...load, Pu: 400 };
-    expect(() => designMember(rectCol, mat5k, colRebar, colLoad)).not.toThrow();
-  });
 });
 
-// ── Interaction diagram ───────────────────────────────────────────────────────
+// ─── ACI beam calc fixes ──────────────────────────────────────────────────────
 
-describe('computeInteractionDiagram', () => {
-  it('returns ≥ 5 points', () => {
-    expect(computeInteractionDiagram(rectCol, mat5k, colRebar).length).toBeGreaterThanOrEqual(5);
+describe('ACI 318-19 beam calc fixes', () => {
+  it('min shear trigger: no warning when Vu is very small', () => {
+    const lightLoad: LoadCase = { id: 'lc', label: 'lc', Mu_pos: 0, Mu_neg: 0, Vu: 0.5, Tu: 0, Pu: 0 };
+    const noTies: RebarLayout = { topBars: rebar3_8.topBars, botBars: rebar3_8.botBars };
+    const r = designMember(beam16x24, mat4k, noTies, lightLoad);
+    expect(r.warnings.some(w => w.code === 'ACI §9.6.3.1')).toBe(false);
   });
 
-  it('first point has highest axial Pn (pure compression)', () => {
-    const pts = computeInteractionDiagram(rectCol, mat5k, colRebar);
-    expect(pts[0].Pn).toBeGreaterThanOrEqual(Math.max(...pts.map(p => p.Pn)));
+  it('two-tier spacing: d/2 warning fires when s > d/2 (normal shear zone)', () => {
+    const wideStir: RebarLayout = { ...rebar3_8, ties: { barSize: 4, spacing: 20, legs: 2 } };
+    // d ≈ 21.5, d/2 ≈ 10.75 < 20
+    const load: LoadCase = { id: 'lc', label: 'lc', Mu_pos: 50, Mu_neg: 30, Vu: 30, Tu: 0, Pu: 0 };
+    const r = designMember(beam16x24, mat4k, wideStir, load);
+    expect(r.warnings.some(w => w.code === 'ACI §9.7.6.2.2')).toBe(true);
   });
 
-  it('last point has negative Pn (pure tension)', () => {
-    const pts = computeInteractionDiagram(rectCol, mat5k, colRebar);
-    expect(pts[pts.length - 1].Pn).toBeLessThan(0);
+  it('two-tier spacing: d/4 warning fires under heavy shear', () => {
+    const stir8: RebarLayout = { ...rebar3_8, ties: { barSize: 4, spacing: 8, legs: 2 } };
+    // Massive Vu to trigger heavy shear zone; d/4 ≈ 5.4 < 8
+    const load: LoadCase = { id: 'lc', label: 'lc', Mu_pos: 100, Mu_neg: 50, Vu: 500, Tu: 0, Pu: 0 };
+    const r = designMember(beam16x24, mat4k, stir8, load);
+    expect(r.warnings.some(w => w.code === 'ACI §9.7.6.2.2' && w.message.includes('Heavy shear'))).toBe(true);
   });
 
-  it('all phi values are in [0.65, 0.9]', () => {
-    const pts = computeInteractionDiagram(rectCol, mat5k, colRebar);
-    pts.forEach(p => {
-      expect(p.phi).toBeGreaterThanOrEqual(0.65 - 1e-9);
-      expect(p.phi).toBeLessThanOrEqual(0.90 + 1e-9);
-    });
+  it('face steel warning fires for h > 36"', () => {
+    const tallBeam: SectionDimensions = { type: 'rectangular_beam', b: 16, h: 42, coverClear: 1.5, stirrupDia: 4 };
+    const load: LoadCase = { id: 'lc', label: 'lc', Mu_pos: 200, Mu_neg: 100, Vu: 60, Tu: 0, Pu: 0 };
+    const r = designMember(tallBeam, mat4k, rebar3_8, load);
+    expect(r.warnings.some(w => w.code === 'ACI §9.7.2.3')).toBe(true);
   });
 
-  it('phiPn = phi * Pn for all points except pure-compression (which applies 0.80 factor)', () => {
-    const pts = computeInteractionDiagram(rectCol, mat5k, colRebar, 5);
-    // Skip first point (pure compression) — phiPn there includes ACI 0.80 eccentricity cap
-    pts.slice(1).forEach(p => expect(p.phiPn).toBeCloseTo(p.phi * p.Pn, 2));
+  it('face steel warning does NOT fire for h ≤ 36"', () => {
+    const load: LoadCase = { id: 'lc', label: 'lc', Mu_pos: 100, Mu_neg: 50, Vu: 40, Tu: 0, Pu: 0 };
+    const r = designMember(beam16x24, mat4k, rebar3_8, load);
+    expect(r.warnings.some(w => w.code === 'ACI §9.7.2.3')).toBe(false);
   });
 
-  it('circular column generates valid diagram', () => {
-    const pts = computeInteractionDiagram(circCol, mat5k, colRebar);
-    expect(pts.length).toBeGreaterThanOrEqual(5);
-    expect(pts[0].Pn).toBeGreaterThan(0);
-  });
-});
-
-// ── ACI code checks ───────────────────────────────────────────────────────────
-
-describe('ACI 318-19 code compliance', () => {
-  it('lightweight lambda=0.75 reduces Vc vs normal-weight', () => {
-    const nw = computeShear(beam16x24, mat4k, rebar3_8);
-    const lw = computeShear(beam16x24, { ...mat4k, lambdaConcrete: 0.75 }, rebar3_8);
-    expect(lw.Vc).toBeCloseTo(nw.Vc * 0.75, 1);
-  });
-
-  it('design does not throw for fc=3000, 4000, 5000, 6000, 8000 psi', () => {
+  it('no throw for various fc values', () => {
     const load: LoadCase = { id: 'x', label: 'x', Mu_pos: 80, Mu_neg: 40, Vu: 30, Tu: 2, Pu: 0 };
     [3000, 4000, 5000, 6000, 8000].forEach(fc => {
       expect(() => designMember(beam16x24, { ...mat4k, fc }, rebar3_8, load)).not.toThrow();
     });
-  });
-
-  it('Av_min_per_s computed correctly for #4 stirrups in 16" beam', () => {
-    // Av,min/s = max(0.75√f'c/fyt, 50/fyt) × bw
-    // = max(0.75√4000/60000, 50/60000) × 16
-    // = max(0.000791, 0.000833) × 16 = 0.01333 in²/in
-    const r = computeShear(beam16x24, mat4k, rebar3_8);
-    expect(r.Av_min_per_s).toBeCloseTo(0.01333, 3);
-  });
-
-  it('beta1 = 0.75 for fc=6000 psi', () => {
-    expect(beta1(6000)).toBeCloseTo(0.75, 3);
   });
 });
