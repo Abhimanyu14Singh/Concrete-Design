@@ -54,6 +54,12 @@ export interface LoadCase {
   Muy?: number;    // Moment about y for column (kip-ft)
 }
 
+export interface DesignWarning {
+  code: string;      // ACI section, e.g. "ACI §9.7.6.2.2"
+  message: string;   // Human-readable description with actual numbers
+  severity: 'error' | 'warning';
+}
+
 export interface DesignResults {
   loadCaseId: string;
   // Flexure
@@ -84,7 +90,8 @@ export interface DesignResults {
   As_min: number;
   As_max: number;
   Av_req: number;       // Required stirrup area (in²/in)
-  warnings: string[];
+  Av_min_per_s: number; // Min required stirrup area per unit length (in²/in)
+  warnings: DesignWarning[];
   status: 'OK' | 'NG' | 'Warning';
 }
 

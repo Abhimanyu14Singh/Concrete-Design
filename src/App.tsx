@@ -1,15 +1,22 @@
 import { useState } from 'react';
 import type { Project, Member } from './types';
 import { defaultProject } from './utils/sampleData';
+import { saveProject, openProject } from './utils/electronBridge';
 import Dashboard from './components/Dashboard/Dashboard';
 import DesignView from './components/DesignView';
+import ExportModal from './components/ExportModal';
 
 type Tab = 'dashboard' | 'design';
 
-const LOGO_STYLE: React.CSSProperties = {
-  width: 32, height: 32, background: 'linear-gradient(135deg,#1d4ed8,#6d28d9)',
+const LOGO: React.CSSProperties = {
+  width: 30, height: 30, background: 'linear-gradient(135deg,#1d4ed8,#6d28d9)',
   borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontSize: 10, fontWeight: 800, color: 'white', letterSpacing: 0.5, flexShrink: 0,
+};
+
+const BTN: React.CSSProperties = {
+  background: 'none', border: '1px solid #1e293b', borderRadius: 6, color: '#94a3b8',
+  cursor: 'pointer', fontSize: 11, padding: '4px 10px', fontWeight: 600,
 };
 
 export default function App() {
@@ -17,13 +24,11 @@ export default function App() {
   const [activeMemberId, setActiveMemberId] = useState(project.members[0].id);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showExport, setShowExport] = useState(false);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
 
-  function handleSelectMember(id: string) {
-    setActiveMemberId(id);
-    setTab('design');
-  }
+  function handleSelectMember(id: string) { setActiveMemberId(id); setTab('design'); }
 
   function handleUpdateMember(updated: Member) {
     setProject(p => ({ ...p, members: p.members.map(m => m.id === updated.id ? updated : m) }));
@@ -47,21 +52,39 @@ export default function App() {
     setTab('design');
   }
 
+  async function handleOpen() {
+    try {
+      const loaded = await openProject();
+      if (loaded) { setProject(loaded); setActiveMemberId(loaded.members[0]?.id ?? ''); setTab('dashboard'); }
+    } catch { /* user cancelled */ }
+  }
+
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'design',    label: 'Member Design' },
+  ];
+
+  function handleNew() {
+    if (confirm('Start a new project? Unsaved changes will be lost.')) {
+      setProject({ ...defaultProject, id: `proj-${Date.now()}`, name: 'New Project', date: new Date().toISOString().slice(0, 10) });
+      setTab('dashboard');
+    }
+  }
+
   const memberTypeColor = (t: string) =>
     t === 'column' ? '#c084fc' : t === 'wall' ? '#4ade80' : '#60a5fa';
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#020817', color: '#e2e8f0', overflow: 'hidden', fontFamily: 'system-ui,sans-serif' }}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
+      {/* Sidebar */}
       <aside style={{
         width: sidebarOpen ? 200 : 44, flexShrink: 0, transition: 'width 0.18s ease',
         background: '#0a1628', borderRight: '1px solid #1e293b',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
-        {/* Logo row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 10px', borderBottom: '1px solid #1e293b' }}>
-          <div style={LOGO_STYLE}>SC</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 10px', borderBottom: '1px solid #1e293b' }}>
+          <div style={LOGO}>SC</div>
           {sidebarOpen && (
             <div style={{ overflow: 'hidden' }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: '#f1f5f9', whiteSpace: 'nowrap' }}>S-Concrete</div>
@@ -69,17 +92,16 @@ export default function App() {
             </div>
           )}
           <button onClick={() => setSidebarOpen(o => !o)}
-            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: 2, fontSize: 11 }}>
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 11 }}>
             {sidebarOpen ? '◀' : '▶'}
           </button>
         </div>
 
-        {/* Member list */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
           {sidebarOpen && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px 6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px 4px' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 1 }}>Members</span>
-              <button onClick={addMember} style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: 0 }}>+</button>
+              <button onClick={addMember} style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: 18, lineHeight: 1, cursor: 'pointer' }}>+</button>
             </div>
           )}
           {project.members.map(m => {
@@ -93,8 +115,7 @@ export default function App() {
                   borderRight: active ? '2px solid #3b82f6' : '2px solid transparent',
                   background: active ? 'rgba(59,130,246,0.08)' : 'transparent',
                   cursor: 'pointer',
-                } as React.CSSProperties}
-              >
+                } as React.CSSProperties}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: memberTypeColor(m.memberType), flexShrink: 0, minWidth: 24, textAlign: 'center' }}>
                   {m.id}
                 </span>
@@ -114,9 +135,8 @@ export default function App() {
           )}
         </div>
 
-        {/* Legend */}
         {sidebarOpen && (
-          <div style={{ borderTop: '1px solid #1e293b', padding: '10px 10px' }}>
+          <div style={{ borderTop: '1px solid #1e293b', padding: '10px' }}>
             {[['Beam', '#60a5fa'], ['Column', '#c084fc'], ['Wall', '#4ade80']].map(([label, color]) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <div style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
@@ -127,38 +147,41 @@ export default function App() {
         )}
       </aside>
 
-      {/* ── Main area ───────────────────────────────────────────────────── */}
+      {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* Top bar */}
+        {/* Header */}
         <header style={{
           height: 44, background: '#0a1628', borderBottom: '1px solid #1e293b',
-          display: 'flex', alignItems: 'center', padding: '0 16px', gap: 8, flexShrink: 0,
+          display: 'flex', alignItems: 'center', padding: '0 12px', gap: 6, flexShrink: 0,
         }}>
+          {/* File buttons */}
+          <button style={BTN} onClick={handleNew} title="New project">New</button>
+          <button style={BTN} onClick={handleOpen} title="Open .scdb file">Open</button>
+          <button style={BTN} onClick={() => saveProject(project)} title="Save project">Save</button>
+          <div style={{ width: 1, height: 20, background: '#1e293b', margin: '0 4px' }} />
+
           {/* Tabs */}
-          {([['dashboard', 'Dashboard'], ['design', 'Member Design']] as [Tab, string][]).map(([key, label]) => (
-            <button key={key} onClick={() => setTab(key)}
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
               style={{
                 padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                border: 'none', cursor: 'pointer', transition: 'all 0.12s',
-                background: tab === key ? '#1d4ed8' : 'transparent',
-                color: tab === key ? 'white' : '#475569',
+                border: 'none', cursor: 'pointer',
+                background: tab === t.key ? '#1d4ed8' : 'transparent',
+                color: tab === t.key ? 'white' : '#475569',
               }}>
-              {label}
+              {t.label}
             </button>
           ))}
 
           <div style={{ flex: 1 }} />
 
-          {/* Member selector (Design tab only) */}
+          {/* Member selector (Design tab) */}
           {tab === 'design' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: '#475569' }}>Member</span>
-              <select
-                value={activeMemberId}
-                onChange={e => setActiveMemberId(e.target.value)}
-                style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 5, padding: '4px 8px', fontSize: 11, color: '#e2e8f0', outline: 'none' }}
-              >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: '#475569' }}>Member</span>
+              <select value={activeMemberId} onChange={e => setActiveMemberId(e.target.value)}
+                style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 5, padding: '3px 6px', fontSize: 11, color: '#e2e8f0', outline: 'none' }}>
                 {project.members.map(m => (
                   <option key={m.id} value={m.id}>{m.id} — {m.label}</option>
                 ))}
@@ -166,9 +189,15 @@ export default function App() {
             </div>
           )}
 
-          {/* Project / code badge */}
-          <span style={{ fontSize: 10, color: '#334155', marginLeft: 8 }}>{project.name}</span>
-          <span style={{ fontSize: 10, background: 'rgba(29,78,216,0.2)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 4, padding: '2px 7px', fontWeight: 700 }}>
+          {/* Export */}
+          <button
+            onClick={() => setShowExport(true)}
+            style={{ ...BTN, color: '#a78bfa', borderColor: 'rgba(109,40,217,0.4)', background: 'rgba(109,40,217,0.08)' }}>
+            Export ↗
+          </button>
+
+          <span style={{ fontSize: 10, color: '#334155' }}>{project.name}</span>
+          <span style={{ fontSize: 10, background: 'rgba(29,78,216,0.2)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 4, padding: '2px 6px', fontWeight: 700 }}>
             {project.code}
           </span>
         </header>
@@ -181,13 +210,12 @@ export default function App() {
             </div>
           )}
           {tab === 'design' && (
-            <DesignView
-              member={activeMember}
-              onUpdate={handleUpdateMember}
-            />
+            <DesignView member={activeMember} onUpdate={handleUpdateMember} />
           )}
         </main>
       </div>
+
+      {showExport && <ExportModal project={project} onClose={() => setShowExport(false)} />}
     </div>
   );
 }

@@ -181,8 +181,9 @@ export default function MemberResults({ member }: Props) {
               <h4 className="text-xs font-bold text-red-400 uppercase mb-2">Warnings / Code Checks</h4>
               <ul className="space-y-1">
                 {result.warnings.map((w, i) => (
-                  <li key={i} className="text-xs text-red-300 flex gap-2">
-                    <span>⚠</span><span>{w}</span>
+                  <li key={i} className="text-xs flex gap-2" style={{ color: w.severity === 'error' ? '#fca5a5' : '#fde68a' }}>
+                    <span>{w.severity === 'error' ? '✗' : '⚠'}</span>
+                    <span><strong style={{ fontFamily: 'monospace', marginRight: 4 }}>[{w.code}]</strong>{w.message}</span>
                   </li>
                 ))}
               </ul>

@@ -485,9 +485,16 @@ export default function DesignView({ member, onUpdate }: Props) {
               Code Warnings
             </div>
             {result.warnings.map((w, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-                <span style={{ color: '#f87171', fontSize: 11 }}>⚠</span>
-                <span style={{ fontSize: 11, color: '#fca5a5' }}>{w}</span>
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'flex-start' }}>
+                <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, marginTop: 1, color: w.severity === 'error' ? '#ef4444' : '#f59e0b' }}>
+                  {w.severity === 'error' ? '✗' : '⚠'}
+                </span>
+                <div>
+                  <span style={{ fontSize: 9, fontWeight: 700, fontFamily: 'monospace', marginRight: 6, color: w.severity === 'error' ? '#ef4444' : '#f59e0b' }}>
+                    [{w.code}]
+                  </span>
+                  <span style={{ fontSize: 11, color: w.severity === 'error' ? '#fca5a5' : '#fde68a' }}>{w.message}</span>
+                </div>
               </div>
             ))}
           </div>
