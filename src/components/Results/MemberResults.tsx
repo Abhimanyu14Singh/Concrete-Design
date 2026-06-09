@@ -6,6 +6,7 @@ import StatusBadge from '../common/StatusBadge';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import InteractionDiagram from '../Detailing/InteractionDiagram';
+import CalcBreakdownModal from './CalcBreakdownModal';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell } from 'recharts';
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 
 export default function MemberResults({ member }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id);
+  const [showCalc, setShowCalc] = useState(false);
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
   const result: DesignResults = designMember(member.section, member.material, member.rebar, load, member.span);
 
@@ -33,21 +35,42 @@ export default function MemberResults({ member }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Load case selector */}
-      <div className="flex gap-2 flex-wrap">
-        {member.loads.map(l => (
-          <button
-            key={l.id}
-            onClick={() => setActiveLoad(l.id)}
-            className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-              activeLoad === l.id
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            {l.label}
-          </button>
-        ))}
+      {showCalc && (
+        <CalcBreakdownModal
+          member={member}
+          loadId={activeLoad ?? member.loads[0]?.id}
+          onClose={() => setShowCalc(false)}
+        />
+      )}
+
+      {/* Load case selector + calc breakdown button */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div className="flex gap-2 flex-wrap">
+          {member.loads.map(l => (
+            <button
+              key={l.id}
+              onClick={() => setActiveLoad(l.id)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                activeLoad === l.id
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setShowCalc(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(139,92,246,0.4)',
+            color: '#a78bfa', borderRadius: 8, padding: '6px 14px',
+            fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+          }}
+        >
+          <span style={{ fontSize: 14 }}>∑</span> Show Calculations
+        </button>
       </div>
 
       {/* Overall status */}
