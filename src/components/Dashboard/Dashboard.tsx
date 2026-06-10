@@ -17,7 +17,7 @@ interface MemberSummary {
 }
 
 function summarize(m: Member, code: DesignCode): MemberSummary {
-  const results = m.loads.map(l => runDesign(m.section, m.material, m.rebar, l, m.span, code));
+  const results = m.loads.map(l => runDesign(m.section, m.material, m.rebar, l, m.span, code, m.crackParams));
   const maxDCR = Math.max(...results.map(r => Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion)));
   const worstResult = results.reduce((a, b) =>
     Math.max(b.DCR_flex_pos, b.DCR_flex_neg, b.DCR_shear) >

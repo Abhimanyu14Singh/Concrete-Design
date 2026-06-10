@@ -51,7 +51,7 @@ function line(ctx: DrawCtx, x1: number, y1: number, x2: number, y2: number, thic
 function worstResult(m: Member, code?: string): DesignResults | null {
   let worst: DesignResults | null = null;
   for (const lc of m.loads) {
-    const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code);
+    const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
     if (!worst || Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion) >
                   Math.max(worst.DCR_flex_pos, worst.DCR_flex_neg, worst.DCR_shear, worst.DCR_torsion))
       worst = r;
@@ -151,7 +151,7 @@ export async function exportPDF(project: Project): Promise<void> {
     y -= 16;
 
     for (const lc of m.loads) {
-      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code);
+      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code, m.crackParams);
       const bg = m.loads.indexOf(lc) % 2 === 0 ? C.light : C.white;
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
       const lcVals = [lc.label.slice(0, 12),
@@ -171,7 +171,7 @@ export async function exportPDF(project: Project): Promise<void> {
     // Warnings
     const allWarnings: { code: string; message: string; severity: string }[] = [];
     for (const lc of m.loads) {
-      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code);
+      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code, m.crackParams);
       for (const w of r.warnings)
         if (!allWarnings.find(x => x.message === w.message))
           allWarnings.push(w);

@@ -4,10 +4,11 @@
  * CalcBreakdownModal renders both codes identically. All values shown in SI.
  */
 
-import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
+import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase, CrackControlParams } from '../types';
+import { DEFAULT_CRACK_PARAMS } from '../types';
 import type { CalcSection } from './calcBreakdown';
 import { getBarArea, getBarDiam } from './concreteDesign';
-import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd } from '../engines/ec2/ec2Beam';
+import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, ecm } from '../engines/ec2/ec2Beam';
 import { formatBarLabel } from './rebar';
 
 const IN_TO_MM = 25.4, PSI_TO_MPA = 0.00689476, KIP_TO_KN = 4.44822, KIPFT_TO_KNM = 1.35582, IN2_TO_MM2 = 645.16;
@@ -20,6 +21,7 @@ export function generateBreakdownEC2(
   rebar: RebarLayout,
   load: LoadCase,
   _span = 20,
+  crack: CrackControlParams = DEFAULT_CRACK_PARAMS,
 ): CalcSection[] {
   const b = (section.bw ?? section.b) * IN_TO_MM;
   const h = (section.h ?? 12) * IN_TO_MM;
@@ -124,6 +126,24 @@ export function generateBreakdownEC2(
     );
   }
   sections.push({ title: `${load.Tu > 0 ? 5 : 4}. Detailing (§9.2)`, steps: detailSteps });
+
+  // ── Crack width §7.3.4 ──
+  const Es_MPa = material.Es * PSI_TO_MPA;
+  const Mqp = crack.qpFactor * MEd;
+  if (Mqp > 0 && As > 0) {
+    const cw = crackWidth(Mqp, As, botBarD, b, h, d, cover + stirrupD, fck, Es_MPa, crack.kt);
+    const alpha_e = Es_MPa / ecm(fck);
+    sections.push({
+      title: `${load.Tu > 0 ? 6 : 5}. Crack Width (§7.3.4)`,
+      steps: [
+        { ref: '§7.3.4', label: 'Quasi-permanent moment', equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(MEd)}`, result: `M_qp = ${f(Mqp)} kN·m` },
+        { ref: '§7.3.4', label: 'Cracked-section steel stress', equation: 'σs = M_qp / (As·z)', substitution: `x = ${f(cw.x, 0)} mm, z = d − x/3 = ${f(d - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
+        { ref: '§7.3.2', label: 'Effective reinforcement ratio', equation: 'ρp,eff = As / Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
+        { ref: 'eq (7.11)', label: 'Maximum crack spacing', equation: 'sr,max = 3.4c + 0.425·k1·k2·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(botBarD, 0)} mm, k1 = 0.8, k2 = 0.5`, result: `sr,max = ${f(cw.sr_max, 0)} mm` },
+        { ref: 'eq (7.8)', label: 'Bottom face crack width', equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)}`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(crack.wLimitBot, 2)} mm ${cw.wk <= crack.wLimitBot ? '✓' : '✗'}` },
+      ],
+    });
+  }
 
   return sections;
 }

@@ -42,10 +42,10 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   const cap = capacityLabels(code);
 
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code);
+  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, member.crackParams);
 
   // C1: compute all-LC results to find governing cases
-  const allResults = member.loads.map(l => ({ id: l.id, label: l.label, r: runDesign(member.section, member.material, member.rebar, l, member.span, code) }));
+  const allResults = member.loads.map(l => ({ id: l.id, label: l.label, r: runDesign(member.section, member.material, member.rebar, l, member.span, code, member.crackParams) }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
   const govShear    = allResults.reduce((a, b) => b.r.DCR_shear     > a.r.DCR_shear     ? b : a).id;
@@ -60,7 +60,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, member.crackParams));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 
@@ -220,6 +220,21 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
           <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')} />
           <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')} />
           <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion} />
+
+          {code === 'EN1992-1-1' && (
+            <>
+              <SectionLabel title="Crack Width §7.3.4" />
+              <KV k="wk bot" v={`${(result.wk_bot ?? 0).toFixed(3)} mm`}
+                dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} />
+              <KV k="wk top" v={`${(result.wk_top ?? 0).toFixed(3)} mm`}
+                dcr={(result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)} />
+              {result.wk_face !== undefined && (
+                <KV k="wk face" v={`${result.wk_face.toFixed(3)} mm`}
+                  dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} />
+              )}
+              <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`} />
+            </>
+          )}
         </div>
       </div>
 

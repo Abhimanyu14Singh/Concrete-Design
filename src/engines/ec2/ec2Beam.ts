@@ -17,8 +17,9 @@
 
 import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase,
-  DesignResults, DesignWarning,
+  DesignResults, DesignWarning, CrackControlParams,
 } from '../../types';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea, getBarDiam } from '../../utils/concreteDesign';
 
 // ── Unit factors (imperial → SI) ─────────────────────────────────────────────
@@ -149,6 +150,69 @@ export function tRd(
   return { TRds, TRdMax, TRdc, Ak, tef: tefUse };
 }
 
+// ── Crack width §7.3.4 ───────────────────────────────────────────────────────
+
+/** Mean secant modulus of elasticity Ecm (MPa), §3.1.3 Table 3.1. */
+export function ecm(fck: number): number {
+  return 22000 * Math.pow((fck + 8) / 10, 0.3);
+}
+
+export interface CrackWidthResult {
+  wk: number;       // characteristic crack width (mm)
+  sigma_s: number;  // steel stress under quasi-permanent moment (MPa)
+  sr_max: number;   // maximum crack spacing (mm)
+  x: number;        // cracked-section neutral axis depth (mm)
+  rho_p_eff: number;
+}
+
+/**
+ * Characteristic crack width wk = sr,max·(εsm − εcm) per EN 1992-1-1 §7.3.4.
+ * Elastic cracked-section analysis for σs; k1=0.8 (ribbed bars), k2=0.5
+ * (bending), k3=3.4, k4=0.425. All inputs SI: mm, MPa, kN·m.
+ */
+export function crackWidth(
+  Mqp: number,     // quasi-permanent moment (kN·m)
+  As: number,      // tension steel (mm²)
+  barD: number,    // tension bar diameter (mm)
+  b: number,       // section width at the tension face (mm)
+  h: number,       // overall depth (mm)
+  d: number,       // effective depth (mm)
+  cover: number,   // clear cover to the tension bars (mm)
+  fck: number,     // MPa
+  Es: number,      // MPa
+  kt: number,      // 0.4 long-term / 0.6 short-term
+): CrackWidthResult {
+  if (Mqp <= 0 || As <= 0 || d <= 0) {
+    return { wk: 0, sigma_s: 0, sr_max: 0, x: 0, rho_p_eff: 0 };
+  }
+
+  const alpha_e = Es / ecm(fck);
+
+  // Cracked elastic neutral axis: b·x²/2 = αe·As·(d − x)
+  const n = alpha_e * As / b;
+  const x = n * (Math.sqrt(1 + 2 * d / n) - 1);
+  const z = d - x / 3;
+  const sigma_s = Mqp * 1e6 / (As * z); // MPa
+
+  // Effective tension area §7.3.2(3)
+  const hc_ef = Math.min(2.5 * (h - d), (h - x) / 3, h / 2);
+  const Ac_eff = b * hc_ef;
+  const rho_p_eff = As / Ac_eff;
+
+  // Maximum crack spacing eq (7.11): k1=0.8 ribbed, k2=0.5 bending
+  const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
+  const sr_max = k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;
+
+  // Mean strain difference eq (7.9), floor 0.6·σs/Es
+  const fct_eff = fctm(fck);
+  const eps = Math.max(
+    (sigma_s - kt * (fct_eff / rho_p_eff) * (1 + alpha_e * rho_p_eff)) / Es,
+    0.6 * sigma_s / Es,
+  );
+
+  return { wk: sr_max * eps, sigma_s, sr_max, x, rho_p_eff };
+}
+
 // ── Full member check ────────────────────────────────────────────────────────
 
 function rebarAs(bars: { numBars: number; barSize: number }[]): number {
@@ -161,6 +225,7 @@ export function designMemberEC2(
   rebar: RebarLayout,
   load: LoadCase,
   _span = 20,
+  crack: CrackControlParams = DEFAULT_CRACK_PARAMS,
 ): DesignResults {
   const warnings: DesignWarning[] = [];
 
@@ -269,6 +334,52 @@ export function designMemberEC2(
     warnings.push({ code: 'EC2 §6.2.1', message: `V_Ed = ${VEd.toFixed(1)} kN > V_Rd,c = ${VRdc.toFixed(1)} kN — shear reinforcement required`, severity: 'error' });
   }
 
+  // ── Crack width §7.3.4 (quasi-permanent combination) ──
+  const Es_MPa = material.Es * PSI_TO_MPA;
+  const Mqp_pos = crack.qpFactor * MEd_pos;
+  const Mqp_neg = crack.qpFactor * MEd_neg;
+
+  // Bottom face (positive bending → bottom steel in tension)
+  const cw_bot = crackWidth(Mqp_pos, As_bot_mm2, botBarD_mm, b_mm, h_mm, d_bot,
+    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt);
+  // Top face (negative bending → top steel in tension)
+  const cw_top = crackWidth(Mqp_neg, As_top_mm2, topBarD_mm, b_mm, h_mm, d_top,
+    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt);
+
+  if (cw_bot.wk > crack.wLimitBot)
+    warnings.push({ code: 'EC2 §7.3.4', message: `Bottom face crack width wk = ${cw_bot.wk.toFixed(2)} mm > limit ${crack.wLimitBot.toFixed(2)} mm (σs = ${cw_bot.sigma_s.toFixed(0)} MPa under M_qp = ${Mqp_pos.toFixed(1)} kN·m)`, severity: 'error' });
+  if (cw_top.wk > crack.wLimitTop)
+    warnings.push({ code: 'EC2 §7.3.4', message: `Top face crack width wk = ${cw_top.wk.toFixed(2)} mm > limit ${crack.wLimitTop.toFixed(2)} mm (σs = ${cw_top.sigma_s.toFixed(0)} MPa under M_qp = ${Mqp_neg.toFixed(1)} kN·m)`, severity: 'error' });
+
+  // Side face: approximate check using skin reinforcement over the web tension
+  // strip. Conservative: side bars resist the same steel stress as the main
+  // tension chord; ρp,eff taken over the strip between the bars and the face.
+  let wk_face: number | undefined;
+  const governingMqp = Math.max(Mqp_pos, Mqp_neg);
+  if (rebar.sideBars && rebar.sideBars.length > 0 && governingMqp > 0) {
+    const As_side = rebar.sideBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0) * IN2_TO_MM2;
+    const sideBarD = getBarDiam(rebar.sideBars[0].barSize) * IN_TO_MM;
+    if (As_side > 0) {
+      const governingAs = Mqp_pos >= Mqp_neg ? As_bot_mm2 : As_top_mm2;
+      const governingD  = Mqp_pos >= Mqp_neg ? d_bot : d_top;
+      const cwMain = crackWidth(governingMqp, governingAs, sideBarD, b_mm, h_mm, governingD,
+        cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt);
+      // Effective tension strip on each side face per §7.3.2: width = web
+      // thickness exposure, height ≈ distance over which side bars are smeared
+      const hc_side = Math.min(2.5 * (cover_mm + stirrupD_mm + sideBarD / 2) * 2, h_mm / 2);
+      const rho_side = As_side / (b_mm * hc_side);
+      const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
+      const sr_side = k3 * (cover_mm + stirrupD_mm) + k1 * k2 * k4 * sideBarD / Math.max(rho_side, 1e-4);
+      // Strain at the side face scales with the main chord strain (≤ 1.0 at the chord)
+      const eps_side = cwMain.sr_max > 0 ? cwMain.wk / cwMain.sr_max : 0;
+      wk_face = sr_side * eps_side;
+      if (wk_face > crack.wLimitFace)
+        warnings.push({ code: 'EC2 §7.3.4', message: `Side face crack width wk ≈ ${wk_face.toFixed(2)} mm > limit ${crack.wLimitFace.toFixed(2)} mm — add/enlarge skin reinforcement`, severity: 'warning' });
+    }
+  } else if (h_mm > 1000 && governingMqp > 0) {
+    warnings.push({ code: 'EC2 §7.3.3', message: `h = ${h_mm.toFixed(0)} mm > 1000 mm — skin reinforcement required for side-face crack control (none provided)`, severity: 'warning' });
+  }
+
   // ── DCRs ──
   const DCR_flex_pos = MRd_pos > 0 ? MEd_pos / MRd_pos : (MEd_pos > 0 ? Infinity : 0);
   const DCR_flex_neg = MRd_neg > 0 ? MEd_neg / MRd_neg : (MEd_neg > 0 ? Infinity : 0);
@@ -305,6 +416,7 @@ export function designMemberEC2(
     As_min: toIn2(AsMin_mm2), As_max: toIn2(AsMax_mm2),
     Av_req: 0,
     Av_min_per_s: (0.08 * Math.sqrt(fck) / fywk) * b_mm / IN_TO_MM, // in²/in equivalent
+    wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face,
     warnings, status,
   };
 }

@@ -91,6 +91,10 @@ export interface DesignResults {
   As_max: number;
   Av_req: number;       // Required stirrup area (in²/in)
   Av_min_per_s: number; // Min Av/s per ACI §9.6.3.3 (in²/in)
+  // EC2 crack width check (EN 1992-1-1 §7.3.4) — mm, only set for EN1992-1-1
+  wk_bot?: number;      // crack width at bottom face (mm)
+  wk_top?: number;      // crack width at top face (mm)
+  wk_face?: number;     // crack width at side face (mm)
   warnings: DesignWarning[];
   status: 'OK' | 'NG' | 'Warning';
 }
@@ -105,6 +109,19 @@ export interface Project {
   members: Member[];
 }
 
+/** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */
+export interface CrackControlParams {
+  wLimitTop: number;   // allowable crack width at top face (mm)
+  wLimitBot: number;   // allowable crack width at bottom face (mm)
+  wLimitFace: number;  // allowable crack width at side faces (mm)
+  qpFactor: number;    // quasi-permanent moment ratio: M_qp = qpFactor × Mu (0–1)
+  kt: number;          // load duration factor: 0.4 long-term, 0.6 short-term
+}
+
+export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
+  wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4,
+};
+
 export interface Member {
   id: string;
   label: string;
@@ -115,4 +132,5 @@ export interface Member {
   loads: LoadCase[];
   results?: DesignResults[];
   span?: number;  // ft
+  crackParams?: CrackControlParams; // EC2 crack width check inputs
 }

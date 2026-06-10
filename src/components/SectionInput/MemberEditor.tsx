@@ -4,6 +4,7 @@ import LoadCaseTable from './LoadCaseTable';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'rectangular_beam', label: 'Rect. Beam' },
@@ -115,6 +116,9 @@ export default function MemberEditor({ member, onUpdate }: Props) {
     update({ rebar: { ...m.rebar, botBars: [{ ...m.rebar.botBars[0], ...p }] } });
   const ties = (p: Partial<NonNullable<Member['rebar']['ties']>>) =>
     update({ rebar: { ...m.rebar, ties: { ...(m.rebar.ties ?? { barSize: 4, spacing: 6, legs: 2 }), ...p } } });
+  const crackP = m.crackParams ?? DEFAULT_CRACK_PARAMS;
+  const crack = (p: Partial<NonNullable<Member['crackParams']>>) =>
+    update({ crackParams: { ...crackP, ...p } });
 
   return (
     <div style={{ fontSize: 14 }}>
@@ -216,6 +220,40 @@ export default function MemberEditor({ member, onUpdate }: Props) {
               onChange={v => ties({ legs: +v })} />
           </div>
         </div>
+      </div>
+
+      {/* Crack Control (EC2) */}
+      <div style={cardStyle}>
+        <div style={headingStyle}>Crack Control — EN 1992-1-1 §7.3.4</div>
+        <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 6px' }}>
+          Used when the project design code is EN 1992-1-1. Limits and crack widths are always in mm.
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <InputRow label="w limit, bottom" value={crackP.wLimitBot} unit="mm" step={0.05} min={0}
+              onChange={v => crack({ wLimitBot: +v })} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <InputRow label="w limit, top" value={crackP.wLimitTop} unit="mm" step={0.05} min={0}
+              onChange={v => crack({ wLimitTop: +v })} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <InputRow label="w limit, face" value={crackP.wLimitFace} unit="mm" step={0.05} min={0}
+              onChange={v => crack({ wLimitFace: +v })} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <InputRow label="M_qp / Mu ratio" value={crackP.qpFactor} step={0.05} min={0}
+              onChange={v => crack({ qpFactor: +v })} />
+          </div>
+        </div>
+        <SelectRow label="Load duration kt" value={crackP.kt}
+          options={[
+            { value: 0.4, label: 'kt = 0.4 — long-term / repeated' },
+            { value: 0.6, label: 'kt = 0.6 — short-term' },
+          ]}
+          onChange={v => crack({ kt: +v })} />
       </div>
 
       {/* Load Cases */}

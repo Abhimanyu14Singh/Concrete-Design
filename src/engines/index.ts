@@ -16,6 +16,7 @@ import { designMember } from '../utils/concreteDesign';
 import { designMemberEC2 } from './ec2/ec2Beam';
 import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase, DesignResults, DesignCode,
+  CrackControlParams,
 } from '../types';
 
 // Register all available engines at module load time
@@ -35,9 +36,10 @@ export function runDesign(
   load: LoadCase,
   span = 20,
   code?: DesignCode | string,
+  crack?: CrackControlParams,
 ): DesignResults {
   if (code === 'EN1992-1-1') {
-    return designMemberEC2(section, material, rebar, load, span);
+    return designMemberEC2(section, material, rebar, load, span, crack);
   }
   return designMember(section, material, rebar, load, span);
 }

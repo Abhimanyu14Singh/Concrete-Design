@@ -185,3 +185,102 @@ describe('code routing sanity', () => {
     expect(aci.phi_Mn_pos).not.toBeCloseTo(ec2.phi_Mn_pos, 4);
   });
 });
+
+// ── Crack width §7.3.4 ────────────────────────────────────────────────────────
+import { crackWidth, ecm } from '../ec2Beam';
+import { DEFAULT_CRACK_PARAMS } from '../../../types';
+
+describe('crackWidth §7.3.4 — 300×500, 3Ø20, C30, B500', () => {
+  const As = 3 * Math.PI * 100; // 942.5 mm²
+  const Es = 200_000;
+  const args = [As, 20, 300, 500, 457, 33, 30, Es, 0.4] as const;
+
+  it('Ecm for C30 ≈ 32.8 GPa', () => {
+    expect(ecm(30)).toBeCloseTo(32837, -2);
+  });
+
+  it('returns a physically sensible crack width under a service moment', () => {
+    const cw = crackWidth(100, ...args);
+    expect(cw.wk).toBeGreaterThan(0.05);
+    expect(cw.wk).toBeLessThan(1.0);
+    expect(cw.sigma_s).toBeGreaterThan(100);
+    expect(cw.sigma_s).toBeLessThan(500);
+    expect(cw.sr_max).toBeGreaterThan(100); // mm
+    expect(cw.x).toBeGreaterThan(0);
+    expect(cw.x).toBeLessThan(457);
+  });
+
+  it('zero moment → zero crack width', () => {
+    expect(crackWidth(0, ...args).wk).toBe(0);
+  });
+
+  it('higher moment → wider crack', () => {
+    expect(crackWidth(120, ...args).wk).toBeGreaterThan(crackWidth(60, ...args).wk);
+  });
+
+  it('more steel → narrower crack', () => {
+    const less = crackWidth(100, As, 20, 300, 500, 457, 33, 30, Es, 0.4);
+    const more = crackWidth(100, As * 2, 20, 300, 500, 457, 33, 30, Es, 0.4);
+    expect(more.wk).toBeLessThan(less.wk);
+  });
+
+  it('kt = 0.6 (short-term) gives smaller or equal strain than kt = 0.4', () => {
+    // larger kt subtracts more tension stiffening → smaller εsm−εcm (until the 0.6σs/Es floor)
+    const k4 = crackWidth(100, ...args).wk;
+    const k6 = crackWidth(100, As, 20, 300, 500, 457, 33, 30, Es, 0.6).wk;
+    expect(k6).toBeLessThanOrEqual(k4);
+  });
+
+  it('smaller bars at equal As → narrower crack (sr,max ∝ Ø)', () => {
+    const big   = crackWidth(100, As, 25, 300, 500, 457, 33, 30, Es, 0.4);
+    const small = crackWidth(100, As, 12, 300, 500, 457, 33, 30, Es, 0.4);
+    expect(small.wk).toBeLessThan(big.wk);
+  });
+});
+
+describe('designMemberEC2 crack width integration', () => {
+  it('reports wk_bot and wk_top in results', () => {
+    const r = designMemberEC2(section, material, rebar, load);
+    expect(r.wk_bot).toBeGreaterThan(0);
+    expect(r.wk_top).toBeGreaterThan(0);
+    expect(r.wk_face).toBeUndefined(); // no side bars in fixture
+  });
+
+  it('fires §7.3.4 warning when limit exceeded (tight user limit)', () => {
+    const strict = { ...DEFAULT_CRACK_PARAMS, wLimitBot: 0.01 };
+    const r = designMemberEC2(section, material, rebar, load, 20, strict);
+    expect(r.warnings.some(w => w.code === 'EC2 §7.3.4' && w.message.includes('Bottom'))).toBe(true);
+  });
+
+  it('no warning with a generous limit', () => {
+    const loose = { ...DEFAULT_CRACK_PARAMS, wLimitBot: 5, wLimitTop: 5, wLimitFace: 5 };
+    const r = designMemberEC2(section, material, rebar, load, 20, loose);
+    expect(r.warnings.some(w => w.code === 'EC2 §7.3.4')).toBe(false);
+  });
+
+  it('qpFactor = 0 → zero service moment → zero crack widths', () => {
+    const noQp = { ...DEFAULT_CRACK_PARAMS, qpFactor: 0 };
+    const r = designMemberEC2(section, material, rebar, load, 20, noQp);
+    expect(r.wk_bot).toBe(0);
+    expect(r.wk_top).toBe(0);
+  });
+
+  it('side bars produce a face crack width result', () => {
+    const withSide = { ...rebar, sideBars: [{ numBars: 4, barSize: -12 }] };
+    const r = designMemberEC2(section, material, withSide, load);
+    expect(r.wk_face).toBeGreaterThan(0);
+  });
+
+  it('deep beam (h > 1000 mm) without side bars fires §7.3.3 skin reinforcement warning', () => {
+    const deep = { ...section, h: 47.24 }; // 1200 mm
+    const r = designMemberEC2(deep, material, rebar, load);
+    expect(r.warnings.some(w => w.code === 'EC2 §7.3.3')).toBe(true);
+  });
+
+  it('face crack width over user limit fires warning', () => {
+    const withSide = { ...rebar, sideBars: [{ numBars: 2, barSize: -10 }] };
+    const strict = { ...DEFAULT_CRACK_PARAMS, wLimitFace: 0.001 };
+    const r = designMemberEC2(section, material, withSide, load, 20, strict);
+    expect(r.warnings.some(w => w.message.includes('Side face'))).toBe(true);
+  });
+});

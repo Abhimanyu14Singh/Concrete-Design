@@ -27,6 +27,22 @@ export interface TieLayout {
   legs: number;
 }
 
+/**
+ * User inputs for the EC2 crack width check (EN 1992-1-1 §7.3.4).
+ * Limits and widths are in mm (the check is SI-native regardless of display units).
+ */
+export interface CrackControlParams {
+  wLimitTop: number;   // allowable crack width at top face (mm)
+  wLimitBot: number;   // allowable crack width at bottom face (mm)
+  wLimitFace: number;  // allowable crack width at side faces (mm)
+  qpFactor: number;    // quasi-permanent moment ratio: M_qp = qpFactor × Mu (0–1)
+  kt: number;          // load duration factor: 0.4 long-term, 0.6 short-term
+}
+
+export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
+  wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4,
+};
+
 export interface DesignWarning {
   code: string;             // ACI section reference, e.g. "ACI §9.7.6.2.2"
   message: string;          // Human-readable description with computed values

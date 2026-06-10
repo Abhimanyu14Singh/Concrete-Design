@@ -14,7 +14,7 @@ interface Props {
 export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', onClose }: Props) {
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
   const sections: CalcSection[] = code === 'EN1992-1-1'
-    ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span)
+    ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, member.crackParams)
     : generateBreakdown(member.section, member.material, member.rebar, load, member.span);
 
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
