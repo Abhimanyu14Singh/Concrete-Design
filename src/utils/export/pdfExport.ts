@@ -191,7 +191,7 @@ export async function exportPDF(project: Project): Promise<void> {
 
   // Footer on all pages
   const pages = doc.getPages();
-  pages.forEach((pg, i) => {
+  pages.forEach((pg: PDFPage, i: number) => {
     pg.drawText(`S-Concrete Design  |  ${project.code}  |  Page ${i + 1} of ${pages.length}`, {
       x: 48, y: 24, size: 7, color: C.mid, font,
     });

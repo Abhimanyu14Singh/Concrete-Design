@@ -1,10 +1,11 @@
 import type { ReactElement } from 'react';
-import type { SectionDimensions, RebarLayout } from '../../types';
-import { getBarDiam } from '../../utils/concreteDesign';
+import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
+import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
 
 interface Props {
   section: SectionDimensions;
   rebar: RebarLayout;
+  result?: DesignResults;
   width?: number;
   height?: number;
   showDims?: boolean;
@@ -18,7 +19,7 @@ const CON_FILL  = '#b0bec5';
 const CON_EDGE  = '#546e7a';
 
 export default function SectionView({
-  section, rebar,
+  section, rebar, result,
   width = 320, height = 270,
   showDims = true,
   onRebarChange,
@@ -196,6 +197,21 @@ export default function SectionView({
             fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
             {interactive ? 'L+1 / R−1' : 'bot'}
           </text>
+          {result && (() => {
+            const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
+            const reqBot = result.As_req_pos;
+            const ok = asBot >= reqBot;
+            return (
+              <>
+                <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                  {`As=${asBot.toFixed(2)}in²`}
+                </text>
+                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? '#16a34a' : '#dc2626'} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                  {`Req:${reqBot.toFixed(2)} ${ok ? '✓' : '⚠'}`}
+                </text>
+              </>
+            );
+          })()}
 
           {/* Stirrup label — left-click decreases spacing, right-click increases */}
           {rebar.ties && (

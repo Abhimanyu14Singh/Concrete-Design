@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Project, Member } from './types';
 import { defaultProject } from './utils/sampleData';
 import { saveProject, openProject } from './utils/electronBridge';
+import { exportPDF } from './utils/export/pdfExport';
+import { exportExcel } from './utils/export/excelExport';
 import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 
-type Tab = 'dashboard' | 'results' | 'editor';
+type Tab = 'dashboard' | 'member';
 
 const hdrBtn: React.CSSProperties = {
   padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
@@ -14,7 +16,8 @@ const hdrBtn: React.CSSProperties = {
 };
 
 export default function App() {
-  const [project, setProject] = useState<Project>(defaultProject);
+  // ── Core state ────────────────────────────────────────────────────────────
+  const [project, setProjectRaw] = useState<Project>(defaultProject);
   const [activeMemberId, setActiveMemberId] = useState<string>(project.members[0].id);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -23,30 +26,70 @@ export default function App() {
     return s ? parseFloat(s) : 1.0;
   });
   const [showPrefs, setShowPrefs] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+
+  // B5: dirty indicator
+  const [isDirty, setIsDirty] = useState(false);
+
+  // B4: undo/redo history
+  const historyRef = useRef<Project[]>([defaultProject]);
+  const historyIndexRef = useRef<number>(0);
+
+  // A3: drag-to-reorder state
+  const [dragSrcId, setDragSrcId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // A1: split-pane width
+  const [splitPos, setSplitPos] = useState<number>(() => {
+    const s = localStorage.getItem('sc-split');
+    return s ? parseInt(s) : 360;
+  });
+  const splitDragging = useRef(false);
+  const splitStartX = useRef(0);
+  const splitStartPos = useRef(360);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
 
-  // ── File handlers ──────────────────────────────────────────────────────────
-
-  async function handleSave() {
-    await saveProject(project);
+  // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
+  function setProject(p: Project | ((prev: Project) => Project)) {
+    setProjectRaw(prev => {
+      const next = typeof p === 'function' ? p(prev) : p;
+      // Push to history (cap at 20)
+      const sliced = historyRef.current.slice(0, historyIndexRef.current + 1);
+      historyRef.current = [...sliced, next].slice(-20);
+      historyIndexRef.current = historyRef.current.length - 1;
+      setIsDirty(true);
+      return next;
+    });
   }
 
-  async function handleOpen() {
+  // ── File handlers ──────────────────────────────────────────────────────────
+  const handleSave = useCallback(async () => {
+    await saveProject(project);
+    setIsDirty(false);
+  }, [project]);
+
+  const handleOpen = useCallback(async () => {
     try {
       const loaded = await openProject();
       if (!loaded) return;
-      setProject(loaded);
+      setProjectRaw(loaded);
+      historyRef.current = [loaded];
+      historyIndexRef.current = 0;
       setActiveMemberId(loaded.members[0]?.id ?? '');
       setTab('dashboard');
-    } catch { /* user cancelled or file was invalid */ }
-  }
+      setIsDirty(false);
+    } catch { /* user cancelled */ }
+  }, []);
 
   function handleNewProject() {
     if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
-    setProject(defaultProject);
+    setProjectRaw(defaultProject);
+    historyRef.current = [defaultProject];
+    historyIndexRef.current = 0;
     setActiveMemberId(defaultProject.members[0].id);
     setTab('dashboard');
+    setIsDirty(false);
   }
 
   function changeZoom(z: number) {
@@ -55,17 +98,47 @@ export default function App() {
     setShowPrefs(false);
   }
 
-  // ── Keyboard shortcuts (re-bind when project changes so handler is fresh) ──
+  // ── B4: Undo/Redo ──────────────────────────────────────────────────────────
+  function undo() {
+    if (historyIndexRef.current <= 0) return;
+    historyIndexRef.current--;
+    const prev = historyRef.current[historyIndexRef.current];
+    setProjectRaw(prev);
+    setIsDirty(historyIndexRef.current > 0);
+  }
+
+  function redo() {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    historyIndexRef.current++;
+    const next = historyRef.current[historyIndexRef.current];
+    setProjectRaw(next);
+    setIsDirty(true);
+  }
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) {
+        // A4: Arrow navigation in sidebar
+        if (tab === 'member' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          const idx = project.members.findIndex(m => m.id === activeMemberId);
+          if (e.key === 'ArrowUp' && idx > 0)
+            setActiveMemberId(project.members[idx - 1].id);
+          if (e.key === 'ArrowDown' && idx < project.members.length - 1)
+            setActiveMemberId(project.members[idx + 1].id);
+        }
+        return;
+      }
       if (e.key === 's') { e.preventDefault(); handleSave(); }
       if (e.key === 'o') { e.preventDefault(); handleOpen(); }
       if (e.key === 'n') { e.preventDefault(); handleNewProject(); }
+      if (e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      if (e.key === 'y') { e.preventDefault(); redo(); }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [project]);
+  }, [project, activeMemberId, tab, handleSave, handleOpen]);
 
   // ── Electron menu → renderer events ───────────────────────────────────────
   useEffect(() => {
@@ -79,23 +152,46 @@ export default function App() {
       api.offTriggerOpen(handleOpen);
       api.offNewProject(handleNewProject);
     };
-  }, [project]);
+  }, [handleSave, handleOpen]);
 
-  // ── Click outside to close prefs popover ──────────────────────────────────
+  // ── Click outside to close popovers ───────────────────────────────────────
   useEffect(() => {
-    if (!showPrefs) return;
+    if (!showPrefs && !showExport) return;
     function close(e: MouseEvent) {
-      if (!(e.target as Element).closest('[data-prefs]')) setShowPrefs(false);
+      if (!(e.target as Element).closest('[data-popover]')) {
+        setShowPrefs(false);
+        setShowExport(false);
+      }
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
-  }, [showPrefs]);
+  }, [showPrefs, showExport]);
+
+  // ── A1: Split-pane drag ───────────────────────────────────────────────────
+  function onSplitMouseDown(e: React.MouseEvent) {
+    splitDragging.current = true;
+    splitStartX.current = e.clientX;
+    splitStartPos.current = splitPos;
+    e.preventDefault();
+  }
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!splitDragging.current) return;
+      const newPos = Math.max(240, Math.min(640, splitStartPos.current + e.clientX - splitStartX.current));
+      setSplitPos(newPos);
+      localStorage.setItem('sc-split', String(newPos));
+    }
+    function onMouseUp() { splitDragging.current = false; }
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+  }, []);
 
   // ── Member helpers ─────────────────────────────────────────────────────────
-
   function handleSelectMember(id: string) {
     setActiveMemberId(id);
-    setTab('results');
+    setTab('member');
   }
 
   function handleUpdateMember(updated: Member) {
@@ -125,25 +221,51 @@ export default function App() {
     };
     setProject(p => ({ ...p, members: [...p.members, newMember] }));
     setActiveMemberId(id);
-    setTab('editor');
+    setTab('member');
   }
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'dashboard', label: 'Dashboard' },
-    { key: 'results',   label: 'Results'   },
-    { key: 'editor',    label: 'Input'     },
-  ];
+  // A2: Duplicate member
+  function duplicateMember(id: string) {
+    const src = project.members.find(m => m.id === id);
+    if (!src) return;
+    const newId = `M${project.members.length + 1}`;
+    const copy: Member = {
+      ...JSON.parse(JSON.stringify(src)),
+      id: newId,
+      label: src.label + ' (Copy)',
+    };
+    setProject(p => ({ ...p, members: [...p.members, copy] }));
+    setActiveMemberId(newId);
+    setTab('member');
+  }
+
+  // A3: Drag-to-reorder
+  function onDragStart(id: string) { setDragSrcId(id); }
+  function onDragOver(e: React.DragEvent, id: string) { e.preventDefault(); setDragOverId(id); }
+  function onDrop(targetId: string) {
+    if (!dragSrcId || dragSrcId === targetId) { setDragSrcId(null); setDragOverId(null); return; }
+    setProject(p => {
+      const members = [...p.members];
+      const srcIdx = members.findIndex(m => m.id === dragSrcId);
+      const tgtIdx = members.findIndex(m => m.id === targetId);
+      const [item] = members.splice(srcIdx, 1);
+      members.splice(tgtIdx, 0, item);
+      return { ...p, members };
+    });
+    setDragSrcId(null);
+    setDragOverId(null);
+  }
 
   const sectionLabel = (m: Member) => {
     const s = m.section;
     if (s.type === 'circular_column') return `Ø${s.diameter ?? s.b}"`;
-    return `${s.b}" × ${s.h}"`;
+    return `${s.b}"×${s.h}"`;
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
+    <div id="app-root" style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
       {/* Sidebar */}
-      <aside style={{ width: sidebarOpen ? 220 : 48, transition: 'width 0.2s', flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <aside id="app-sidebar" style={{ width: sidebarOpen ? 220 : 48, transition: 'width 0.2s', flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ width: 28, height: 28, background: '#2563eb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', color: 'white', flexShrink: 0 }}>
@@ -165,30 +287,55 @@ export default function App() {
           {sidebarOpen && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 6px' }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 1 }}>Members</span>
-              <button onClick={addMember} style={{ color: '#2563eb', fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }}>+</button>
+              <button onClick={addMember} style={{ color: '#2563eb', fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
             </div>
           )}
           {project.members.map(m => (
-            <button
+            <div
               key={m.id}
-              onClick={() => handleSelectMember(m.id)}
+              draggable={sidebarOpen}
+              onDragStart={() => onDragStart(m.id)}
+              onDragOver={e => onDragOver(e, m.id)}
+              onDrop={() => onDrop(m.id)}
+              onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
               style={{
-                width: '100%', textAlign: 'left', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
-                background: activeMemberId === m.id ? '#eff6ff' : 'none',
-                borderRight: `3px solid ${activeMemberId === m.id ? '#2563eb' : 'transparent'}`,
-                border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
-                cursor: 'pointer',
+                display: 'flex', alignItems: 'center',
+                borderTop: dragOverId === m.id && dragSrcId !== m.id ? '2px solid #2563eb' : '2px solid transparent',
+                opacity: dragSrcId === m.id ? 0.5 : 1,
               }}
             >
-              <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: m.memberType === 'column' ? '#7c3aed' : m.memberType === 'wall' ? '#059669' : '#2563eb' }}>
-                {m.id}
-              </span>
               {sidebarOpen && (
-                <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {m.label.length > 16 ? m.label.slice(0, 16) + '…' : m.label}
-                </span>
+                <span style={{ fontSize: 14, color: '#d1d5db', cursor: 'grab', padding: '0 4px 0 8px', flexShrink: 0 }}>⠿</span>
               )}
-            </button>
+              <button
+                onClick={() => handleSelectMember(m.id)}
+                style={{
+                  flex: 1, textAlign: 'left', padding: '7px 8px', display: 'flex', alignItems: 'center', gap: 6,
+                  background: activeMemberId === m.id ? '#eff6ff' : 'none',
+                  borderRight: `3px solid ${activeMemberId === m.id ? '#2563eb' : 'transparent'}`,
+                  border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: m.memberType === 'column' ? '#7c3aed' : m.memberType === 'wall' ? '#059669' : '#2563eb' }}>
+                  {m.id}
+                </span>
+                {sidebarOpen && (
+                  <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {m.label.length > 14 ? m.label.slice(0, 14) + '…' : m.label}
+                  </span>
+                )}
+              </button>
+              {sidebarOpen && (
+                <button
+                  onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
+                  title="Duplicate member"
+                  style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 0 2px', flexShrink: 0 }}
+                >
+                  ⧉
+                </button>
+              )}
+            </div>
           ))}
           {sidebarOpen && (
             <button onClick={addMember} style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', gap: 6 }}>
@@ -212,20 +359,20 @@ export default function App() {
       {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Top bar */}
-        <header style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <header id="app-header" style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {tabs.map(t => (
+            {([['dashboard', 'Dashboard'], ['member', 'Member']] as [Tab, string][]).map(([key, label]) => (
               <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
+                key={key}
+                onClick={() => setTab(key)}
                 style={{
                   padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
-                  background: tab === t.key ? '#2563eb' : 'transparent',
-                  color: tab === t.key ? 'white' : '#6b7280',
+                  background: tab === key ? '#2563eb' : 'transparent',
+                  color: tab === key ? 'white' : '#6b7280',
                 }}
               >
-                {t.label}
+                {label}
               </button>
             ))}
           </div>
@@ -233,7 +380,7 @@ export default function App() {
           <div style={{ flex: 1 }} />
 
           {/* Member selector */}
-          {tab !== 'dashboard' && (
+          {tab === 'member' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 11, color: '#6b7280' }}>Member:</span>
               <select
@@ -251,15 +398,68 @@ export default function App() {
           {/* Separator */}
           <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
 
+          {/* B5: Dirty indicator */}
+          <span style={{ fontSize: 11, color: isDirty ? '#dc2626' : '#9ca3af', fontWeight: 600, minWidth: 70 }}>
+            {isDirty ? '● Unsaved' : '✓ Saved'}
+          </span>
+
+          {/* B4: Undo/Redo */}
+          <button onClick={undo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Undo (Ctrl+Z)">↩</button>
+          <button onClick={redo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Redo (Ctrl+Y)">↪</button>
+
+          <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
+
           {/* File actions */}
           <button onClick={handleNewProject} style={hdrBtn} title="New project (Ctrl+N)">New</button>
           <button onClick={handleOpen}       style={hdrBtn} title="Open project (Ctrl+O)">Open</button>
           <button onClick={handleSave}       style={hdrBtn} title="Save project (Ctrl+S)">Save</button>
 
-          {/* Preferences */}
-          <div data-prefs="" style={{ position: 'relative' }}>
+          {/* E1: Export dropdown */}
+          <div data-popover="" style={{ position: 'relative' }}>
             <button
-              onClick={() => setShowPrefs(v => !v)}
+              onClick={() => { setShowExport(v => !v); setShowPrefs(false); }}
+              style={{ ...hdrBtn, background: showExport ? '#eff6ff' : 'white', color: showExport ? '#2563eb' : '#374151' }}
+            >
+              Export ▾
+            </button>
+            {showExport && (
+              <div style={{
+                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
+                background: 'white', border: '1px solid #e5e7eb', borderRadius: 10,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '6px', minWidth: 160,
+              }}>
+                <button
+                  onClick={() => { exportPDF(project); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  PDF Calc Sheet
+                </button>
+                <button
+                  onClick={() => { exportExcel(project); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Excel Summary
+                </button>
+                <button
+                  onClick={() => { window.print(); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Print Preview
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Preferences */}
+          <div data-popover="" style={{ position: 'relative' }}>
+            <button
+              onClick={() => { setShowPrefs(v => !v); setShowExport(false); }}
               style={{ ...hdrBtn, background: showPrefs ? '#eff6ff' : 'white', color: showPrefs ? '#2563eb' : '#374151' }}
               title="Preferences"
             >
@@ -302,8 +502,8 @@ export default function App() {
           </div>
         </header>
 
-        {/* Content — wrapped in a scale container */}
-        <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        {/* Content */}
+        <main id="app-main" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
           <div style={{
             transform: `scale(${zoom})`,
             transformOrigin: 'top left',
@@ -312,34 +512,53 @@ export default function App() {
             padding: 16,
           }}>
             {tab === 'dashboard' && (
-              <Dashboard project={project} onSelectMember={handleSelectMember} />
+              <Dashboard
+                project={project}
+                onSelectMember={handleSelectMember}
+                onProjectUpdate={p => setProject(p)}
+              />
             )}
-            {tab === 'results' && (
-              <div>
-                <div style={{ marginBottom: 12 }}>
-                  <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#111827' }}>{activeMember.label}</h2>
-                  <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0' }}>
-                    {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
-                    f'c = {activeMember.material.fc} psi &bull; fy = {activeMember.material.fy / 1000} ksi
-                  </p>
+            {tab === 'member' && (
+              <div id="app-split" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+                {/* Left: Input editor */}
+                <div style={{ width: splitPos, flexShrink: 0, minWidth: 0, paddingRight: 8 }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>Input</h2>
+                    <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>Edit geometry, materials, reinforcement, loads</p>
+                  </div>
+                  <MemberEditor
+                    key={activeMember.id}
+                    member={activeMember}
+                    onUpdate={handleUpdateMember}
+                  />
                 </div>
-                <MemberResults
-                  member={activeMember}
-                  onRebarChange={handleUpdateMember}
-                />
-              </div>
-            )}
-            {tab === 'editor' && (
-              <div style={{ maxWidth: 560 }}>
-                <div style={{ marginBottom: 12 }}>
-                  <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#111827' }}>Member Input</h2>
-                  <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0' }}>Edit geometry, materials, reinforcement, and loads</p>
+
+                {/* A1: Drag divider */}
+                <div
+                  onMouseDown={onSplitMouseDown}
+                  style={{
+                    width: 8, flexShrink: 0, cursor: 'col-resize',
+                    background: 'transparent', position: 'relative',
+                    alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <div style={{ width: 3, borderRadius: 2, height: '40px', background: '#d1d5db' }} />
                 </div>
-                <MemberEditor
-                  key={activeMember.id}
-                  member={activeMember}
-                  onUpdate={handleUpdateMember}
-                />
+
+                {/* Right: Results */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>{activeMember.label}</h2>
+                    <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>
+                      {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
+                      f'c = {activeMember.material.fc} psi &bull; fy = {activeMember.material.fy / 1000} ksi
+                    </p>
+                  </div>
+                  <MemberResults
+                    member={activeMember}
+                    onRebarChange={handleUpdateMember}
+                  />
+                </div>
               </div>
             )}
           </div>
