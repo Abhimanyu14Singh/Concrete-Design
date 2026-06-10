@@ -5,6 +5,10 @@ import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
+import { getBarArea } from '../../utils/concreteDesign';
+import SectionView from '../Detailing/SectionView';
+import CodeBadge from '../common/CodeBadge';
+import { codeAccent } from '../../theme';
 
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'rectangular_beam', label: 'Rect. Beam' },
@@ -96,9 +100,10 @@ const headingStyle: React.CSSProperties = {
 interface Props {
   member: Member;
   onUpdate: (m: Member) => void;
+  code?: string;
 }
 
-export default function MemberEditor({ member, onUpdate }: Props) {
+export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: Props) {
   const { units } = useUnits();
   const [m, setM] = useState<Member>(member);
   const [showLoads, setShowLoads] = useState(false);
@@ -157,6 +162,27 @@ export default function MemberEditor({ member, onUpdate }: Props) {
           onCancel={() => setShowLoads(false)}
         />
       )}
+
+      {/* Context header: design code + active unit system */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+        padding: '8px 12px', background: 'white', borderRadius: 10,
+        border: '1px solid #e5e7eb', borderLeft: `3px solid ${codeAccent(code)}`,
+      }}>
+        <CodeBadge code={code} />
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: '#6b7280', background: '#f3f4f6',
+          border: '1px solid #e5e7eb', borderRadius: 12, padding: '2px 8px',
+        }}>
+          {units === 'si' ? 'SI — mm / MPa / kN' : 'Imperial — in / psi / kips'}
+        </span>
+        <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 'auto' }}>
+          {isColumn ? 'Column' : 'Beam'} input
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 300px', minWidth: 280 }}>
 
       {/* General */}
       <div style={cardStyle}>
@@ -274,11 +300,12 @@ export default function MemberEditor({ member, onUpdate }: Props) {
         </div>
       </div>
 
-      {/* Crack Control (EC2) */}
-      <div style={cardStyle}>
+      {/* Crack Control (EC2 beams only) */}
+      {code === 'EN1992-1-1' && !isColumn && (
+      <div style={{ ...cardStyle, borderLeft: `3px solid ${codeAccent('EN1992-1-1')}` }}>
         <div style={headingStyle}>Crack Control — EN 1992-1-1 §7.3.4</div>
         <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 6px' }}>
-          Used when the project design code is EN 1992-1-1. Limits and crack widths are always in mm.
+          Limits and crack widths are always in mm regardless of the display unit system.
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
@@ -307,6 +334,7 @@ export default function MemberEditor({ member, onUpdate }: Props) {
           ]}
           onChange={v => crack({ kt: +v })} />
       </div>
+      )}
 
       {/* Load Cases */}
       <div style={cardStyle}>
@@ -327,6 +355,36 @@ export default function MemberEditor({ member, onUpdate }: Props) {
           Edit Load Cases ({m.loads.length})
         </button>
       </div>
+
+      </div>{/* end inputs column */}
+
+      {/* Live section preview — redraws as you type */}
+      <div style={{ width: 248, flexShrink: 0, position: 'sticky', top: 0 }}>
+        <div style={{ ...cardStyle, padding: 10 }}>
+          <div style={{ ...headingStyle, marginBottom: 4 }}>Live Preview</div>
+          <SectionView section={m.section} rebar={m.rebar} width={228} height={195} />
+          {(() => {
+            const isCirc = m.section.type === 'circular_column';
+            const D = m.section.diameter ?? m.section.b;
+            const Ag = isCirc ? Math.PI * D * D / 4 : m.section.b * (m.section.h ?? 12);
+            const As = [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])]
+              .reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
+            const rho = Ag > 0 ? As / Ag : 0;
+            return (
+              <div style={{ fontSize: 10, color: '#6b7280', fontFamily: 'monospace', marginTop: 6, lineHeight: 1.7 }}>
+                <div>Ag = {Ag.toFixed(0)} in² &nbsp; As = {As.toFixed(2)} in²</div>
+                <div>ρ = {(rho * 100).toFixed(2)}%
+                  {isColumn && (rho < 0.01 || rho > 0.08) && (
+                    <span style={{ color: '#dc2626', fontWeight: 700 }}> ⚠ outside 1–8%</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      </div>{/* end flex */}
     </div>
   );
 }

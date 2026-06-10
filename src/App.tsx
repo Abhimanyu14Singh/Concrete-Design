@@ -8,6 +8,7 @@ import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import { useUnits } from './contexts/UnitsContext';
+import { MEMBER_COLOR } from './theme';
 
 type Tab = 'dashboard' | 'member';
 
@@ -319,7 +320,7 @@ export default function App() {
                   cursor: 'pointer',
                 }}
               >
-                <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: m.memberType === 'column' ? '#7c3aed' : m.memberType === 'wall' ? '#059669' : '#2563eb' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>
                   {m.id}
                 </span>
                 {sidebarOpen && (
@@ -348,7 +349,7 @@ export default function App() {
 
         {sidebarOpen && (
           <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb' }}>
-            {[['Beam', '#2563eb'], ['Column', '#7c3aed'], ['Wall', '#059669']].map(([t, c]) => (
+            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column], ['Wall', MEMBER_COLOR.wall]].map(([t, c]) => (
               <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
                 <span style={{ fontSize: 10, color: '#9ca3af' }}>{t}</span>
@@ -552,6 +553,7 @@ export default function App() {
                     key={activeMember.id}
                     member={activeMember}
                     onUpdate={handleUpdateMember}
+                    code={project.code}
                   />
                 </div>
 

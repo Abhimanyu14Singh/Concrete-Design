@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { Project, Member, DesignResults, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
 import { useUnits } from '../../contexts/UnitsContext';
+import CodeBadge from '../common/CodeBadge';
+import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -30,12 +32,8 @@ function summarize(m: Member, code: DesignCode): MemberSummary {
   return { member: m, worstResult, maxDCR };
 }
 
-function dcrColor(dcr: number) {
-  return dcr > 1 ? '#dc2626' : dcr > 0.9 ? '#d97706' : '#16a34a';
-}
-function dcrBg(dcr: number) {
-  return dcr > 1 ? '#fef2f2' : dcr > 0.9 ? '#fffbeb' : '#f0fdf4';
-}
+const dcrColor = themeDcrColor;
+const dcrBg = themeDcrBg;
 
 const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
 
@@ -207,15 +205,28 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
             ))}
           </div>
 
-          <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
+          <div style={{ background: 'white', border: '1px solid #e5e7eb', borderTop: `3px solid ${codeAccent(project.code)}`, borderRadius: 12, padding: 16 }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Design Code</div>
-            <div style={{ color: '#2563eb', fontWeight: 700, fontSize: 16 }}>{project.code}</div>
-            <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 4 }}>ACI 318-19 Strength Design</div>
-            <div style={{ marginTop: 10, fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>
-              <div>φ_flex = 0.90</div>
-              <div>φ_shear = 0.75</div>
-              <div>φ_comp = 0.65 / 0.75</div>
-            </div>
+            <CodeBadge code={project.code} size="md" />
+            {project.code === 'EN1992-1-1' ? (
+              <>
+                <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 8 }}>Eurocode 2 — Partial Factor Method</div>
+                <div style={{ marginTop: 10, fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>
+                  <div>γ_c = 1.50, γ_s = 1.15</div>
+                  <div>α_cc = 1.0</div>
+                  <div>cot θ = 2.5 (variable strut)</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 8 }}>Strength Design Method</div>
+                <div style={{ marginTop: 10, fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>
+                  <div>φ_flex = 0.90</div>
+                  <div>φ_shear = 0.75</div>
+                  <div>φ_comp = 0.65 (tied) / 0.75 (spiral)</div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

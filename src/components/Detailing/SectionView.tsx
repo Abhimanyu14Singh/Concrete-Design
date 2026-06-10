@@ -2,6 +2,8 @@ import { formatBarLabel } from '../../utils/rebar';
 import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
+import { useUnits } from '../../contexts/UnitsContext';
+import { BARS, DCR } from '../../theme';
 
 interface Props {
   section: SectionDimensions;
@@ -13,25 +15,21 @@ interface Props {
   onRebarChange?: (r: RebarLayout) => void;
 }
 
-const TOP_COLOR = '#2e7d32';
-const BOT_COLOR = '#1565c0';
-const STR_COLOR = '#e91e8c';
-const CON_FILL  = '#b0bec5';
-const CON_EDGE  = '#546e7a';
-
 export default function SectionView({
   section, rebar, result,
   width = 320, height = 270,
   showDims = true,
   onRebarChange,
 }: Props) {
+  const { fmt } = useUnits();
   const pL = 40, pR = 78, pT = 28, pB = 46;
   const drawW = width - pL - pR;
   const drawH = height - pT - pB;
 
   const isCircular = section.type === 'circular_column';
-  const secW = section.b;
-  const secH = section.h ?? section.diameter ?? 12;
+  const isColumn = section.type.endsWith('_column');
+  const secW = isCircular ? (section.diameter ?? section.b) : section.b;
+  const secH = isCircular ? (section.diameter ?? section.b) : (section.h ?? 12);
 
   const scale = Math.min(drawW / secW, drawH / secH);
   const scaledW = secW * scale;
@@ -39,22 +37,28 @@ export default function SectionView({
   const ox = pL + (drawW - scaledW) / 2;
   const oy = pT + (drawH - scaledH) / 2;
 
-  const stOff = (section.coverClear + section.stirrupDia / 8 / 2) * scale;
+  const tieD = getBarDiam(section.stirrupDia);
+  const stOff = (section.coverClear + tieD / 2) * scale;
   const bw = section.bw ?? secW;
   const hf = section.hf ?? 0;
   const isT = section.type === 'T_beam' || section.type === 'L_beam';
   const interactive = !!onRebarChange;
 
-  function barDots(bars: { numBars: number; barSize: number }[], row: 'top' | 'bot'): ReactElement[] {
-    const color = row === 'top' ? TOP_COLOR : BOT_COLOR;
-    const barR = Math.max(3, (getBarDiam(bars[0]?.barSize ?? 8) / 2) * scale);
-    const barY = row === 'top'
-      ? oy + stOff + barR
-      : oy + scaledH - stOff - barR;
+  /** Bar radius, shrunk when bars would overlap in the row. */
+  function fitRadius(barSize: number, numBars: number, rowWidth: number): number {
+    const r = Math.max(3, (getBarDiam(barSize) / 2) * scale);
+    if (numBars <= 1) return r;
+    const maxR = (rowWidth / (numBars - 1) - 2) / 2;
+    return Math.max(2.5, Math.min(r, maxR));
+  }
 
+  function barDots(bars: { numBars: number; barSize: number }[], row: 'top' | 'bot'): ReactElement[] {
+    const color = row === 'top' ? BARS.top : BARS.bot;
     return bars.flatMap((grp, gi) => {
-      const r = Math.max(3, (getBarDiam(grp.barSize) / 2) * scale);
+      const usableW0 = scaledW - 2 * stOff;
+      const r = fitRadius(grp.barSize, grp.numBars, usableW0);
       const usableW = scaledW - 2 * (stOff + r);
+      const barY = row === 'top' ? oy + stOff + r : oy + scaledH - stOff - r;
       const spacing = grp.numBars > 1 ? usableW / (grp.numBars - 1) : 0;
       const startX = ox + stOff + r;
       return Array.from({ length: grp.numBars }, (_, i) => {
@@ -95,6 +99,14 @@ export default function SectionView({
   const topLabelY = oy + stOff + topBarR;
   const botLabelY = oy + scaledH - stOff - botBarR;
 
+  // Circular columns: pool ALL bar groups onto the ring (matches engine layout)
+  const circGroups = [...rebar.topBars, ...rebar.botBars, ...(rebar.sideBars ?? [])]
+    .filter(g => g.numBars > 0);
+  const circTotal = circGroups.reduce((s, g) => s + g.numBars, 0);
+  const circBarSize = circGroups[0]?.barSize ?? 8;
+
+  const cx = ox + scaledW / 2, cy = oy + scaledH / 2;
+
   return (
     <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 8 }}>
       <defs>
@@ -108,53 +120,84 @@ export default function SectionView({
 
       {isCircular ? (
         <>
-          <circle cx={ox + scaledW / 2} cy={oy + scaledH / 2} r={scaledW / 2} fill={CON_FILL} stroke={CON_EDGE} strokeWidth="2" />
-          <circle cx={ox + scaledW / 2} cy={oy + scaledH / 2} r={scaledW / 2 - stOff}
-            fill="none" stroke={STR_COLOR} strokeWidth="1.5" strokeDasharray="4,2" />
-          {[...rebar.topBars, ...rebar.botBars].flatMap((grp, gi) => {
-            const rb = Math.max(3, (getBarDiam(grp.barSize) / 2) * scale);
-            const R = scaledW / 2 - stOff - rb;
-            const color = gi === 0 ? TOP_COLOR : BOT_COLOR;
-            return Array.from({ length: grp.numBars }, (_, i) => {
-              const ang = (2 * Math.PI * i) / grp.numBars - Math.PI / 2;
-              return <circle key={`c-${gi}-${i}`}
-                cx={ox + scaledW / 2 + R * Math.cos(ang)} cy={oy + scaledH / 2 + R * Math.sin(ang)}
-                r={rb} fill={color} stroke="#fff" strokeWidth="0.5" />;
+          <circle cx={cx} cy={cy} r={scaledW / 2} fill={BARS.concrete} stroke={BARS.concreteEdge} strokeWidth="2" />
+          {/* Tie / spiral hoop at the stirrup centerline */}
+          <circle cx={cx} cy={cy} r={scaledW / 2 - stOff}
+            fill="none" stroke={BARS.tie} strokeWidth="2"
+            strokeDasharray={rebar.tieType === 'spiral' ? '6,3' : undefined} />
+          {/* All longitudinal bars pooled evenly on the ring (engine convention) */}
+          {circTotal > 0 && (() => {
+            const rb = Math.max(3, (getBarDiam(circBarSize) / 2) * scale);
+            const R = scaledW / 2 - stOff - rb - 1;
+            return Array.from({ length: circTotal }, (_, i) => {
+              const ang = (2 * Math.PI * i) / circTotal - Math.PI / 2;
+              return <circle key={`c-${i}`}
+                cx={cx + R * Math.cos(ang)} cy={cy + R * Math.sin(ang)}
+                r={rb} fill={BARS.bot} stroke="#fff" strokeWidth="0.5" />;
             });
-          })}
+          })()}
         </>
       ) : (
         <>
           {isT && (
-            <rect x={ox} y={oy} width={scaledW} height={hf * scale} fill={CON_FILL} stroke={CON_EDGE} strokeWidth="1.5" />
+            <rect x={ox} y={oy} width={scaledW} height={hf * scale} fill={BARS.concrete} stroke={BARS.concreteEdge} strokeWidth="1.5" />
           )}
           <rect
             x={isT ? ox + (secW - bw) / 2 * scale : ox}
             y={isT ? oy + hf * scale : oy}
             width={(isT ? bw : secW) * scale}
             height={(isT ? secH - hf : secH) * scale}
-            fill={CON_FILL} stroke={CON_EDGE} strokeWidth="1.5"
+            fill={BARS.concrete} stroke={BARS.concreteEdge} strokeWidth="1.5"
           />
+          {/* Tie / stirrup hoop at the centerline */}
           <rect
             x={isT ? ox + (secW - bw) / 2 * scale + stOff : ox + stOff}
             y={oy + (isT ? hf * scale : 0) + stOff}
             width={(isT ? bw : secW) * scale - 2 * stOff}
             height={(isT ? secH - hf : secH) * scale - 2 * stOff}
-            fill="none" stroke={STR_COLOR} strokeWidth="1.5" rx="2"
+            fill="none" stroke={BARS.tie} strokeWidth="2" rx="4"
           />
           {barDots(rebar.topBars, 'top')}
           {barDots(rebar.botBars, 'bot')}
           {rebar.sideBars?.flatMap((grp, gi) => {
             const r = Math.max(2.5, (getBarDiam(grp.barSize) / 2) * scale);
-            const spc = scaledH / (grp.numBars + 1);
-            return Array.from({ length: grp.numBars }, (_, i) => {
-              const by = oy + spc * (i + 1);
+            // Columns: pairs at evenly spaced heights between face layers (engine convention)
+            const rows = isColumn ? Math.max(1, Math.round(grp.numBars / 2)) : grp.numBars;
+            const yTop = oy + stOff + topBarR;
+            const yBot = oy + scaledH - stOff - botBarR;
+            return Array.from({ length: rows }, (_, i) => {
+              const t = (i + 1) / (rows + 1);
+              const by = isColumn ? yTop + t * (yBot - yTop) : oy + (scaledH / (grp.numBars + 1)) * (i + 1);
               return [
-                <circle key={`sl-${gi}-${i}`} cx={ox + stOff + r} cy={by} r={r} fill="#8d6e63" stroke="#fff" strokeWidth="0.5" />,
-                <circle key={`sr-${gi}-${i}`} cx={ox + scaledW - stOff - r} cy={by} r={r} fill="#8d6e63" stroke="#fff" strokeWidth="0.5" />,
+                <circle key={`sl-${gi}-${i}`} cx={ox + stOff + r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
+                <circle key={`sr-${gi}-${i}`} cx={ox + scaledW - stOff - r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
               ];
             }).flat();
           })}
+        </>
+      )}
+
+      {/* Dimensions + labels */}
+      {showDims && isCircular && (
+        <>
+          {/* Diameter dim */}
+          <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
+            stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
+          <text x={cx} y={oy + scaledH + 27} textAnchor="middle"
+            fontSize="10" fill="#374151" fontFamily="monospace">
+            Ø = {fmt(secW, 'length', 1)}
+          </text>
+          {/* Bar + tie labels */}
+          <text x={ox + scaledW + 8} y={cy - 8}
+            fontSize="10" fill={BARS.bot} fontFamily="monospace" {...labelEvents('bot')}>
+            {circTotal > 0 ? `${circTotal}-${formatBarLabel(circBarSize)}` : '—'}
+          </text>
+          {rebar.ties && (
+            <text x={ox + scaledW + 8} y={cy + 8}
+              fontSize="10" fill={BARS.tie} fontFamily="monospace" {...labelEvents('stir')}>
+              {rebar.tieType === 'spiral' ? 'Sp ' : ''}{formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
+            </text>
+          )}
         </>
       )}
 
@@ -165,7 +208,7 @@ export default function SectionView({
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox + scaledW / 2} y={oy + scaledH + 27} textAnchor="middle"
             fontSize="10" fill="#374151" fontFamily="monospace">
-            {isT ? `bw = ${bw}"` : `b = ${secW}"`}
+            {isT ? `bw = ${fmt(bw, 'length', 1)}` : `b = ${fmt(secW, 'length', 1)}`}
           </text>
 
           {/* Height dim */}
@@ -174,12 +217,12 @@ export default function SectionView({
           <text x={ox - 26} y={oy + scaledH / 2} textAnchor="middle"
             fontSize="10" fill="#374151" fontFamily="monospace"
             transform={`rotate(-90,${ox - 26},${oy + scaledH / 2})`}>
-            h = {secH}"
+            h = {fmt(secH, 'length', 1)}
           </text>
 
           {/* Top bars — left-click +1 bar, right-click -1 bar */}
           <text x={ox + scaledW + 8} y={topLabelY + 4}
-            fontSize="10" fill={TOP_COLOR} fontFamily="monospace"
+            fontSize="10" fill={BARS.top} fontFamily="monospace"
             {...labelEvents('top')}>
             {rebar.topBars[0] ? `${rebar.topBars[0].numBars}-${formatBarLabel(rebar.topBars[0].barSize)}` : '—'}
           </text>
@@ -190,7 +233,7 @@ export default function SectionView({
 
           {/* Bottom bars */}
           <text x={ox + scaledW + 8} y={botLabelY + 4}
-            fontSize="10" fill={BOT_COLOR} fontFamily="monospace"
+            fontSize="10" fill={BARS.bot} fontFamily="monospace"
             {...labelEvents('bot')}>
             {rebar.botBars[0] ? `${rebar.botBars[0].numBars}-${formatBarLabel(rebar.botBars[0].barSize)}` : '—'}
           </text>
@@ -198,7 +241,14 @@ export default function SectionView({
             fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
             {interactive ? 'L+1 / R−1' : 'bot'}
           </text>
-          {result && (() => {
+          {/* Side bar label (columns) */}
+          {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
+            <text x={ox + scaledW + 8} y={(topLabelY + botLabelY) / 2 + 18}
+              fontSize="10" fill={BARS.side} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+              {`${rebar.sideBars[0].numBars}-${formatBarLabel(rebar.sideBars[0].barSize)} side`}
+            </text>
+          )}
+          {result && !isColumn && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;
             const ok = asBot >= reqBot;
@@ -207,7 +257,7 @@ export default function SectionView({
                 <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
                   {`As=${asBot.toFixed(2)}in²`}
                 </text>
-                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? '#16a34a' : '#dc2626'} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? DCR.pass : DCR.fail} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
                   {`Req:${reqBot.toFixed(2)} ${ok ? '✓' : '⚠'}`}
                 </text>
               </>
@@ -218,9 +268,9 @@ export default function SectionView({
           {rebar.ties && (
             <>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
-                fontSize="10" fill={STR_COLOR} fontFamily="monospace"
+                fontSize="10" fill={BARS.tie} fontFamily="monospace"
                 {...labelEvents('stir')}>
-                {formatBarLabel(rebar.ties.barSize)}@{rebar.ties.spacing}"
+                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
               </text>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
                 fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>

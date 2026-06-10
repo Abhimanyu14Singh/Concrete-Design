@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import type { InteractionPoint, LoadCase, DesignCode } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
+import { codeAccent, DCR } from '../../theme';
 
 interface Props {
   points: InteractionPoint[];
@@ -78,19 +79,19 @@ export default function InteractionDiagram({
             labelFormatter={(v) => `${mLabel} = ${v} ${mUnit}`}
           />
           <ReferenceLine y={0} stroke="#d1d5db" />
-          {/* Design envelope */}
-          <Line dataKey="P" stroke="#2563eb" strokeWidth={2} dot={false} isAnimationActive={false} name="P" />
+          {/* Design envelope — colored by design code */}
+          <Line dataKey="P" stroke={codeAccent(code)} strokeWidth={2} dot={false} isAnimationActive={false} name="P" />
           {/* Nominal curve (ACI only — EC2 has no φ so they coincide) */}
           {!isEC2 && (
-            <Line dataKey="Pn" stroke="#93c5fd" strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} name="Pn (nominal)" />
+            <Line dataKey="Pn" stroke={`${codeAccent(code)}60`} strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} name="Pn (nominal)" />
           )}
           {/* Demand points */}
           {demands.map(d => (
             <ReferenceDot
               key={d.id} x={d.M} y={d.P} r={d.id === activeLoadId ? 6 : 4}
-              fill={d.id === activeLoadId ? '#dc2626' : '#f87171'}
+              fill={d.id === activeLoadId ? DCR.fail : '#f87171'}
               stroke="white" strokeWidth={1.5}
-              label={d.id === activeLoadId ? { value: d.label, position: 'right', fill: '#dc2626', fontSize: 10 } : undefined}
+              label={d.id === activeLoadId ? { value: d.label, position: 'right', fill: DCR.fail, fontSize: 10 } : undefined}
             />
           ))}
         </LineChart>

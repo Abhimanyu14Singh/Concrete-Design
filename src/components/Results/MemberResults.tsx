@@ -8,6 +8,8 @@ import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import InteractionDiagram from '../Detailing/InteractionDiagram';
 import CalcBreakdownModal from './CalcBreakdownModal';
+import CodeBadge from '../common/CodeBadge';
+import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR } from '../../theme';
 
 interface Props {
   member: Member;
@@ -16,7 +18,7 @@ interface Props {
 }
 
 function KV({ k, v, dcr }: { k: string; v: string; dcr?: number }) {
-  const dcrColor = dcr !== undefined ? (dcr > 1 ? '#dc2626' : dcr > 0.9 ? '#d97706' : '#16a34a') : undefined;
+  const dcrColor = dcr !== undefined ? themeDcrColor(dcr) : undefined;
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 8, minWidth: 0 }}>
       <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>{k}</span>
@@ -30,9 +32,7 @@ function SectionLabel({ title }: { title: string }) {
 }
 
 function dcrStyle(dcr: number): React.CSSProperties {
-  const color = dcr > 1 ? '#dc2626' : dcr > 0.9 ? '#d97706' : '#16a34a';
-  const bg    = dcr > 1 ? '#fef2f2' : dcr > 0.9 ? '#fffbeb' : '#f0fdf4';
-  return { background: bg, color, fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
+  return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
 export default function MemberResults({ member, code = 'ACI318-19', onRebarChange }: Props) {
@@ -97,13 +97,13 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
     }
   }
 
-  const statusColor = result.status === 'OK' ? '#16a34a' : result.status === 'NG' ? '#dc2626' : '#d97706';
-  const statusBg    = result.status === 'OK' ? '#f0fdf4' : result.status === 'NG' ? '#fef2f2' : '#fffbeb';
+  const statusColor = result.status === 'OK' ? DCR.pass : result.status === 'NG' ? DCR.fail : DCR.warn;
+  const statusBg    = result.status === 'OK' ? DCR.passBg : result.status === 'NG' ? DCR.failBg : DCR.warnBg;
   const s = member.section;
   const t = member.rebar.ties;
 
   return (
-    <div style={{ background: 'white', borderRadius: 12, padding: 16 }}>
+    <div style={{ background: 'white', borderRadius: 12, padding: 16, borderTop: `3px solid ${codeAccent(code)}` }}>
       {showCalc && (
         <CalcBreakdownModal
           member={member}
@@ -138,6 +138,18 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
             {result.status === 'OK' ? 'All checks pass' : result.status === 'NG' ? 'Section inadequate' : 'Near capacity — review'}
           </span>
         </div>
+
+        {/* Code + member-type badges */}
+        <CodeBadge code={code} />
+        <span style={{
+          fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5,
+          color: MEMBER_COLOR[member.memberType] ?? '#6b7280',
+          background: `${MEMBER_COLOR[member.memberType] ?? '#6b7280'}14`,
+          border: `1px solid ${MEMBER_COLOR[member.memberType] ?? '#6b7280'}40`,
+          borderRadius: 12, padding: '2px 8px',
+        }}>
+          {isColumn ? 'Column' : member.memberType}
+        </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {onRebarChange && !isColumn && (
