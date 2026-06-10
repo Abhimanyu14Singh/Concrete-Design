@@ -7,6 +7,7 @@ interface Props {
   loads: LoadCase[];
   onDone: (loads: LoadCase[]) => void;
   onCancel: () => void;
+  isColumn?: boolean;
 }
 
 let _uid = 1;
@@ -21,7 +22,7 @@ const LABEL_INPUT: React.CSSProperties = {
   ...INPUT, textAlign: 'left', fontFamily: 'system-ui',
 };
 
-const FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [
+const BEAM_FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [
   { key: 'Mu_pos', label: 'Mu+', quantity: 'moment' },
   { key: 'Mu_neg', label: 'Mu−', quantity: 'moment' },
   { key: 'Vu',    label: 'Vu',  quantity: 'force'  },
@@ -29,12 +30,20 @@ const FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [
   { key: 'Pu',    label: 'Pu',  quantity: 'force'  },
 ];
 
-export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
+const COLUMN_FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [
+  { key: 'Pu',  label: 'Pu',  quantity: 'force'  },
+  { key: 'Mux', label: 'Mux', quantity: 'moment' },
+  { key: 'Muy', label: 'Muy', quantity: 'moment' },
+  { key: 'Vu',  label: 'Vu',  quantity: 'force'  },
+];
+
+export default function LoadCaseTable({ loads, onDone, onCancel, isColumn = false }: Props) {
   const { label: unitLbl, toDisplay, fromDisplay } = useUnits();
+  const FIELDS = isColumn ? COLUMN_FIELDS : BEAM_FIELDS;
+  const blankRow = (label: string): LoadCase =>
+    ({ id: uid(), label, Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0, Mux: 0, Muy: 0 });
   const [rows, setRows] = useState<LoadCase[]>(
-    loads.length > 0
-      ? loads
-      : [{ id: uid(), label: '1.2D+1.6L', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 }]
+    loads.length > 0 ? loads : [blankRow('1.2D+1.6L')]
   );
 
   function setField(idx: number, patch: Partial<LoadCase>) {
@@ -42,7 +51,7 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
   }
 
   function addRow() {
-    setRows(prev => [...prev, { id: uid(), label: `LC ${prev.length + 1}`, Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 }]);
+    setRows(prev => [...prev, blankRow(`LC ${prev.length + 1}`)]);
   }
 
   function deleteRow(idx: number) {
@@ -57,15 +66,13 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
     e.preventDefault();
     const parsed: LoadCase[] = lines.map((line, i) => {
       const cols = line.split('\t');
-      return {
-        id: uid(),
-        label: cols[0]?.trim() || `LC ${i + 1}`,
-        Mu_pos: fromDisplay(parseFloat(cols[1] ?? '') || 0, 'moment'),
-        Mu_neg: fromDisplay(parseFloat(cols[2] ?? '') || 0, 'moment'),
-        Vu:     fromDisplay(parseFloat(cols[3] ?? '') || 0, 'force'),
-        Tu:     fromDisplay(parseFloat(cols[4] ?? '') || 0, 'moment'),
-        Pu:     fromDisplay(parseFloat(cols[5] ?? '') || 0, 'force'),
-      };
+      const base = blankRow(cols[0]?.trim() || `LC ${i + 1}`);
+      // Paste column order follows the visible FIELDS order
+      FIELDS.forEach((f2, ci) => {
+        (base as unknown as Record<string, unknown>)[f2.key] =
+          fromDisplay(parseFloat(cols[ci + 1] ?? '') || 0, f2.quantity);
+      });
+      return base;
     });
     setRows(parsed);
   }
@@ -83,7 +90,7 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
           <div>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>Load Cases</h3>
             <p style={{ margin: '3px 0 0', fontSize: 11, color: '#6b7280' }}>
-              Paste from Excel: <code style={{ background: '#f3f4f6', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>Label&nbsp;&nbsp;Mu+&nbsp;&nbsp;Mu−&nbsp;&nbsp;Vu&nbsp;&nbsp;Tu&nbsp;&nbsp;Pu</code>&nbsp;— replaces all rows
+              Paste from Excel: <code style={{ background: '#f3f4f6', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>Label&nbsp;&nbsp;{FIELDS.map(f2 => f2.label).join('  ')}</code>&nbsp;— replaces all rows
             </p>
           </div>
           <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af', lineHeight: 1, padding: '2px 6px' }}>✕</button>
@@ -121,7 +128,7 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
                       <input
                         type="number"
                         style={INPUT}
-                        value={+toDisplay(row[f.key] as number, f.quantity).toFixed(4)}
+                        value={+toDisplay((row[f.key] as number | undefined) ?? 0, f.quantity).toFixed(4)}
                         onChange={e => setField(idx, { [f.key]: fromDisplay(Number(e.target.value), f.quantity) })}
                       />
                     </td>

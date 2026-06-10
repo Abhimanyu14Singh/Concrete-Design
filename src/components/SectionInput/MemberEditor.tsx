@@ -120,11 +120,39 @@ export default function MemberEditor({ member, onUpdate }: Props) {
   const crack = (p: Partial<NonNullable<Member['crackParams']>>) =>
     update({ crackParams: { ...crackP, ...p } });
 
+  const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
+  const sideBar = (p: Partial<Member['rebar']['topBars'][0]>) =>
+    update({ rebar: { ...m.rebar, sideBars: [{ ...(m.rebar.sideBars?.[0] ?? { numBars: 0, barSize: 8 }), ...p }] } });
+
+  /** Switching section type to/from a column syncs memberType and seeds sensible defaults. */
+  function changeSectionType(v: SectionType) {
+    const toColumn = v.endsWith('_column');
+    const wasColumn = isColumn;
+    const patch: Partial<Member> = { section: { ...m.section, type: v } };
+    if (v === 'circular_column' && !m.section.diameter) {
+      patch.section = { ...patch.section!, diameter: 20, b: 20, h: 20 };
+    }
+    if (toColumn && !wasColumn) {
+      patch.memberType = 'column';
+      patch.rebar = {
+        topBars: [{ numBars: 3, barSize: 8 }],
+        botBars: [{ numBars: 3, barSize: 8 }],
+        sideBars: [{ numBars: 2, barSize: 8 }],
+        ties: { barSize: 4, spacing: 12, legs: 2 },
+        tieType: 'tied',
+      };
+    } else if (!toColumn && wasColumn) {
+      patch.memberType = 'beam';
+    }
+    update(patch);
+  }
+
   return (
     <div style={{ fontSize: 14 }}>
       {showLoads && (
         <LoadCaseTable
           loads={m.loads}
+          isColumn={isColumn}
           onDone={loads => { setShowLoads(false); update({ loads }); }}
           onCancel={() => setShowLoads(false)}
         />
@@ -153,7 +181,7 @@ export default function MemberEditor({ member, onUpdate }: Props) {
       <div style={cardStyle}>
         <div style={headingStyle}>Section Dimensions</div>
         <SelectRow label="Section type" value={m.section.type} options={SECTION_TYPES}
-          onChange={v => sec({ type: v as SectionType })} />
+          onChange={v => changeSectionType(v as SectionType)} />
         {m.section.type === 'circular_column' ? (
           <UnitInputRow label="Diameter" value={m.section.diameter ?? 20} quantity="length"
             onChange={v => sec({ diameter: v, b: v, h: v })} />
@@ -204,7 +232,31 @@ export default function MemberEditor({ member, onUpdate }: Props) {
               onChange={v => botBar({ barSize: +v })} />
           </div>
         </div>
+        {isColumn && (
+          <>
+            <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 6px' }}>Side Bars (intermediate layers)</p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <InputRow label="# bars" value={m.rebar.sideBars?.[0]?.numBars ?? 0} min={0}
+                  onChange={v => sideBar({ numBars: +v })} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <SelectRow label="Size" value={m.rebar.sideBars?.[0]?.barSize ?? 8}
+                  options={barSizeOptions(units, m.rebar.sideBars?.[0]?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                  onChange={v => sideBar({ barSize: +v })} />
+              </div>
+            </div>
+          </>
+        )}
         <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 6px' }}>Stirrups / Ties</p>
+        {isColumn && (
+          <SelectRow label="Transverse type" value={m.rebar.tieType ?? 'tied'}
+            options={[
+              { value: 'tied', label: 'Tied (φc = 0.65, 0.80·P₀)' },
+              { value: 'spiral', label: 'Spiral (φc = 0.75, 0.85·P₀)' },
+            ]}
+            onChange={v => update({ rebar: { ...m.rebar, tieType: v as 'tied' | 'spiral' } })} />
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
             <SelectRow label="Size" value={m.rebar.ties?.barSize ?? 4}

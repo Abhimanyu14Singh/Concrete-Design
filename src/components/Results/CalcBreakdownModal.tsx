@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { Member, DesignCode } from '../../types';
 import { generateBreakdown } from '../../utils/calcBreakdown';
 import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
+import { generateColumnBreakdown } from '../../utils/calcBreakdownColumn';
+import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
 import type { CalcSection } from '../../utils/calcBreakdown';
 
 interface Props {
@@ -13,9 +15,15 @@ interface Props {
 
 export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', onClose }: Props) {
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
-  const sections: CalcSection[] = code === 'EN1992-1-1'
-    ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, member.crackParams)
-    : generateBreakdown(member.section, member.material, member.rebar, load, member.span);
+  const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
+  const isEC2 = code === 'EN1992-1-1';
+  const sections: CalcSection[] = isColumn
+    ? (isEC2
+        ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
+        : generateColumnBreakdown(member.section, member.material, member.rebar, load))
+    : (isEC2
+        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, member.crackParams)
+        : generateBreakdown(member.section, member.material, member.rebar, load, member.span));
 
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(sections.map(s => s.title))
@@ -58,7 +66,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
               Calculation Breakdown
             </h2>
             <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280' }}>
-              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; ACI 318-19
+              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; {isEC2 ? 'EN 1992-1-1' : code}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -95,11 +103,22 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
             borderRadius: 10, padding: '12px 16px', marginBottom: 16,
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8,
           }}>
-            <LoadItem label="Mu⁺" value={`${load.Mu_pos} kip-ft`} />
-            <LoadItem label="Mu⁻" value={`${load.Mu_neg} kip-ft`} />
-            <LoadItem label="Vu" value={`${load.Vu} kips`} />
-            <LoadItem label="Tu" value={`${load.Tu} kip-ft`} />
-            {load.Pu !== 0 && <LoadItem label="Pu" value={`${load.Pu} kips`} />}
+            {isColumn ? (
+              <>
+                <LoadItem label="Pu" value={`${load.Pu} kips`} />
+                <LoadItem label="Mux" value={`${load.Mux ?? 0} kip-ft`} />
+                <LoadItem label="Muy" value={`${load.Muy ?? 0} kip-ft`} />
+                <LoadItem label="Vu" value={`${load.Vu} kips`} />
+              </>
+            ) : (
+              <>
+                <LoadItem label="Mu⁺" value={`${load.Mu_pos} kip-ft`} />
+                <LoadItem label="Mu⁻" value={`${load.Mu_neg} kip-ft`} />
+                <LoadItem label="Vu" value={`${load.Vu} kips`} />
+                <LoadItem label="Tu" value={`${load.Tu} kip-ft`} />
+                {load.Pu !== 0 && <LoadItem label="Pu" value={`${load.Pu} kips`} />}
+              </>
+            )}
           </div>
 
           {sections.map(section => (

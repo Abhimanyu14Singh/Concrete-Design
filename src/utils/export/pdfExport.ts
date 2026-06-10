@@ -48,13 +48,16 @@ function line(ctx: DrawCtx, x1: number, y1: number, x2: number, y2: number, thic
   ctx.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color });
 }
 
+function worstDCROf(r: DesignResults): number {
+  return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
+    r.DCR_PM ?? 0, r.DCR_axial ?? 0);
+}
+
 function worstResult(m: Member, code?: string): DesignResults | null {
   let worst: DesignResults | null = null;
   for (const lc of m.loads) {
     const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
-    if (!worst || Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion) >
-                  Math.max(worst.DCR_flex_pos, worst.DCR_flex_neg, worst.DCR_shear, worst.DCR_torsion))
-      worst = r;
+    if (!worst || worstDCROf(r) > worstDCROf(worst)) worst = r;
   }
   return worst;
 }
@@ -102,7 +105,9 @@ export async function exportPDF(project: Project): Promise<void> {
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
     const bg = project.members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
-    const sec = `${m.section.b}"×${m.section.h}"`;
+    const sec = m.section.type === 'circular_column'
+      ? `Ø${m.section.diameter ?? m.section.b}"`
+      : `${m.section.b}"×${m.section.h}"`;
     const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
       `${m.material.fc / 1000}k`,
       r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2),

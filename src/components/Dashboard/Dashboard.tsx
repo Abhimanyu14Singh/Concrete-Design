@@ -16,13 +16,17 @@ interface MemberSummary {
   maxDCR: number;
 }
 
+function worstOf(r: DesignResults): number {
+  return Math.max(
+    r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
+    r.DCR_PM ?? 0, r.DCR_axial ?? 0,
+  );
+}
+
 function summarize(m: Member, code: DesignCode): MemberSummary {
   const results = m.loads.map(l => runDesign(m.section, m.material, m.rebar, l, m.span, code, m.crackParams));
-  const maxDCR = Math.max(...results.map(r => Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion)));
-  const worstResult = results.reduce((a, b) =>
-    Math.max(b.DCR_flex_pos, b.DCR_flex_neg, b.DCR_shear) >
-    Math.max(a.DCR_flex_pos, a.DCR_flex_neg, a.DCR_shear) ? b : a
-  );
+  const maxDCR = Math.max(...results.map(worstOf));
+  const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
   return { member: m, worstResult, maxDCR };
 }
 
@@ -51,6 +55,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     'Flex-':   parseFloat(s.worstResult.DCR_flex_neg.toFixed(3)),
     Shear:     parseFloat(s.worstResult.DCR_shear.toFixed(3)),
     Torsion:   parseFloat(s.worstResult.DCR_torsion.toFixed(3)),
+    'P-M':     parseFloat((s.worstResult.DCR_PM ?? 0).toFixed(3)),
   }));
 
   function saveMeta() {
@@ -232,6 +237,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
             <Bar dataKey="Flex-"  fill="#8b5cf6" />
             <Bar dataKey="Shear"  fill="#f59e0b" />
             <Bar dataKey="Torsion" fill="#10b981" />
+            <Bar dataKey="P-M"    fill="#ec4899" />
           </BarChart>
         </ResponsiveContainer>
       </div>

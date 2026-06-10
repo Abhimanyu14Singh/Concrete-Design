@@ -31,8 +31,20 @@ export interface SectionDimensions {
 export interface RebarLayout {
   topBars: BarGroup[];
   botBars: BarGroup[];
-  sideBars?: BarGroup[];  // skin reinforcement
+  sideBars?: BarGroup[];  // skin reinforcement (beams) / intermediate bars (columns)
   ties?: TieLayout;
+  tieType?: 'tied' | 'spiral'; // columns only; default 'tied'
+}
+
+/** One point on a column P-M interaction curve. */
+export interface InteractionPoint {
+  c: number;       // neutral axis depth (in) — Infinity at pure compression
+  Pn: number;      // nominal axial (kips)
+  Mn: number;      // nominal moment (kip-ft)
+  phi: number;     // strength reduction factor (1.0 for EC2)
+  phiPn: number;   // design axial — capped by Pn,max at top (kips)
+  phiMn: number;   // design moment (kip-ft)
+  eps_t: number;   // extreme tension steel strain
 }
 
 export interface BarGroup {
@@ -84,6 +96,10 @@ export interface DesignResults {
   phi_Mn_col?: number;
   DCR_axial?: number;
   DCR_PM?: number;      // Combined P-M interaction
+  phi_Pn_max?: number;  // axial capacity cap φ·Pn,max (kips) | N_Rd,max for EC2
+  phi_Mnx?: number;     // moment capacity about x at Pu (kip-ft)
+  phi_Mny?: number;     // moment capacity about y at Pu (kip-ft)
+  interaction?: InteractionPoint[]; // P-M curve (about x) for chart/calc sheet
   // Additional
   As_req_pos: number;   // Required steel (in²)
   As_req_neg: number;

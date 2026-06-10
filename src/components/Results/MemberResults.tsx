@@ -6,6 +6,7 @@ import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
+import InteractionDiagram from '../Detailing/InteractionDiagram';
 import CalcBreakdownModal from './CalcBreakdownModal';
 
 interface Props {
@@ -44,13 +45,18 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
   const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, member.crackParams);
 
+  const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
+
   // C1: compute all-LC results to find governing cases
   const allResults = member.loads.map(l => ({ id: l.id, label: l.label, r: runDesign(member.section, member.material, member.rebar, l, member.span, code, member.crackParams) }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
   const govShear    = allResults.reduce((a, b) => b.r.DCR_shear     > a.r.DCR_shear     ? b : a).id;
   const govTorsion  = allResults.reduce((a, b) => b.r.DCR_torsion   > a.r.DCR_torsion   ? b : a).id;
-  const govSet      = new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
+  const govPM       = allResults.reduce((a, b) => (b.r.DCR_PM ?? 0) > (a.r.DCR_PM ?? 0) ? b : a).id;
+  const govSet      = isColumn
+    ? new Set([govPM, govShear])
+    : new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
 
   function handleRebarChange(rebar: RebarLayout) {
     onRebarChange?.({ ...member, rebar });
@@ -134,7 +140,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          {onRebarChange && (
+          {onRebarChange && !isColumn && (
             <button
               onClick={handleOptimize}
               style={{ padding: '5px 10px', border: '1px solid #d97706', borderRadius: 6, background: '#fffbeb', fontSize: 11, cursor: 'pointer', color: '#d97706', fontWeight: 600 }}
@@ -169,11 +175,22 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
           {member.span && <KV k="Span" v={fmt(member.span, 'spanLength')} />}
 
           <SectionLabel title="Applied Loads" />
-          {load.Mu_pos > 0 && <KV k="Mu+" v={fmt(load.Mu_pos, 'moment')} />}
-          {load.Mu_neg > 0 && <KV k="Mu−" v={fmt(load.Mu_neg, 'moment')} />}
-          <KV k="Vu" v={fmt(load.Vu, 'force')} />
-          {load.Tu > 0 && <KV k="Tu" v={fmt(load.Tu, 'moment')} />}
-          {load.Pu !== 0 && <KV k="Pu" v={fmt(load.Pu, 'force')} />}
+          {isColumn ? (
+            <>
+              <KV k="Pu" v={fmt(load.Pu, 'force')} />
+              <KV k="Mux" v={fmt(load.Mux ?? 0, 'moment')} />
+              <KV k="Muy" v={fmt(load.Muy ?? 0, 'moment')} />
+              <KV k="Vu" v={fmt(load.Vu, 'force')} />
+            </>
+          ) : (
+            <>
+              {load.Mu_pos > 0 && <KV k="Mu+" v={fmt(load.Mu_pos, 'moment')} />}
+              {load.Mu_neg > 0 && <KV k="Mu−" v={fmt(load.Mu_neg, 'moment')} />}
+              <KV k="Vu" v={fmt(load.Vu, 'force')} />
+              {load.Tu > 0 && <KV k="Tu" v={fmt(load.Tu, 'moment')} />}
+              {load.Pu !== 0 && <KV k="Pu" v={fmt(load.Pu, 'force')} />}
+            </>
+          )}
         </div>
 
         {/* Center: Section diagram */}
@@ -198,6 +215,29 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
 
         {/* Right: design results */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
+          {isColumn ? (
+            <>
+              <SectionLabel title="Axial" />
+              <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
+              <KV k="  DCR" v={(result.DCR_axial ?? 0).toFixed(3)} dcr={result.DCR_axial ?? 0} />
+
+              <SectionLabel title="P-M Interaction" />
+              <KV k={code === 'EN1992-1-1' ? 'M_Rd,x @NEd' : 'φMnx @Pu'} v={fmt(result.phi_Mnx ?? 0, 'moment')} />
+              <KV k={code === 'EN1992-1-1' ? 'M_Rd,y @NEd' : 'φMny @Pu'} v={fmt(result.phi_Mny ?? 0, 'moment')} />
+              <KV k="  DCR" v={(result.DCR_PM ?? 0).toFixed(3)} dcr={result.DCR_PM ?? 0} />
+
+              <SectionLabel title="Shear" />
+              <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
+              <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
+              <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
+              <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
+
+              <SectionLabel title="Steel Limits" />
+              <KV k="As min" v={fmt(result.As_min, 'area')} />
+              <KV k="As max" v={fmt(result.As_max, 'area')} />
+            </>
+          ) : (
+            <>
           <SectionLabel title="Flexure" />
           <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')} />
           <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} />
@@ -235,8 +275,22 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
               <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`} />
             </>
           )}
+            </>
+          )}
         </div>
       </div>
+
+      {/* Column interaction diagram */}
+      {isColumn && result.interaction && (
+        <div style={{ marginTop: 14 }}>
+          <InteractionDiagram
+            points={result.interaction}
+            loads={member.loads}
+            code={code}
+            activeLoadId={activeLoad}
+          />
+        </div>
+      )}
 
       {/* C2: All-load-cases comparison table */}
       {member.loads.length > 1 && (
@@ -253,7 +307,10 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
               <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f9fafb' }}>
-                    {['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status'].map(h => (
+                    {(isColumn
+                      ? ['Load Case', 'P-M DCR', 'Axial DCR', 'Shear DCR', 'Status']
+                      : ['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status']
+                    ).map(h => (
                       <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: '#6b7280', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -269,10 +326,20 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
                         {govSet.has(id) && <span style={{ color: '#d97706', marginRight: 4 }}>★</span>}
                         {label}
                       </td>
-                      <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_pos)}>{r.DCR_flex_pos.toFixed(3)}</span></td>
-                      <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_neg)}>{r.DCR_flex_neg.toFixed(3)}</span></td>
-                      <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear)}>{r.DCR_shear.toFixed(3)}</span></td>
-                      <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_torsion)}>{r.DCR_torsion.toFixed(3)}</span></td>
+                      {isColumn ? (
+                        <>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_PM ?? 0)}>{(r.DCR_PM ?? 0).toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_axial ?? 0)}>{(r.DCR_axial ?? 0).toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear)}>{r.DCR_shear.toFixed(3)}</span></td>
+                        </>
+                      ) : (
+                        <>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_pos)}>{r.DCR_flex_pos.toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_neg)}>{r.DCR_flex_neg.toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear)}>{r.DCR_shear.toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_torsion)}>{r.DCR_torsion.toFixed(3)}</span></td>
+                        </>
+                      )}
                       <td style={{ padding: '5px 10px', fontWeight: 700, color: r.status === 'OK' ? '#16a34a' : r.status === 'NG' ? '#dc2626' : '#d97706', fontSize: 10 }}>
                         {r.status}
                       </td>
