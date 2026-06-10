@@ -59,15 +59,30 @@ export function generateBreakdownEC2(
   });
 
   // ── Flexure ──
+  const As_top = rebar.topBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0) * IN2_TO_MM2;
+  const topBarD = getBarDiam(rebar.topBars[0]?.barSize ?? 8) * IN_TO_MM;
+  const MEd_neg = load.Mu_neg * KIPFT_TO_KNM;
+  const topDesc = rebar.topBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
+
   const flex = mRd(As, d, b, fck, fcd, fyd);
-  sections.push({
-    title: '2. Flexural Resistance (§6.1)',
-    steps: [
-      { ref: '§6.1', label: 'Neutral axis depth', equation: 'x = As·fyd / (η·fcd·λ·b)', substitution: `${f(As, 0)} × ${f(fyd, 0)} / (${f(eta, 2)} × ${f(fcd)} × ${f(lambda, 2)} × ${f(b, 0)})`, result: `x = ${f(flex.x, 1)} mm` },
-      { ref: '§6.1', label: 'Moment resistance', equation: 'M_Rd = As·fyd·(d − λx/2)', substitution: `${f(As, 0)} × ${f(fyd, 0)} × (${f(d, 0)} − ${f(lambda * flex.x / 2, 1)})`, result: `M_Rd = ${f(flex.MRd)} kN·m ${MEd <= flex.MRd ? '✓' : '✗'}`, note: `M_Ed = ${f(MEd)} kN·m → DCR = ${flex.MRd > 0 ? f(MEd / flex.MRd, 3) : '—'}` },
-      { ref: '§5.5', label: 'Ductility check', equation: 'x/d ≤ 0.45', substitution: `${f(flex.x, 1)} / ${f(d, 0)}`, result: `x/d = ${f(flex.x / d, 3)} ${flex.x / d <= 0.45 ? '✓' : '✗'}` },
-    ],
-  });
+  const flex_neg = mRd(As_top, d, b, fck, fcd, fyd);
+
+  const flexSteps: CalcSection['steps'] = [
+    { ref: '§6.1', label: 'Bottom steel (positive moment, tension at bottom)', equation: 'As,bot', substitution: `${botDesc}, As = ${f(As, 0)} mm²`, result: `As,bot = ${f(As, 0)} mm²` },
+    { ref: '§6.1', label: 'Neutral axis depth (positive)', equation: 'x = As·fyd / (η·fcd·λ·b)', substitution: `${f(As, 0)} × ${f(fyd, 0)} / (${f(eta, 2)} × ${f(fcd)} × ${f(lambda, 2)} × ${f(b, 0)})`, result: `x = ${f(flex.x, 1)} mm` },
+    { ref: '§6.1', label: 'M_Rd positive', equation: 'M_Rd = As·fyd·(d − λx/2)', substitution: `${f(As, 0)} × ${f(fyd, 0)} × (${f(d, 0)} − ${f(lambda * flex.x / 2, 1)}) / 10⁶`, result: `M_Rd⁺ = ${f(flex.MRd)} kN·m ${MEd <= flex.MRd ? '✓' : '✗'}`, note: `M_Ed⁺ = ${f(MEd)} kN·m → DCR = ${flex.MRd > 0 ? f(MEd / flex.MRd, 3) : '—'}` },
+    { ref: '§5.5', label: 'Ductility check (positive)', equation: 'x/d ≤ 0.45 (fck ≤ 50 MPa)', substitution: `${f(flex.x, 1)} / ${f(d, 0)}`, result: `x/d = ${f(flex.x / d, 3)} ${flex.x / d <= 0.45 ? '✓' : '✗'}` },
+  ];
+
+  if (As_top > 0) {
+    flexSteps.push(
+      { ref: '§6.1', label: 'Top steel (negative moment, tension at top)', equation: 'As,top', substitution: `${topDesc}, As,top = ${f(As_top, 0)} mm²`, result: `As,top = ${f(As_top, 0)} mm²` },
+      { ref: '§6.1', label: 'Neutral axis depth (negative)', equation: 'x = As,top·fyd / (η·fcd·λ·bw)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} / (${f(eta, 2)} × ${f(fcd)} × ${f(lambda, 2)} × ${f(b, 0)})`, result: `x = ${f(flex_neg.x, 1)} mm` },
+      { ref: '§6.1', label: 'M_Rd negative', equation: 'M_Rd⁻ = As,top·fyd·(d − λx/2)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} × (${f(d, 0)} − ${f(lambda * flex_neg.x / 2, 1)}) / 10⁶`, result: `M_Rd⁻ = ${f(flex_neg.MRd)} kN·m ${MEd_neg <= flex_neg.MRd ? '✓' : '✗'}`, note: `M_Ed⁻ = ${f(MEd_neg)} kN·m → DCR = ${flex_neg.MRd > 0 ? f(MEd_neg / flex_neg.MRd, 3) : '—'}` },
+    );
+  }
+
+  sections.push({ title: '2. Flexural Resistance (§6.1)', steps: flexSteps });
 
   // ── Shear ──
   const VRdc_v = vRdc(b, d, As, fck);
@@ -76,16 +91,17 @@ export function generateBreakdownEC2(
   const shearSteps: CalcSection['steps'] = [
     { ref: '§6.2.2', label: 'Resistance without stirrups', equation: 'V_Rd,c = [C_Rd,c·k·(100ρl·fck)^⅓]·bw·d', substitution: `k = ${f(Math.min(2, 1 + Math.sqrt(200 / d)), 2)}, ρl = ${f(Math.min(0.02, As / (b * d)) * 100, 2)}%`, result: `V_Rd,c = ${f(VRdc_v)} kN` },
   ];
+  let VRd_kN = VRdc_v;
   if (rebar.ties) {
     const Asw = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
     const s_mm = rebar.ties.spacing * IN_TO_MM;
     const VRds_v = vRds(Asw, s_mm, z, fywd, cotT);
     const VRdmax_v = vRdMax(b, z, fck, fcd, cotT);
-    const VRd = Math.min(VRds_v, VRdmax_v);
+    VRd_kN = Math.min(VRds_v, VRdmax_v);
     shearSteps.push(
       { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = 21.8° (cotθ = 2.5)` },
       { ref: '§6.2.3', label: 'Strut crushing limit', equation: 'V_Rd,max = bw·z·ν1·fcd/(cotθ+tanθ)', substitution: `ν1 = 0.6(1 − ${f(fck)}/250) = ${f(0.6 * (1 - fck / 250), 3)}`, result: `V_Rd,max = ${f(VRdmax_v)} kN` },
-      { ref: '§6.2', label: 'Governing shear resistance', equation: 'V_Rd = min(V_Rd,s, V_Rd,max)', substitution: `min(${f(VRds_v)}, ${f(VRdmax_v)})`, result: `V_Rd = ${f(VRd)} kN ${VEd <= VRd ? '✓' : '✗'}`, note: `V_Ed = ${f(VEd)} kN → DCR = ${VRd > 0 ? f(VEd / VRd, 3) : '—'}` },
+      { ref: '§6.2', label: 'Governing shear resistance', equation: 'V_Rd = min(V_Rd,s, V_Rd,max)', substitution: `min(${f(VRds_v)}, ${f(VRdmax_v)})`, result: `V_Rd = ${f(VRd_kN)} kN ${VEd <= VRd_kN ? '✓' : '✗'}`, note: `V_Ed = ${f(VEd)} kN → DCR = ${VRd_kN > 0 ? f(VEd / VRd_kN, 3) : '—'}` },
     );
   } else {
     shearSteps.push({ ref: '§6.2.1', label: 'Check', equation: 'V_Ed ≤ V_Rd,c', substitution: `${f(VEd)} vs ${f(VRdc_v)}`, result: VEd <= VRdc_v ? '✓ No shear reinforcement required' : '✗ Shear reinforcement required' });
@@ -105,6 +121,12 @@ export function generateBreakdownEC2(
         { ref: '§6.3.2', label: 'Cracking torsion', equation: 'T_Rd,c = 2·Ak·t_ef·fctd', substitution: `fctd = ${f(fctm(fck) * 0.7 / 1.5, 2)} MPa`, result: `T_Rd,c = ${f(t.TRdc)} kN·m`, note: TEd <= t.TRdc ? 'T_Ed ≤ T_Rd,c — torsion may be neglected' : 'T_Ed > T_Rd,c — torsion design required' },
         { ref: '§6.3.2', label: 'Stirrup torsion resistance', equation: 'T_Rd,s = 2·Ak·(At/s)·fywd·cotθ', substitution: `2 × ${f(t.Ak / 1e3, 0)}×10³ × (${f(AtLeg, 0)}/${f(s_mm, 0)}) × ${f(fywd, 0)} × ${cotT}`, result: `T_Rd,s = ${f(t.TRds)} kN·m` },
         { ref: '§6.3.2', label: 'Strut crushing limit', equation: 'T_Rd,max = 2·ν·fcd·Ak·t_ef·sinθ·cosθ', substitution: `ν = ${f(0.6 * (1 - fck / 250), 3)}`, result: `T_Rd,max = ${f(t.TRdMax)} kN·m`, note: `T_Rd = ${f(TRd)} kN·m, T_Ed = ${f(TEd)} kN·m ${TEd <= Math.max(TRd, t.TRdc) ? '✓' : '✗'}` },
+        {
+          ref: '§6.3.2(5)', label: 'V+T combined interaction',
+          equation: '(V_Ed/V_Rd) + (T_Ed/T_Rd) ≤ 1.0',
+          substitution: `(${f(VEd)}/${f(VRd_kN)}) + (${f(TEd)}/${f(TRd)})`,
+          result: `${f(VRd_kN > 0 ? VEd / VRd_kN : 0, 3)} + ${f(TRd > 0 ? TEd / TRd : 0, 3)} = ${f((VRd_kN > 0 ? VEd / VRd_kN : 0) + (TRd > 0 ? TEd / TRd : 0), 3)} ${(VRd_kN > 0 ? VEd / VRd_kN : 0) + (TRd > 0 ? TEd / TRd : 0) <= 1 ? '✓' : '✗'}`,
+        },
       ],
     });
   }
@@ -129,20 +151,47 @@ export function generateBreakdownEC2(
 
   // ── Crack width §7.3.4 ──
   const Es_MPa = material.Es * PSI_TO_MPA;
-  const Mqp = crack.qpFactor * MEd;
-  if (Mqp > 0 && As > 0) {
-    const cw = crackWidth(Mqp, As, botBarD, b, h, d, cover + stirrupD, fck, Es_MPa, crack.kt);
-    const alpha_e = Es_MPa / ecm(fck);
-    sections.push({
-      title: `${load.Tu > 0 ? 6 : 5}. Crack Width (§7.3.4)`,
-      steps: [
-        { ref: '§7.3.4', label: 'Quasi-permanent moment', equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(MEd)}`, result: `M_qp = ${f(Mqp)} kN·m` },
-        { ref: '§7.3.4', label: 'Cracked-section steel stress', equation: 'σs = M_qp / (As·z)', substitution: `x = ${f(cw.x, 0)} mm, z = d − x/3 = ${f(d - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
-        { ref: '§7.3.2', label: 'Effective reinforcement ratio', equation: 'ρp,eff = As / Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
-        { ref: 'eq (7.11)', label: 'Maximum crack spacing', equation: 'sr,max = 3.4c + 0.425·k1·k2·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(botBarD, 0)} mm, k1 = 0.8, k2 = 0.5`, result: `sr,max = ${f(cw.sr_max, 0)} mm` },
-        { ref: 'eq (7.8)', label: 'Bottom face crack width', equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)}`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(crack.wLimitBot, 2)} mm ${cw.wk <= crack.wLimitBot ? '✓' : '✗'}` },
-      ],
+  const alpha_e = Es_MPa / ecm(fck);
+  const Mqp_pos = crack.qpFactor * MEd;
+  const Mqp_neg = crack.qpFactor * MEd_neg;
+  const crackSectionNum = load.Tu > 0 ? 6 : 5;
+  const crackSteps: CalcSection['steps'] = [];
+
+  function addFaceSteps(
+    faceLabel: string, Mqp: number, As_f: number, barD_f: number,
+    b_f: number, d_f: number, wLimit: number,
+  ) {
+    if (Mqp <= 0 || As_f <= 0) return;
+    const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt);
+    crackSteps.push(
+      { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(Mqp / crack.qpFactor)}`, result: `M_qp = ${f(Mqp)} kN·m` },
+      { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'σs via elastic cracked section', substitution: `x = ${f(cw.x, 0)} mm, z = d−x/3 = ${f(d_f - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
+      { ref: '§7.3.2(3)', label: `${faceLabel}: effective reinforcement ratio`, equation: 'ρp,eff = As/Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
+      { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = 3.4c + 0.425·k1·k2·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = 0.5`, result: `sr,max = ${f(cw.sr_max, 0)} mm` },
+      { ref: 'eq (7.8)', label: `${faceLabel}: crack width`, equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)} (${crack.kt === 0.4 ? 'long-term' : 'short-term'})`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(wLimit, 2)} mm ${cw.wk <= wLimit ? '✓' : '✗'}` },
+    );
+  }
+
+  addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, crack.wLimitBot);
+  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, d, crack.wLimitTop);
+
+  // Side face (skin reinforcement)
+  if (rebar.sideBars && rebar.sideBars.length > 0) {
+    const As_side = rebar.sideBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0) * IN2_TO_MM2;
+    const sideBarD = getBarDiam(rebar.sideBars[0].barSize) * IN_TO_MM;
+    const govMqp = Math.max(Mqp_pos, Mqp_neg);
+    addFaceSteps('Side face (skin rebar)', govMqp, As_side, sideBarD, b, h / 2, crack.wLimitFace);
+  } else if (h > 1000) {
+    crackSteps.push({
+      ref: '§7.3.3', label: 'Side face — deep beam',
+      equation: 'Skin reinforcement required for h > 1000 mm',
+      substitution: `h = ${f(h, 0)} mm > 1000 mm`,
+      result: '⚠ No side bars defined',
     });
+  }
+
+  if (crackSteps.length > 0) {
+    sections.push({ title: `${crackSectionNum}. Crack Width (§7.3.4)`, steps: crackSteps });
   }
 
   return sections;
