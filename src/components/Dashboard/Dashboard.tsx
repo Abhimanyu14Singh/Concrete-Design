@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Project, Member, DesignResults, DesignCode } from '../../types';
-import { designMember } from '../../utils/concreteDesign';
+import { runDesign } from '../../engines';
+import { useUnits } from '../../contexts/UnitsContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -15,8 +16,8 @@ interface MemberSummary {
   maxDCR: number;
 }
 
-function summarize(m: Member): MemberSummary {
-  const results = m.loads.map(l => designMember(m.section, m.material, m.rebar, l, m.span));
+function summarize(m: Member, code: DesignCode): MemberSummary {
+  const results = m.loads.map(l => runDesign(m.section, m.material, m.rebar, l, m.span, code));
   const maxDCR = Math.max(...results.map(r => Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion)));
   const worstResult = results.reduce((a, b) =>
     Math.max(b.DCR_flex_pos, b.DCR_flex_neg, b.DCR_shear) >
@@ -32,13 +33,14 @@ function dcrBg(dcr: number) {
   return dcr > 1 ? '#fef2f2' : dcr > 0.9 ? '#fffbeb' : '#f0fdf4';
 }
 
-const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14'];
+const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
 
 export default function Dashboard({ project, onSelectMember, onProjectUpdate }: Props) {
+  const { setUnits } = useUnits();
   const [editingMeta, setEditingMeta] = useState(false);
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
 
-  const summaries = project.members.map(summarize);
+  const summaries = project.members.map(m => summarize(m, project.code));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;
@@ -52,6 +54,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   }));
 
   function saveMeta() {
+    // Switching to Eurocode defaults the display units to SI (user can toggle back)
+    if (meta.code === 'EN1992-1-1' && project.code !== 'EN1992-1-1') {
+      setUnits('si');
+    }
     onProjectUpdate?.({ ...project, ...meta });
     setEditingMeta(false);
   }

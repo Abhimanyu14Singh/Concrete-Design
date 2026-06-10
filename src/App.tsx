@@ -7,6 +7,7 @@ import { exportExcel } from './utils/export/excelExport';
 import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
+import { useUnits } from './contexts/UnitsContext';
 
 type Tab = 'dashboard' | 'member';
 
@@ -27,6 +28,7 @@ export default function App() {
   });
   const [showPrefs, setShowPrefs] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const { units, setUnits, fmt } = useUnits();
 
   // B5: dirty indicator
   const [isDirty, setIsDirty] = useState(false);
@@ -258,8 +260,8 @@ export default function App() {
 
   const sectionLabel = (m: Member) => {
     const s = m.section;
-    if (s.type === 'circular_column') return `Ø${s.diameter ?? s.b}"`;
-    return `${s.b}"×${s.h}"`;
+    if (s.type === 'circular_column') return `Ø${fmt(s.diameter ?? s.b, 'length')}`;
+    return `${fmt(s.b, 'length')} × ${fmt(s.h, 'length')}`;
   };
 
   return (
@@ -491,6 +493,26 @@ export default function App() {
                     {zoom === z && <span style={{ fontSize: 11 }}>✓</span>}
                   </button>
                 ))}
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, padding: '0 8px', margin: '12px 0 8px', borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
+                  Units
+                </div>
+                {([['imperial', 'US (in, psi, kips)'], ['si', 'SI (mm, MPa, kN)']] as const).map(([u, label]) => (
+                  <button
+                    key={u}
+                    onClick={() => setUnits(u)}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                      background: units === u ? '#eff6ff' : 'none',
+                      color: units === u ? '#2563eb' : '#374151',
+                      fontWeight: units === u ? 700 : 400,
+                    }}
+                  >
+                    <span>{label}</span>
+                    {units === u && <span style={{ fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -551,11 +573,12 @@ export default function App() {
                     <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>{activeMember.label}</h2>
                     <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>
                       {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
-                      f'c = {activeMember.material.fc} psi &bull; fy = {activeMember.material.fy / 1000} ksi
+                      f'c = {fmt(activeMember.material.fc, 'stress')} &bull; fy = {fmt(activeMember.material.fy / 1000, 'stressKsi')}
                     </p>
                   </div>
                   <MemberResults
                     member={activeMember}
+                    code={project.code}
                     onRebarChange={handleUpdateMember}
                   />
                 </div>

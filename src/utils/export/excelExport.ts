@@ -1,11 +1,11 @@
 import * as XLSX from 'xlsx';
 import type { Project, Member } from '../../types';
-import { designMember } from '../concreteDesign';
+import { runDesign } from '../../engines';
 
-function worstResult(member: Member) {
-  let worst = null as ReturnType<typeof designMember> | null;
+function worstResult(member: Member, code?: string) {
+  let worst = null as ReturnType<typeof runDesign> | null;
   for (const lc of member.loads) {
-    const r = designMember(member.section, member.material, member.rebar, lc, member.span ?? 20);
+    const r = runDesign(member.section, member.material, member.rebar, lc, member.span ?? 20, code);
     if (!worst || Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion)
                 > Math.max(worst.DCR_flex_pos, worst.DCR_flex_neg, worst.DCR_shear, worst.DCR_torsion))
       worst = r;
@@ -26,7 +26,7 @@ export function exportExcel(project: Project): void {
       'DCR Flex+', 'DCR Flex-', 'DCR Shear', 'DCR Torsion', 'Status'],
   ];
   for (const m of project.members) {
-    const r = worstResult(m);
+    const r = worstResult(m, project.code);
     if (!r) continue;
     const sec = `${m.section.b}"×${m.section.h}"`;
     summaryData.push([
@@ -57,7 +57,7 @@ export function exportExcel(project: Project): void {
         'As_req+ (in²)', 'As_min (in²)', 'As_max (in²)', 'Av_req (in²/in)', 'Status', 'Warnings'],
     ];
     for (const lc of m.loads) {
-      const r = designMember(m.section, m.material, m.rebar, lc, m.span ?? 20);
+      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code);
       const warns = r.warnings.map(w => `[${w.code}] ${w.message}`).join('; ');
       rows.push([
         lc.label,

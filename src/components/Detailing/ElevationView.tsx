@@ -1,3 +1,4 @@
+import { formatBarLabel } from '../../utils/rebar';
 import type { Member } from '../../types';
 
 interface Props {
@@ -79,11 +80,11 @@ export default function ElevationView({ member, width = 600, height = 160 }: Pro
       {/* Bar labels */}
       <text x={ox - 5} y={oy + 10}
         textAnchor="end" fontSize="9" fill="#4a90d9" fontFamily="monospace">
-        {member.rebar.topBars[0] ? `${member.rebar.topBars[0].numBars}#${member.rebar.topBars[0].barSize}` : ''}
+        {member.rebar.topBars[0] ? `${member.rebar.topBars[0].numBars}${formatBarLabel(member.rebar.topBars[0].barSize)}` : ''}
       </text>
       <text x={ox - 5} y={oy + drawH - 4}
         textAnchor="end" fontSize="9" fill="#4a90d9" fontFamily="monospace">
-        {member.rebar.botBars[0] ? `${member.rebar.botBars[0].numBars}#${member.rebar.botBars[0].barSize}` : ''}
+        {member.rebar.botBars[0] ? `${member.rebar.botBars[0].numBars}${formatBarLabel(member.rebar.botBars[0].barSize)}` : ''}
       </text>
     </svg>
   );

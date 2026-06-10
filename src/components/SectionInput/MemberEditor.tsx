@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { Member, SectionType, MemberType } from '../../types';
 import LoadCaseTable from './LoadCaseTable';
+import { useUnits } from '../../contexts/UnitsContext';
+import type { Quantity } from '../../utils/units';
+import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'rectangular_beam', label: 'Rect. Beam' },
@@ -39,6 +42,28 @@ function InputRow({ label, value, onChange, unit = '', type = 'number', min, ste
   );
 }
 
+/**
+ * Numeric input that displays/accepts values in the active unit system while
+ * storing imperial. value/onChange are always imperial; conversion happens
+ * only at this boundary. Rounded display never gets written back to state
+ * unless the user actually edits the field.
+ */
+interface UnitInputRowProps {
+  label: string; value: number; quantity: Quantity;
+  onChange: (imperialValue: number) => void; min?: number; step?: number;
+}
+function UnitInputRow({ label, value, quantity, onChange, min, step }: UnitInputRowProps) {
+  const { toDisplay, fromDisplay, label: unitLbl } = useUnits();
+  // Strip float noise (355.59999 → 355.6) without losing user precision
+  const display = +toDisplay(value, quantity).toFixed(4);
+  return (
+    <InputRow
+      label={label} value={display} unit={unitLbl(quantity)} min={min} step={step}
+      onChange={v => onChange(fromDisplay(+v, quantity))}
+    />
+  );
+}
+
 interface SelectRowProps {
   label: string; value: string | number;
   options: { value: string | number; label: string }[];
@@ -73,6 +98,7 @@ interface Props {
 }
 
 export default function MemberEditor({ member, onUpdate }: Props) {
+  const { units } = useUnits();
   const [m, setM] = useState<Member>(member);
   const [showLoads, setShowLoads] = useState(false);
 
@@ -104,7 +130,7 @@ export default function MemberEditor({ member, onUpdate }: Props) {
       <div style={cardStyle}>
         <div style={headingStyle}>General</div>
         <InputRow label="Label" value={m.label} type="text" onChange={v => update({ label: v })} />
-        <InputRow label="Span" value={m.span ?? 20} unit="ft" onChange={v => update({ span: +v })} />
+        <UnitInputRow label="Span" value={m.span ?? 20} quantity="spanLength" onChange={v => update({ span: v })} />
         <SelectRow label="Member type" value={m.memberType}
           options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }, { value: 'wall', label: 'Wall' }]}
           onChange={v => update({ memberType: v as MemberType })} />
@@ -113,9 +139,9 @@ export default function MemberEditor({ member, onUpdate }: Props) {
       {/* Materials */}
       <div style={cardStyle}>
         <div style={headingStyle}>Materials</div>
-        <InputRow label="f'c" value={m.material.fc} unit="psi" onChange={v => mat({ fc: +v })} />
-        <InputRow label="fy (longit.)" value={m.material.fy} unit="psi" onChange={v => mat({ fy: +v })} />
-        <InputRow label="fyt (trans.)" value={m.material.fyt} unit="psi" onChange={v => mat({ fyt: +v })} />
+        <UnitInputRow label="f'c (cylinder)" value={m.material.fc} quantity="stress" onChange={v => mat({ fc: v })} />
+        <UnitInputRow label="fy (longit.)" value={m.material.fy} quantity="stress" onChange={v => mat({ fy: v })} />
+        <UnitInputRow label="fyt (trans.)" value={m.material.fyt} quantity="stress" onChange={v => mat({ fyt: v })} />
         <InputRow label="λ (concrete)" value={m.material.lambdaConcrete} step={0.05} onChange={v => mat({ lambdaConcrete: +v })} />
       </div>
 
@@ -125,25 +151,25 @@ export default function MemberEditor({ member, onUpdate }: Props) {
         <SelectRow label="Section type" value={m.section.type} options={SECTION_TYPES}
           onChange={v => sec({ type: v as SectionType })} />
         {m.section.type === 'circular_column' ? (
-          <InputRow label="Diameter" value={m.section.diameter ?? 20} unit="in"
-            onChange={v => sec({ diameter: +v, b: +v, h: +v })} />
+          <UnitInputRow label="Diameter" value={m.section.diameter ?? 20} quantity="length"
+            onChange={v => sec({ diameter: v, b: v, h: v })} />
         ) : (
           <>
-            <InputRow
+            <UnitInputRow
               label={m.section.type === 'T_beam' || m.section.type === 'L_beam' ? 'Flange width b' : 'Width b'}
-              value={m.section.b} unit="in" onChange={v => sec({ b: +v })} />
-            <InputRow label="Depth h" value={m.section.h ?? 24} unit="in" onChange={v => sec({ h: +v })} />
+              value={m.section.b} quantity="length" onChange={v => sec({ b: v })} />
+            <UnitInputRow label="Depth h" value={m.section.h ?? 24} quantity="length" onChange={v => sec({ h: v })} />
             {(m.section.type === 'T_beam' || m.section.type === 'L_beam') && (
               <>
-                <InputRow label="Web width bw" value={m.section.bw ?? 14} unit="in" onChange={v => sec({ bw: +v })} />
-                <InputRow label="Flange thk hf" value={m.section.hf ?? 5} unit="in" onChange={v => sec({ hf: +v })} />
+                <UnitInputRow label="Web width bw" value={m.section.bw ?? 14} quantity="length" onChange={v => sec({ bw: v })} />
+                <UnitInputRow label="Flange thk hf" value={m.section.hf ?? 5} quantity="length" onChange={v => sec({ hf: v })} />
               </>
             )}
           </>
         )}
-        <InputRow label="Clear cover" value={m.section.coverClear} unit="in" onChange={v => sec({ coverClear: +v })} />
+        <UnitInputRow label="Clear cover" value={m.section.coverClear} quantity="length" onChange={v => sec({ coverClear: v })} />
         <SelectRow label="Stirrup size" value={m.section.stirrupDia}
-          options={BAR_SIZES.map(s => ({ value: s, label: `#${s}` }))}
+          options={barSizeOptions(units, m.section.stirrupDia).map(s => ({ value: s, label: formatBarLabel(s) }))}
           onChange={v => sec({ stirrupDia: +v })} />
       </div>
 
@@ -158,7 +184,7 @@ export default function MemberEditor({ member, onUpdate }: Props) {
           </div>
           <div style={{ flex: 1 }}>
             <SelectRow label="Size" value={m.rebar.topBars[0]?.barSize ?? 8}
-              options={BAR_SIZES.map(s => ({ value: s, label: `#${s}` }))}
+              options={barSizeOptions(units, m.rebar.topBars[0]?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => topBar({ barSize: +v })} />
           </div>
         </div>
@@ -170,7 +196,7 @@ export default function MemberEditor({ member, onUpdate }: Props) {
           </div>
           <div style={{ flex: 1 }}>
             <SelectRow label="Size" value={m.rebar.botBars[0]?.barSize ?? 8}
-              options={BAR_SIZES.map(s => ({ value: s, label: `#${s}` }))}
+              options={barSizeOptions(units, m.rebar.botBars[0]?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => botBar({ barSize: +v })} />
           </div>
         </div>
@@ -178,12 +204,12 @@ export default function MemberEditor({ member, onUpdate }: Props) {
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
             <SelectRow label="Size" value={m.rebar.ties?.barSize ?? 4}
-              options={BAR_SIZES.map(s => ({ value: s, label: `#${s}` }))}
+              options={barSizeOptions(units, m.rebar.ties?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => ties({ barSize: +v })} />
           </div>
           <div style={{ flex: 1 }}>
-            <InputRow label="Spacing" value={m.rebar.ties?.spacing ?? 6} unit="in"
-              onChange={v => ties({ spacing: +v })} />
+            <UnitInputRow label="Spacing" value={m.rebar.ties?.spacing ?? 6} quantity="length"
+              onChange={v => ties({ spacing: v })} />
           </div>
           <div style={{ flex: 1 }}>
             <InputRow label="Legs" value={m.rebar.ties?.legs ?? 2} min={2}

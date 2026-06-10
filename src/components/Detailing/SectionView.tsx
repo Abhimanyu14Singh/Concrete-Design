@@ -1,3 +1,4 @@
+import { formatBarLabel } from '../../utils/rebar';
 import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
@@ -180,7 +181,7 @@ export default function SectionView({
           <text x={ox + scaledW + 8} y={topLabelY + 4}
             fontSize="10" fill={TOP_COLOR} fontFamily="monospace"
             {...labelEvents('top')}>
-            {rebar.topBars[0] ? `${rebar.topBars[0].numBars}-#${rebar.topBars[0].barSize}` : '—'}
+            {rebar.topBars[0] ? `${rebar.topBars[0].numBars}-${formatBarLabel(rebar.topBars[0].barSize)}` : '—'}
           </text>
           <text x={ox + scaledW + 8} y={topLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
@@ -191,7 +192,7 @@ export default function SectionView({
           <text x={ox + scaledW + 8} y={botLabelY + 4}
             fontSize="10" fill={BOT_COLOR} fontFamily="monospace"
             {...labelEvents('bot')}>
-            {rebar.botBars[0] ? `${rebar.botBars[0].numBars}-#${rebar.botBars[0].barSize}` : '—'}
+            {rebar.botBars[0] ? `${rebar.botBars[0].numBars}-${formatBarLabel(rebar.botBars[0].barSize)}` : '—'}
           </text>
           <text x={ox + scaledW + 8} y={botLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
@@ -219,7 +220,7 @@ export default function SectionView({
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
                 fontSize="10" fill={STR_COLOR} fontFamily="monospace"
                 {...labelEvents('stir')}>
-                #{rebar.ties.barSize}@{rebar.ties.spacing}"
+                {formatBarLabel(rebar.ties.barSize)}@{rebar.ties.spacing}"
               </text>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
                 fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>

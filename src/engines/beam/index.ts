@@ -10,19 +10,24 @@ import type { DesignEngine } from '../types';
 import type { BeamSection, BeamRebar, BeamLoadCase, BeamResults } from '../../types/beam';
 import type { MaterialProps } from '../../types/common';
 import { designMember } from '../../utils/concreteDesign';
+import { designMemberEC2 } from '../ec2/ec2Beam';
 
 export class BeamDesignEngine
   implements DesignEngine<BeamSection, BeamRebar, BeamLoadCase, BeamResults>
 {
   readonly memberType = 'beam' as const;
-  readonly supportedCodes = ['ACI318-19', 'ACI318-14'];
+  readonly supportedCodes = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
 
   design(
     section: BeamSection,
     material: MaterialProps,
     rebar: BeamRebar,
     load: BeamLoadCase,
+    code?: string,
   ): BeamResults {
+    if (code === 'EN1992-1-1') {
+      return designMemberEC2(section, material, rebar, load);
+    }
     return designMember(section, material, rebar, load);
   }
 

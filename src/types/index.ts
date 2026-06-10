@@ -1,5 +1,5 @@
 export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column';
-export type DesignCode = 'ACI318-19' | 'ACI318-14';
+export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1';
 export type MemberType = 'beam' | 'column' | 'wall';
 export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
 

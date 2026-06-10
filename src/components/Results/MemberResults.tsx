@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import type { Member, DesignResults, RebarLayout } from '../../types';
-import { designMember } from '../../utils/concreteDesign';
+import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
+import { runDesign } from '../../engines';
+import { capacityLabels } from '../../utils/units';
+import { formatBarLabel } from '../../utils/rebar';
+import { useUnits } from '../../contexts/UnitsContext';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import CalcBreakdownModal from './CalcBreakdownModal';
 
 interface Props {
   member: Member;
+  code?: DesignCode;
   onRebarChange?: (updated: Member) => void;
 }
 
@@ -30,16 +34,18 @@ function dcrStyle(dcr: number): React.CSSProperties {
   return { background: bg, color, fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
-export default function MemberResults({ member, onRebarChange }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', onRebarChange }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
+  const { fmt } = useUnits();
+  const cap = capacityLabels(code);
 
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const result: DesignResults = designMember(member.section, member.material, member.rebar, load, member.span);
+  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code);
 
   // C1: compute all-LC results to find governing cases
-  const allResults = member.loads.map(l => ({ id: l.id, label: l.label, r: designMember(member.section, member.material, member.rebar, l, member.span) }));
+  const allResults = member.loads.map(l => ({ id: l.id, label: l.label, r: runDesign(member.section, member.material, member.rebar, l, member.span, code) }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
   const govShear    = allResults.reduce((a, b) => b.r.DCR_shear     > a.r.DCR_shear     ? b : a).id;
@@ -54,7 +60,7 @@ export default function MemberResults({ member, onRebarChange }: Props) {
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => designMember(member.section, member.material, { ...member.rebar, ...r }, l, member.span));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 
@@ -96,6 +102,7 @@ export default function MemberResults({ member, onRebarChange }: Props) {
         <CalcBreakdownModal
           member={member}
           loadId={activeLoad || member.loads[0]?.id}
+          code={code}
           onClose={() => setShowCalc(false)}
         />
       )}
@@ -150,23 +157,23 @@ export default function MemberResults({ member, onRebarChange }: Props) {
         {/* Left: member properties + applied loads */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
           <SectionLabel title="Member" />
-          <KV k="f'c" v={`${member.material.fc} psi`} />
-          <KV k="fy" v={`${(member.material.fy / 1000).toFixed(0)} ksi`} />
+          <KV k={code === 'EN1992-1-1' ? 'fck (cyl)' : "f'c"} v={fmt(member.material.fc, 'stress')} />
+          <KV k="fy" v={fmt(member.material.fy / 1000, 'stressKsi')} />
           <KV k="λ" v={member.material.lambdaConcrete.toFixed(2)} />
-          <KV k="b" v={`${s.b}"`} />
-          <KV k="h" v={`${s.h}"`} />
-          {s.bw && <KV k="bw" v={`${s.bw}"`} />}
-          {s.hf && <KV k="hf" v={`${s.hf}"`} />}
-          <KV k="Cover" v={`${s.coverClear}"`} />
-          {t && <KV k="Stirrups" v={`#${t.barSize}@${t.spacing}"`} />}
-          {member.span && <KV k="Span" v={`${member.span} ft`} />}
+          <KV k="b" v={fmt(s.b, 'length')} />
+          <KV k="h" v={fmt(s.h, 'length')} />
+          {s.bw && <KV k="bw" v={fmt(s.bw, 'length')} />}
+          {s.hf && <KV k="hf" v={fmt(s.hf, 'length')} />}
+          <KV k="Cover" v={fmt(s.coverClear, 'length')} />
+          {t && <KV k="Stirrups" v={`${formatBarLabel(t.barSize)}@${fmt(t.spacing, 'length')}`} />}
+          {member.span && <KV k="Span" v={fmt(member.span, 'spanLength')} />}
 
           <SectionLabel title="Applied Loads" />
-          {load.Mu_pos > 0 && <KV k="Mu+" v={`${load.Mu_pos.toFixed(1)} k-ft`} />}
-          {load.Mu_neg > 0 && <KV k="Mu−" v={`${load.Mu_neg.toFixed(1)} k-ft`} />}
-          <KV k="Vu" v={`${load.Vu.toFixed(1)} kips`} />
-          {load.Tu > 0 && <KV k="Tu" v={`${load.Tu.toFixed(1)} k-ft`} />}
-          {load.Pu !== 0 && <KV k="Pu" v={`${load.Pu.toFixed(1)} kips`} />}
+          {load.Mu_pos > 0 && <KV k="Mu+" v={fmt(load.Mu_pos, 'moment')} />}
+          {load.Mu_neg > 0 && <KV k="Mu−" v={fmt(load.Mu_neg, 'moment')} />}
+          <KV k="Vu" v={fmt(load.Vu, 'force')} />
+          {load.Tu > 0 && <KV k="Tu" v={fmt(load.Tu, 'moment')} />}
+          {load.Pu !== 0 && <KV k="Pu" v={fmt(load.Pu, 'force')} />}
         </div>
 
         {/* Center: Section diagram */}
@@ -192,26 +199,26 @@ export default function MemberResults({ member, onRebarChange }: Props) {
         {/* Right: design results */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
           <SectionLabel title="Flexure" />
-          <KV k="φMn+" v={`${result.phi_Mn_pos.toFixed(1)} k-ft`} />
+          <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')} />
           <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} />
-          <KV k="φMn−" v={`${result.phi_Mn_neg.toFixed(1)} k-ft`} />
+          <KV k={`${cap.Mn}−`} v={fmt(result.phi_Mn_neg, 'moment')} />
           <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg} />
-          <KV k="As req+" v={`${result.As_req_pos.toFixed(2)} in²`} />
-          <KV k="As req−" v={`${result.As_req_neg.toFixed(2)} in²`} />
-          <KV k="As min" v={`${result.As_min.toFixed(2)} in²`} />
-          <KV k="As max" v={`${result.As_max.toFixed(2)} in²`} />
+          {code !== 'EN1992-1-1' && <KV k="As req+" v={fmt(result.As_req_pos, 'area')} />}
+          {code !== 'EN1992-1-1' && <KV k="As req−" v={fmt(result.As_req_neg, 'area')} />}
+          <KV k="As min" v={fmt(result.As_min, 'area')} />
+          <KV k="As max" v={fmt(result.As_max, 'area')} />
 
           <SectionLabel title="Shear" />
-          <KV k="Vc" v={`${result.Vc.toFixed(1)} kips`} />
-          <KV k="Vs" v={`${result.Vs.toFixed(1)} kips`} />
-          <KV k="φVn" v={`${result.phi_Vn.toFixed(1)} kips`} />
+          <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
+          <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
+          <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
           <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
-          <KV k="Av req" v={`${result.Av_req.toFixed(4)} in²/in`} />
-          <KV k="Av min/s" v={`${result.Av_min_per_s.toFixed(4)} in²/in`} />
+          {code !== 'EN1992-1-1' && <KV k="Av req" v={`${result.Av_req.toFixed(4)} in²/in`} />}
+          {code !== 'EN1992-1-1' && <KV k="Av min/s" v={`${result.Av_min_per_s.toFixed(4)} in²/in`} />}
 
           <SectionLabel title="Torsion" />
-          <KV k="Tcr" v={`${result.Tcr.toFixed(1)} k-ft`} />
-          <KV k="φTn" v={`${result.phi_Tn.toFixed(1)} k-ft`} />
+          <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')} />
+          <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')} />
           <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion} />
         </div>
       </div>

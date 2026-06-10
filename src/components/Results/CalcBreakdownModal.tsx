@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import type { Member } from '../../types';
+import type { Member, DesignCode } from '../../types';
 import { generateBreakdown } from '../../utils/calcBreakdown';
+import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
 import type { CalcSection } from '../../utils/calcBreakdown';
 
 interface Props {
   member: Member;
   loadId: string;
+  code?: DesignCode;
   onClose: () => void;
 }
 
-export default function CalcBreakdownModal({ member, loadId, onClose }: Props) {
+export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', onClose }: Props) {
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
-  const sections: CalcSection[] = generateBreakdown(
-    member.section, member.material, member.rebar, load, member.span
-  );
+  const sections: CalcSection[] = code === 'EN1992-1-1'
+    ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span)
+    : generateBreakdown(member.section, member.material, member.rebar, load, member.span);
 
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(sections.map(s => s.title))

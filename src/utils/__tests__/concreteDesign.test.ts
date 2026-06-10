@@ -454,3 +454,42 @@ describe('designMember — ACI code checks', () => {
     expect(r.Av_min_per_s).toBeCloseTo(expected, 4);
   });
 });
+
+describe('metric bar encoding (negative barSize = Ø mm)', () => {
+  it('getBarDiam(-16) = 16/25.4 in', () => {
+    expect(getBarDiam(-16)).toBeCloseTo(0.6299, 4);
+  });
+
+  it('getBarArea(-16) ≈ 201 mm² = 0.3117 in²', () => {
+    expect(getBarArea(-16)).toBeCloseTo(201.06 / 645.16, 4);
+  });
+
+  it('getBarArea(-25) ≈ 490.9 mm² in in²', () => {
+    expect(getBarArea(-25)).toBeCloseTo(490.87 / 645.16, 3);
+  });
+
+  it('US bars unaffected', () => {
+    expect(getBarArea(8)).toBeCloseTo(0.79, 4);
+    expect(getBarDiam(8)).toBeCloseTo(1.0, 4);
+  });
+
+  it('unknown positive sizes still return 0', () => {
+    expect(getBarArea(99)).toBe(0);
+    expect(getBarDiam(99)).toBe(0);
+  });
+
+  it('designMember runs with all-metric rebar and gives sane results', () => {
+    const metricRebar: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 4, barSize: -20 }],
+      ties: { barSize: -10, spacing: 6, legs: 2 },
+    };
+    const r = designMember(rect16x24, mat4k, metricRebar, stdLoad);
+    expect(r.phi_Mn_pos).toBeGreaterThan(0);
+    expect(r.phi_Vn).toBeGreaterThan(0);
+    expect(Number.isFinite(r.DCR_flex_pos)).toBe(true);
+    // 4-Ø20 = 1257 mm² ≈ 1.95 in² ≈ 2.5 #8 — capacity should be in a plausible band
+    const rUS = designMember(rect16x24, mat4k, { ...metricRebar, botBars: [{ numBars: 4, barSize: 8 }] }, stdLoad);
+    expect(r.phi_Mn_pos).toBeLessThan(rUS.phi_Mn_pos); // 1.95 in² < 3.16 in²
+  });
+});

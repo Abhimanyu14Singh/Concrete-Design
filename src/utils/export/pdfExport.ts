@@ -1,6 +1,7 @@
+import { formatBarLabel } from '../rebar';
 import { PDFDocument, rgb, StandardFonts, type PDFPage, type PDFFont } from 'pdf-lib';
 import type { Project, Member, DesignResults } from '../../types';
-import { designMember } from '../concreteDesign';
+import { runDesign } from '../../engines';
 
 // Colour palette
 const C = {
@@ -47,10 +48,10 @@ function line(ctx: DrawCtx, x1: number, y1: number, x2: number, y2: number, thic
   ctx.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color });
 }
 
-function worstResult(m: Member): DesignResults | null {
+function worstResult(m: Member, code?: string): DesignResults | null {
   let worst: DesignResults | null = null;
   for (const lc of m.loads) {
-    const r = designMember(m.section, m.material, m.rebar, lc, m.span ?? 20);
+    const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code);
     if (!worst || Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion) >
                   Math.max(worst.DCR_flex_pos, worst.DCR_flex_neg, worst.DCR_shear, worst.DCR_torsion))
       worst = r;
@@ -96,7 +97,7 @@ export async function exportPDF(project: Project): Promise<void> {
 
   let row = h - 260;
   for (const m of project.members) {
-    const r = worstResult(m);
+    const r = worstResult(m, project.code);
     if (!r) continue;
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
     const bg = project.members.indexOf(m) % 2 === 0 ? C.light : C.white;
@@ -134,7 +135,7 @@ export async function exportPDF(project: Project): Promise<void> {
     const props = [
       [`b=${m.section.b}"`, `h=${m.section.h}"`, `cc=${m.section.coverClear}"`],
       [`f'c=${m.material.fc}psi`, `fy=${m.material.fy / 1000}ksi`, `fyt=${m.material.fyt / 1000}ksi`],
-      [`λ=${m.material.lambdaConcrete}`, `Stirrup #${m.section.stirrupDia}`, `Span ${m.span}ft`],
+      [`λ=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${m.span}ft`],
     ];
     props.forEach((row2, ri) =>
       row2.forEach((v, ci) => text(ctx, v, margin + 8 + ci * 70, y - 24 - ri * 12, 8)));
@@ -150,7 +151,7 @@ export async function exportPDF(project: Project): Promise<void> {
     y -= 16;
 
     for (const lc of m.loads) {
-      const r = designMember(m.section, m.material, m.rebar, lc, m.span ?? 20);
+      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code);
       const bg = m.loads.indexOf(lc) % 2 === 0 ? C.light : C.white;
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
       const lcVals = [lc.label.slice(0, 12),
@@ -170,7 +171,7 @@ export async function exportPDF(project: Project): Promise<void> {
     // Warnings
     const allWarnings: { code: string; message: string; severity: string }[] = [];
     for (const lc of m.loads) {
-      const r = designMember(m.section, m.material, m.rebar, lc, m.span ?? 20);
+      const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, project.code);
       for (const w of r.warnings)
         if (!allWarnings.find(x => x.message === w.message))
           allWarnings.push(w);

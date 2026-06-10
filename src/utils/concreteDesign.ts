@@ -18,8 +18,15 @@ const BAR_DIAMS: Record<number, number> = {
   9: 1.128, 10: 1.270, 11: 1.410, 14: 1.693, 18: 2.257,
 };
 
-export function getBarArea(size: number): number { return BAR_AREAS[size] ?? 0; }
-export function getBarDiam(size: number): number { return BAR_DIAMS[size] ?? 0; }
+// Negative barSize = metric bar Ø in mm (e.g. -16 = Ø16); returns in²/in
+export function getBarArea(size: number): number {
+  if (size < 0) { const d = -size / 25.4; return Math.PI * d * d / 4; }
+  return BAR_AREAS[size] ?? 0;
+}
+export function getBarDiam(size: number): number {
+  if (size < 0) return -size / 25.4;
+  return BAR_DIAMS[size] ?? 0;
+}
 
 function getRebarAs(bars: { numBars: number; barSize: number }[]): number {
   return bars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);

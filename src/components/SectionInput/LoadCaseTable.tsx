@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { LoadCase } from '../../types';
+import { useUnits } from '../../contexts/UnitsContext';
+import type { Quantity } from '../../utils/units';
 
 interface Props {
   loads: LoadCase[];
@@ -19,15 +21,16 @@ const LABEL_INPUT: React.CSSProperties = {
   ...INPUT, textAlign: 'left', fontFamily: 'system-ui',
 };
 
-const FIELDS: { key: keyof LoadCase; label: string; unit: string }[] = [
-  { key: 'Mu_pos', label: 'Mu+',  unit: 'k-ft'  },
-  { key: 'Mu_neg', label: 'Mu−',  unit: 'k-ft'  },
-  { key: 'Vu',    label: 'Vu',   unit: 'kips'   },
-  { key: 'Tu',    label: 'Tu',   unit: 'k-ft'   },
-  { key: 'Pu',    label: 'Pu',   unit: 'kips'   },
+const FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [
+  { key: 'Mu_pos', label: 'Mu+', quantity: 'moment' },
+  { key: 'Mu_neg', label: 'Mu−', quantity: 'moment' },
+  { key: 'Vu',    label: 'Vu',  quantity: 'force'  },
+  { key: 'Tu',    label: 'Tu',  quantity: 'moment' },
+  { key: 'Pu',    label: 'Pu',  quantity: 'force'  },
 ];
 
 export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
+  const { label: unitLbl, toDisplay, fromDisplay } = useUnits();
   const [rows, setRows] = useState<LoadCase[]>(
     loads.length > 0
       ? loads
@@ -57,11 +60,11 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
       return {
         id: uid(),
         label: cols[0]?.trim() || `LC ${i + 1}`,
-        Mu_pos: parseFloat(cols[1] ?? '') || 0,
-        Mu_neg: parseFloat(cols[2] ?? '') || 0,
-        Vu:     parseFloat(cols[3] ?? '') || 0,
-        Tu:     parseFloat(cols[4] ?? '') || 0,
-        Pu:     parseFloat(cols[5] ?? '') || 0,
+        Mu_pos: fromDisplay(parseFloat(cols[1] ?? '') || 0, 'moment'),
+        Mu_neg: fromDisplay(parseFloat(cols[2] ?? '') || 0, 'moment'),
+        Vu:     fromDisplay(parseFloat(cols[3] ?? '') || 0, 'force'),
+        Tu:     fromDisplay(parseFloat(cols[4] ?? '') || 0, 'moment'),
+        Pu:     fromDisplay(parseFloat(cols[5] ?? '') || 0, 'force'),
       };
     });
     setRows(parsed);
@@ -96,7 +99,7 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
                 {FIELDS.map(f => (
                   <th key={f.key} style={{ ...th, textAlign: 'right' }}>
                     {f.label}
-                    <span style={{ color: '#9ca3af', fontWeight: 400, marginLeft: 3 }}>{f.unit}</span>
+                    <span style={{ color: '#9ca3af', fontWeight: 400, marginLeft: 3 }}>{unitLbl(f.quantity)}</span>
                   </th>
                 ))}
                 <th style={{ ...th, width: 28 }} />
@@ -118,8 +121,8 @@ export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
                       <input
                         type="number"
                         style={INPUT}
-                        value={row[f.key] as number}
-                        onChange={e => setField(idx, { [f.key]: Number(e.target.value) })}
+                        value={+toDisplay(row[f.key] as number, f.quantity).toFixed(4)}
+                        onChange={e => setField(idx, { [f.key]: fromDisplay(Number(e.target.value), f.quantity) })}
                       />
                     </td>
                   ))}

@@ -2,6 +2,7 @@
  * Generates a step-by-step ACI 318-19 calculation breakdown
  * as a structured array of steps with equation, substitution, and result.
  */
+import { formatBarLabel } from './rebar';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
 import { getBarArea, getBarDiam } from './concreteDesign';
 
@@ -143,8 +144,8 @@ export function generateBreakdown(
   ];
 
   // ── Reinforcement ────────────────────────────────────────────────────
-  const topBarDesc = rebar.topBars.map(g => `${g.numBars}−#${g.barSize}`).join(' + ');
-  const botBarDesc = rebar.botBars.map(g => `${g.numBars}−#${g.barSize}`).join(' + ');
+  const topBarDesc = rebar.topBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
+  const botBarDesc = rebar.botBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
 
   const rebarSteps: CalcStep[] = [
     {
