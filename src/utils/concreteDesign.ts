@@ -78,6 +78,8 @@ export function computeFlexure(
   As_top: number,
   As_bot: number,
   span = 20,
+  topBarSize = 8,
+  botBarSize = 8,
 ): {
   phi_Mn_pos: number; phi_Mn_neg: number;
   Mn_pos: number;     Mn_neg: number;
@@ -90,10 +92,8 @@ export function computeFlexure(
   const beff = effectiveFlange(section, span);
   const bw   = section.bw ?? section.b;
 
-  // Use representative bar size #8; caller may pass actual size for precision
-  const botBarSize = section.type !== 'rectangular_beam' ? 9 : 8;
   const d_pos = effectiveDepth(section, botBarSize);
-  const d_neg = effectiveDepth(section, botBarSize);
+  const d_neg = effectiveDepth(section, topBarSize);
 
   function calcMn(As: number, d: number, bFlange: number): { Mn: number; a: number; phi: number } {
     if (As <= 0) return { Mn: 0, a: 0, phi: 0.9 };
@@ -142,23 +142,16 @@ export function computeShear(
   material: MaterialProps,
   rebar: RebarLayout,
   Nu = 0,
-): { Vc: number; Vs: number; phi_Vn: number; Av_req: number; Av_prov: number; d_shear: number } {
+): { Vc: number; Vs: number; phi_Vn: number; Av_req: number; Av_prov: number; d_shear: number; Av_min_per_s: number } {
   const { fc, fyt, lambdaConcrete } = material;
   const bw  = section.bw ?? section.b;
   const h   = section.h ?? 12;
   const phi = 0.75;
 
   const d_raw   = effectiveDepth(section, 8);
-  // d ≥ 0.8h lower bound for shear (conservative S-CONCRETE practice)
   const d_shear = Math.max(d_raw, 0.8 * h);
 
-  const As_bot = getRebarAs(rebar.botBars);
-  const rho_w  = As_bot / (bw * d_shear);
-
-  // ACI 318-19 Table 22.5.5.1 (with size effect factor λs)
-  const lambda_s = Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d_shear)));
-  const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(rho_w, 1 / 3) * Math.sqrt(fc)
-    + Nu / (6 * bw * d_shear)) * bw * d_shear / 1000;
+  const Av_min_per_s = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
 
   const ties = rebar.ties;
   let Vs = 0;
@@ -168,7 +161,19 @@ export function computeShear(
     Vs = (Av_prov * fyt * d_shear) / (ties.spacing * 1000);
   }
 
-  return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear };
+  const As_bot = getRebarAs(rebar.botBars);
+  const rho_w  = As_bot / (bw * d_shear);
+
+  // Bug 4 fix: λs only applies when Av/s < Av,min/s (ACI §22.5.5.1.1)
+  const Av_s_prov = ties ? (ties.legs * getBarArea(ties.barSize)) / ties.spacing : 0;
+  const hasMinStirrups = Av_s_prov >= Av_min_per_s;
+  const lambda_s = hasMinStirrups ? 1.0 : Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d_shear)));
+
+  const Ag = bw * h;
+  const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(Math.max(rho_w, 1e-6), 1 / 3) * Math.sqrt(fc)
+    + Nu / (6 * Ag)) * bw * d_shear / 1000;
+
+  return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s };
 }
 
 // ── Torsion (ACI §22.7) ───────────────────────────────────────────────────────
