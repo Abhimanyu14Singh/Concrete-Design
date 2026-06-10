@@ -1,60 +1,119 @@
-# S-Concrete Design
+# S-Concrete
 
-Reinforced concrete design application per **ACI 318-19**, similar to Altair S-Concrete.
-Covers beams (rectangular, T-beam, L-beam) and columns (rectangular, circular).
+A structural reinforced concrete beam design web application built with **React + TypeScript + Vite**.
+
+Supports both **ACI 318-19** and **EN 1992-1-1 (Eurocode 2)** design codes with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
+
+> **Important:** All calculations must be independently verified by a licensed engineer before use in any real project.
+
+---
+
+## Overview
+
+S-Concrete provides a complete beam design workflow — from geometry and material input through code checks, detailing, and visual output. Switch between ACI and Eurocode 2 at any time using the design code selector in the header. Results update instantly.
 
 ---
 
 ## Features
 
-- **Flexure** — rectangular stress block, T-beam flange, tension/compression reinforcement, φ factor per strain
-- **Shear** — ACI 318-19 size-effect method (Table 22.5.5.1), stirrup contribution, minimum stirrup check
-- **Torsion** — cracking torsion, neglect threshold, space truss capacity
-- **Columns** — P-M interaction diagram, biaxial check
-- **DCR dashboard** — per-member Demand/Capacity Ratio bars and status (OK / Warning / NG)
-- **Section detailing** — SVG cross-section and elevation views with bar layout
-- **Calculation breakdown** — step-by-step ACI code equations with substituted values
+### Design Codes Supported
+
+| Code | Flexure | Shear | Torsion | Detailing | Crack Width |
+|------|---------|-------|---------|-----------|-------------|
+| ACI 318-19 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
+| ACI 318-14 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
+| EN 1992-1-1 (EC2) | §6.1 M_Rd | §6.2 V_Rd,c/s/max | §6.3 T_Rd | §9.2 | §7.3.4 |
+
+**ACI 318-19 beam design**
+- Rectangular stress block, T-beam and L-beam flanges
+- Tension and compression reinforcement; φ factor per strain regime
+- Size-effect shear (Table 22.5.5.1), stirrup contribution, minimum stirrup check
+- Cracking torsion, neglect threshold, space-truss torsion capacity
+- Detailing checks per §9.6–9.7
+
+**EN 1992-1-1 (Eurocode 2) beam design**
+- Positive and negative flexure — M_Rd⁺ and M_Rd⁻ (§6.1)
+- V_Rd,c (concrete contribution), V_Rd,s (stirrups), V_Rd,max (crushing limit) (§6.2)
+- Torsion capacity T_Rd and combined V+T interaction per §6.3.2(5)
+- Detailing checks per §9.2
+- Crack width w_k (§7.3.4) for bottom, top, and side faces; accepts per-face limits, M_qp/Mu ratio, and kt factor
+
+### Design Code Selector
+Switch between ACI 318-19, ACI 318-14, and EN 1992-1-1 from the header without losing project data.
+
+### Step-by-Step Calculation Sheet
+"Show Calculations" opens a modal with every check displayed as:
+`equation → substitution → result`
+
+Covers all EC2 checks including V+T interaction, negative flexure, and top/side face crack widths.
+
+### SI / Imperial Unit Toggle
+Display units can be toggled between SI and imperial at any time. Project data is stored internally in imperial units; conversions are applied on display.
+
+### Metric Rebar Support
+Bar sizes use a signed encoding: positive values are US customary bars (e.g. `5` = #5), negative values are metric bars (e.g. `-16` = Ø16 mm).
+
+### Crack Control Inputs (EC2)
+Per-face crack width limits, quasi-permanent moment ratio M_qp/Mu, and kt factor are configurable inputs for EC2 crack width calculations.
+
+### DCR Dashboard
+Bar charts showing Demand/Capacity Ratios for all members and load cases. Status indicators: OK / Warning / NG.
+
+### Multiple Load Cases
+Each member supports multiple load cases; all are checked independently.
+
+### Save / Open Project Files
+Projects are saved and opened as JSON files for portability and version control.
+
+### Section Detailing Views
+SVG cross-section and elevation views showing rebar layout and spacing.
 
 ---
 
-## Option A — Run in browser (needs Node.js once)
+## Tech Stack
 
-**Prerequisites:** [Node.js 18+](https://nodejs.org/en/download) (free, one-time install ~70 MB)
+| Layer | Technology |
+|-------|-----------|
+| UI framework | React 19 |
+| Language | TypeScript |
+| Build tool | Vite |
+| Styling | Tailwind CSS |
+| Charts | Recharts |
+| Desktop (optional) | Electron |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+[Node.js 18+](https://nodejs.org/en/download) — free, one-time install (~70 MB).
+
+### Option A — Browser (development server)
 
 ```bash
-# 1. Clone
 git clone https://github.com/Abhimanyu14Singh/Concrete-Design.git
 cd Concrete-Design
-
-# 2. Install dependencies (one-time, ~30 seconds)
 npm install
-
-# 3. Start
 npm run dev
-# → Open http://localhost:5173 in your browser
+# Open http://localhost:5173
 ```
 
----
-
-## Option B — Desktop app, no browser needed (Electron)
-
-**Prerequisites:** Node.js 18+ (same as above — needed only to build)
+### Option B — Desktop app (Electron)
 
 ```bash
 npm install
 npm run electron:build
 ```
 
-This produces an installer in the `release/` folder:
-- **Windows** → `release/S-Concrete Design Setup x.x.x.exe`  (double-click to install, then launch from Start Menu)
-- **macOS**   → `release/S-Concrete Design-x.x.x.dmg`
-- **Linux**   → `release/S-Concrete Design-x.x.x.AppImage` (mark executable: `chmod +x *.AppImage && ./S-Concrete*.AppImage`)
+Produces an installer in `release/`:
+- **Windows** — `release/S-Concrete Design Setup x.x.x.exe`
+- **macOS** — `release/S-Concrete Design-x.x.x.dmg`
+- **Linux** — `release/S-Concrete Design-x.x.x.AppImage`
 
-Once installed, the app runs with **zero prerequisites** — no Node.js, no browser, no internet.
+Once installed, the app runs with no Node.js or browser required.
 
----
-
-## Option C — Static web build (host anywhere)
+### Option C — Static web build
 
 ```bash
 npm install
@@ -62,15 +121,13 @@ npm run build
 # Serve the dist/ folder from any static host (Netlify, GitHub Pages, nginx, etc.)
 ```
 
----
-
-## Development
+### Development commands
 
 ```bash
-npm run dev          # Hot-reload dev server
-npm test             # Run 40 unit tests (Vitest)
-npm run test:watch   # Watch mode
-npm run electron:dev # Electron in dev mode (hot-reload)
+npm run dev           # Hot-reload dev server
+npm test              # Run unit tests (Vitest)
+npm run test:watch    # Watch mode
+npm run electron:dev  # Electron dev mode with hot-reload
 ```
 
 ---
@@ -79,39 +136,37 @@ npm run electron:dev # Electron in dev mode (hot-reload)
 
 ```
 src/
-  types/           # TypeScript interfaces (Member, Section, Load, Results)
+  engines/
+    aci/                    # ACI 318-19 / 318-14 beam design engine
+    ec2/
+      ec2Beam.ts            # Eurocode 2 beam design engine
+    dispatcher.ts           # Routes calculations to the correct engine
+  adapters/                 # Placeholder adapters (ETABS, SAP2000 import)
   utils/
-    concreteDesign.ts   # ACI 318-19 design engine (pure functions)
-    calcBreakdown.ts    # Step-by-step calculation generator
-    sampleData.ts       # Pre-loaded sample project
-    __tests__/          # 40 Vitest unit tests
+    calcBreakdown.ts        # ACI step-by-step calculation sheet generator
+    calcBreakdownEC2.ts     # EC2 step-by-step calculation sheet generator
+    units.ts                # SI / imperial conversion utilities
+    rebar.ts                # Bar designation helpers (US customary + metric)
+  contexts/
+    UnitsContext.tsx         # React context for active unit system
+  types/                    # TypeScript interfaces (beam, column, wall, common)
   components/
-    Dashboard/          # Project overview, member table, DCR chart
-    Results/            # Per-member DCR bars, summary table, calc modal
-    Detailing/          # SVG section view, elevation view, P-M diagram
-    SectionInput/       # Member editor (geometry, materials, loads)
-    common/             # StatusBadge, DCRBar
-  App.tsx              # Layout, routing, state
+    Dashboard/              # Project overview, member table, DCR chart
+    Results/                # Per-member DCR bars, summary table, calc modal
+    Detailing/              # SVG section and elevation views
+    SectionInput/           # Member editor (geometry, materials, loads)
+  App.tsx                   # Layout, state, code-selector
 electron/
-  main.cjs             # Electron main process
+  main.cjs                  # Electron main process
 ```
+
+### Plugin-Ready Design
+`src/engines/` and `src/adapters/` are structured to accept additional design engines (wall, column) and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines.
 
 ---
 
-## Honest status
+## Design Codes Supported
 
-This is a **well-structured prototype**, not a certified production tool. Gaps to close before production use:
-
-| Gap | Status |
-|-----|--------|
-| Unit tests for design engine | ✅ 40 tests passing |
-| Input validation & error boundaries | ⚠ Partial |
-| Save / load project files | ❌ Not yet |
-| PDF / Excel report export | ❌ Not yet |
-| Biaxial column design (full) | ⚠ Interaction diagram only |
-| Wall design | ❌ Not yet |
-| Seismic detailing (ACI 318-19 Ch. 18) | ❌ Not yet |
-| Accessibility (WCAG) | ❌ Not yet |
-| Professional PE review of engine | ❌ Required before real use |
-
-> **Important:** All calculations should be independently verified by a licensed engineer before use in any real project.
+- **ACI 318-19** — Building Code Requirements for Structural Concrete
+- **ACI 318-14** — Previous edition (same clause structure)
+- **EN 1992-1-1:2004 (Eurocode 2)** — Design of Concrete Structures, Part 1-1
