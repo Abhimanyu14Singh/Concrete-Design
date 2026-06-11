@@ -32,11 +32,18 @@ function attach() {
     // Lazy require so non-Windows builds never load the native module
     // eslint-disable-next-line global-require
     winax = require('winax');
-  } catch {
+  } catch (e) {
+    if (process.platform !== 'win32') {
+      throw new Error(
+        'Live ETABS connection is only available in the Windows desktop app. ' +
+        'Use the "ETABS tables file" import instead.'
+      );
+    }
     throw new Error(
-      'Live ETABS connection is only available in the Windows desktop app ' +
-      '(the winax COM module is not installed on this platform). ' +
-      'Use the "ETABS tables file" import instead.'
+      'The winax COM module could not be loaded in this build ' +
+      `(${e && e.message ? e.message : 'not packaged or not compiled for Electron'}). ` +
+      'Reinstall the app from a build that includes native modules, ' +
+      'or use the "ETABS tables file" import instead.'
     );
   }
   let helper;

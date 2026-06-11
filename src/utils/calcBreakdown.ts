@@ -6,7 +6,7 @@ import { formatBarLabel } from './rebar';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
 import {
   getBarArea, getBarDiam,
-  effectiveDepth as engineEffectiveDepth,
+  effectiveDepthMulti, layerCentroidOffset,
   computeFlexure, computeShear, computeTorsion, zonedShearCheck,
 } from './concreteDesign';
 
@@ -31,12 +31,6 @@ function fmt(n: number, dec = 2): string {
 function beta1(fc: number): number {
   if (fc <= 4000) return 0.85;
   return Math.max(0.65, 0.85 - 0.05 * (fc - 4000) / 1000);
-}
-
-// Same formula as the design engine (concreteDesign.effectiveDepth with #8
-// outermost bar) so the breakdown numbers match the results screen exactly.
-function effectiveDepth(section: SectionDimensions): number {
-  return engineEffectiveDepth(section, 8);
 }
 
 function effectiveFlange(section: SectionDimensions, span: number): number {
@@ -67,7 +61,11 @@ export function generateBreakdown(
   const h = section.h ?? 12;
   const b = section.b;
   const bw = section.bw ?? b;
-  const d = effectiveDepth(section);
+  const sClear = rebar.layerClearSpacing ?? 1.0;
+  const d = effectiveDepthMulti(section, rebar.botBars, sClear);       // to bottom steel centroid
+  const d_neg = effectiveDepthMulti(section, rebar.topBars, sClear);   // to top steel centroid
+  const yBot = layerCentroidOffset(section, rebar.botBars, sClear);
+  const botLayers = rebar.botBars.filter(g => g.numBars > 0).length;
   const b1 = beta1(fc);
   const beff = effectiveFlange(section, span);
 
@@ -89,11 +87,15 @@ export function generateBreakdown(
     },
     {
       ref: 'ACI 318-19 §22.2.2',
-      label: 'Effective depth',
-      equation: 'd = h − cc − d_stirrup − d_bar/2',
-      substitution: `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − 0.50`,
+      label: 'Effective depth (to bottom steel centroid)',
+      equation: botLayers > 1 ? 'd = h − ȳs (area-weighted steel centroid)' : 'd = h − cc − d_stirrup − d_bar/2',
+      substitution: botLayers > 1
+        ? `ȳs = ${fmt(yBot)}" over ${botLayers} layers (clear layer spacing ${sClear}");  d = ${h} − ${fmt(yBot)}`
+        : `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − ${fmt(getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2)}`,
       result: `${fmt(d)} in`,
-      note: 'Using assumed bar radius of 0.5" (#8) for outermost bar — same as results engine',
+      note: botLayers > 1
+        ? 'Multi-layer tension steel — d measured to the area-weighted centroid (same as results engine)'
+        : `Outermost bottom bar ${formatBarLabel(rebar.botBars[0]?.barSize ?? 8)} — same as results engine`,
     },
     {
       ref: 'ACI 318-19 §22.2.2.4.3',
@@ -169,6 +171,19 @@ export function generateBreakdown(
     },
   ];
 
+  if (botLayers > 1 || rebar.topBars.filter(g => g.numBars > 0).length > 1) {
+    const allLayers = [...rebar.topBars, ...rebar.botBars].filter(g => g.numBars > 0);
+    const dbMax = Math.max(...allLayers.map(g => getBarDiam(g.barSize)));
+    const sReq = Math.max(1.0, dbMax);
+    rebarSteps.push({
+      ref: 'ACI 318-19 §25.2.2',
+      label: 'Vertical clear spacing between bar layers',
+      equation: 's_layer ≥ max(1", db)',
+      substitution: `s_layer = ${sClear}"  vs  max(1", ${fmt(dbMax)}") = ${fmt(sReq)}"`,
+      result: `${sClear} in  ${sClear >= sReq ? '✓ OK' : '⚠ NG'}`,
+    });
+  }
+
   if (rebar.ties) {
     rebarSteps.push({
       ref: 'Input',
@@ -179,10 +194,30 @@ export function generateBreakdown(
     });
   }
 
+  // ACI §25.2.1: min clear horizontal spacing within each layer
+  {
+    const Cc = section.coverClear + getBarDiam(section.stirrupDia);
+    for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+      for (const g of bars) {
+        if (g.numBars <= 1) continue;
+        const db = getBarDiam(g.barSize);
+        const s_clear = (bw - 2 * Cc - g.numBars * db) / (g.numBars - 1);
+        const s_req   = Math.max(1.0, db);
+        rebarSteps.push({
+          ref: 'ACI 318-19 §25.2.1',
+          label: `Clear horizontal spacing — ${face.toLowerCase()} bars (${g.numBars}−${formatBarLabel(g.barSize)})`,
+          equation: 's_clear = (bw − 2(cc + d_stir) − n·db) / (n − 1)  ≥ max(1", db)',
+          substitution: `s_clear = (${fmt(bw)} − 2×${fmt(Cc)} − ${g.numBars}×${fmt(db, 3)}) / ${g.numBars - 1}  vs  ${fmt(s_req)}"`,
+          result: `${fmt(s_clear)} in  ${s_clear >= s_req - 1e-9 ? '✓ OK' : '⚠ NG'}`,
+        });
+      }
+    }
+  }
+
   // Steel limits
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
   const As_min = rho_min * bw * d;
-  const As_max = 0.75 * b1 * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
+  const As_max = 0.85 * b1 * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
 
   rebarSteps.push(
     {
@@ -196,15 +231,17 @@ export function generateBreakdown(
     {
       ref: 'ACI 318-19 §9.3.3.1',
       label: 'Maximum flexural steel (net strain εt ≥ 0.004)',
-      equation: 'As,max = 0.75β₁(f\'c/fy)(0.003/(0.003+0.004)) × bw × d',
-      substitution: `0.75 × ${fmt(b1)} × (${fc}/${fy}) × (3/7) × ${fmt(bw)} × ${fmt(d)}`,
+      equation: 'As,max = 0.85β₁(f\'c/fy)(0.003/(0.003+0.004)) × bw × d',
+      substitution: `0.85 × ${fmt(b1)} × (${fc}/${fy}) × (3/7) × ${fmt(bw)} × ${fmt(d)}`,
       result: `${fmt(As_max)} in²`,
       note: As_bot > As_max ? '⚠ Provided As_bot > As_max (over-reinforced!)' : '✓ As_bot ≤ As_max',
     }
   );
 
   // ── Flexure — engine call (identical numbers to the results screen) ──
-  const flex = computeFlexure(section, material, As_top, As_bot, span);
+  const flex = computeFlexure(section, material, As_top, As_bot, span,
+    rebar.topBars[0]?.barSize ?? 8, rebar.botBars[0]?.barSize ?? 8,
+    rebar.topBars, rebar.botBars, sClear);
   const a_pos = flex.a_pos;
   const c_pos = a_pos / b1;
   const et_pos = c_pos > 0 ? 0.003 * (d - c_pos) / c_pos : 99;
@@ -286,7 +323,7 @@ export function generateBreakdown(
       ref: 'ACI 318-19 §22.3.2',
       label: 'Nominal moment (negative)',
       equation: 'Mn⁻ = As\'·fy·(d − a/2)',
-      substitution: `Mn⁻ = ${fmt(As_top)} × ${fy} × (${fmt(d)} − ${fmt(a_neg / 2)}) / 12,000`,
+      substitution: `Mn⁻ = ${fmt(As_top)} × ${fy} × (${fmt(d_neg)} − ${fmt(a_neg / 2)}) / 12,000`,
       result: `Mn⁻ = ${fmt(Mn_neg)} kip-ft`,
     },
     {
@@ -339,8 +376,16 @@ export function generateBreakdown(
     {
       ref: 'ACI 318-19 Table 22.5.5.1',
       label: 'Concrete shear strength',
-      equation: 'Vc = (8λλsρw^(1/3)√f\'c + Nu/6Ag) × bw × d',
-      substitution: `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(load.Pu / (6 * bw * h), 4)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
+      equation: hasMinStirrups
+        ? 'Vc = max(2λ√f\'c, 8λρw^(1/3)√f\'c) × bw × d  [min stirrups provided]'
+        : 'Vc = (8λλsρw^(1/3)√f\'c + Nu/6Ag) × bw × d',
+      substitution: hasMinStirrups
+        ? (() => {
+            const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + load.Pu / (6 * bw * h)) * bw * d_shear / 1000;
+            const Vc_b2 = (8 * lambdaConcrete * Math.pow(Math.max(rho_w, 1e-6), 1/3) * Math.sqrt(fc) + load.Pu / (6 * bw * h)) * bw * d_shear / 1000;
+            return `case (a) = ${fmt(Vc_a)} kips; case (b) = ${fmt(Vc_b2)} kips → governs: ${Vc_a >= Vc_b2 ? '(a)' : '(b)'}`;
+          })()
+        : `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(load.Pu / (6 * bw * h), 4)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
       result: `Vc = ${fmt(Vc)} kips`,
       note: load.Pu !== 0 ? `Includes axial term Nu/6Ag with Pu = ${load.Pu} kips` : undefined,
     },
@@ -366,6 +411,14 @@ export function generateBreakdown(
       equation: 'φVn = φ(Vc + Vs)',
       substitution: `φVn = 0.75 × (${fmt(Vc)} + ${fmt(Vs)})`,
       result: `φVn = ${fmt(phi_Vn)} kips`,
+    },
+    {
+      ref: 'ACI 318-19 §22.5.1.2',
+      label: 'Cross-section crushing limit',
+      equation: 'φVn,max = φ(Vc + 8√f\'c·bw·d)',
+      substitution: `φVn,max = 0.75 × (${fmt(Vc)} + 8×√${fc} × ${fmt(bw)} × ${fmt(d_shear)} / 1000)`,
+      result: `φVn,max = ${fmt(0.75 * (Vc + 8 * Math.sqrt(fc) * bw * d_shear / 1000))} kips  ${load.Vu <= 0.75 * (Vc + 8 * Math.sqrt(fc) * bw * d_shear / 1000) ? '✓ OK' : '✗ NG — enlarge section'}`,
+      note: 'Upper bound on shear capacity regardless of stirrups',
     },
     {
       ref: 'Design check',
@@ -417,16 +470,16 @@ export function generateBreakdown(
     },
     {
       ref: 'ACI 318-19 §22.7.4.1',
-      label: 'Threshold torsion (cracking)',
-      equation: 'Tcr = λ√f\'c × Acp² / Pcp / 12000',
-      substitution: `Tcr = ${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
+      label: 'Cracking torsion',
+      equation: 'Tcr = 4λ√f\'c × Acp² / Pcp / 12000',
+      substitution: `Tcr = 4×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
       result: `Tcr = ${fmt(Tcr)} kip-ft`,
     },
     {
-      ref: 'ACI 318-19 §22.7.4.1',
-      label: 'Torsion threshold (may neglect)',
-      equation: 'Tu,thresh = Tcr / 4',
-      substitution: `Tu,thresh = ${fmt(Tcr)} / 4`,
+      ref: 'ACI 318-19 §22.7.4.1(a)',
+      label: 'Threshold torsion (may neglect below this)',
+      equation: 'Tu,thresh = phi*lambda*sqrt(fc)*Acp^2/Pcp / 12000  (phi=0.75)',
+      substitution: `Tu,thresh = 0.75×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
       result: `Tu,thresh = ${fmt(Tu_thresh)} kip-ft`,
       note: load.Tu <= Tu_thresh
         ? `✓ Tu = ${load.Tu} k-ft ≤ Tu,thresh — torsion may be neglected`

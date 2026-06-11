@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "electron:dev": "NODE_ENV=development electron electron/main.cjs",
     "electron:build": "npm run build && electron-builder",
+    "rebuild:native": "electron-rebuild -w winax",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -35,6 +36,7 @@
     "@vitest/ui": "^4.1.8",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.2",
+    "@electron/rebuild": "^4.0.1",
     "electron-is-dev": "^3.0.1",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -54,7 +56,11 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/winax/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/winax/**/*"
     ],
     "win": {
       "target": [

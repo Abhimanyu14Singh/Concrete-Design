@@ -34,6 +34,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Compile the winax COM native module against Electron's ABI so the
+      # packaged desktop app can attach to a live ETABS instance.
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild:native
+
       - name: Build web assets (Vite)
         run: npm run build
 

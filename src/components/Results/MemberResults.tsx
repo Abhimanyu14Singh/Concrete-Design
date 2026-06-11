@@ -43,6 +43,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
+  const [elevZoom, setElevZoom] = useState(1);
   const { fmt } = useUnits();
   const cap = capacityLabels(code);
 
@@ -268,7 +269,21 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
             />
           )}
           {member.memberType === 'beam' && (
-            <ElevationView member={member} width={300} height={member.rebar.tieZones ? 110 : 90} />
+            <div style={{ width: '100%', maxWidth: 560 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 2 }}>
+                {([['−', -0.25], ['fit', 0], ['+', 0.25]] as const).map(([lbl, dz]) => (
+                  <button key={lbl}
+                    onClick={() => setElevZoom(z => dz === 0 ? 1 : Math.min(2.5, Math.max(1, +(z + dz).toFixed(2))))}
+                    title={dz === 0 ? 'Fit' : dz > 0 ? 'Zoom in' : 'Zoom out'}
+                    style={{ border: '1px solid #e5e7eb', background: 'white', color: '#6b7280', borderRadius: 5, fontSize: 10, padding: '1px 7px', cursor: 'pointer' }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+              <div style={{ overflowX: elevZoom > 1 ? 'auto' : 'visible' }}>
+                <ElevationView member={member} width={520} height={member.rebar.tieZones ? 200 : 170} zoom={elevZoom} />
+              </div>
+            </div>
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
             <ForceDiagram member={member} result={result} height={130} />

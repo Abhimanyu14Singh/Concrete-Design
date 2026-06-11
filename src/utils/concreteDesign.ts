@@ -5,7 +5,7 @@
 
 import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase,
-  DesignResults, DesignWarning, ComboForces,
+  DesignResults, DesignWarning, ComboForces, BarGroup,
 } from '../types';
 
 /** Max |V| within each third of the span — drives the zoned stirrup check. */
@@ -43,6 +43,60 @@ export function getBarDiam(size: number): number {
 
 function getRebarAs(bars: { numBars: number; barSize: number }[]): number {
   return bars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
+}
+
+/**
+ * Distance from the extreme tension fiber to the area-weighted centroid of a
+ * multi-layer bar group. Layers are listed outermost-first; layer i sits at
+ * cc + dstir + Σ_{j<i}(dbar_j + sClear) + dbar_i/2 from the face.
+ * For a single layer this reduces exactly to cc + dstir + dbar/2.
+ */
+export function layerCentroidOffset(
+  section: SectionDimensions,
+  bars: BarGroup[],
+  sClear = 1.0,
+): number {
+  const dStir = getBarDiam(section.stirrupDia);
+  let edge = section.coverClear + dStir; // running offset to top of next layer
+  let sumA = 0, sumAy = 0;
+  for (const g of bars) {
+    if (g.numBars <= 0) continue;
+    const db = getBarDiam(g.barSize);
+    const A  = g.numBars * getBarArea(g.barSize);
+    sumA  += A;
+    sumAy += A * (edge + db / 2);
+    edge  += db + sClear;
+  }
+  if (sumA <= 0) return section.coverClear + dStir + getBarDiam(8) / 2;
+  return sumAy / sumA;
+}
+
+/** Per-layer (area, depth-from-face) pairs for a multi-layer bar group. */
+export function layerDepths(
+  section: SectionDimensions,
+  bars: BarGroup[],
+  sClear = 1.0,
+): { A: number; y: number }[] {
+  const dStir = getBarDiam(section.stirrupDia);
+  let edge = section.coverClear + dStir;
+  const out: { A: number; y: number }[] = [];
+  for (const g of bars) {
+    if (g.numBars <= 0) continue;
+    const db = getBarDiam(g.barSize);
+    out.push({ A: g.numBars * getBarArea(g.barSize), y: edge + db / 2 });
+    edge += db + sClear;
+  }
+  return out;
+}
+
+/** Effective depth to the centroid of a (possibly multi-layer) bar group. */
+export function effectiveDepthMulti(
+  section: SectionDimensions,
+  bars: BarGroup[],
+  sClear = 1.0,
+): number {
+  const h = section.h ?? 12;
+  return h - layerCentroidOffset(section, bars, sClear);
 }
 
 // ── ACI helpers ───────────────────────────────────────────────────────────────
@@ -86,7 +140,8 @@ export function steelLimits(section: SectionDimensions, material: MaterialProps)
   const d  = effectiveDepth(section, 8);
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
   const As_min  = rho_min * bw * d;
-  const As_max  = 0.75 * beta1(fc) * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
+  // εt ≥ 0.004 limit (§9.3.3.1): c = 3d/7, As,max = 0.85·β₁·(f'c/fy)·(3/7)·bw·d
+  const As_max  = 0.85 * beta1(fc) * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
   return { As_min, As_max };
 }
 
@@ -100,6 +155,9 @@ export function computeFlexure(
   span = 20,
   topBarSize = 8,
   botBarSize = 8,
+  topBars?: BarGroup[],
+  botBars?: BarGroup[],
+  layerClearSpacing = 1.0,
 ): {
   phi_Mn_pos: number; phi_Mn_neg: number;
   Mn_pos: number;     Mn_neg: number;
@@ -112,14 +170,74 @@ export function computeFlexure(
   const beff = effectiveFlange(section, span);
   const bw   = section.bw ?? section.b;
 
-  const d_pos = effectiveDepth(section, botBarSize);
-  const d_neg = effectiveDepth(section, topBarSize);
+  const d_pos = botBars?.length
+    ? effectiveDepthMulti(section, botBars, layerClearSpacing)
+    : effectiveDepth(section, botBarSize);
+  const d_neg = topBars?.length
+    ? effectiveDepthMulti(section, topBars, layerClearSpacing)
+    : effectiveDepth(section, topBarSize);
 
-  function calcMn(As: number, d: number, bFlange: number): { Mn: number; a: number; phi: number } {
+  // d' for compression steel: distance from compression face to comp-steel centroid
+  const d_prime_pos = topBars?.length
+    ? layerCentroidOffset(section, topBars, layerClearSpacing)
+    : effectiveDepth(section, topBarSize);  // fallback (rarely used)
+  const d_prime_neg = botBars?.length
+    ? layerCentroidOffset(section, botBars, layerClearSpacing)
+    : section.coverClear + getBarDiam(section.stirrupDia) + getBarDiam(botBarSize) / 2;
+
+  function calcMn(
+    As: number, d: number, bFlange: number,
+    As_prime = 0, d_prime = 0,
+    compLayers?: { A: number; y: number }[],
+  ): { Mn: number; a: number; phi: number } {
     if (As <= 0) return { Mn: 0, a: 0, phi: 0.9 };
 
-    let a = (As * fy) / (0.85 * fc * bFlange);
     const hf = section.hf ?? h;
+
+    // Doubly-reinforced rectangular section (As' > 0, no T/L flange, comp steel in compression zone)
+    // First check via singly-reinforced c whether the "compression" steel is actually in compression.
+    if (As_prime > 0 && section.type !== 'T_beam' && section.type !== 'L_beam') {
+      const a_sr = (As * fy) / (0.85 * fc * bFlange);
+      const c_sr = a_sr / b1;
+      // Per-layer compression steel: each layer at its own depth with its own
+      // strain-compatible stress (reduces to the lumped-centroid result for one layer)
+      const layers = compLayers && compLayers.length > 0
+        ? compLayers
+        : [{ A: As_prime, y: d_prime }];
+      if (c_sr > Math.min(...layers.map(l => l.y))) {
+        // At least one comp layer is inside the compression zone — iterate equilibrium
+        const Cs_of = (c: number) => layers.reduce((sum, l) => {
+          const eps = 0.003 * (c - l.y) / c;
+          const fs = Math.min(Math.max(eps * 29_000_000, -fy), fy);
+          // displace concrete only where the bar sits inside the stress block
+          const disp = l.y < b1 * c ? 0.85 * fc : 0;
+          return sum + l.A * (fs - disp);
+        }, 0);
+        let a = (As * fy) / (0.85 * fc * bFlange);
+        for (let i = 0; i < 80; i++) {
+          const c = Math.max(a / b1, 1e-4);
+          const a_new = (As * fy - Cs_of(c)) / (0.85 * fc * bFlange);
+          if (Math.abs(a_new - a) < 1e-7) { a = a_new; break; }
+          a = 0.5 * (a + a_new); // damped update for stability
+        }
+        a = Math.max(a, 0.001);
+        const c = a / b1;
+        const et = 0.003 * (d - c) / c;
+        const phi = et >= 0.005 ? 0.9 : et <= 0.002 ? 0.65 : 0.65 + (et - 0.002) * (250 / 3);
+        const Cc = 0.85 * fc * bFlange * a;
+        const Ms = layers.reduce((sum, l) => {
+          const eps = 0.003 * (c - l.y) / c;
+          const fs = Math.min(Math.max(eps * 29_000_000, -fy), fy);
+          const disp = l.y < b1 * c ? 0.85 * fc : 0;
+          return sum + l.A * (fs - disp) * (d - l.y);
+        }, 0);
+        const Mn = (Cc * (d - a / 2) + Ms) / 12000;
+        return { Mn, a, phi };
+      }
+      // Comp steel in tension zone — fall through to singly-reinforced
+    }
+
+    let a = (As * fy) / (0.85 * fc * bFlange);
 
     if ((section.type === 'T_beam' || section.type === 'L_beam') && a > hf) {
       // Flange + web compression split
@@ -143,8 +261,10 @@ export function computeFlexure(
     return { Mn, a, phi };
   }
 
-  const pos = calcMn(As_bot, d_pos, beff);
-  const neg = calcMn(As_top, d_neg, bw); // negative moment: web width only
+  const compLayersPos = topBars?.length ? layerDepths(section, topBars, layerClearSpacing) : undefined;
+  const compLayersNeg = botBars?.length ? layerDepths(section, botBars, layerClearSpacing) : undefined;
+  const pos = calcMn(As_bot, d_pos, beff, As_top, d_prime_pos, compLayersPos);
+  const neg = calcMn(As_top, d_neg, bw, As_bot, d_prime_neg, compLayersNeg); // negative moment: web width only
 
   return {
     Mn_pos: pos.Mn,      Mn_neg: neg.Mn,
@@ -162,13 +282,16 @@ export function computeShear(
   material: MaterialProps,
   rebar: RebarLayout,
   Nu = 0,
-): { Vc: number; Vs: number; phi_Vn: number; Av_req: number; Av_prov: number; d_shear: number; Av_min_per_s: number } {
+): { Vc: number; Vs: number; phi_Vn: number; Av_req: number; Av_prov: number; d_shear: number; Av_min_per_s: number; VsCapped: boolean } {
   const { fc, fyt, lambdaConcrete } = material;
   const bw  = section.bw ?? section.b;
   const h   = section.h ?? 12;
   const phi = 0.75;
 
-  const d_raw   = effectiveDepth(section, 8);
+  // d to the actual outermost bottom-bar centroid (multi-layer aware)
+  const d_raw   = rebar.botBars?.length
+    ? effectiveDepthMulti(section, rebar.botBars, rebar.layerClearSpacing ?? 1.0)
+    : effectiveDepth(section, 8);
   const d_shear = Math.max(d_raw, 0.8 * h);
 
   const Av_min_per_s = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
@@ -176,9 +299,13 @@ export function computeShear(
   const ties = rebar.ties;
   let Vs = 0;
   let Av_prov = 0;
+  let VsCapped = false;
   if (ties) {
     Av_prov = ties.legs * getBarArea(ties.barSize);
     Vs = (Av_prov * fyt * d_shear) / (ties.spacing * 1000);
+    // Vs ≤ 8√f'c·bw·d (ACI §22.5.1.2 upper limit on Vn − Vc)
+    const VsMax = 8 * Math.sqrt(fc) * bw * d_shear / 1000;
+    if (Vs > VsMax) { Vs = VsMax; VsCapped = true; }
   }
 
   const As_bot = getRebarAs(rebar.botBars);
@@ -190,10 +317,22 @@ export function computeShear(
   const lambda_s = hasMinStirrups ? 1.0 : Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d_shear)));
 
   const Ag = bw * h;
-  const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(Math.max(rho_w, 1e-6), 1 / 3) * Math.sqrt(fc)
-    + Nu / (6 * Ag)) * bw * d_shear / 1000;
 
-  return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s };
+  // ACI Table 22.5.5.1: when Av/s ≥ Av,min/s use max(case a, case b); otherwise case b/c with λs
+  const Nu_term = Nu / (6 * Ag);
+  const Vc_b = (8 * lambdaConcrete * lambda_s * Math.pow(Math.max(rho_w, 1e-6), 1 / 3) * Math.sqrt(fc) + Nu_term) * bw * d_shear / 1000;
+  let Vc: number;
+  if (hasMinStirrups) {
+    const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + Nu_term) * bw * d_shear / 1000;
+    Vc = Math.max(Vc_a, Vc_b);
+    // Table 22.5.5.1 note: Vc ≤ 5λ√f'c·bw·d
+    const Vc_cap = 5 * lambdaConcrete * Math.sqrt(fc) * bw * d_shear / 1000;
+    if (Vc > Vc_cap) Vc = Vc_cap;
+  } else {
+    Vc = Vc_b;
+  }
+
+  return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s, VsCapped };
 }
 
 // ── Zoned shear (three stirrup spacings over thirds of the span) ─────────────
@@ -250,9 +389,10 @@ export function computeTorsion(
   const Acp = b * h;
   const Pcp = 2 * (b + h);
 
-  // Cracking torsion ACI §22.7.4.1
-  const Tcr        = (lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp) / 12000;
-  const Tu_threshold = Tcr / 4;
+  // True cracking torsion: Tcr = 4λ√f'c·Acp²/Pcp (ACI §22.7.4.1, Eq. 22.7.4.1a)
+  const Tcr          = (4 * lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp) / 12000;
+  // Threshold below which torsion may be neglected: φ·λ√f'c·Acp²/Pcp (= φ·Tcr/4)
+  const Tu_threshold = phi * lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp / 12000;
 
   // Closed stirrup centerline geometry
   const cc      = section.coverClear + getBarDiam(section.stirrupDia) / 2;
@@ -267,8 +407,7 @@ export function computeTorsion(
   let phi_Tn = 0;
   if (rebar?.ties && Ao > 0) {
     const At_s = getBarArea(rebar.ties.barSize) / rebar.ties.spacing; // in²/in per leg
-    phi_Tn = phi * 2 * Ao * At_s * fyt / 1000; // kip-ft (fyt in psi → /1000 kips, Ao in in² → /12 ft ... wait)
-    // Actually: Tn = 2*Ao*At*fyt/s  (units: in²·in²/in·psi = in²·psi = lb-in → /12000 kip-ft)
+    // Tn = 2·Ao·(At/s)·fyt — in²·(in²/in)·psi = lb-in → /12000 kip-ft
     phi_Tn = phi * 2 * Ao * At_s * fyt / 12000;
   }
 
@@ -317,7 +456,10 @@ export function designMember(
   const As_top = getRebarAs(rebar.topBars);
   const As_bot = getRebarAs(rebar.botBars);
 
-  const flex   = computeFlexure(section, material, As_top, As_bot, span);
+  const sClear = rebar.layerClearSpacing ?? 1.0;
+  const flex   = computeFlexure(section, material, As_top, As_bot, span,
+    rebar.topBars[0]?.barSize ?? 8, rebar.botBars[0]?.barSize ?? 8,
+    rebar.topBars, rebar.botBars, sClear);
   const shear  = computeShear(section, material, rebar, load.Pu);
   const torsion = computeTorsion(section, material, rebar);
 
@@ -334,6 +476,25 @@ export function designMember(
   // Minimum Av/s (ACI §9.6.3.3)
   const Av_min_per_s = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
 
+  // §9.6.1.3 exception: if As ≥ (4/3)·As_req_raw the min-steel check is satisfied.
+  // Use raw (unfloored) As_req so the exception applies when Mu is tiny.
+  function rawAs(Mu_kft: number, isTop: boolean): number {
+    if (Mu_kft <= 0) return 0;
+    const Mu_lb_in = Mu_kft * 12000;
+    const faceBars = isTop ? rebar.topBars : rebar.botBars;
+    const d_raw = faceBars?.length
+      ? effectiveDepthMulti(section, faceBars, sClear)
+      : effectiveDepth(section, 8);
+    const buse  = isTop ? bw : effectiveFlange(section, span);
+    const Rn = Mu_lb_in / (0.9 * buse * d_raw * d_raw);
+    const rho = (0.85 * fc / fy) * (1 - Math.sqrt(Math.max(0, 1 - 2 * Rn / (0.85 * fc))));
+    return Math.max(0, rho) * buse * d_raw;
+  }
+  const As_req_pos_raw = rawAs(load.Mu_pos, false);
+  const As_req_neg_raw = rawAs(load.Mu_neg, true);
+  const As_min_pos_eff = As_req_pos_raw > 0 ? Math.min(As_min, (4 / 3) * As_req_pos_raw) : As_min;
+  const As_min_neg_eff = As_req_neg_raw > 0 ? Math.min(As_min, (4 / 3) * As_req_neg_raw) : As_min;
+
   // DCRs
   const DCR_flex_pos = flex.phi_Mn_pos > 0 ? load.Mu_pos / flex.phi_Mn_pos : 0;
   const DCR_flex_neg = flex.phi_Mn_neg > 0 ? load.Mu_neg / flex.phi_Mn_neg : 0;
@@ -347,10 +508,10 @@ export function designMember(
     warnings.push({ code: 'ACI §9.3.3', message: `Bottom steel ${As_bot.toFixed(2)} in² > As_max ${As_max.toFixed(2)} in² — compression-controlled`, severity: 'error' });
   if (As_top > As_max)
     warnings.push({ code: 'ACI §9.3.3', message: `Top steel ${As_top.toFixed(2)} in² > As_max ${As_max.toFixed(2)} in²`, severity: 'error' });
-  if (As_bot < As_min && load.Mu_pos > 0)
-    warnings.push({ code: 'ACI §9.6.1.2', message: `Bottom steel ${As_bot.toFixed(2)} in² is below As_min ${As_min.toFixed(2)} in²`, severity: 'error' });
-  if (As_top < As_min && load.Mu_neg > 0)
-    warnings.push({ code: 'ACI §9.6.1.2', message: `Top steel ${As_top.toFixed(2)} in² is below As_min ${As_min.toFixed(2)} in²`, severity: 'error' });
+  if (As_bot < As_min_pos_eff && load.Mu_pos > 0)
+    warnings.push({ code: 'ACI §9.6.1.2', message: `Bottom steel ${As_bot.toFixed(2)} in² is below As,min ${As_min_pos_eff.toFixed(2)} in²`, severity: 'error' });
+  if (As_top < As_min_neg_eff && load.Mu_neg > 0)
+    warnings.push({ code: 'ACI §9.6.1.2', message: `Top steel ${As_top.toFixed(2)} in² is below As,min ${As_min_neg_eff.toFixed(2)} in²`, severity: 'error' });
 
   // Capacity exceedances
   if (DCR_flex_pos > 1)
@@ -401,6 +562,63 @@ export function designMember(
     }
   }
 
+  // Min horizontal clear spacing within each bar layer ACI §25.2.1: ≥ max(1", db)
+  // (4/3·d_agg not tracked; using max(1", db) as hagg=0.75" gives same limit)
+  for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+    for (const g of bars) {
+      if (g.numBars <= 1) continue;
+      const db = getBarDiam(g.barSize);
+      const Cc = section.coverClear + getBarDiam(section.stirrupDia);
+      const s_clear = (bw - 2 * Cc - g.numBars * db) / (g.numBars - 1);
+      const s_req   = Math.max(1.0, db);
+      if (s_clear < s_req - 1e-9)
+        warnings.push({
+          code: 'ACI §25.2.1',
+          message: `${face} bars: clear horizontal spacing ${s_clear.toFixed(2)}" < required max(1", db = ${db.toFixed(3)}") = ${s_req.toFixed(2)}"`,
+          severity: 'warning',
+        });
+    }
+  }
+
+  // Multi-layer checks: ACI §25.2.2 vertical clear spacing ≥ max(1", db); fit check
+  for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+    const layers = bars.filter(g => g.numBars > 0);
+    if (layers.length < 2) continue;
+    const dbMax = Math.max(...layers.map(g => getBarDiam(g.barSize)));
+    const sReq  = Math.max(1.0, dbMax);
+    if (sClear < sReq - 1e-9)
+      warnings.push({
+        code: 'ACI §25.2.2',
+        message: `${face} bars: layer clear spacing ${sClear}" < required max(1", db = ${dbMax.toFixed(2)}") = ${sReq.toFixed(2)}"`,
+        severity: 'warning',
+      });
+    const stack = section.coverClear + getBarDiam(section.stirrupDia)
+      + layers.reduce((s, g) => s + getBarDiam(g.barSize), 0) + sClear * (layers.length - 1);
+    if (stack >= h / 2)
+      warnings.push({
+        code: 'GEOM',
+        message: `${face} bar layers occupy ${stack.toFixed(1)}" ≥ h/2 = ${(h / 2).toFixed(1)}" — section cannot fit this layout`,
+        severity: 'error',
+      });
+  }
+
+  // Cross-section crushing limit ACI §22.5.1.2: Vu > φ(Vc + 8√f'c·bw·d) → enlarge section
+  const phi_Vn_max = phi_v * (shear.Vc + 8 * lambdaConcrete * Math.sqrt(fc) * bw * d / 1000);
+  if (load.Vu > phi_Vn_max)
+    warnings.push({
+      code: 'ACI §22.5.1.2',
+      message: `Cross-section inadequate for shear: Vu = ${load.Vu.toFixed(1)} kips > φVn,max = ${phi_Vn_max.toFixed(1)} kips — enlarge section`,
+      severity: 'error',
+    });
+
+  // Vs upper limit ACI §22.5.1.2
+  if (shear.VsCapped)
+    warnings.push({
+      code: 'ACI §22.5.1.2',
+      message: `Stirrup contribution capped at Vs,max = 8√f'c·bw·d = ${shear.Vs.toFixed(1)} kips — enlarge section instead of adding stirrups`,
+      severity: 'warning',
+    });
+
   // Face/skin steel ACI §9.7.2.3
   if (h > 36 && (!rebar.sideBars || rebar.sideBars.length === 0))
     warnings.push({ code: 'ACI §9.7.2.3', message: `h = ${h}" > 36" — skin reinforcement required on each face (ACI §9.7.2.3)`, severity: 'warning' });
@@ -416,7 +634,8 @@ export function designMember(
     DCR_flex_pos, DCR_flex_neg,
     Vc: shear.Vc, Vs: shear.Vs, phi_Vn: shear.phi_Vn, DCR_shear,
     Tcr: torsion.Tcr, Tu_threshold: torsion.Tu_threshold, phi_Tn: torsion.phi_Tn, DCR_torsion,
-    As_req_pos, As_req_neg, As_min, As_max, Av_req, Av_min_per_s,
+    // Report the effective bottom-face As,min (§9.6.1.3 exception applied)
+    As_req_pos, As_req_neg, As_min: As_min_pos_eff, As_max, Av_req, Av_min_per_s,
     warnings, status,
   };
 }
