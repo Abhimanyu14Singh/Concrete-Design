@@ -52,14 +52,22 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;
 
-  const barData = summaries.map(s => ({
-    name: s.member.label.length > 12 ? s.member.label.slice(0, 12) + '…' : s.member.label,
-    'Flex+':   parseFloat(s.worstResult.DCR_flex_pos.toFixed(3)),
-    'Flex-':   parseFloat(s.worstResult.DCR_flex_neg.toFixed(3)),
-    Shear:     parseFloat(s.worstResult.DCR_shear.toFixed(3)),
-    Torsion:   parseFloat(s.worstResult.DCR_torsion.toFixed(3)),
-    'P-M':     parseFloat((s.worstResult.DCR_PM ?? 0).toFixed(3)),
-  }));
+  const barData = summaries.map(s => {
+    const r = s.worstResult;
+    const isWall   = s.member.memberType === 'wall';
+    const isColumn = s.member.memberType === 'column';
+    return {
+      name: s.member.label.length > 12 ? s.member.label.slice(0, 12) + '…' : s.member.label,
+      'Flex+':   isWall   ? 0 : parseFloat(r.DCR_flex_pos.toFixed(3)),
+      'Flex-':   isWall   ? 0 : parseFloat(r.DCR_flex_neg.toFixed(3)),
+      Shear:     isWall   ? parseFloat((r.DCR_shear_wall ?? r.DCR_shear).toFixed(3))
+                           : parseFloat(r.DCR_shear.toFixed(3)),
+      Torsion:   isWall || isColumn ? 0 : parseFloat(r.DCR_torsion.toFixed(3)),
+      'P-M':     isWall   ? parseFloat((r.DCR_flex_wall ?? 0).toFixed(3))
+                           : parseFloat((r.DCR_PM ?? 0).toFixed(3)),
+      'SBZ Ash': isWall   ? parseFloat((r.DCR_sbzAsh ?? 0).toFixed(3)) : 0,
+    };
+  });
 
   function saveMeta() {
     // Switching to Eurocode defaults the display units to SI (user can toggle back)
@@ -249,11 +257,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
               labelStyle={{ color: '#374151', fontWeight: 600 }}
             />
             <Legend wrapperStyle={{ fontSize: 11, color: '#6b7280' }} />
-            <Bar dataKey="Flex+"  fill="#3b82f6" />
-            <Bar dataKey="Flex-"  fill="#8b5cf6" />
-            <Bar dataKey="Shear"  fill="#f59e0b" />
+            <Bar dataKey="Flex+"   fill="#3b82f6" />
+            <Bar dataKey="Flex-"   fill="#8b5cf6" />
+            <Bar dataKey="Shear"   fill="#f59e0b" />
             <Bar dataKey="Torsion" fill="#10b981" />
-            <Bar dataKey="P-M"    fill="#ec4899" />
+            <Bar dataKey="P-M"     fill="#ec4899" />
+            <Bar dataKey="SBZ Ash" fill="#ef4444" />
           </BarChart>
         </ResponsiveContainer>
       </div>

@@ -2,8 +2,7 @@ import { useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
-import { zonedShearCheck } from '../../utils/concreteDesign';
-import { zoneShearDemands } from '../../adapters/etabs';
+import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -407,7 +406,9 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
               <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f9fafb' }}>
-                    {(isColumn
+                    {(isWall
+                      ? ['Load Case', 'Shear DCR', 'P-M DCR', 'SBZ Ash DCR', 'Status']
+                      : isColumn
                       ? ['Load Case', 'P-M DCR', 'Axial DCR', 'Shear DCR', 'Status']
                       : ['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status']
                     ).map(h => (
@@ -426,7 +427,13 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
                         {govSet.has(id) && <span style={{ color: '#d97706', marginRight: 4 }}>★</span>}
                         {label}
                       </td>
-                      {isColumn ? (
+                      {isWall ? (
+                        <>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear_wall ?? 0)}>{(r.DCR_shear_wall ?? 0).toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_wall ?? 0)}>{(r.DCR_flex_wall ?? 0).toFixed(3)}</span></td>
+                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_sbzAsh ?? 0)}>{(r.DCR_sbzAsh ?? 0).toFixed(3)}</span></td>
+                        </>
+                      ) : isColumn ? (
                         <>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_PM ?? 0)}>{(r.DCR_PM ?? 0).toFixed(3)}</span></td>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_axial ?? 0)}>{(r.DCR_axial ?? 0).toFixed(3)}</span></td>

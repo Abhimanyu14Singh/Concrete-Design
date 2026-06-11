@@ -34,18 +34,7 @@ export function envelopeLoadCase(forces: ComboForces[], label = 'ETABS Envelope'
   };
 }
 
-/** Max |V| within each third of the span — drives the zoned stirrup check. */
-export function zoneShearDemands(forces: ComboForces[], spanFt: number): [number, number, number] {
-  const zones: [number, number, number] = [0, 0, 0];
-  for (const cf of forces) {
-    for (const st of cf.stations) {
-      const zi = Math.min(2, Math.floor((st.x / spanFt) * 3));
-      const v = Math.abs(st.V);
-      if (v > zones[zi]) zones[zi] = v;
-    }
-  }
-  return zones;
-}
+export { zoneShearDemands } from '../../utils/concreteDesign';
 
 const DEFAULT_MATERIAL: MaterialProps = {
   fc: 4000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0,

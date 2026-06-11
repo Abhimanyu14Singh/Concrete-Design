@@ -9,8 +9,7 @@ import {
   ReferenceLine, ResponsiveContainer,
 } from 'recharts';
 import type { Member, DesignResults } from '../../types';
-import { zonedShearCheck } from '../../utils/concreteDesign';
-import { zoneShearDemands } from '../../adapters/etabs';
+import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 
 interface Props {
   member: Member;

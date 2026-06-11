@@ -291,7 +291,7 @@ export function generateWallBreakdown(
       {
         ref: '§18.10.5',
         label: 'Neutral axis depth c (at Mn consistent with Pu)',
-        equation: 'c from interaction curve at Pn = Pu (§18.10.6.2)',
+        equation: 'c interpolated on P-M curve at Pn consistent with Pu (§18.10.6.2)',
         substitution: `Pu=${load.Pu.toFixed(1)} kips`,
         result: `${c_demand.toFixed(2)}"`,
       },

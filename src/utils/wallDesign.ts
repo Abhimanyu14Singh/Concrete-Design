@@ -373,8 +373,10 @@ export function wallCapacityOnRay(
  */
 export function wallNeutralAxisAtP(curve: WallInteractionPoint[], Pu: number): number {
   if (curve.length === 0) return 0;
-  // Curve runs from pure compression (max Pn) to pure tension (min Pn)
-  if (Pu >= curve[0].Pn) return curve[0].c;
+  // Curve runs from pure compression (max Pn, large c) to pure tension (min Pn, c→0)
+  if (Pu >= curve[0].Pn) return curve[0].c;           // above max compression: use max c
+  const last = curve[curve.length - 1];
+  if (Pu <= last.Pn)     return last.c;               // below pure tension end: use min c
   for (let i = 0; i < curve.length - 1; i++) {
     const p1 = curve[i];
     const p2 = curve[i + 1];
@@ -384,7 +386,7 @@ export function wallNeutralAxisAtP(curve: WallInteractionPoint[], Pu: number): n
       return p1.c + t * (p2.c - p1.c);
     }
   }
-  return 0;
+  return curve[0].c;
 }
 
 // ─── §18.10.6 SBZ triggers ───────────────────────────────────────────────
