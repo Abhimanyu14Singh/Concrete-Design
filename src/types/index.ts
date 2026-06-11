@@ -91,6 +91,8 @@ export interface StationForce {
   x: number;  // distance from I-node (ft)
   V: number;  // shear V2 (kips)
   M: number;  // moment M3 (kip-ft, +ve sagging)
+  P?: number; // axial force (kips, + compression) — from COM import
+  T?: number; // torsion (kip-ft) — from COM import
 }
 
 /** Station forces for one load combination. */

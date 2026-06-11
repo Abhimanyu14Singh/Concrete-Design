@@ -85,6 +85,15 @@ function attach() {
   return sapModel;
 }
 
+/**
+ * Switch the API's present units so all transmitted data has a known unit.
+ * eUnits: kip_in_F=3 (depths/widths/fc/fy), kip_ft_F=4 (geometry/forces).
+ * Errors are swallowed — if the call fails the model units remain unchanged.
+ */
+function setUnits(sm, eUnits) {
+  try { sm.SetPresentUnits(eUnits); } catch { /* ignore */ }
+}
+
 /** Read a winax by-ref string-array out-parameter into a JS array. */
 function variantToArray(v) {
   if (v == null) return [];
@@ -99,7 +108,14 @@ const handlers = {
     const sm = attach();
     let name = 'ETABS model';
     try { name = String(sm.GetModelFilename(false)); } catch { /* optional */ }
-    return { modelName: name, units: 'kip-ft' };
+    // Report whatever units the model is currently using
+    let units = 'kip-ft';
+    try {
+      const u = Number(sm.GetPresentUnits());
+      const UNIT_LABELS = { 1:'lb-in', 2:'lb-ft', 3:'kip-in', 4:'kip-ft', 5:'kN-mm', 6:'kN-m', 7:'kgf-mm', 8:'kgf-m' };
+      units = UNIT_LABELS[u] ?? `eUnits(${u})`;
+    } catch { /* optional */ }
+    return { modelName: name, units };
   },
 
   getStories() {
@@ -116,18 +132,19 @@ const handlers = {
 
   getFrameSections() {
     const sm = attach();
+    setUnits(sm, 3); // kip-in: T3/T2 in inches
     const names = variantToArray(sm.PropFrame.GetNameList(0, [])?.[1]);
     const out = [];
     for (const name of names) {
       try {
-        // GetRectangle(name, fileName, matProp, t3, t2, color, notes, guid)
+        // GetRectangle(Name, FileName, MatProp, T3[depth], T2[width], Color, Notes, GUID)
         const r = sm.PropFrame.GetRectangle(name, '', '', 0, 0, 0, '', '');
         out.push({
           name,
           material: String(r?.[2] ?? ''),
           shape: 'Rectangular',
-          depth: Number(r?.[3] ?? 0),
-          width: Number(r?.[4] ?? 0),
+          depth: Number(r?.[3] ?? 0), // T3 = depth (in)
+          width: Number(r?.[4] ?? 0), // T2 = width (in)
         });
       } catch {
         // non-rectangular sections skipped (steel shapes, etc.)
@@ -138,17 +155,24 @@ const handlers = {
 
   getMaterials() {
     const sm = attach();
+    setUnits(sm, 3); // kip-in: Fc/Fy in ksi; ×1000 below converts to psi
     const names = variantToArray(sm.PropMaterial.GetNameList(0, [])?.[1]);
     const out = [];
     for (const name of names) {
       try {
+        // GetOConcrete_1(Name, Fc, IsLightweight, FcsFactor, SSType, SSHysType,
+        //               StrainAtFc, StrainUltimate, FinalSlope, FrictionAngle,
+        //               DilatationalAngle [, Temp])
         const c = sm.PropMaterial.GetOConcrete_1(name, 0, false, 0, 0, 0, 0, 0, 0, 0, 0);
-        out.push({ name, fc: Number(c?.[1] ?? 0) * 1000 }); // ksi → psi if model in kip-in
+        out.push({ name, fc: Number(c?.[1] ?? 0) * 1000 }); // ksi → psi
         continue;
       } catch { /* not concrete */ }
       try {
-        const r = sm.PropMaterial.GetORebar_1(name, 0, 0, 0, 0, 0, 0, false, 0);
-        out.push({ name, fy: Number(r?.[1] ?? 0) * 1000 });
+        // GetORebar_1(Name, Fy, Fu, EFy, EFu, SSType, SSHysType,
+        //             StrainAtHardening, StrainUltimate, FinalSlope,
+        //             UseCaltransSSDefaults [, Temp])
+        const r = sm.PropMaterial.GetORebar_1(name, 0, 0, 0, 0, 0, 0, 0, 0, 0, false);
+        out.push({ name, fy: Number(r?.[1] ?? 0) * 1000 }); // ksi → psi
       } catch { /* not rebar */ }
     }
     return out;
@@ -162,10 +186,14 @@ const handlers = {
 
   getBeams() {
     const sm = attach();
-    // GetAllFrames returns parallel arrays: names, propNames, stories,
-    // point names, and point coordinates.
+    setUnits(sm, 4); // kip-ft: coordinates in ft
+    // GetAllFrames signature (20 required by-ref + optional csys):
+    // NumberNames, MyName, PropName, StoryName, PointName1, PointName2,
+    // Point1X, Point1Y, Point1Z, Point2X, Point2Y, Point2Z, Angle,
+    // Offset1X, Offset2X, Offset1Y, Offset2Y, Offset1Z, Offset2Z, CardinalPoint
     const r = sm.FrameObj.GetAllFrames(
       0, [], [], [], [], [], [], [], [], [], [], [], [],
+      [], [], [], [], [], [], [],
     );
     const names   = variantToArray(r?.[1]);
     const props   = variantToArray(r?.[2]);
@@ -195,19 +223,31 @@ const handlers = {
 
   getStationForces({ frameNames, combos }) {
     const sm = attach();
+    setUnits(sm, 4); // kip-ft: V in kip, M/T in kip-ft
     sm.Results.Setup.DeselectAllCasesAndCombosForOutput();
     for (const combo of combos) sm.Results.Setup.SetComboSelectedForOutput(combo, true);
 
     const out = {};
     for (const frame of frameNames) {
-      // FrameForce(name, itemType=0 object, ...out arrays)
+      // FrameForce(Name, ItemTypeElm, NumberResults, Obj, ObjSta, Elm, ElmSta,
+      //            LoadCase, StepType, StepNum, P, V2, V3, T, M2, M3)
+      // Positional indices: ObjSta=4, LoadCase=7, P=10, V2=11, T=13, M3=15
       const r = sm.Results.FrameForce(
         frame, 0, 0, [], [], [], [], [], [], [], [], [], [], [], [], [],
       );
-      const objSta = variantToArray(r?.[2]);   // station distances
-      const combosOut = variantToArray(r?.[5]); // load combo per row
-      const V2 = variantToArray(r?.[9]);
-      const M3 = variantToArray(r?.[14]);
+      const numResults = Number(r?.[2] ?? 0);
+      if (numResults === 0) {
+        throw new Error(
+          `No results for frame "${frame}" — has the analysis been run? ` +
+          'Open ETABS → Analyze → Run Analysis, then lock the model before connecting.'
+        );
+      }
+      const objSta    = variantToArray(r?.[4]);  // ObjSta: station distances (ft)
+      const combosOut = variantToArray(r?.[7]);  // LoadCase: combo name per row
+      const P         = variantToArray(r?.[10]); // axial (kip)
+      const V2        = variantToArray(r?.[11]); // shear (kip)
+      const T         = variantToArray(r?.[13]); // torsion (kip-ft)
+      const M3        = variantToArray(r?.[15]); // moment (kip-ft)
 
       const byCombo = new Map();
       for (let i = 0; i < objSta.length; i++) {
@@ -217,6 +257,8 @@ const handlers = {
           x: Number(objSta[i]),
           V: Number(V2[i]),
           M: Number(M3[i]),
+          P: Number(P[i]),
+          T: Number(T[i]),
         });
       }
       for (const cf of byCombo.values()) cf.stations.sort((a, b) => a.x - b.x);
