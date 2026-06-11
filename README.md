@@ -74,6 +74,16 @@ Per-face crack width limits, quasi-permanent moment ratio M_qp/Mu, and kt factor
 ### DCR Dashboard
 Bar charts showing Demand/Capacity Ratios for all members and load cases. Status indicators: OK / Warning / NG.
 
+### Model Map
+A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view snapshot of the imported ETABS model:
+- **Story selector** and three color modes — DCR, Group, or Section. Frames that haven't been imported as design members render dashed.
+- **Navigation** — wheel zoom, drag to pan, and a fit-to-view button.
+- **Selection** — click a beam, shift-click to add to the selection, or drag a lasso to multi-select.
+- **Design groups** — create, rename, or dissolve groups from the current map selection. Each group gets a color chip and a worst-DCR badge.
+- **Group rebar** — edit a rebar template for a group (bars + stirrup zones) and click **Apply** to fan the layout out to every member in the group.
+
+The map geometry (`project.modelMap`) is captured during ETABS import — all beam frames, not just the ones filtered into design members — and is saved with the project file.
+
 ### Multiple Load Cases
 Each member supports multiple load cases; all are checked independently.
 
@@ -86,6 +96,8 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 ### ETABS Import (CSI API)
 "⇪ ETABS" in the header opens a 4-step wizard:
 1. **Connect** — attach to the active ETABS instance via the CSI OAPI (Windows desktop app), read an exported ETABS tables workbook (.xlsx), or use the built-in demo model.
+
+   *Live connection requirements:* the **Windows desktop (Electron) app**, with ETABS open, a model loaded, and the **analysis already run** — frame forces are read from the active results, and the import reports a clear error if no analysis results exist.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
 4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story × section for envelope design; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
@@ -180,13 +192,22 @@ src/
   types/                    # TypeScript interfaces (beam, column, wall, common)
   components/
     Dashboard/              # Project overview, member table, DCR chart
+    ModelMap/               # Map tab: SVG plan canvas (MapCanvas), group panel,
+                            #   group rebar editor (ModelMapView composes them)
+    EtabsImport/            # 4-step ETABS import wizard
     Results/                # Per-member DCR bars, summary table, calc modal
     Detailing/              # SVG section, elevation, wall plan, P-M diagram views
     SectionInput/           # Member editor (geometry, materials, loads)
   App.tsx                   # Layout, state, code-selector
 electron/
   main.cjs                  # Electron main process
+  etabsBridge.cjs           # CSI OAPI COM bridge (winax, Windows only)
 ```
+
+### ETABS COM Bridge Units Convention
+`electron/etabsBridge.cjs` calls `SetPresentUnits` before each handler group so results arrive in known units: **kip-in** for section/material reads, **kip-ft** for geometry and frame forces. FrameForce results follow the official CSI API result-array indices (ObjSta=4, LoadCase=7, P=10, V2=11, T=13, M3=15); axial P and torsion T are captured per station and enveloped into Pu/Tu.
+
+The Windows CI build (`.github/workflows/build-windows.yml`) installs the `winax` native module with `--foreground-scripts` so a failed native build fails loudly, and verifies the compiled `.node` binary exists both before and after packaging.
 
 ### Plugin-Ready Design
 `src/engines/` and `src/adapters/` are structured to accept additional design engines and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines. Beam, column, and shear wall engines are implemented today.
