@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs   = require('fs');
+const { registerEtabsBridge } = require('./etabsBridge.cjs');
 const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow() {
@@ -79,6 +80,10 @@ ipcMain.handle('open-file', async () => {
   const content = fs.readFileSync(filePaths[0], 'utf8');
   return { content };
 });
+
+// ── IPC: ETABS CSI OAPI bridge (Windows + ETABS running; errors elsewhere) ───
+
+registerEtabsBridge(ipcMain);
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 

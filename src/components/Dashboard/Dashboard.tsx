@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Project, Member, DesignResults, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
+import { designWallACI } from '../../utils/wallDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import CodeBadge from '../common/CodeBadge';
 import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
@@ -22,11 +23,15 @@ function worstOf(r: DesignResults): number {
   return Math.max(
     r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
     r.DCR_PM ?? 0, r.DCR_axial ?? 0,
+    r.DCR_shear_wall ?? 0, r.DCR_flex_wall ?? 0, r.DCR_sbzAsh ?? 0,
   );
 }
 
 function summarize(m: Member, code: DesignCode): MemberSummary {
-  const results = m.loads.map(l => runDesign(m.section, m.material, m.rebar, l, m.span, code, m.crackParams));
+  const isWall = m.memberType === 'wall' && !!m.wallRebar;
+  const results = m.loads.map(l => isWall
+    ? designWallACI(m.section, m.material, m.wallRebar!, l)
+    : runDesign(m.section, m.material, m.rebar, l, m.span, code, m.crackParams));
   const maxDCR = Math.max(...results.map(worstOf));
   const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
   return { member: m, worstResult, maxDCR };

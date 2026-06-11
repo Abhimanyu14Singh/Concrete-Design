@@ -2,11 +2,14 @@ import { useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
+import { zonedShearCheck } from '../../utils/concreteDesign';
+import { zoneShearDemands } from '../../adapters/etabs';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
+import ForceDiagram from '../Detailing/ForceDiagram';
 import InteractionDiagram from '../Detailing/InteractionDiagram';
 import WallSectionView from '../Detailing/WallSectionView';
 import CalcBreakdownModal from './CalcBreakdownModal';
@@ -51,6 +54,15 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
     : runDesign(member.section, member.material, member.rebar, load, member.span, code, member.crackParams);
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
+
+  // Per-zone shear DCRs for beams with zoned stirrups + station forces
+  const zoneResults = member.memberType === 'beam' && member.rebar.tieZones && member.stationForces?.length
+    ? zonedShearCheck(
+        member.section, member.material, member.rebar,
+        zoneShearDemands(member.stationForces, member.span ?? 20),
+        load.Pu,
+      )
+    : [];
 
   // Neutral axis depth at Pn = Pu (§18.10.6.2) for the wall SBZ graphics
   const wallC = isWall
@@ -257,7 +269,10 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
             />
           )}
           {member.memberType === 'beam' && (
-            <ElevationView member={member} width={300} height={90} />
+            <ElevationView member={member} width={300} height={member.rebar.tieZones ? 110 : 90} />
+          )}
+          {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
+            <ForceDiagram member={member} result={result} height={130} />
           )}
           {onRebarChange && (
             <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>
@@ -335,6 +350,9 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
           <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
           <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
           <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
+          {zoneResults.map(z => (
+            <KV key={z.zone} k={`  z${z.zone + 1}@${z.spacing}"`} v={z.DCR.toFixed(3)} dcr={z.DCR} />
+          ))}
           {code !== 'EN1992-1-1' && <KV k="Av req" v={`${result.Av_req.toFixed(4)} in²/in`} />}
           {code !== 'EN1992-1-1' && <KV k="Av min/s" v={`${result.Av_min_per_s.toFixed(4)} in²/in`} />}
 

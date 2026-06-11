@@ -5,6 +5,7 @@ import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
 import { generateColumnBreakdown } from '../../utils/calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
 import { generateWallBreakdown } from '../../utils/calcBreakdownWall';
+import { zoneShearDemands } from '../../adapters/etabs';
 import type { CalcSection } from '../../utils/calcBreakdown';
 
 interface Props {
@@ -27,7 +28,12 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
         : generateColumnBreakdown(member.section, member.material, member.rebar, load))
     : (isEC2
         ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, member.crackParams)
-        : generateBreakdown(member.section, member.material, member.rebar, load, member.span));
+        : generateBreakdown(
+            member.section, member.material, member.rebar, load, member.span,
+            member.rebar.tieZones && member.stationForces?.length
+              ? zoneShearDemands(member.stationForces, member.span ?? 20)
+              : undefined,
+          ));
 
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(sections.map(s => s.title))

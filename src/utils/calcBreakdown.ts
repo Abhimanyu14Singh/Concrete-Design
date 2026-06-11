@@ -7,7 +7,7 @@ import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '..
 import {
   getBarArea, getBarDiam,
   effectiveDepth as engineEffectiveDepth,
-  computeFlexure, computeShear, computeTorsion,
+  computeFlexure, computeShear, computeTorsion, zonedShearCheck,
 } from './concreteDesign';
 
 export interface CalcStep {
@@ -60,7 +60,8 @@ export function generateBreakdown(
   material: MaterialProps,
   rebar: RebarLayout,
   load: LoadCase,
-  span = 20
+  span = 20,
+  zoneVu?: [number, number, number],  // max |V| per span third (station forces)
 ): CalcSection[] {
   const { fc, fy, fyt, lambdaConcrete } = material;
   const h = section.h ?? 12;
@@ -449,7 +450,7 @@ export function generateBreakdown(
     },
   ];
 
-  return [
+  const out: CalcSection[] = [
     { title: '1. Section Properties', steps: sectionSteps },
     { title: '2. Material Properties', steps: materialSteps },
     { title: '3. Reinforcement', steps: rebarSteps },
@@ -458,4 +459,24 @@ export function generateBreakdown(
     { title: '6. Shear', steps: shearSteps },
     { title: '7. Torsion', steps: torsionSteps },
   ];
+
+  // ── Zoned stirrups (thirds of span) — same engine call as the screen ──
+  if (rebar.tieZones && rebar.ties) {
+    const demands: [number, number, number] = zoneVu ?? [load.Vu, load.Vu, load.Vu];
+    const zones = zonedShearCheck(section, material, rebar, demands, load.Pu);
+    const zoneLabel = ['End zone (0–L/3)', 'Middle zone (L/3–2L/3)', 'End zone (2L/3–L)'];
+    out.push({
+      title: '8. Shear by Stirrup Zone (thirds of span)',
+      steps: zones.map((z, i) => ({
+        ref: 'ACI 318-19 §22.5',
+        label: zoneLabel[i],
+        equation: 'DCR = Vu,zone / φVn(s_zone)',
+        substitution: `s = ${z.spacing}"  →  φVn = ${fmt(z.phi_Vn)} kips;  Vu,zone = ${fmt(z.Vu)} kips`,
+        result: `DCR = ${fmt(z.DCR, 3)}  ${z.DCR <= 1 ? '✓ OK' : '✗ NG'}`,
+        note: zoneVu ? 'Vu,zone = max |V| within this third (station forces)' : 'No station forces — governing Vu applied to all zones',
+      })),
+    });
+  }
+
+  return out;
 }

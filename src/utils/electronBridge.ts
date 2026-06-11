@@ -5,6 +5,7 @@ declare global {
   interface Window {
     electronAPI?: {
       saveFile:       (opts: { content: string; defaultName: string }) => Promise<{ success: boolean }>;
+      etabs?:         (method: string, args?: unknown) => Promise<unknown>;
       openFile:       () => Promise<{ content: string } | null>;
       onTriggerSave:  (cb: () => void) => void;
       onTriggerOpen:  (cb: () => void) => void;

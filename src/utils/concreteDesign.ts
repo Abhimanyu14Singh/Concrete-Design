@@ -183,6 +183,45 @@ export function computeShear(
   return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s };
 }
 
+// ── Zoned shear (three stirrup spacings over thirds of the span) ─────────────
+
+export interface ZoneShearResult {
+  zone: 0 | 1 | 2;     // end / middle / end third
+  spacing: number;     // stirrup spacing in this zone (in)
+  Vu: number;          // max |V| demand within the zone (kips)
+  phi_Vn: number;      // capacity with this zone's spacing (kips)
+  DCR: number;
+}
+
+/**
+ * Per-zone shear check for beams with `rebar.tieZones`. Each zone's capacity
+ * comes from the same `computeShear` the single-spacing check uses, with the
+ * zone's spacing substituted — so the calc sheet, diagrams, and results screen
+ * all agree. `zoneVu` is the max |V| within each third (from station forces);
+ * with no station data pass the single governing Vu for all three zones.
+ */
+export function zonedShearCheck(
+  section: SectionDimensions,
+  material: MaterialProps,
+  rebar: RebarLayout,
+  zoneVu: [number, number, number],
+  Nu = 0,
+): ZoneShearResult[] {
+  const zones = rebar.tieZones;
+  if (!zones || !rebar.ties) return [];
+  return zones.map((z, i) => {
+    const zonedRebar: RebarLayout = { ...rebar, ties: { ...rebar.ties!, spacing: z.spacing } };
+    const r = computeShear(section, material, zonedRebar, Nu);
+    return {
+      zone: i as 0 | 1 | 2,
+      spacing: z.spacing,
+      Vu: zoneVu[i],
+      phi_Vn: r.phi_Vn,
+      DCR: r.phi_Vn > 0 ? zoneVu[i] / r.phi_Vn : 0,
+    };
+  });
+}
+
 // ── Torsion (ACI §22.7) ───────────────────────────────────────────────────────
 
 export function computeTorsion(

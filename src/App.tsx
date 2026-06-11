@@ -7,6 +7,8 @@ import { exportExcel } from './utils/export/excelExport';
 import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
+import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
+import type { DesignGroup } from './types';
 import { useUnits } from './contexts/UnitsContext';
 import { MEMBER_COLOR } from './theme';
 
@@ -191,6 +193,28 @@ export default function App() {
     return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
   }, []);
 
+  // ── ETABS import ───────────────────────────────────────────────────────────
+  const [showEtabsImport, setShowEtabsImport] = useState(false);
+
+  function handleEtabsImport(members: Member[], groups: DesignGroup[], pickId?: string) {
+    setProject(p => {
+      // Re-imports replace members with the same frame id
+      const incoming = new Set(members.map(m => m.id));
+      return {
+        ...p,
+        members: [...p.members.filter(m => !incoming.has(m.id)), ...members],
+        designGroups: [...(p.designGroups ?? []).filter(g => !g.memberIds.some(id => incoming.has(id))), ...groups],
+      };
+    });
+    setShowEtabsImport(false);
+    if (pickId) {
+      setActiveMemberId(pickId);
+      setTab('member');
+    } else {
+      setTab('dashboard');
+    }
+  }
+
   // ── Member helpers ─────────────────────────────────────────────────────────
   function handleSelectMember(id: string) {
     setActiveMemberId(id);
@@ -267,6 +291,13 @@ export default function App() {
 
   return (
     <div id="app-root" style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
+      {showEtabsImport && (
+        <EtabsImportWizard
+          code={project.code}
+          onClose={() => setShowEtabsImport(false)}
+          onImport={handleEtabsImport}
+        />
+      )}
       {/* Sidebar */}
       <aside id="app-sidebar" style={{ width: sidebarOpen ? 220 : 48, transition: 'width 0.2s', flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Logo */}
@@ -416,6 +447,13 @@ export default function App() {
           <button onClick={handleNewProject} style={hdrBtn} title="New project (Ctrl+N)">New</button>
           <button onClick={handleOpen}       style={hdrBtn} title="Open project (Ctrl+O)">Open</button>
           <button onClick={handleSave}       style={hdrBtn} title="Save project (Ctrl+S)">Save</button>
+          <button
+            onClick={() => setShowEtabsImport(true)}
+            style={{ ...hdrBtn, borderColor: '#7c3aed', color: '#7c3aed' }}
+            title="Import beams from an ETABS model (CSI API or tables file)"
+          >
+            ⇪ ETABS
+          </button>
 
           {/* E1: Export dropdown */}
           <div data-popover="" style={{ position: 'relative' }}>

@@ -53,6 +53,51 @@ export interface RebarLayout {
   sideBars?: BarGroup[];  // skin reinforcement (beams) / intermediate bars (columns)
   ties?: TieLayout;
   tieType?: 'tied' | 'spiral'; // columns only; default 'tied'
+  /**
+   * Optional zoned stirrup layout for beams: three spacings over equal
+   * thirds of the span [end, middle, end]. Tie bar size/legs come from
+   * `ties`. When absent the single `ties.spacing` applies full length.
+   */
+  tieZones?: [TieZone, TieZone, TieZone];
+}
+
+export interface TieZone {
+  spacing: number; // in
+}
+
+// ── ETABS import link ─────────────────────────────────────────────────────────
+
+export interface Point3D { x: number; y: number; z: number } // ft, model coords
+
+/** Provenance of a member imported from an ETABS model via the CSI API. */
+export interface EtabsLink {
+  frameName: string;     // ETABS unique frame name
+  story: string;         // floor level label
+  groups: string[];      // ETABS group memberships
+  pt1: Point3D;          // I-node coordinates
+  pt2: Point3D;          // J-node coordinates
+  sectionName: string;   // ETABS frame property name
+  designGroupId?: string;
+}
+
+/** Force value at a station along the member. */
+export interface StationForce {
+  x: number;  // distance from I-node (ft)
+  V: number;  // shear V2 (kips)
+  M: number;  // moment M3 (kip-ft, +ve sagging)
+}
+
+/** Station forces for one load combination. */
+export interface ComboForces {
+  combo: string;
+  stations: StationForce[];
+}
+
+/** A set of beams designed together with one rebar layout vs the group envelope. */
+export interface DesignGroup {
+  id: string;
+  label: string;
+  memberIds: string[];
 }
 
 /** One point on a column P-M interaction curve. */
@@ -156,6 +201,7 @@ export interface Project {
   engineer: string;
   date: string;
   members: Member[];
+  designGroups?: DesignGroup[]; // beam design groups (ETABS import)
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */
@@ -183,4 +229,6 @@ export interface Member {
   results?: DesignResults[];
   span?: number;  // ft
   crackParams?: CrackControlParams; // EC2 crack width check inputs
+  etabs?: EtabsLink;             // present when imported from an ETABS model
+  stationForces?: ComboForces[]; // analysis forces along the span (per combo)
 }

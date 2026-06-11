@@ -81,7 +81,16 @@ Each member supports multiple load cases; all are checked independently.
 Projects are saved and opened as JSON files for portability and version control.
 
 ### Section Detailing Views
-SVG cross-section and elevation views showing rebar layout and spacing.
+SVG cross-section and elevation views showing rebar layout and spacing. Beam elevations support zoned stirrups — three distinct spacings over thirds of the span.
+
+### ETABS Import (CSI API)
+"⇪ ETABS" in the header opens a 4-step wizard:
+1. **Connect** — attach to the active ETABS instance via the CSI OAPI (Windows desktop app), read an exported ETABS tables workbook (.xlsx), or use the built-in demo model.
+2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
+3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
+4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story × section for envelope design; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
+
+Imported members keep their ETABS link (frame name, story, groups, node coordinates) and station forces, and the shear check is evaluated per stirrup zone against the max |V| within each third of the span.
 
 ---
 
@@ -156,7 +165,9 @@ src/
     ec2/
       ec2Beam.ts            # Eurocode 2 beam design engine
     dispatcher.ts           # Routes calculations to the correct engine
-  adapters/                 # Placeholder adapters (ETABS, SAP2000 import)
+  adapters/
+    etabs/                  # ETABS import: CSI OAPI client, .xlsx parser, demo model,
+                            #   rebar seeding, member/group mapping
   utils/
     wallDesign.ts           # ACI 318-25 shear wall engine (shear, P-M, SBZ)
     calcBreakdown.ts        # ACI step-by-step calculation sheet generator

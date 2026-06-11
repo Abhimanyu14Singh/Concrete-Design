@@ -36,4 +36,5 @@ export function detectAdapter(data: unknown): ModelAdapter | undefined {
 }
 
 // ── Built-in adapters ─────────────────────────────────────────────────────────
-// registerAdapter(new EtabsAdapter());  // uncomment when implemented
+import { EtabsAdapter } from './etabs';
+registerAdapter(new EtabsAdapter());

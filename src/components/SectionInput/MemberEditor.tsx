@@ -398,15 +398,48 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               options={barSizeOptions(units, m.rebar.ties?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => ties({ barSize: +v })} />
           </div>
-          <div style={{ flex: 1 }}>
-            <UnitInputRow label="Spacing" value={m.rebar.ties?.spacing ?? 6} quantity="length"
-              onChange={v => ties({ spacing: v })} />
-          </div>
+          {!m.rebar.tieZones && (
+            <div style={{ flex: 1 }}>
+              <UnitInputRow label="Spacing" value={m.rebar.ties?.spacing ?? 6} quantity="length"
+                onChange={v => ties({ spacing: v })} />
+            </div>
+          )}
           <div style={{ flex: 1 }}>
             <InputRow label="Legs" value={m.rebar.ties?.legs ?? 2} min={2}
               onChange={v => ties({ legs: +v })} />
           </div>
         </div>
+        {!isColumn && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#6b7280', padding: '6px 0 0', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!m.rebar.tieZones}
+              onChange={e => {
+                if (e.target.checked) {
+                  const s = m.rebar.ties?.spacing ?? 6;
+                  update({ rebar: { ...m.rebar, tieZones: [{ spacing: s }, { spacing: s * 2 }, { spacing: s }] } });
+                } else {
+                  const rest = { ...m.rebar };
+                  delete rest.tieZones;
+                  update({ rebar: rest });
+                }
+              }} />
+            Zoned stirrups — 3 spacings over thirds of span
+          </label>
+        )}
+        {m.rebar.tieZones && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['End (0–L/3)', 'Middle', 'End (2L/3–L)'] as const).map((zl, i) => (
+              <div key={zl} style={{ flex: 1 }}>
+                <UnitInputRow label={zl} value={m.rebar.tieZones![i].spacing} quantity="length"
+                  onChange={v => {
+                    const zones = m.rebar.tieZones!.map((z, zi) => zi === i ? { spacing: v } : z) as
+                      [{ spacing: number }, { spacing: number }, { spacing: number }];
+                    // Engine single-spacing path stays governed by the tightest zone
+                    update({ rebar: { ...m.rebar, tieZones: zones, ties: { ...(m.rebar.ties ?? { barSize: 4, legs: 2, spacing: v }), spacing: Math.min(...zones.map(z => z.spacing)) } } });
+                  }} />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Crack Control (EC2 beams only) */}

@@ -20,6 +20,19 @@ export default function ElevationView({ member, width = 600, height = 160 }: Pro
 
   const ties = member.rebar.ties;
   const numTies = ties ? Math.ceil(span / ties.spacing) : 0;
+  const tieZones = member.rebar.tieZones;
+
+  // Stirrup x-positions for the zoned layout: each third uses its own pitch
+  const zonedStirrupXs: number[] = [];
+  if (ties && tieZones) {
+    const third = span / 3;
+    for (let zi = 0; zi < 3; zi++) {
+      const s = tieZones[zi].spacing;
+      const z0 = zi * third;
+      for (let x = z0; x < z0 + third - 1e-6; x += s) zonedStirrupXs.push(x);
+    }
+    zonedStirrupXs.push(span);
+  }
 
   return (
     <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 8 }}>
@@ -37,8 +50,32 @@ export default function ElevationView({ member, width = 600, height = 160 }: Pro
       <rect x={ox} y={oy} width={drawW} height={drawH}
         fill={BARS.concrete} stroke={BARS.concreteEdge} strokeWidth="2" rx="1" />
 
-      {/* Stirrups */}
-      {ties && Array.from({ length: numTies + 1 }, (_, i) => {
+      {/* Stirrups — zoned (3 spacings over thirds) or uniform */}
+      {ties && tieZones ? (
+        <>
+          {zonedStirrupXs.map((sx, i) => (
+            <line key={i}
+              x1={ox + (sx / span) * drawW} y1={oy + 3}
+              x2={ox + (sx / span) * drawW} y2={oy + drawH - 3}
+              stroke={BARS.tie} strokeWidth="1" opacity={0.5} />
+          ))}
+          {/* Zone separators at L/3 and 2L/3 */}
+          {[1, 2].map(i => (
+            <line key={`sep-${i}`}
+              x1={ox + (i / 3) * drawW} y1={oy - 6}
+              x2={ox + (i / 3) * drawW} y2={oy + drawH + 6}
+              stroke="#d97706" strokeWidth="1" strokeDasharray="4 3" />
+          ))}
+          {/* Zone spacing labels */}
+          {tieZones.map((z, i) => (
+            <text key={`zl-${i}`}
+              x={ox + ((i + 0.5) / 3) * drawW} y={oy + drawH + 14}
+              textAnchor="middle" fontSize="9" fill="#d97706" fontFamily="monospace">
+              {formatBarLabel(ties.barSize)}@{z.spacing}"
+            </text>
+          ))}
+        </>
+      ) : ties && Array.from({ length: numTies + 1 }, (_, i) => {
         const x = ox + (i / numTies) * drawW;
         return (
           <line key={i} x1={x} y1={oy + 3} x2={x} y2={oy + drawH - 3}
