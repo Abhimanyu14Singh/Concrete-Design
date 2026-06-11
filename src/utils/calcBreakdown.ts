@@ -356,8 +356,16 @@ export function generateBreakdown(
     {
       ref: 'ACI 318-19 Table 22.5.5.1',
       label: 'Concrete shear strength',
-      equation: 'Vc = (8λλsρw^(1/3)√f\'c + Nu/6Ag) × bw × d',
-      substitution: `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(load.Pu / (6 * bw * h), 4)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
+      equation: hasMinStirrups
+        ? 'Vc = max(2λ√f\'c, 8λρw^(1/3)√f\'c) × bw × d  [min stirrups provided]'
+        : 'Vc = (8λλsρw^(1/3)√f\'c + Nu/6Ag) × bw × d',
+      substitution: hasMinStirrups
+        ? (() => {
+            const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + load.Pu / (6 * bw * h)) * bw * d_shear / 1000;
+            const Vc_b2 = (8 * lambdaConcrete * Math.pow(Math.max(rho_w, 1e-6), 1/3) * Math.sqrt(fc) + load.Pu / (6 * bw * h)) * bw * d_shear / 1000;
+            return `case (a) = ${fmt(Vc_a)} kips; case (b) = ${fmt(Vc_b2)} kips → governs: ${Vc_a >= Vc_b2 ? '(a)' : '(b)'}`;
+          })()
+        : `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(load.Pu / (6 * bw * h), 4)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
       result: `Vc = ${fmt(Vc)} kips`,
       note: load.Pu !== 0 ? `Includes axial term Nu/6Ag with Pu = ${load.Pu} kips` : undefined,
     },
@@ -434,16 +442,16 @@ export function generateBreakdown(
     },
     {
       ref: 'ACI 318-19 §22.7.4.1',
-      label: 'Threshold torsion (cracking)',
-      equation: 'Tcr = λ√f\'c × Acp² / Pcp / 12000',
-      substitution: `Tcr = ${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
+      label: 'Cracking torsion',
+      equation: 'Tcr = 4λ√f\'c × Acp² / Pcp / 12000',
+      substitution: `Tcr = 4×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
       result: `Tcr = ${fmt(Tcr)} kip-ft`,
     },
     {
-      ref: 'ACI 318-19 §22.7.4.1',
-      label: 'Torsion threshold (may neglect)',
-      equation: 'Tu,thresh = Tcr / 4',
-      substitution: `Tu,thresh = ${fmt(Tcr)} / 4`,
+      ref: 'ACI 318-19 §22.7.4.1(a)',
+      label: 'Threshold torsion (may neglect below this)',
+      equation: 'Tu,thresh = phi*lambda*sqrt(fc)*Acp^2/Pcp / 12000  (phi=0.75)',
+      substitution: `Tu,thresh = 0.75×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
       result: `Tu,thresh = ${fmt(Tu_thresh)} kip-ft`,
       note: load.Tu <= Tu_thresh
         ? `✓ Tu = ${load.Tu} k-ft ≤ Tu,thresh — torsion may be neglected`

@@ -158,11 +158,50 @@ export function computeFlexure(
     ? effectiveDepthMulti(section, topBars, layerClearSpacing)
     : effectiveDepth(section, topBarSize);
 
-  function calcMn(As: number, d: number, bFlange: number): { Mn: number; a: number; phi: number } {
+  // d' for compression steel: distance from compression face to comp-steel centroid
+  const d_prime_pos = topBars?.length
+    ? layerCentroidOffset(section, topBars, layerClearSpacing)
+    : effectiveDepth(section, topBarSize);  // fallback (rarely used)
+  const d_prime_neg = botBars?.length
+    ? layerCentroidOffset(section, botBars, layerClearSpacing)
+    : section.coverClear + getBarDiam(section.stirrupDia) + getBarDiam(botBarSize) / 2;
+
+  function calcMn(As: number, d: number, bFlange: number, As_prime = 0, d_prime = 0): { Mn: number; a: number; phi: number } {
     if (As <= 0) return { Mn: 0, a: 0, phi: 0.9 };
 
-    let a = (As * fy) / (0.85 * fc * bFlange);
     const hf = section.hf ?? h;
+
+    // Doubly-reinforced rectangular section (As' > 0, no T/L flange, comp steel in compression zone)
+    // First check via singly-reinforced c whether the "compression" steel is actually in compression.
+    if (As_prime > 0 && section.type !== 'T_beam' && section.type !== 'L_beam') {
+      const a_sr = (As * fy) / (0.85 * fc * bFlange);
+      const c_sr = a_sr / b1;
+      if (c_sr > d_prime) {
+        // Comp steel is inside the compression zone — use doubly-reinforced analysis
+        let a = (As * fy - As_prime * fy) / (0.85 * fc * bFlange);
+        for (let i = 0; i < 50; i++) {
+          const c = Math.max(a / b1, 1e-4);
+          const eps_prime = 0.003 * (c - d_prime) / c;
+          const fs_prime = Math.min(Math.max(eps_prime * 29_000_000, 0), fy);
+          const a_new = (As * fy - As_prime * (fs_prime - 0.85 * fc)) / (0.85 * fc * bFlange);
+          if (Math.abs(a_new - a) < 1e-6) { a = a_new; break; }
+          a = 0.5 * (a + a_new); // damped update for stability
+        }
+        a = Math.max(a, 0.001);
+        const c = a / b1;
+        const eps_prime = c > 0 ? 0.003 * (c - d_prime) / c : 0;
+        const fs_prime = Math.min(Math.max(eps_prime * 29_000_000, 0), fy);
+        const et = 0.003 * (d - c) / c;
+        const phi = et >= 0.005 ? 0.9 : et <= 0.002 ? 0.65 : 0.65 + (et - 0.002) * (250 / 3);
+        const Cc = 0.85 * fc * bFlange * a;
+        const Cs = As_prime * (fs_prime - 0.85 * fc);
+        const Mn = (Cc * (d - a / 2) + Cs * (d - d_prime)) / 12000;
+        return { Mn, a, phi };
+      }
+      // Comp steel in tension zone — fall through to singly-reinforced
+    }
+
+    let a = (As * fy) / (0.85 * fc * bFlange);
 
     if ((section.type === 'T_beam' || section.type === 'L_beam') && a > hf) {
       // Flange + web compression split
@@ -186,8 +225,8 @@ export function computeFlexure(
     return { Mn, a, phi };
   }
 
-  const pos = calcMn(As_bot, d_pos, beff);
-  const neg = calcMn(As_top, d_neg, bw); // negative moment: web width only
+  const pos = calcMn(As_bot, d_pos, beff, As_top, d_prime_pos);
+  const neg = calcMn(As_top, d_neg, bw, As_bot, d_prime_neg); // negative moment: web width only
 
   return {
     Mn_pos: pos.Mn,      Mn_neg: neg.Mn,
@@ -240,8 +279,20 @@ export function computeShear(
   const lambda_s = hasMinStirrups ? 1.0 : Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d_shear)));
 
   const Ag = bw * h;
-  const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(Math.max(rho_w, 1e-6), 1 / 3) * Math.sqrt(fc)
-    + Nu / (6 * Ag)) * bw * d_shear / 1000;
+
+  // ACI Table 22.5.5.1: when Av/s ≥ Av,min/s use max(case a, case b); otherwise case b/c with λs
+  const Nu_term = Nu / (6 * Ag);
+  const Vc_b = (8 * lambdaConcrete * lambda_s * Math.pow(Math.max(rho_w, 1e-6), 1 / 3) * Math.sqrt(fc) + Nu_term) * bw * d_shear / 1000;
+  let Vc: number;
+  if (hasMinStirrups) {
+    const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + Nu_term) * bw * d_shear / 1000;
+    Vc = Math.max(Vc_a, Vc_b);
+    // Table 22.5.5.1 note: Vc ≤ 5λ√f'c·bw·d
+    const Vc_cap = 5 * lambdaConcrete * Math.sqrt(fc) * bw * d_shear / 1000;
+    if (Vc > Vc_cap) Vc = Vc_cap;
+  } else {
+    Vc = Vc_b;
+  }
 
   return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s, VsCapped };
 }
@@ -300,9 +351,10 @@ export function computeTorsion(
   const Acp = b * h;
   const Pcp = 2 * (b + h);
 
-  // Cracking torsion ACI §22.7.4.1
-  const Tcr        = (lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp) / 12000;
-  const Tu_threshold = Tcr / 4;
+  // True cracking torsion: Tcr = 4λ√f'c·Acp²/Pcp (ACI §22.7.4.1, Eq. 22.7.4.1a)
+  const Tcr          = (4 * lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp) / 12000;
+  // Threshold below which torsion may be neglected: φ·λ√f'c·Acp²/Pcp (= φ·Tcr/4)
+  const Tu_threshold = phi * lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp / 12000;
 
   // Closed stirrup centerline geometry
   const cc      = section.coverClear + getBarDiam(section.stirrupDia) / 2;
@@ -386,6 +438,22 @@ export function designMember(
   // Minimum Av/s (ACI §9.6.3.3)
   const Av_min_per_s = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
 
+  // §9.6.1.3 exception: if As ≥ (4/3)·As_req_raw the min-steel check is satisfied.
+  // Use raw (unfloored) As_req so the exception applies when Mu is tiny.
+  function rawAs(Mu_kft: number, isTop: boolean): number {
+    if (Mu_kft <= 0) return 0;
+    const Mu_lb_in = Mu_kft * 12000;
+    const d_raw = effectiveDepth(section, 8);
+    const buse  = isTop ? bw : effectiveFlange(section, span);
+    const Rn = Mu_lb_in / (0.9 * buse * d_raw * d_raw);
+    const rho = (0.85 * fc / fy) * (1 - Math.sqrt(Math.max(0, 1 - 2 * Rn / (0.85 * fc))));
+    return Math.max(0, rho) * buse * d_raw;
+  }
+  const As_req_pos_raw = rawAs(load.Mu_pos, false);
+  const As_req_neg_raw = rawAs(load.Mu_neg, true);
+  const As_min_pos_eff = As_req_pos_raw > 0 ? Math.min(As_min, (4 / 3) * As_req_pos_raw) : As_min;
+  const As_min_neg_eff = As_req_neg_raw > 0 ? Math.min(As_min, (4 / 3) * As_req_neg_raw) : As_min;
+
   // DCRs
   const DCR_flex_pos = flex.phi_Mn_pos > 0 ? load.Mu_pos / flex.phi_Mn_pos : 0;
   const DCR_flex_neg = flex.phi_Mn_neg > 0 ? load.Mu_neg / flex.phi_Mn_neg : 0;
@@ -399,10 +467,10 @@ export function designMember(
     warnings.push({ code: 'ACI §9.3.3', message: `Bottom steel ${As_bot.toFixed(2)} in² > As_max ${As_max.toFixed(2)} in² — compression-controlled`, severity: 'error' });
   if (As_top > As_max)
     warnings.push({ code: 'ACI §9.3.3', message: `Top steel ${As_top.toFixed(2)} in² > As_max ${As_max.toFixed(2)} in²`, severity: 'error' });
-  if (As_bot < As_min && load.Mu_pos > 0)
-    warnings.push({ code: 'ACI §9.6.1.2', message: `Bottom steel ${As_bot.toFixed(2)} in² is below As_min ${As_min.toFixed(2)} in²`, severity: 'error' });
-  if (As_top < As_min && load.Mu_neg > 0)
-    warnings.push({ code: 'ACI §9.6.1.2', message: `Top steel ${As_top.toFixed(2)} in² is below As_min ${As_min.toFixed(2)} in²`, severity: 'error' });
+  if (As_bot < As_min_pos_eff && load.Mu_pos > 0)
+    warnings.push({ code: 'ACI §9.6.1.2', message: `Bottom steel ${As_bot.toFixed(2)} in² is below As,min ${As_min_pos_eff.toFixed(2)} in²`, severity: 'error' });
+  if (As_top < As_min_neg_eff && load.Mu_neg > 0)
+    warnings.push({ code: 'ACI §9.6.1.2', message: `Top steel ${As_top.toFixed(2)} in² is below As,min ${As_min_neg_eff.toFixed(2)} in²`, severity: 'error' });
 
   // Capacity exceedances
   if (DCR_flex_pos > 1)

@@ -251,10 +251,11 @@ describe('computeShear', () => {
 // ─── computeTorsion ──────────────────────────────────────────────────────────
 
 describe('computeTorsion', () => {
-  it('Tcr > 0, Tu_threshold = Tcr/4', () => {
+  it('Tcr > 0; Tu_threshold = phi*lambda*sqrt(fc)*Acp^2/Pcp/12000 (not Tcr/4)', () => {
     const r = computeTorsion(rect16x24, mat4k, rebar3_8);
     expect(r.Tcr).toBeGreaterThan(0);
-    expect(r.Tu_threshold).toBeCloseTo(r.Tcr / 4, 3);
+    // Tu_threshold = 0.75 * Tcr/4 (Tcr_new = 4*Tcr_old, threshold = phi*old_Tcr)
+    expect(r.Tu_threshold).toBeCloseTo(r.Tcr * 0.1875, 3);
   });
 
   it('larger section → higher Tcr', () => {
@@ -534,12 +535,83 @@ describe('effectiveDepthMulti / layerCentroidOffset', () => {
     expect(ok.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(false);
   });
 
-  it('no §25.2.2 warning for single-layer beams and results unchanged (regression)', () => {
+  it('no §25.2.2 warning for single-layer beams; doubly-reinforced path gives higher phi_Mn_pos than singly-reinforced', () => {
     const r = designMember(rect16x24, mat4k, rebar3_8, stdLoad);
     expect(r.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(false);
-    // d = 24 - 1.5 - 0.5 - 0.5 = 21.5; a = 3.16*60/(0.85*4*16) = 3.485
-    // Mn = 3.16*60000*(21.5 - 1.743)/12000 = 312.2 k-ft, tension-controlled phi=0.9
-    expect(r.phi_Mn_pos).toBeCloseTo(0.9 * 312.2, 0);
+    // rebar3_8: As_top=3*0.79=2.37, As_bot=4*0.79=3.16 — compression steel helps
+    const rSingly = computeFlexure(rect16x24, mat4k, 0, 4 * getBarArea(8));
+    expect(r.phi_Mn_pos).toBeGreaterThanOrEqual(rSingly.phi_Mn_pos);
+    expect(r.phi_Mn_pos).toBeGreaterThan(200); // sanity: well above 0
+  });
+});
+
+// ─── S-CONCRETE reference beam back-check ─────────────────────────────────────
+// 12×24, f'c=5000, fy=fyt=60k, cc=1.5", #4@6 2-leg, top 3-#7, bot 2-#7
+describe('S-CONCRETE back-check (reference beam)', () => {
+  const sect: SectionDimensions = { type: 'rectangular_beam', b: 12, h: 24, coverClear: 1.5, stirrupDia: 4 };
+  const mat: MaterialProps      = { fc: 5000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 };
+  const rb: RebarLayout = {
+    topBars: [{ numBars: 3, barSize: 7 }],
+    botBars: [{ numBars: 2, barSize: 7 }],
+    ties: { barSize: 4, spacing: 6, legs: 2 },
+  };
+
+  it('d = 21.563"', () => {
+    // d = 24 - 1.5 - 0.5 - 0.875/2 = 21.5625"
+    expect(effectiveDepthMulti(sect, rb.botBars)).toBeCloseTo(21.563, 2);
+  });
+
+  it('phi*Vc = 27.4 kips (Table 22.5.5.1 case a governs when min stirrups provided)', () => {
+    const r = computeShear(sect, mat, rb);
+    expect(r.phi_Vn - 0.75 * r.Vs).toBeCloseTo(27.4, 0); // phi*Vc
+  });
+
+  it('phi*Vn = 92.1 kips', () => {
+    const r = computeShear(sect, mat, rb);
+    expect(r.phi_Vn).toBeCloseTo(92.1, 0);
+  });
+
+  it('torsion Tcr = 27.2 k-ft, phi*Tcr/4 = 5.1 k-ft, phi*Tn = 37.0 k-ft', () => {
+    const r = computeTorsion(sect, mat, rb);
+    expect(r.Tcr).toBeCloseTo(27.2, 0);          // 4*lambda*sqrt(fc)*Acp^2/Pcp
+    expect(r.Tu_threshold).toBeCloseTo(5.1, 0);  // phi*lambda*sqrt(fc)*Acp^2/Pcp
+    expect(r.phi_Tn).toBeCloseTo(37.0, 0);
+  });
+
+  it('phi*Mn_pos matches S-CONCRETE singly-reinforced baseline (c_sr < d_prime, comp steel in tension zone)', () => {
+    // For 2-#7 bot, 3-#7 top: c_sr = 1.765" < d'=2.44" → comp bars are in tension zone
+    // The engine correctly falls back to singly-reinforced; S-CONCRETE gives 113.7 (1% rounding)
+    const As_top = 3 * getBarArea(7);
+    const As_bot = 2 * getBarArea(7);
+    const r = computeFlexure(sect, mat, As_top, As_bot, 20, 7, 7, rb.topBars, rb.botBars);
+    expect(r.phi_Mn_pos).toBeGreaterThan(110);
+    expect(r.phi_Mn_pos).toBeLessThan(115);
+  });
+
+  it('doubly-reinforced path activates and increases Mn when c_sr > d_prime', () => {
+    // 8-#8 bot, 3-#8 top on 16×24: a_sr = 8*0.79*60000/(0.85*4000*16) = 6.93", c_sr = 8.15" > d'=2.5"
+    const sect2: SectionDimensions = { type: 'rectangular_beam', b: 16, h: 24, coverClear: 1.5, stirrupDia: 4 };
+    const topB = [{ numBars: 3, barSize: 8 }];
+    const botB = [{ numBars: 8, barSize: 8 }];
+    const As_top2 = 3 * getBarArea(8), As_bot2 = 8 * getBarArea(8);
+    const rDoubly = computeFlexure(sect2, mat4k, As_top2, As_bot2, 20, 8, 8, topB, botB);
+    const rSingly = computeFlexure(sect2, mat4k, 0, As_bot2, 20, 8, 8);
+    expect(rDoubly.phi_Mn_pos).toBeGreaterThan(rSingly.phi_Mn_pos);
+  });
+});
+
+// ─── As,min §9.6.1.3 exception ───────────────────────────────────────────────
+describe('designMember — §9.6.1.3 As,min 4/3 exception', () => {
+  it('no As,min warning when As >= (4/3)*As,req even if As < code min', () => {
+    // Tiny Mu → As,req very small → (4/3)*As,req < code As,min → exception kicks in
+    const smallMu: LoadCase = { id: 'lc', label: '', Mu_pos: 5, Mu_neg: 0, Vu: 10, Tu: 0, Pu: 0 };
+    const rb2: RebarLayout = {
+      topBars: [{ numBars: 1, barSize: 3 }],
+      botBars: [{ numBars: 2, barSize: 5 }], // 2*0.31 = 0.62 in²
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+    };
+    const r = designMember(rect16x24, mat4k, rb2, smallMu);
+    expect(r.warnings.some(w => w.code === 'ACI §9.6.1.2' && w.message.includes('below'))).toBe(false);
   });
 });
 
