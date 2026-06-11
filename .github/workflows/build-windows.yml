@@ -36,10 +36,13 @@ jobs:
 
       # winax is an optionalDependency — if its node-gyp build fails during
       # `npm ci` the package is silently skipped and the app ships without it.
-      # This step forces a loud, mandatory install so the build fails visibly
-      # if the native module cannot be compiled.
-      - name: Install winax (COM bridge — must succeed)
-        run: npm install winax@^3.4.2 --no-save --foreground-scripts
+      # Install it explicitly WITHOUT running its build script: winax 3.6.x
+      # targets a newer V8 than Node 22 ships (HolderV2 API), so compiling
+      # against Node fails — but that compile is a throwaway anyway. The only
+      # build that matters is the electron-rebuild below, which compiles
+      # against Electron's (much newer) V8 headers.
+      - name: Install winax sources (COM bridge, no node build)
+        run: npm install winax@^3.4.2 --no-save --ignore-scripts
 
       # Compile the winax COM native module against Electron's ABI so the
       # packaged desktop app can attach to a live ETABS instance.
@@ -48,9 +51,9 @@ jobs:
 
       - name: Verify winax native binary exists
         run: |
-          node -e "require.resolve('winax'); console.log('winax OK:', require('winax/package.json').version)"
+          node -e "require.resolve('winax/package.json'); console.log('winax present:', require('winax/package.json').version)"
           $nativeFile = Get-ChildItem -Path node_modules/winax/build/Release -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nativeFile) { Write-Error "winax .node binary not found in build/Release"; exit 1 }
+          if (-not $nativeFile) { Write-Error "winax .node binary not found in build/Release — electron-rebuild did not compile it"; exit 1 }
           Write-Host "winax binary: $($nativeFile.FullName)"
         shell: pwsh
 
