@@ -197,7 +197,7 @@ export function generateBreakdown(
   // Steel limits
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
   const As_min = rho_min * bw * d;
-  const As_max = 0.75 * b1 * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
+  const As_max = 0.85 * b1 * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
 
   rebarSteps.push(
     {
@@ -211,8 +211,8 @@ export function generateBreakdown(
     {
       ref: 'ACI 318-19 §9.3.3.1',
       label: 'Maximum flexural steel (net strain εt ≥ 0.004)',
-      equation: 'As,max = 0.75β₁(f\'c/fy)(0.003/(0.003+0.004)) × bw × d',
-      substitution: `0.75 × ${fmt(b1)} × (${fc}/${fy}) × (3/7) × ${fmt(bw)} × ${fmt(d)}`,
+      equation: 'As,max = 0.85β₁(f\'c/fy)(0.003/(0.003+0.004)) × bw × d',
+      substitution: `0.85 × ${fmt(b1)} × (${fc}/${fy}) × (3/7) × ${fmt(bw)} × ${fmt(d)}`,
       result: `${fmt(As_max)} in²`,
       note: As_bot > As_max ? '⚠ Provided As_bot > As_max (over-reinforced!)' : '✓ As_bot ≤ As_max',
     }

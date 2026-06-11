@@ -71,6 +71,24 @@ export function layerCentroidOffset(
   return sumAy / sumA;
 }
 
+/** Per-layer (area, depth-from-face) pairs for a multi-layer bar group. */
+export function layerDepths(
+  section: SectionDimensions,
+  bars: BarGroup[],
+  sClear = 1.0,
+): { A: number; y: number }[] {
+  const dStir = getBarDiam(section.stirrupDia);
+  let edge = section.coverClear + dStir;
+  const out: { A: number; y: number }[] = [];
+  for (const g of bars) {
+    if (g.numBars <= 0) continue;
+    const db = getBarDiam(g.barSize);
+    out.push({ A: g.numBars * getBarArea(g.barSize), y: edge + db / 2 });
+    edge += db + sClear;
+  }
+  return out;
+}
+
 /** Effective depth to the centroid of a (possibly multi-layer) bar group. */
 export function effectiveDepthMulti(
   section: SectionDimensions,
@@ -122,7 +140,8 @@ export function steelLimits(section: SectionDimensions, material: MaterialProps)
   const d  = effectiveDepth(section, 8);
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
   const As_min  = rho_min * bw * d;
-  const As_max  = 0.75 * beta1(fc) * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
+  // εt ≥ 0.004 limit (§9.3.3.1): c = 3d/7, As,max = 0.85·β₁·(f'c/fy)·(3/7)·bw·d
+  const As_max  = 0.85 * beta1(fc) * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
   return { As_min, As_max };
 }
 
@@ -166,7 +185,11 @@ export function computeFlexure(
     ? layerCentroidOffset(section, botBars, layerClearSpacing)
     : section.coverClear + getBarDiam(section.stirrupDia) + getBarDiam(botBarSize) / 2;
 
-  function calcMn(As: number, d: number, bFlange: number, As_prime = 0, d_prime = 0): { Mn: number; a: number; phi: number } {
+  function calcMn(
+    As: number, d: number, bFlange: number,
+    As_prime = 0, d_prime = 0,
+    compLayers?: { A: number; y: number }[],
+  ): { Mn: number; a: number; phi: number } {
     if (As <= 0) return { Mn: 0, a: 0, phi: 0.9 };
 
     const hf = section.hf ?? h;
@@ -176,26 +199,39 @@ export function computeFlexure(
     if (As_prime > 0 && section.type !== 'T_beam' && section.type !== 'L_beam') {
       const a_sr = (As * fy) / (0.85 * fc * bFlange);
       const c_sr = a_sr / b1;
-      if (c_sr > d_prime) {
-        // Comp steel is inside the compression zone — use doubly-reinforced analysis
-        let a = (As * fy - As_prime * fy) / (0.85 * fc * bFlange);
-        for (let i = 0; i < 50; i++) {
+      // Per-layer compression steel: each layer at its own depth with its own
+      // strain-compatible stress (reduces to the lumped-centroid result for one layer)
+      const layers = compLayers && compLayers.length > 0
+        ? compLayers
+        : [{ A: As_prime, y: d_prime }];
+      if (c_sr > Math.min(...layers.map(l => l.y))) {
+        // At least one comp layer is inside the compression zone — iterate equilibrium
+        const Cs_of = (c: number) => layers.reduce((sum, l) => {
+          const eps = 0.003 * (c - l.y) / c;
+          const fs = Math.min(Math.max(eps * 29_000_000, -fy), fy);
+          // displace concrete only where the bar sits inside the stress block
+          const disp = l.y < b1 * c ? 0.85 * fc : 0;
+          return sum + l.A * (fs - disp);
+        }, 0);
+        let a = (As * fy) / (0.85 * fc * bFlange);
+        for (let i = 0; i < 80; i++) {
           const c = Math.max(a / b1, 1e-4);
-          const eps_prime = 0.003 * (c - d_prime) / c;
-          const fs_prime = Math.min(Math.max(eps_prime * 29_000_000, 0), fy);
-          const a_new = (As * fy - As_prime * (fs_prime - 0.85 * fc)) / (0.85 * fc * bFlange);
-          if (Math.abs(a_new - a) < 1e-6) { a = a_new; break; }
+          const a_new = (As * fy - Cs_of(c)) / (0.85 * fc * bFlange);
+          if (Math.abs(a_new - a) < 1e-7) { a = a_new; break; }
           a = 0.5 * (a + a_new); // damped update for stability
         }
         a = Math.max(a, 0.001);
         const c = a / b1;
-        const eps_prime = c > 0 ? 0.003 * (c - d_prime) / c : 0;
-        const fs_prime = Math.min(Math.max(eps_prime * 29_000_000, 0), fy);
         const et = 0.003 * (d - c) / c;
         const phi = et >= 0.005 ? 0.9 : et <= 0.002 ? 0.65 : 0.65 + (et - 0.002) * (250 / 3);
         const Cc = 0.85 * fc * bFlange * a;
-        const Cs = As_prime * (fs_prime - 0.85 * fc);
-        const Mn = (Cc * (d - a / 2) + Cs * (d - d_prime)) / 12000;
+        const Ms = layers.reduce((sum, l) => {
+          const eps = 0.003 * (c - l.y) / c;
+          const fs = Math.min(Math.max(eps * 29_000_000, -fy), fy);
+          const disp = l.y < b1 * c ? 0.85 * fc : 0;
+          return sum + l.A * (fs - disp) * (d - l.y);
+        }, 0);
+        const Mn = (Cc * (d - a / 2) + Ms) / 12000;
         return { Mn, a, phi };
       }
       // Comp steel in tension zone — fall through to singly-reinforced
@@ -225,8 +261,10 @@ export function computeFlexure(
     return { Mn, a, phi };
   }
 
-  const pos = calcMn(As_bot, d_pos, beff, As_top, d_prime_pos);
-  const neg = calcMn(As_top, d_neg, bw, As_bot, d_prime_neg); // negative moment: web width only
+  const compLayersPos = topBars?.length ? layerDepths(section, topBars, layerClearSpacing) : undefined;
+  const compLayersNeg = botBars?.length ? layerDepths(section, botBars, layerClearSpacing) : undefined;
+  const pos = calcMn(As_bot, d_pos, beff, As_top, d_prime_pos, compLayersPos);
+  const neg = calcMn(As_top, d_neg, bw, As_bot, d_prime_neg, compLayersNeg); // negative moment: web width only
 
   return {
     Mn_pos: pos.Mn,      Mn_neg: neg.Mn,
@@ -443,7 +481,10 @@ export function designMember(
   function rawAs(Mu_kft: number, isTop: boolean): number {
     if (Mu_kft <= 0) return 0;
     const Mu_lb_in = Mu_kft * 12000;
-    const d_raw = effectiveDepth(section, 8);
+    const faceBars = isTop ? rebar.topBars : rebar.botBars;
+    const d_raw = faceBars?.length
+      ? effectiveDepthMulti(section, faceBars, sClear)
+      : effectiveDepth(section, 8);
     const buse  = isTop ? bw : effectiveFlange(section, span);
     const Rn = Mu_lb_in / (0.9 * buse * d_raw * d_raw);
     const rho = (0.85 * fc / fy) * (1 - Math.sqrt(Math.max(0, 1 - 2 * Rn / (0.85 * fc))));
@@ -566,7 +607,8 @@ export function designMember(
     DCR_flex_pos, DCR_flex_neg,
     Vc: shear.Vc, Vs: shear.Vs, phi_Vn: shear.phi_Vn, DCR_shear,
     Tcr: torsion.Tcr, Tu_threshold: torsion.Tu_threshold, phi_Tn: torsion.phi_Tn, DCR_torsion,
-    As_req_pos, As_req_neg, As_min, As_max, Av_req, Av_min_per_s,
+    // Report the effective bottom-face As,min (§9.6.1.3 exception applied)
+    As_req_pos, As_req_neg, As_min: As_min_pos_eff, As_max, Av_req, Av_min_per_s,
     warnings, status,
   };
 }
