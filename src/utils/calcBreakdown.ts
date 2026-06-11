@@ -194,6 +194,26 @@ export function generateBreakdown(
     });
   }
 
+  // ACI §25.2.1: min clear horizontal spacing within each layer
+  {
+    const Cc = section.coverClear + getBarDiam(section.stirrupDia);
+    for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+      for (const g of bars) {
+        if (g.numBars <= 1) continue;
+        const db = getBarDiam(g.barSize);
+        const s_clear = (bw - 2 * Cc - g.numBars * db) / (g.numBars - 1);
+        const s_req   = Math.max(1.0, db);
+        rebarSteps.push({
+          ref: 'ACI 318-19 §25.2.1',
+          label: `Clear horizontal spacing — ${face.toLowerCase()} bars (${g.numBars}−${formatBarLabel(g.barSize)})`,
+          equation: 's_clear = (bw − 2(cc + d_stir) − n·db) / (n − 1)  ≥ max(1", db)',
+          substitution: `s_clear = (${fmt(bw)} − 2×${fmt(Cc)} − ${g.numBars}×${fmt(db, 3)}) / ${g.numBars - 1}  vs  ${fmt(s_req)}"`,
+          result: `${fmt(s_clear)} in  ${s_clear >= s_req - 1e-9 ? '✓ OK' : '⚠ NG'}`,
+        });
+      }
+    }
+  }
+
   // Steel limits
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
   const As_min = rho_min * bw * d;
@@ -391,6 +411,14 @@ export function generateBreakdown(
       equation: 'φVn = φ(Vc + Vs)',
       substitution: `φVn = 0.75 × (${fmt(Vc)} + ${fmt(Vs)})`,
       result: `φVn = ${fmt(phi_Vn)} kips`,
+    },
+    {
+      ref: 'ACI 318-19 §22.5.1.2',
+      label: 'Cross-section crushing limit',
+      equation: 'φVn,max = φ(Vc + 8√f\'c·bw·d)',
+      substitution: `φVn,max = 0.75 × (${fmt(Vc)} + 8×√${fc} × ${fmt(bw)} × ${fmt(d_shear)} / 1000)`,
+      result: `φVn,max = ${fmt(0.75 * (Vc + 8 * Math.sqrt(fc) * bw * d_shear / 1000))} kips  ${load.Vu <= 0.75 * (Vc + 8 * Math.sqrt(fc) * bw * d_shear / 1000) ? '✓ OK' : '✗ NG — enlarge section'}`,
+      note: 'Upper bound on shear capacity regardless of stirrups',
     },
     {
       ref: 'Design check',
