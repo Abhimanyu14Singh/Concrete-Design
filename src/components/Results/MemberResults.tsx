@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
+import { designWallACI } from '../../utils/wallDesign';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import InteractionDiagram from '../Detailing/InteractionDiagram';
+import WallSectionView from '../Detailing/WallSectionView';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR } from '../../theme';
@@ -43,7 +45,10 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   const cap = capacityLabels(code);
 
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, member.crackParams);
+  const isWall = member.memberType === 'wall' && !!member.wallRebar;
+  const result: DesignResults = isWall
+    ? designWallACI(member.section, member.material, member.wallRebar!, load)
+    : runDesign(member.section, member.material, member.rebar, load, member.span, code, member.crackParams);
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
@@ -207,14 +212,28 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
 
         {/* Center: Section diagram */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <SectionView
-            section={member.section}
-            rebar={member.rebar}
-            result={result}
-            width={300}
-            height={250}
-            onRebarChange={onRebarChange ? handleRebarChange : undefined}
-          />
+          {isWall && member.wallRebar ? (
+            <WallSectionView
+              section={member.section}
+              wallRebar={member.wallRebar}
+              Pu={load.Pu}
+              Mu={Math.abs(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg)}
+              c_demand={0}
+              fc={member.material.fc}
+              fyt={member.material.fyt}
+              width={420}
+              height={180}
+            />
+          ) : (
+            <SectionView
+              section={member.section}
+              rebar={member.rebar}
+              result={result}
+              width={300}
+              height={250}
+              onRebarChange={onRebarChange ? handleRebarChange : undefined}
+            />
+          )}
           {member.memberType === 'beam' && (
             <ElevationView member={member} width={300} height={90} />
           )}
@@ -227,7 +246,36 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
 
         {/* Right: design results */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
-          {isColumn ? (
+          {isWall ? (
+            <>
+              <SectionLabel title="In-Plane Shear §18.10.4" />
+              <KV k="αc" v={(result.alphaC ?? 0).toFixed(2)} />
+              <KV k="φVn" v={`${(result.phi_Vn_wall ?? 0).toFixed(1)} k`} />
+              <KV k="Vn,max" v={`${(result.wallVnMax ?? 0).toFixed(1)} k`} />
+              <KV k="  DCR" v={(result.DCR_shear_wall ?? 0).toFixed(3)} dcr={result.DCR_shear_wall ?? 0} />
+
+              <SectionLabel title="P-M §18.10.5" />
+              <KV k="φMn,wall" v={`${(result.phi_Mn_wall ?? 0).toFixed(1)} k-ft`} />
+              <KV k="  DCR" v={(result.DCR_flex_wall ?? 0).toFixed(3)} dcr={result.DCR_flex_wall ?? 0} />
+
+              <SectionLabel title="Min. Reinf. §11.6" />
+              <KV k="ρl" v={`${((result.rhoL ?? 0) * 100).toFixed(4)}%`}
+                dcr={(result.rhoL ?? 0) < 0.0025 ? 1.5 : 0} />
+              <KV k="ρt" v={`${((result.rhoT ?? 0) * 100).toFixed(4)}%`}
+                dcr={(result.rhoT ?? 0) < 0.0025 ? 1.5 : 0} />
+
+              <SectionLabel title="SBZ §18.10.6" />
+              <KV k="Required" v={result.sbzRequired ? '⚠ YES' : '✓ No'} />
+              {result.sbzRequired && (
+                <>
+                  <KV k="lbe" v={`${(result.sbzLength ?? 0).toFixed(1)}"`} />
+                  <KV k="Ash,req" v={`${(result.sbzAshRequired ?? 0).toFixed(3)} in²`} />
+                  <KV k="Ash,prov" v={`${(result.sbzAshProvided ?? 0).toFixed(3)} in²`} />
+                  <KV k="  DCR" v={(result.DCR_sbzAsh ?? 0).toFixed(3)} dcr={result.DCR_sbzAsh ?? 0} />
+                </>
+              )}
+            </>
+          ) : isColumn ? (
             <>
               <SectionLabel title="Axial" />
               <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />

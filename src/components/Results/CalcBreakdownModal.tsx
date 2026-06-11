@@ -4,6 +4,7 @@ import { generateBreakdown } from '../../utils/calcBreakdown';
 import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
 import { generateColumnBreakdown } from '../../utils/calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
+import { generateWallBreakdown } from '../../utils/calcBreakdownWall';
 import type { CalcSection } from '../../utils/calcBreakdown';
 
 interface Props {
@@ -15,9 +16,12 @@ interface Props {
 
 export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', onClose }: Props) {
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
+  const isWall = member.memberType === 'wall' && !!member.wallRebar;
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
   const isEC2 = code === 'EN1992-1-1';
-  const sections: CalcSection[] = isColumn
+  const sections: CalcSection[] = isWall
+    ? generateWallBreakdown(member.section, member.material, member.wallRebar!, load)
+    : isColumn
     ? (isEC2
         ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
         : generateColumnBreakdown(member.section, member.material, member.rebar, load))
@@ -66,7 +70,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
               Calculation Breakdown
             </h2>
             <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280' }}>
-              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; {isEC2 ? 'EN 1992-1-1' : code}
+              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; {isWall ? 'ACI 318-25 Shear Wall' : isEC2 ? 'EN 1992-1-1' : code}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
