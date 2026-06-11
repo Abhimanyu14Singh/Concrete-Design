@@ -562,6 +562,24 @@ export function designMember(
     }
   }
 
+  // Min horizontal clear spacing within each bar layer ACI §25.2.1: ≥ max(1", db)
+  // (4/3·d_agg not tracked; using max(1", db) as hagg=0.75" gives same limit)
+  for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+    for (const g of bars) {
+      if (g.numBars <= 1) continue;
+      const db = getBarDiam(g.barSize);
+      const Cc = section.coverClear + getBarDiam(section.stirrupDia);
+      const s_clear = (bw - 2 * Cc - g.numBars * db) / (g.numBars - 1);
+      const s_req   = Math.max(1.0, db);
+      if (s_clear < s_req - 1e-9)
+        warnings.push({
+          code: 'ACI §25.2.1',
+          message: `${face} bars: clear horizontal spacing ${s_clear.toFixed(2)}" < required max(1", db = ${db.toFixed(3)}") = ${s_req.toFixed(2)}"`,
+          severity: 'warning',
+        });
+    }
+  }
+
   // Multi-layer checks: ACI §25.2.2 vertical clear spacing ≥ max(1", db); fit check
   for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
     const layers = bars.filter(g => g.numBars > 0);
@@ -583,6 +601,15 @@ export function designMember(
         severity: 'error',
       });
   }
+
+  // Cross-section crushing limit ACI §22.5.1.2: Vu > φ(Vc + 8√f'c·bw·d) → enlarge section
+  const phi_Vn_max = phi_v * (shear.Vc + 8 * lambdaConcrete * Math.sqrt(fc) * bw * d / 1000);
+  if (load.Vu > phi_Vn_max)
+    warnings.push({
+      code: 'ACI §22.5.1.2',
+      message: `Cross-section inadequate for shear: Vu = ${load.Vu.toFixed(1)} kips > φVn,max = ${phi_Vn_max.toFixed(1)} kips — enlarge section`,
+      severity: 'error',
+    });
 
   // Vs upper limit ACI §22.5.1.2
   if (shear.VsCapped)

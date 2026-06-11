@@ -684,6 +684,85 @@ describe('designMember — §9.6.1.3 As,min 4/3 exception', () => {
   });
 });
 
+// ─── S-CONCRETE back-check #3: deliberately failing beam ─────────────────────
+describe('S-CONCRETE back-check #3 (failing beam)', () => {
+  const sect: SectionDimensions = { type: 'rectangular_beam', b: 12, h: 24, coverClear: 1.5, stirrupDia: 4 };
+  const mat: MaterialProps      = { fc: 5000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 };
+  const top5 = [{ numBars: 5, barSize: 7 }, { numBars: 5, barSize: 7 }];
+  const bot5 = [{ numBars: 5, barSize: 7 }, { numBars: 5, barSize: 7 }];
+  const rb: RebarLayout = {
+    topBars: top5, botBars: bot5,
+    ties: { barSize: 4, spacing: 7, legs: 3 },
+    layerClearSpacing: 1.0,
+    sideBars: [{ numBars: 8, barSize: 5 }],
+  };
+
+  it('phiMn+ = 492.8 k-ft', () => {
+    const As = 10 * getBarArea(7);
+    const r = computeFlexure(sect, mat, As, As, 20, 7, 7, top5, bot5, 1.0);
+    expect(r.phi_Mn_pos).toBeCloseTo(492.8, 0);
+  });
+
+  it('phiVc=30.4, phiVs=79.6, phiVn=109.9, phiVn,max=135.4', () => {
+    const r = computeShear(sect, mat, rb);
+    expect(0.75 * r.Vc).toBeCloseTo(30.4, 1);
+    expect(0.75 * r.Vs).toBeCloseTo(79.6, 1);
+    expect(r.phi_Vn).toBeCloseTo(109.9, 1);
+    const VnMax = 0.75 * (r.Vc + 8 * Math.sqrt(5000) * 12 * r.d_shear / 1000);
+    expect(VnMax).toBeCloseTo(135.4, 1);
+  });
+
+  it('torsion phiTcr=20.4, Tth=5.1, phiTn=31.7', () => {
+    const r = computeTorsion(sect, mat, rb);
+    expect(0.75 * r.Tcr).toBeCloseTo(20.4, 1);
+    expect(r.Tu_threshold).toBeCloseTo(5.1, 1);
+    expect(r.phi_Tn).toBeCloseTo(31.7, 1);
+  });
+
+  it('LC1 moment util=18.26, LC2 shear util=8.19, both NG', () => {
+    const lc1: LoadCase = { id: '1', label: '', Mu_pos: 9000, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 };
+    const lc2: LoadCase = { id: '2', label: '', Mu_pos: 8000, Mu_neg: 0, Vu: 900, Tu: 0, Pu: 0 };
+    const r1 = designMember(sect, mat, rb, lc1, 20);
+    const r2 = designMember(sect, mat, rb, lc2, 20);
+    expect(r1.DCR_flex_pos).toBeCloseTo(18.26, 1);
+    expect(r2.DCR_shear).toBeCloseTo(8.19, 1);
+    expect(r1.status).toBe('NG');
+    expect(r2.status).toBe('NG');
+  });
+
+  it('LC2 fires §22.5.1.2 crushing error (Vu=900 >> phiVn,max=135)', () => {
+    const lc2: LoadCase = { id: '2', label: '', Mu_pos: 8000, Mu_neg: 0, Vu: 900, Tu: 0, Pu: 0 };
+    const r = designMember(sect, mat, rb, lc2, 20);
+    expect(r.warnings.some(w => w.code === 'ACI §22.5.1.2' && w.message.includes('Cross-section'))).toBe(true);
+    const w = r.warnings.find(w => w.code === 'ACI §22.5.1.2' && w.message.includes('Cross-section'));
+    expect(w?.severity).toBe('error');
+  });
+
+  it('§25.2.1 horizontal spacing warning fires (5-#7 in 12" → s_clear=0.91 < 1.0")', () => {
+    const lc1: LoadCase = { id: '1', label: '', Mu_pos: 9000, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 };
+    const r = designMember(sect, mat, rb, lc1, 20);
+    expect(r.warnings.some(w => w.code === 'ACI §25.2.1')).toBe(true);
+  });
+
+  it('§22.5.1.2 crushing does NOT fire at normal Vu', () => {
+    const ref: RebarLayout = {
+      topBars: [{ numBars: 3, barSize: 7 }], botBars: [{ numBars: 2, barSize: 7 }],
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+    };
+    const r = designMember(sect, mat, ref, { id: '1', label: '', Mu_pos: 45, Mu_neg: 0, Vu: 45, Tu: 0, Pu: 0 }, 20);
+    expect(r.warnings.some(w => w.code === 'ACI §22.5.1.2' && w.message.includes('Cross-section'))).toBe(false);
+  });
+
+  it('§25.2.1 does NOT fire for reference beams (3-#7 in 12" → s_clear=1.94" ≥ 1.0")', () => {
+    const ref: RebarLayout = {
+      topBars: [{ numBars: 3, barSize: 7 }], botBars: [{ numBars: 2, barSize: 7 }],
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+    };
+    const r = designMember(sect, mat, ref, { id: '1', label: '', Mu_pos: 45, Mu_neg: 0, Vu: 45, Tu: 0, Pu: 0 }, 20);
+    expect(r.warnings.some(w => w.code === 'ACI §25.2.1')).toBe(false);
+  });
+});
+
 describe('computeShear — Vs cap §22.5.1.2', () => {
   it('caps Vs at 8*sqrt(fc)*bw*d and flags it', () => {
     const heavyTies: RebarLayout = {
