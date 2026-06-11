@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs   = require('fs');
+const { registerEtabsBridge } = require('./etabsBridge.cjs');
 const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow() {
@@ -33,7 +34,9 @@ function createWindow() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => win.webContents.send('new-project') },
+        { label: 'New Project',    accelerator: 'CmdOrCtrl+N', click: () => win.webContents.send('new-project')   },
+        { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: () => win.webContents.send('trigger-open') },
+        { label: 'Save Project',  accelerator: 'CmdOrCtrl+S', click: () => win.webContents.send('trigger-save') },
         { type: 'separator' },
         { role: 'quit' },
       ],
@@ -77,6 +80,10 @@ ipcMain.handle('open-file', async () => {
   const content = fs.readFileSync(filePaths[0], 'utf8');
   return { content };
 });
+
+// ── IPC: ETABS CSI OAPI bridge (Windows + ETABS running; errors elsewhere) ───
+
+registerEtabsBridge(ipcMain);
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 

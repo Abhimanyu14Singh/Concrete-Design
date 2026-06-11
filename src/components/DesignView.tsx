@@ -5,8 +5,9 @@
  *   Right : Results (DCRs, code checks, calc breakdown)
  */
 import { useState } from 'react';
-import type { Member, SectionType } from '../types';
-import { getBarArea, getBarDiam, designMember } from '../utils/concreteDesign';
+import type { Member, SectionType, DesignCode } from '../types';
+import { getBarArea, getBarDiam } from '../utils/concreteDesign';
+import { runDesign } from '../engines';
 import SectionView from './Detailing/SectionView';
 import ElevationView from './Detailing/ElevationView';
 import CalcBreakdownModal from './Results/CalcBreakdownModal';
@@ -17,6 +18,7 @@ import {
 
 interface Props {
   member: Member;
+  code?: DesignCode;
   onUpdate: (m: Member) => void;
 }
 
@@ -101,12 +103,12 @@ function DCRRow({ label, dcr, demand, capacity, unit = 'kip-ft' }: { label: stri
   );
 }
 
-export default function DesignView({ member, onUpdate }: Props) {
+export default function DesignView({ member, code = 'ACI318-19', onUpdate }: Props) {
   const [activeLoadId, setActiveLoadId] = useState(member.loads[0]?.id);
   const [showCalc, setShowCalc] = useState(false);
 
   const load = member.loads.find(l => l.id === activeLoadId) ?? member.loads[0];
-  const result = designMember(member.section, member.material, member.rebar, load, member.span);
+  const result = runDesign(member.section, member.material, member.rebar, load, member.span, code);
 
   const upd  = (patch: Partial<Member>) => onUpdate({ ...member, ...patch });
   const updS = (patch: Partial<Member['section']>) => upd({ section: { ...member.section, ...patch } });

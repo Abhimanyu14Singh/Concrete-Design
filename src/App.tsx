@@ -1,23 +1,224 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Project, Member } from './types';
 import { defaultProject } from './utils/sampleData';
+import { saveProject, openProject } from './utils/electronBridge';
+import { exportPDF } from './utils/export/pdfExport';
+import { exportExcel } from './utils/export/excelExport';
 import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
+import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
+import type { DesignGroup } from './types';
+import { useUnits } from './contexts/UnitsContext';
+import { MEMBER_COLOR } from './theme';
 
-type Tab = 'dashboard' | 'results' | 'editor';
+type Tab = 'dashboard' | 'member';
+
+const hdrBtn: React.CSSProperties = {
+  padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
+  background: 'white', fontSize: 12, cursor: 'pointer', color: '#374151', fontWeight: 600,
+};
 
 export default function App() {
-  const [project, setProject] = useState<Project>(defaultProject);
+  // ── Core state ────────────────────────────────────────────────────────────
+  const [project, setProjectRaw] = useState<Project>(defaultProject);
   const [activeMemberId, setActiveMemberId] = useState<string>(project.members[0].id);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [zoom, setZoom] = useState<number>(() => {
+    const s = localStorage.getItem('sc-zoom');
+    return s ? parseFloat(s) : 1.0;
+  });
+  const [showPrefs, setShowPrefs] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const { units, setUnits, fmt } = useUnits();
+
+  // B5: dirty indicator
+  const [isDirty, setIsDirty] = useState(false);
+
+  // B4: undo/redo history
+  const historyRef = useRef<Project[]>([defaultProject]);
+  const historyIndexRef = useRef<number>(0);
+
+  // A3: drag-to-reorder state
+  const [dragSrcId, setDragSrcId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // A1: split-pane width
+  const [splitPos, setSplitPos] = useState<number>(() => {
+    const s = localStorage.getItem('sc-split');
+    return s ? parseInt(s) : 360;
+  });
+  const splitDragging = useRef(false);
+  const splitStartX = useRef(0);
+  const splitStartPos = useRef(360);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
 
+  // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
+  function setProject(p: Project | ((prev: Project) => Project)) {
+    setProjectRaw(prev => {
+      const next = typeof p === 'function' ? p(prev) : p;
+      // Push to history (cap at 20)
+      const sliced = historyRef.current.slice(0, historyIndexRef.current + 1);
+      historyRef.current = [...sliced, next].slice(-20);
+      historyIndexRef.current = historyRef.current.length - 1;
+      setIsDirty(true);
+      return next;
+    });
+  }
+
+  // ── File handlers ──────────────────────────────────────────────────────────
+  const handleSave = useCallback(async () => {
+    await saveProject(project);
+    setIsDirty(false);
+  }, [project]);
+
+  const handleOpen = useCallback(async () => {
+    try {
+      const loaded = await openProject();
+      if (!loaded) return;
+      setProjectRaw(loaded);
+      historyRef.current = [loaded];
+      historyIndexRef.current = 0;
+      setActiveMemberId(loaded.members[0]?.id ?? '');
+      setTab('dashboard');
+      setIsDirty(false);
+    } catch { /* user cancelled */ }
+  }, []);
+
+  function handleNewProject() {
+    if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
+    setProjectRaw(defaultProject);
+    historyRef.current = [defaultProject];
+    historyIndexRef.current = 0;
+    setActiveMemberId(defaultProject.members[0].id);
+    setTab('dashboard');
+    setIsDirty(false);
+  }
+
+  function changeZoom(z: number) {
+    setZoom(z);
+    localStorage.setItem('sc-zoom', String(z));
+    setShowPrefs(false);
+  }
+
+  // ── B4: Undo/Redo ──────────────────────────────────────────────────────────
+  function undo() {
+    if (historyIndexRef.current <= 0) return;
+    historyIndexRef.current--;
+    const prev = historyRef.current[historyIndexRef.current];
+    setProjectRaw(prev);
+    setIsDirty(historyIndexRef.current > 0);
+  }
+
+  function redo() {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    historyIndexRef.current++;
+    const next = historyRef.current[historyIndexRef.current];
+    setProjectRaw(next);
+    setIsDirty(true);
+  }
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) {
+        // A4: Arrow navigation in sidebar
+        if (tab === 'member' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          const idx = project.members.findIndex(m => m.id === activeMemberId);
+          if (e.key === 'ArrowUp' && idx > 0)
+            setActiveMemberId(project.members[idx - 1].id);
+          if (e.key === 'ArrowDown' && idx < project.members.length - 1)
+            setActiveMemberId(project.members[idx + 1].id);
+        }
+        return;
+      }
+      if (e.key === 's') { e.preventDefault(); handleSave(); }
+      if (e.key === 'o') { e.preventDefault(); handleOpen(); }
+      if (e.key === 'n') { e.preventDefault(); handleNewProject(); }
+      if (e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      if (e.key === 'y') { e.preventDefault(); redo(); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [project, activeMemberId, tab, handleSave, handleOpen]);
+
+  // ── Electron menu → renderer events ───────────────────────────────────────
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api) return;
+    api.onTriggerSave(handleSave);
+    api.onTriggerOpen(handleOpen);
+    api.onNewProject(handleNewProject);
+    return () => {
+      api.offTriggerSave(handleSave);
+      api.offTriggerOpen(handleOpen);
+      api.offNewProject(handleNewProject);
+    };
+  }, [handleSave, handleOpen]);
+
+  // ── Click outside to close popovers ───────────────────────────────────────
+  useEffect(() => {
+    if (!showPrefs && !showExport) return;
+    function close(e: MouseEvent) {
+      if (!(e.target as Element).closest('[data-popover]')) {
+        setShowPrefs(false);
+        setShowExport(false);
+      }
+    }
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showPrefs, showExport]);
+
+  // ── A1: Split-pane drag ───────────────────────────────────────────────────
+  function onSplitMouseDown(e: React.MouseEvent) {
+    splitDragging.current = true;
+    splitStartX.current = e.clientX;
+    splitStartPos.current = splitPos;
+    e.preventDefault();
+  }
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!splitDragging.current) return;
+      const newPos = Math.max(240, Math.min(640, splitStartPos.current + e.clientX - splitStartX.current));
+      setSplitPos(newPos);
+      localStorage.setItem('sc-split', String(newPos));
+    }
+    function onMouseUp() { splitDragging.current = false; }
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+  }, []);
+
+  // ── ETABS import ───────────────────────────────────────────────────────────
+  const [showEtabsImport, setShowEtabsImport] = useState(false);
+
+  function handleEtabsImport(members: Member[], groups: DesignGroup[], pickId?: string) {
+    setProject(p => {
+      // Re-imports replace members with the same frame id
+      const incoming = new Set(members.map(m => m.id));
+      return {
+        ...p,
+        members: [...p.members.filter(m => !incoming.has(m.id)), ...members],
+        designGroups: [...(p.designGroups ?? []).filter(g => !g.memberIds.some(id => incoming.has(id))), ...groups],
+      };
+    });
+    setShowEtabsImport(false);
+    if (pickId) {
+      setActiveMemberId(pickId);
+      setTab('member');
+    } else {
+      setTab('dashboard');
+    }
+  }
+
+  // ── Member helpers ─────────────────────────────────────────────────────────
   function handleSelectMember(id: string) {
     setActiveMemberId(id);
-    setTab('results');
+    setTab('member');
   }
 
   function handleUpdateMember(updated: Member) {
@@ -47,32 +248,70 @@ export default function App() {
     };
     setProject(p => ({ ...p, members: [...p.members, newMember] }));
     setActiveMemberId(id);
-    setTab('editor');
+    setTab('member');
   }
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'dashboard', label: 'Dashboard' },
-    { key: 'results', label: 'Results' },
-    { key: 'editor', label: 'Input' },
-  ];
+  // A2: Duplicate member
+  function duplicateMember(id: string) {
+    const src = project.members.find(m => m.id === id);
+    if (!src) return;
+    const newId = `M${project.members.length + 1}`;
+    const copy: Member = {
+      ...JSON.parse(JSON.stringify(src)),
+      id: newId,
+      label: src.label + ' (Copy)',
+    };
+    setProject(p => ({ ...p, members: [...p.members, copy] }));
+    setActiveMemberId(newId);
+    setTab('member');
+  }
+
+  // A3: Drag-to-reorder
+  function onDragStart(id: string) { setDragSrcId(id); }
+  function onDragOver(e: React.DragEvent, id: string) { e.preventDefault(); setDragOverId(id); }
+  function onDrop(targetId: string) {
+    if (!dragSrcId || dragSrcId === targetId) { setDragSrcId(null); setDragOverId(null); return; }
+    setProject(p => {
+      const members = [...p.members];
+      const srcIdx = members.findIndex(m => m.id === dragSrcId);
+      const tgtIdx = members.findIndex(m => m.id === targetId);
+      const [item] = members.splice(srcIdx, 1);
+      members.splice(tgtIdx, 0, item);
+      return { ...p, members };
+    });
+    setDragSrcId(null);
+    setDragOverId(null);
+  }
+
+  const sectionLabel = (m: Member) => {
+    const s = m.section;
+    if (s.type === 'circular_column') return `Ø${fmt(s.diameter ?? s.b, 'length')}`;
+    return `${fmt(s.b, 'length')} × ${fmt(s.h, 'length')}`;
+  };
 
   return (
-    <div className="flex h-screen bg-gray-950 text-white overflow-hidden" style={{ fontFamily: 'system-ui, sans-serif' }}>
+    <div id="app-root" style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
+      {showEtabsImport && (
+        <EtabsImportWizard
+          code={project.code}
+          onClose={() => setShowEtabsImport(false)}
+          onImport={handleEtabsImport}
+        />
+      )}
       {/* Sidebar */}
-      <aside style={{ width: sidebarOpen ? 220 : 48, transition: 'width 0.2s', flexShrink: 0 }}
-        className="bg-gray-900 border-r border-gray-800 flex flex-col overflow-hidden">
+      <aside id="app-sidebar" style={{ width: sidebarOpen ? 220 : 48, transition: 'width 0.2s', flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Logo */}
-        <div className="flex items-center gap-2 px-3 py-4 border-b border-gray-800">
-          <div style={{ width: 28, height: 28, background: '#2563eb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ width: 28, height: 28, background: '#2563eb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', color: 'white', flexShrink: 0 }}>
             SC
           </div>
           {sidebarOpen && (
             <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap' }}>S-Concrete</div>
-              <div style={{ color: '#64748b', fontSize: 10, whiteSpace: 'nowrap' }}>ACI 318-19</div>
+              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: '#111827' }}>S-Concrete</div>
+              <div style={{ color: '#9ca3af', fontSize: 10, whiteSpace: 'nowrap' }}>ACI 318-19</div>
             </div>
           )}
-          <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: '#64748b', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
+          <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
             {sidebarOpen ? '◀' : '▶'}
           </button>
         </div>
@@ -81,44 +320,72 @@ export default function App() {
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           {sidebarOpen && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 6px' }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: 1 }}>Members</span>
-              <button onClick={addMember} style={{ color: '#60a5fa', fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }}>+</button>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 1 }}>Members</span>
+              <button onClick={addMember} style={{ color: '#2563eb', fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
             </div>
           )}
           {project.members.map(m => (
-            <button
+            <div
               key={m.id}
-              onClick={() => handleSelectMember(m.id)}
+              draggable={sidebarOpen}
+              onDragStart={() => onDragStart(m.id)}
+              onDragOver={e => onDragOver(e, m.id)}
+              onDrop={() => onDrop(m.id)}
+              onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
               style={{
-                width: '100%', textAlign: 'left', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
-                background: activeMemberId === m.id ? 'rgba(37,99,235,0.2)' : 'none',
-                borderRight: activeMemberId === m.id ? '3px solid #3b82f6' : '3px solid transparent',
-                border: 'none', cursor: 'pointer', color: 'white',
+                display: 'flex', alignItems: 'center',
+                borderTop: dragOverId === m.id && dragSrcId !== m.id ? '2px solid #2563eb' : '2px solid transparent',
+                opacity: dragSrcId === m.id ? 0.5 : 1,
               }}
             >
-              <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: '#60a5fa' }}>
-                {m.id}
-              </span>
               {sidebarOpen && (
-                <span style={{ fontSize: 11, color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {m.label.length > 16 ? m.label.slice(0, 16) + '…' : m.label}
-                </span>
+                <span style={{ fontSize: 14, color: '#d1d5db', cursor: 'grab', padding: '0 4px 0 8px', flexShrink: 0 }}>⠿</span>
               )}
-            </button>
+              <button
+                onClick={() => handleSelectMember(m.id)}
+                style={{
+                  flex: 1, textAlign: 'left', padding: '7px 8px', display: 'flex', alignItems: 'center', gap: 6,
+                  background: activeMemberId === m.id ? '#eff6ff' : 'none',
+                  borderRight: `3px solid ${activeMemberId === m.id ? '#2563eb' : 'transparent'}`,
+                  border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>
+                  {m.id}
+                </span>
+                {sidebarOpen && (
+                  <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {m.label.length > 14 ? m.label.slice(0, 14) + '…' : m.label}
+                  </span>
+                )}
+              </button>
+              {sidebarOpen && (
+                <button
+                  onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
+                  title="Duplicate member"
+                  style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 0 2px', flexShrink: 0 }}
+                >
+                  ⧉
+                </button>
+              )}
+            </div>
           ))}
           {sidebarOpen && (
-            <button onClick={addMember} style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#475569', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', gap: 6 }}>
+            <button onClick={addMember} style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', gap: 6 }}>
               <span>+</span><span>Add Member</span>
             </button>
           )}
         </div>
 
         {sidebarOpen && (
-          <div style={{ padding: '12px', borderTop: '1px solid #1e293b' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#60a5fa' }} />
-              <span style={{ fontSize: 10, color: '#64748b' }}>Beam</span>
-            </div>
+          <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb' }}>
+            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column], ['Wall', MEMBER_COLOR.wall]].map(([t, c]) => (
+              <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
+                <span style={{ fontSize: 10, color: '#9ca3af' }}>{t}</span>
+              </div>
+            ))}
           </div>
         )}
       </aside>
@@ -126,30 +393,34 @@ export default function App() {
       {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Top bar */}
-        <header style={{ background: '#0f172a', borderBottom: '1px solid #1e293b', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <header id="app-header" style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+          {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {tabs.map(t => (
+            {([['dashboard', 'Dashboard'], ['member', 'Member']] as [Tab, string][]).map(([key, label]) => (
               <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
+                key={key}
+                onClick={() => setTab(key)}
                 style={{
                   padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
-                  background: tab === t.key ? '#2563eb' : 'transparent',
-                  color: tab === t.key ? 'white' : '#64748b',
+                  background: tab === key ? '#2563eb' : 'transparent',
+                  color: tab === key ? 'white' : '#6b7280',
                 }}
               >
-                {t.label}
+                {label}
               </button>
             ))}
           </div>
+
           <div style={{ flex: 1 }} />
-          {tab !== 'dashboard' && (
+
+          {/* Member selector */}
+          {tab === 'member' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: '#64748b' }}>Member:</span>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Member:</span>
               <select
                 value={activeMemberId}
                 onChange={e => setActiveMemberId(e.target.value)}
-                style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '4px 8px', fontSize: 12, color: 'white' }}
+                style={{ background: 'white', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', fontSize: 12, color: '#111827' }}
               >
                 {project.members.map(m => (
                   <option key={m.id} value={m.id}>{m.id} — {m.label}</option>
@@ -157,51 +428,203 @@ export default function App() {
               </select>
             </div>
           )}
-          <div style={{ fontSize: 11, color: '#64748b' }}>{project.name}</div>
-          <div style={{ fontSize: 11, background: 'rgba(37,99,235,0.2)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 6, padding: '2px 8px', fontWeight: 700 }}>
+
+          {/* Separator */}
+          <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
+
+          {/* B5: Dirty indicator */}
+          <span style={{ fontSize: 11, color: isDirty ? '#dc2626' : '#9ca3af', fontWeight: 600, minWidth: 70 }}>
+            {isDirty ? '● Unsaved' : '✓ Saved'}
+          </span>
+
+          {/* B4: Undo/Redo */}
+          <button onClick={undo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Undo (Ctrl+Z)">↩</button>
+          <button onClick={redo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Redo (Ctrl+Y)">↪</button>
+
+          <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
+
+          {/* File actions */}
+          <button onClick={handleNewProject} style={hdrBtn} title="New project (Ctrl+N)">New</button>
+          <button onClick={handleOpen}       style={hdrBtn} title="Open project (Ctrl+O)">Open</button>
+          <button onClick={handleSave}       style={hdrBtn} title="Save project (Ctrl+S)">Save</button>
+          <button
+            onClick={() => setShowEtabsImport(true)}
+            style={{ ...hdrBtn, borderColor: '#7c3aed', color: '#7c3aed' }}
+            title="Import beams from an ETABS model (CSI API or tables file)"
+          >
+            ⇪ ETABS
+          </button>
+
+          {/* E1: Export dropdown */}
+          <div data-popover="" style={{ position: 'relative' }}>
+            <button
+              onClick={() => { setShowExport(v => !v); setShowPrefs(false); }}
+              style={{ ...hdrBtn, background: showExport ? '#eff6ff' : 'white', color: showExport ? '#2563eb' : '#374151' }}
+            >
+              Export ▾
+            </button>
+            {showExport && (
+              <div style={{
+                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
+                background: 'white', border: '1px solid #e5e7eb', borderRadius: 10,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '6px', minWidth: 160,
+              }}>
+                <button
+                  onClick={() => { exportPDF(project); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  PDF Calc Sheet
+                </button>
+                <button
+                  onClick={() => { exportExcel(project); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Excel Summary
+                </button>
+                <button
+                  onClick={() => { window.print(); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Print Preview
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Preferences */}
+          <div data-popover="" style={{ position: 'relative' }}>
+            <button
+              onClick={() => { setShowPrefs(v => !v); setShowExport(false); }}
+              style={{ ...hdrBtn, background: showPrefs ? '#eff6ff' : 'white', color: showPrefs ? '#2563eb' : '#374151' }}
+              title="Preferences"
+            >
+              ⚙
+            </button>
+            {showPrefs && (
+              <div style={{
+                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
+                background: 'white', border: '1px solid #e5e7eb', borderRadius: 10,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '12px 8px', minWidth: 190,
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, padding: '0 8px', marginBottom: 8 }}>
+                  Display Scale
+                </div>
+                {[0.75, 0.9, 1.0, 1.1, 1.25, 1.5].map(z => (
+                  <button
+                    key={z}
+                    onClick={() => changeZoom(z)}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                      background: zoom === z ? '#eff6ff' : 'none',
+                      color: zoom === z ? '#2563eb' : '#374151',
+                      fontWeight: zoom === z ? 700 : 400,
+                    }}
+                  >
+                    <span>{z === 1.0 ? '100%  (default)' : `${Math.round(z * 100)}%`}</span>
+                    {zoom === z && <span style={{ fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, padding: '0 8px', margin: '12px 0 8px', borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
+                  Units
+                </div>
+                {([['imperial', 'US (in, psi, kips)'], ['si', 'SI (mm, MPa, kN)']] as const).map(([u, label]) => (
+                  <button
+                    key={u}
+                    onClick={() => setUnits(u)}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                      background: units === u ? '#eff6ff' : 'none',
+                      color: units === u ? '#2563eb' : '#374151',
+                      fontWeight: units === u ? 700 : 400,
+                    }}
+                  >
+                    <span>{label}</span>
+                    {units === u && <span style={{ fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Project info */}
+          <div style={{ fontSize: 11, color: '#6b7280' }}>{project.name}</div>
+          <div style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 8px', fontWeight: 700 }}>
             {project.code}
           </div>
         </header>
 
         {/* Content */}
-        <main style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-          {tab === 'dashboard' && (
-            <Dashboard project={project} onSelectMember={handleSelectMember} />
-          )}
-          {tab === 'results' && (
-            <div>
-              <div style={{ marginBottom: 12 }}>
-                <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{activeMember.label}</h2>
-                <p style={{ fontSize: 11, color: '#64748b', margin: '4px 0 0' }}>
-                  {activeMember.section.type.replace(/_/g, ' ')} &bull;{' '}
-                  {`${activeMember.section.b}" × ${activeMember.section.h}"`} &bull;{' '}
-                  f'c = {activeMember.material.fc} psi &bull; fy = {activeMember.material.fy / 1000} ksi
-                </p>
-              </div>
-              <MemberResults member={activeMember} />
-            </div>
-          )}
-          {tab === 'editor' && (
-            <div style={{ maxWidth: 640 }}>
-              <div style={{ marginBottom: 12 }}>
-                <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Member Input</h2>
-                <p style={{ fontSize: 11, color: '#64748b', margin: '4px 0 0' }}>Edit geometry, materials, reinforcement, and loads</p>
-              </div>
-              <MemberEditor
-                key={activeMember.id}
-                member={activeMember}
-                onUpdate={handleUpdateMember}
+        <main id="app-main" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+          <div style={{
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top left',
+            width: `${100 / zoom}%`,
+            minHeight: `${100 / zoom}%`,
+            padding: 16,
+          }}>
+            {tab === 'dashboard' && (
+              <Dashboard
+                project={project}
+                onSelectMember={handleSelectMember}
+                onProjectUpdate={p => setProject(p)}
               />
-              <div style={{ marginTop: 16 }}>
-                <button
-                  onClick={() => setTab('results')}
-                  style={{ background: '#2563eb', color: 'white', padding: '8px 24px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer' }}
+            )}
+            {tab === 'member' && (
+              <div id="app-split" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+                {/* Left: Input editor */}
+                <div style={{ width: splitPos, flexShrink: 0, minWidth: 0, paddingRight: 8 }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>Input</h2>
+                    <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>Edit geometry, materials, reinforcement, loads</p>
+                  </div>
+                  <MemberEditor
+                    key={activeMember.id}
+                    member={activeMember}
+                    onUpdate={handleUpdateMember}
+                    code={project.code}
+                  />
+                </div>
+
+                {/* A1: Drag divider */}
+                <div
+                  onMouseDown={onSplitMouseDown}
+                  style={{
+                    width: 8, flexShrink: 0, cursor: 'col-resize',
+                    background: 'transparent', position: 'relative',
+                    alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
                 >
-                  Run Design Check →
-                </button>
+                  <div style={{ width: 3, borderRadius: 2, height: '40px', background: '#d1d5db' }} />
+                </div>
+
+                {/* Right: Results */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>{activeMember.label}</h2>
+                    <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>
+                      {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
+                      f'c = {fmt(activeMember.material.fc, 'stress')} &bull; fy = {fmt(activeMember.material.fy / 1000, 'stressKsi')}
+                    </p>
+                  </div>
+                  <MemberResults
+                    member={activeMember}
+                    code={project.code}
+                    onRebarChange={handleUpdateMember}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </main>
       </div>
     </div>

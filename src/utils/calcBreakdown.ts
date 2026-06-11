@@ -2,8 +2,13 @@
  * Generates a step-by-step ACI 318-19 calculation breakdown
  * as a structured array of steps with equation, substitution, and result.
  */
+import { formatBarLabel } from './rebar';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
-import { getBarArea, getBarDiam } from './concreteDesign';
+import {
+  getBarArea, getBarDiam,
+  effectiveDepth as engineEffectiveDepth,
+  computeFlexure, computeShear, computeTorsion, zonedShearCheck,
+} from './concreteDesign';
 
 export interface CalcStep {
   ref: string;       // ACI 318-19 section reference
@@ -28,10 +33,10 @@ function beta1(fc: number): number {
   return Math.max(0.65, 0.85 - 0.05 * (fc - 4000) / 1000);
 }
 
+// Same formula as the design engine (concreteDesign.effectiveDepth with #8
+// outermost bar) so the breakdown numbers match the results screen exactly.
 function effectiveDepth(section: SectionDimensions): number {
-  const cover = section.coverClear;
-  const stirrupR = getBarDiam(section.stirrupDia) / 2;
-  return (section.h ?? 12) - cover - stirrupR - 0.5;
+  return engineEffectiveDepth(section, 8);
 }
 
 function effectiveFlange(section: SectionDimensions, span: number): number {
@@ -55,7 +60,8 @@ export function generateBreakdown(
   material: MaterialProps,
   rebar: RebarLayout,
   load: LoadCase,
-  span = 20
+  span = 20,
+  zoneVu?: [number, number, number],  // max |V| per span third (station forces)
 ): CalcSection[] {
   const { fc, fy, fyt, lambdaConcrete } = material;
   const h = section.h ?? 12;
@@ -84,10 +90,10 @@ export function generateBreakdown(
     {
       ref: 'ACI 318-19 §22.2.2',
       label: 'Effective depth',
-      equation: 'd = h − cc − d_stirrup/2 − d_bar/2',
-      substitution: `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia) / 2)} − 0.50`,
+      equation: 'd = h − cc − d_stirrup − d_bar/2',
+      substitution: `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − 0.50`,
       result: `${fmt(d)} in`,
-      note: 'Using assumed bar radius of 0.5" for outermost bar',
+      note: 'Using assumed bar radius of 0.5" (#8) for outermost bar — same as results engine',
     },
     {
       ref: 'ACI 318-19 §22.2.2.4.3',
@@ -143,8 +149,8 @@ export function generateBreakdown(
   ];
 
   // ── Reinforcement ────────────────────────────────────────────────────
-  const topBarDesc = rebar.topBars.map(g => `${g.numBars}−#${g.barSize}`).join(' + ');
-  const botBarDesc = rebar.botBars.map(g => `${g.numBars}−#${g.barSize}`).join(' + ');
+  const topBarDesc = rebar.topBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
+  const botBarDesc = rebar.botBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
 
   const rebarSteps: CalcStep[] = [
     {
@@ -197,13 +203,14 @@ export function generateBreakdown(
     }
   );
 
-  // ── Flexure — positive moment ─────────────────────────────────────────
-  const a_pos = (As_bot * fy) / (0.85 * fc * beff);
+  // ── Flexure — engine call (identical numbers to the results screen) ──
+  const flex = computeFlexure(section, material, As_top, As_bot, span);
+  const a_pos = flex.a_pos;
   const c_pos = a_pos / b1;
-  const et_pos = 0.003 * (d - c_pos) / c_pos;
-  const phi_pos = et_pos >= 0.005 ? 0.9 : et_pos <= 0.002 ? 0.65 : 0.65 + (et_pos - 0.002) * (250 / 3);
-  const Mn_pos = As_bot * fy * (d - a_pos / 2) / 12000;
-  const phi_Mn_pos = phi_pos * Mn_pos;
+  const et_pos = c_pos > 0 ? 0.003 * (d - c_pos) / c_pos : 99;
+  const phi_pos = flex.phi_pos;
+  const Mn_pos = flex.Mn_pos;
+  const phi_Mn_pos = flex.phi_Mn_pos;
   const DCR_pos = phi_Mn_pos > 0 ? load.Mu_pos / phi_Mn_pos : 0;
 
   const flexPosSteps: CalcStep[] = [
@@ -260,13 +267,10 @@ export function generateBreakdown(
     },
   ];
 
-  // ── Flexure — negative moment ─────────────────────────────────────────
-  const a_neg = (As_top * fy) / (0.85 * fc * bw);
-  const c_neg = a_neg / b1;
-  const et_neg = c_neg > 0 ? 0.003 * (d - c_neg) / c_neg : 99;
-  const phi_neg = et_neg >= 0.005 ? 0.9 : et_neg <= 0.002 ? 0.65 : 0.65 + (et_neg - 0.002) * (250 / 3);
-  const Mn_neg = As_top > 0 ? As_top * fy * (d - a_neg / 2) / 12000 : 0;
-  const phi_Mn_neg = phi_neg * Mn_neg;
+  // ── Flexure — negative moment (engine values) ────────────────────────
+  const a_neg = flex.a_neg;
+  const Mn_neg = flex.Mn_neg;
+  const phi_Mn_neg = flex.phi_Mn_neg;
   const DCR_neg = phi_Mn_neg > 0 ? load.Mu_neg / phi_Mn_neg : 0;
 
   const flexNegSteps: CalcStep[] = [
@@ -294,44 +298,58 @@ export function generateBreakdown(
     },
   ];
 
-  // ── Shear ─────────────────────────────────────────────────────────────
-  const rho_w = As_bot / (bw * d);
-  const lambda_s = Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d)));
-  const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(rho_w, 1 / 3) * Math.sqrt(fc) + 0) * bw * d / 1000;
-  const Vs = sv > 0 ? (Av * fyt * d) / (sv * 1000) : 0;
+  // ── Shear — engine call (identical numbers to the results screen) ────
+  const shear = computeShear(section, material, rebar, load.Pu);
+  const d_shear = shear.d_shear;
+  const rho_w = As_bot / (bw * d_shear);
+  const Av_min_s = shear.Av_min_per_s;
+  const hasMinStirrups = sv > 0 && Av / sv >= Av_min_s;
+  const lambda_s = hasMinStirrups ? 1.0 : Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d_shear)));
+  const Vc = shear.Vc;
+  const Vs = shear.Vs;
   const phi_v = 0.75;
-  const phi_Vn = phi_v * (Vc + Vs);
+  const phi_Vn = shear.phi_Vn;
   const DCR_shear = phi_Vn > 0 ? load.Vu / phi_Vn : 0;
 
   const shearSteps: CalcStep[] = [
     {
+      ref: 'ACI 318-19 §22.5.2.1',
+      label: 'Effective shear depth',
+      equation: 'd = max(d_flex, 0.8h)',
+      substitution: `d = max(${fmt(d)}, 0.8×${h})`,
+      result: `d = ${fmt(d_shear)} in`,
+    },
+    {
       ref: 'ACI 318-19 Table 22.5.5.1',
       label: 'Longitudinal steel ratio',
       equation: 'ρw = As / (bw × d)',
-      substitution: `ρw = ${fmt(As_bot)} / (${fmt(bw)} × ${fmt(d)})`,
+      substitution: `ρw = ${fmt(As_bot)} / (${fmt(bw)} × ${fmt(d_shear)})`,
       result: `ρw = ${fmt(rho_w, 5)}`,
     },
     {
       ref: 'ACI 318-19 §22.5.5.1.3',
       label: 'Size effect factor',
-      equation: 'λs = min(1.0, √(2/(1+0.004d)))',
-      substitution: `λs = min(1.0, √(2/(1+0.004×${fmt(d)})))`,
+      equation: 'λs = min(1.0, √(2/(1+0.004d)))  [waived if Av/s ≥ Av,min/s]',
+      substitution: hasMinStirrups
+        ? `Av/s = ${fmt(Av / sv, 4)} ≥ Av,min/s = ${fmt(Av_min_s, 4)} → λs = 1.0`
+        : `λs = min(1.0, √(2/(1+0.004×${fmt(d_shear)})))`,
       result: `λs = ${fmt(lambda_s, 4)}`,
-      note: d <= 10 ? 'λs = 1.0 (d ≤ 10")' : 'Size effect applies (d > 10")',
+      note: hasMinStirrups ? 'Size effect waived — minimum stirrups provided' : 'Size effect applies (Av/s < Av,min/s)',
     },
     {
       ref: 'ACI 318-19 Table 22.5.5.1',
       label: 'Concrete shear strength',
-      equation: 'Vc = 8λλsρw^(1/3)√f\'c × bw × d',
-      substitution: `Vc = 8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} × ${fmt(bw)} × ${fmt(d)} / 1000`,
+      equation: 'Vc = (8λλsρw^(1/3)√f\'c + Nu/6Ag) × bw × d',
+      substitution: `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(load.Pu / (6 * bw * h), 4)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
       result: `Vc = ${fmt(Vc)} kips`,
+      note: load.Pu !== 0 ? `Includes axial term Nu/6Ag with Pu = ${load.Pu} kips` : undefined,
     },
     {
       ref: 'ACI 318-19 §22.5.8.5',
       label: 'Steel shear strength',
       equation: 'Vs = Av·fyt·d / s',
       substitution: sv > 0
-        ? `Vs = ${fmt(Av, 3)} × ${fyt} × ${fmt(d)} / (${sv} × 1000)`
+        ? `Vs = ${fmt(Av, 3)} × ${fyt} × ${fmt(d_shear)} / (${sv} × 1000)`
         : 'No stirrups provided',
       result: `Vs = ${fmt(Vs)} kips`,
     },
@@ -362,7 +380,7 @@ export function generateBreakdown(
   // Check min stirrup requirement
   const Vc_phi = phi_v * Vc;
   if (load.Vu > Vc_phi / 2) {
-    const Av_min = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
+    const Av_min = Av_min_s;
     shearSteps.push({
       ref: 'ACI 318-19 §9.6.3.3',
       label: 'Minimum shear reinforcement',
@@ -373,12 +391,14 @@ export function generateBreakdown(
     });
   }
 
-  // ── Torsion ───────────────────────────────────────────────────────────
+  // ── Torsion — engine call (identical numbers to the results screen) ──
+  const torsion = computeTorsion(section, material, rebar);
   const Acp = b * h;
   const Pcp = 2 * (b + h);
-  const Tcr = (lambdaConcrete * Math.sqrt(fc) * Acp * Acp / Pcp) / 12000;
-  const Tu_thresh = Tcr / 4;
-  const DCR_torsion = Tcr > 0 ? load.Tu / Tcr : 0;
+  const Tcr = torsion.Tcr;
+  const Tu_thresh = torsion.Tu_threshold;
+  const phi_Tn = torsion.phi_Tn;
+  const DCR_torsion = phi_Tn > 0 ? load.Tu / phi_Tn : 0;
 
   const torsionSteps: CalcStep[] = [
     {
@@ -413,15 +433,24 @@ export function generateBreakdown(
         : `⚠ Tu = ${load.Tu} k-ft > Tu,thresh — torsion must be designed for`,
     },
     {
+      ref: 'ACI 318-19 §22.7.6.1',
+      label: 'Design torsion capacity (closed stirrups)',
+      equation: 'φTn = φ · 2·Ao · (At/s) · fyt',
+      substitution: rebar.ties
+        ? `φTn = 0.75 × 2 × Ao × (${getBarArea(rebar.ties.barSize)}/${sv}) × ${fyt} / 12000`
+        : 'No closed stirrups provided',
+      result: `φTn = ${fmt(phi_Tn)} kip-ft`,
+    },
+    {
       ref: 'Design check',
       label: 'DCR — Torsion',
-      equation: 'DCR = Tu / Tcr',
-      substitution: `DCR = ${load.Tu} / ${fmt(Tcr)}`,
+      equation: 'DCR = Tu / φTn',
+      substitution: `DCR = ${load.Tu} / ${fmt(phi_Tn)}`,
       result: `DCR = ${fmt(DCR_torsion, 3)}  ${DCR_torsion <= 1 ? '✓ OK' : '✗ NG'}`,
     },
   ];
 
-  return [
+  const out: CalcSection[] = [
     { title: '1. Section Properties', steps: sectionSteps },
     { title: '2. Material Properties', steps: materialSteps },
     { title: '3. Reinforcement', steps: rebarSteps },
@@ -430,4 +459,24 @@ export function generateBreakdown(
     { title: '6. Shear', steps: shearSteps },
     { title: '7. Torsion', steps: torsionSteps },
   ];
+
+  // ── Zoned stirrups (thirds of span) — same engine call as the screen ──
+  if (rebar.tieZones && rebar.ties) {
+    const demands: [number, number, number] = zoneVu ?? [load.Vu, load.Vu, load.Vu];
+    const zones = zonedShearCheck(section, material, rebar, demands, load.Pu);
+    const zoneLabel = ['End zone (0–L/3)', 'Middle zone (L/3–2L/3)', 'End zone (2L/3–L)'];
+    out.push({
+      title: '8. Shear by Stirrup Zone (thirds of span)',
+      steps: zones.map((z, i) => ({
+        ref: 'ACI 318-19 §22.5',
+        label: zoneLabel[i],
+        equation: 'DCR = Vu,zone / φVn(s_zone)',
+        substitution: `s = ${z.spacing}"  →  φVn = ${fmt(z.phi_Vn)} kips;  Vu,zone = ${fmt(z.Vu)} kips`,
+        result: `DCR = ${fmt(z.DCR, 3)}  ${z.DCR <= 1 ? '✓ OK' : '✗ NG'}`,
+        note: zoneVu ? 'Vu,zone = max |V| within this third (station forces)' : 'No station forces — governing Vu applied to all zones',
+      })),
+    });
+  }
+
+  return out;
 }

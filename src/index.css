@@ -2,8 +2,8 @@
 
 body {
   margin: 0;
-  background: #030712;
-  color: #f1f5f9;
+  background: #f3f4f6;
+  color: #111827;
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
@@ -221,4 +221,17 @@ body {
 
 .gradient-header {
   background: linear-gradient(135deg, rgba(30,58,138,0.4), rgba(88,28,135,0.4));
+}
+
+/* E2: Print styles */
+@media print {
+  #app-header, #app-sidebar { display: none !important; }
+  #app-main { overflow: visible !important; }
+  body { background: white; }
+}
+
+/* F2: Responsive layout */
+@media (max-width: 900px) {
+  #app-split { flex-direction: column !important; }
+  #app-sidebar { width: 48px !important; }
 }

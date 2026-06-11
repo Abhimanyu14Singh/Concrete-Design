@@ -4,8 +4,15 @@ import { serializeProject, deserializeProject, downloadProjectFile, loadProjectF
 declare global {
   interface Window {
     electronAPI?: {
-      saveFile: (opts: { content: string; defaultName: string }) => Promise<{ success: boolean }>;
-      openFile: () => Promise<{ content: string } | null>;
+      saveFile:       (opts: { content: string; defaultName: string }) => Promise<{ success: boolean }>;
+      etabs?:         (method: string, args?: unknown) => Promise<unknown>;
+      openFile:       () => Promise<{ content: string } | null>;
+      onTriggerSave:  (cb: () => void) => void;
+      onTriggerOpen:  (cb: () => void) => void;
+      onNewProject:   (cb: () => void) => void;
+      offTriggerSave: (cb: () => void) => void;
+      offTriggerOpen: (cb: () => void) => void;
+      offNewProject:  (cb: () => void) => void;
     };
   }
 }
