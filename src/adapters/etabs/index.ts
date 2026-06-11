@@ -14,13 +14,16 @@ import { seedRebar, type SeedOptions } from './rebarSeed';
 
 /** Envelope station forces from the selected combos into a single LoadCase. */
 export function envelopeLoadCase(forces: ComboForces[], label = 'ETABS Envelope'): LoadCase {
-  let maxPos = 0, maxNeg = 0, maxV = 0;
+  let maxPos = 0, maxNeg = 0, maxV = 0, maxT = 0, worstP = 0;
   for (const cf of forces) {
     for (const st of cf.stations) {
       if (st.M > maxPos) maxPos = st.M;
       if (st.M < maxNeg) maxNeg = st.M;
       const v = Math.abs(st.V);
       if (v > maxV) maxV = v;
+      if (st.T !== undefined && Math.abs(st.T) > maxT) maxT = Math.abs(st.T);
+      // Keep the sign: + compression / − tension matters for axial checks
+      if (st.P !== undefined && Math.abs(st.P) > Math.abs(worstP)) worstP = st.P;
     }
   }
   return {
@@ -29,8 +32,8 @@ export function envelopeLoadCase(forces: ComboForces[], label = 'ETABS Envelope'
     Mu_pos: +maxPos.toFixed(2),
     Mu_neg: +Math.abs(maxNeg).toFixed(2),
     Vu: +maxV.toFixed(2),
-    Tu: 0,
-    Pu: 0,
+    Tu: +maxT.toFixed(2),
+    Pu: +worstP.toFixed(2),
   };
 }
 

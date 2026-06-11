@@ -91,6 +91,8 @@ export interface StationForce {
   x: number;  // distance from I-node (ft)
   V: number;  // shear V2 (kips)
   M: number;  // moment M3 (kip-ft, +ve sagging)
+  P?: number; // axial force (kips, + compression) — from COM import
+  T?: number; // torsion (kip-ft) — from COM import
 }
 
 /** Station forces for one load combination. */
@@ -104,6 +106,29 @@ export interface DesignGroup {
   id: string;
   label: string;
   memberIds: string[];
+  color?: string;      // display color on the model map
+  rebar?: RebarLayout; // group template — fanned out to members on Apply
+}
+
+/** A beam frame captured from the ETABS model (connectivity snapshot). */
+export interface MapFrame {
+  frameName: string;
+  story: string;
+  sectionName: string;
+  pt1: Point3D;
+  pt2: Point3D;
+  memberId?: string; // linked Member if imported and designed
+}
+
+export interface Point3D { x: number; y: number; z: number; }
+
+/** Persistent connectivity snapshot of the ETABS model, saved in .scdb. */
+export interface ModelMap {
+  source: 'com' | 'file' | 'mock';
+  modelName: string;
+  importedAt: string;
+  stories: string[];
+  frames: MapFrame[];
 }
 
 /** One point on a column P-M interaction curve. */
@@ -210,6 +235,7 @@ export interface Project {
   date: string;
   members: Member[];
   designGroups?: DesignGroup[]; // beam design groups (ETABS import)
+  modelMap?: ModelMap;          // persistent connectivity snapshot
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */
