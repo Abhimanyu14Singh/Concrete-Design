@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import type { Member, SectionType, MemberType, WallRebarLayout } from '../../types';
+import type { Member, SectionType, MemberType, WallRebarLayout, BarGroup } from '../../types';
 import LoadCaseTable from './LoadCaseTable';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea } from '../../utils/concreteDesign';
-import SectionView from '../Detailing/SectionView';
 import CodeBadge from '../common/CodeBadge';
 import { codeAccent } from '../../theme';
 
@@ -18,7 +17,6 @@ const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'circular_column',  label: 'Circ. Column' },
   { value: 'shear_wall',       label: 'Shear Wall (ACI 318-25)' },
 ];
-const BAR_SIZES = [3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18];
 
 // ── Module-level sub-components — NEVER defined inside a render function ──────
 // Defining components inside render would make React treat them as new types on
@@ -116,10 +114,19 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   }
   const sec = (p: Partial<Member['section']>) => update({ section: { ...m.section, ...p } });
   const mat = (p: Partial<Member['material']>) => update({ material: { ...m.material, ...p } });
-  const topBar = (p: Partial<Member['rebar']['topBars'][0]>) =>
-    update({ rebar: { ...m.rebar, topBars: [{ ...m.rebar.topBars[0], ...p }] } });
-  const botBar = (p: Partial<Member['rebar']['botBars'][0]>) =>
-    update({ rebar: { ...m.rebar, botBars: [{ ...m.rebar.botBars[0], ...p }] } });
+  // Each array entry = one layer, outermost first (multi-layer beams).
+  const setFaceLayer = (face: 'topBars' | 'botBars', i: number, p: Partial<BarGroup>) =>
+    update({ rebar: { ...m.rebar, [face]: m.rebar[face].map((g, gi) => gi === i ? { ...g, ...p } : g) } });
+  const addLayer = (face: 'topBars' | 'botBars') => {
+    const last = m.rebar[face][m.rebar[face].length - 1] ?? { numBars: 2, barSize: 8 };
+    update({ rebar: { ...m.rebar, [face]: [...m.rebar[face], { numBars: 2, barSize: last.barSize }] } });
+  };
+  const removeLayer = (face: 'topBars' | 'botBars', i: number) => {
+    if (m.rebar[face].length <= 1) return;
+    update({ rebar: { ...m.rebar, [face]: m.rebar[face].filter((_, gi) => gi !== i) } });
+  };
+  const topBar = (p: Partial<Member['rebar']['topBars'][0]>) => setFaceLayer('topBars', 0, p);
+  const botBar = (p: Partial<Member['rebar']['botBars'][0]>) => setFaceLayer('botBars', 0, p);
   const ties = (p: Partial<NonNullable<Member['rebar']['ties']>>) =>
     update({ rebar: { ...m.rebar, ties: { ...(m.rebar.ties ?? { barSize: 4, spacing: 6, legs: 2 }), ...p } } });
   const crackP = m.crackParams ?? DEFAULT_CRACK_PARAMS;
@@ -343,6 +350,36 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       {!isWall && (<>
       <div style={cardStyle}>
         <div style={headingStyle}>Reinforcement</div>
+        {(!isColumn ? (['topBars', 'botBars'] as const) : []).map(face => (
+          <div key={face}>
+            <p style={{ fontSize: 11, color: '#9ca3af', margin: face === 'topBars' ? '0 0 6px' : '8px 0 6px' }}>
+              {face === 'topBars' ? 'Top Bars' : 'Bottom Bars'}
+            </p>
+            {m.rebar[face].map((g, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ flex: '1 1 110px', minWidth: 110 }}>
+                  <InputRow label={m.rebar[face].length > 1 ? `L${i + 1}${i === 0 ? ' (outer)' : ''} # bars` : '# bars'}
+                    value={g.numBars} min={1}
+                    onChange={v => setFaceLayer(face, i, { numBars: +v })} />
+                </div>
+                <div style={{ flex: '1 1 110px', minWidth: 110 }}>
+                  <SelectRow label="Size" value={g.barSize}
+                    options={barSizeOptions(units, g.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                    onChange={v => setFaceLayer(face, i, { barSize: +v })} />
+                </div>
+                {m.rebar[face].length > 1 && (
+                  <button onClick={() => removeLayer(face, i)} title="Remove layer"
+                    style={{ border: '1px solid #e5e7eb', background: 'white', color: '#9ca3af', borderRadius: 6, width: 22, height: 22, cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0 }}>×</button>
+                )}
+              </div>
+            ))}
+            <button onClick={() => addLayer(face)}
+              style={{ border: 'none', background: 'none', color: '#2563eb', fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '2px 0 0' }}>
+              + Add layer
+            </button>
+          </div>
+        ))}
+        {isColumn && (<>
         <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 6px' }}>Top Bars</p>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
@@ -367,6 +404,11 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               onChange={v => botBar({ barSize: +v })} />
           </div>
         </div>
+        </>)}
+        {!isColumn && (m.rebar.topBars.length > 1 || m.rebar.botBars.length > 1) && (
+          <UnitInputRow label="Layer clear spacing" value={m.rebar.layerClearSpacing ?? 1} quantity="length"
+            onChange={v => update({ rebar: { ...m.rebar, layerClearSpacing: v } })} />
+        )}
         {isColumn && (
           <>
             <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 6px' }}>Side Bars (intermediate layers)</p>
@@ -392,23 +434,28 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             ]}
             onChange={v => update({ rebar: { ...m.rebar, tieType: v as 'tied' | 'spiral' } })} />
         )}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 140px', minWidth: 140 }}>
             <SelectRow label="Size" value={m.rebar.ties?.barSize ?? 4}
               options={barSizeOptions(units, m.rebar.ties?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => ties({ barSize: +v })} />
           </div>
           {!m.rebar.tieZones && (
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: '1 1 140px', minWidth: 140 }}>
               <UnitInputRow label="Spacing" value={m.rebar.ties?.spacing ?? 6} quantity="length"
                 onChange={v => ties({ spacing: v })} />
             </div>
           )}
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: '1 1 140px', minWidth: 140 }}>
             <InputRow label="Legs" value={m.rebar.ties?.legs ?? 2} min={2}
               onChange={v => ties({ legs: +v })} />
           </div>
         </div>
+        {m.rebar.tieZones && (
+          <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>
+            Zoned stirrups active — the three zone spacings below govern the shear check.
+          </p>
+        )}
         {!isColumn && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#6b7280', padding: '6px 0 0', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!m.rebar.tieZones}
@@ -426,9 +473,9 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           </label>
         )}
         {m.rebar.tieZones && (
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {(['End (0–L/3)', 'Middle', 'End (2L/3–L)'] as const).map((zl, i) => (
-              <div key={zl} style={{ flex: 1 }}>
+              <div key={zl} style={{ flex: '1 1 150px', minWidth: 150 }}>
                 <UnitInputRow label={zl} value={m.rebar.tieZones![i].spacing} quantity="length"
                   onChange={v => {
                     const zones = m.rebar.tieZones!.map((z, zi) => zi === i ? { spacing: v } : z) as
@@ -440,6 +487,22 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             ))}
           </div>
         )}
+        {(() => {
+          const isCirc = m.section.type === 'circular_column';
+          const D = m.section.diameter ?? m.section.b;
+          const Ag = isCirc ? Math.PI * D * D / 4 : m.section.b * (m.section.h ?? 12);
+          const As = [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])]
+            .reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
+          const rho = Ag > 0 ? As / Ag : 0;
+          return (
+            <div style={{ fontSize: 10, color: '#6b7280', fontFamily: 'monospace', marginTop: 8, paddingTop: 6, borderTop: '1px dashed #e5e7eb', lineHeight: 1.7 }}>
+              Ag = {Ag.toFixed(0)} in² &nbsp; As = {As.toFixed(2)} in² &nbsp; ρ = {(rho * 100).toFixed(2)}%
+              {isColumn && (rho < 0.01 || rho > 0.08) && (
+                <span style={{ color: '#dc2626', fontWeight: 700 }}> ⚠ outside 1–8%</span>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Crack Control (EC2 beams only) */}
@@ -500,33 +563,6 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       </div>
 
       </div>{/* end inputs column */}
-
-      {/* Live section preview — redraws as you type */}
-      <div style={{ width: 248, flexShrink: 0, position: 'sticky', top: 0 }}>
-        <div style={{ ...cardStyle, padding: 10 }}>
-          <div style={{ ...headingStyle, marginBottom: 4 }}>Live Preview</div>
-          <SectionView section={m.section} rebar={m.rebar} width={228} height={195} />
-          {(() => {
-            const isCirc = m.section.type === 'circular_column';
-            const D = m.section.diameter ?? m.section.b;
-            const Ag = isCirc ? Math.PI * D * D / 4 : m.section.b * (m.section.h ?? 12);
-            const As = [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])]
-              .reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
-            const rho = Ag > 0 ? As / Ag : 0;
-            return (
-              <div style={{ fontSize: 10, color: '#6b7280', fontFamily: 'monospace', marginTop: 6, lineHeight: 1.7 }}>
-                <div>Ag = {Ag.toFixed(0)} in² &nbsp; As = {As.toFixed(2)} in²</div>
-                <div>ρ = {(rho * 100).toFixed(2)}%
-                  {isColumn && (rho < 0.01 || rho > 0.08) && (
-                    <span style={{ color: '#dc2626', fontWeight: 700 }}> ⚠ outside 1–8%</span>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      </div>
-
       </div>{/* end flex */}
     </div>
   );

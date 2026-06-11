@@ -54,16 +54,20 @@ export default function SectionView({
 
   function barDots(bars: { numBars: number; barSize: number }[], row: 'top' | 'bot'): ReactElement[] {
     const color = row === 'top' ? BARS.top : BARS.bot;
+    const sClear = (rebar.layerClearSpacing ?? 1.0) * scale;
+    let inset = 0; // true-scale offset from the stirrup line to the current layer
     return bars.flatMap((grp, gi) => {
       const usableW0 = scaledW - 2 * stOff;
       const r = fitRadius(grp.barSize, grp.numBars, usableW0);
+      const dbScaled = getBarDiam(grp.barSize) * scale;
+      const faceY = row === 'top' ? oy + stOff : oy + scaledH - stOff;
+      const ry = row === 'top' ? faceY + inset + r : faceY - inset - r;
+      inset += dbScaled + sClear;
       const usableW = scaledW - 2 * (stOff + r);
-      const barY = row === 'top' ? oy + stOff + r : oy + scaledH - stOff - r;
       const spacing = grp.numBars > 1 ? usableW / (grp.numBars - 1) : 0;
       const startX = ox + stOff + r;
       return Array.from({ length: grp.numBars }, (_, i) => {
         const bx = grp.numBars === 1 ? ox + scaledW / 2 : startX + i * spacing;
-        const ry = row === 'top' ? barY + gi * (r * 2 + 2) : barY - gi * (r * 2 + 2);
         return <circle key={`${row}-${gi}-${i}`} cx={bx} cy={ry} r={r} fill={color} stroke="#fff" strokeWidth="0.5" />;
       });
     });
@@ -157,6 +161,25 @@ export default function SectionView({
             height={(isT ? secH - hf : secH) * scale - 2 * stOff}
             fill="none" stroke={BARS.tie} strokeWidth="2" rx="4"
           />
+          {/* Interior crosstie legs when legs > 2 — evenly spaced verticals with 135° hook ticks */}
+          {rebar.ties && rebar.ties.legs > 2 && (() => {
+            const hoopX = isT ? ox + (secW - bw) / 2 * scale + stOff : ox + stOff;
+            const hoopW = (isT ? bw : secW) * scale - 2 * stOff;
+            const hoopY = oy + (isT ? hf * scale : 0) + stOff;
+            const hoopH = (isT ? secH - hf : secH) * scale - 2 * stOff;
+            const n = rebar.ties.legs - 2;
+            const hook = Math.min(8, hoopW * 0.08);
+            return Array.from({ length: n }, (_, i) => {
+              const lx = hoopX + (hoopW * (i + 1)) / (n + 1);
+              return (
+                <g key={`leg-${i}`} stroke={BARS.tie} strokeWidth="1.5" fill="none">
+                  <line x1={lx} y1={hoopY} x2={lx} y2={hoopY + hoopH} />
+                  <line x1={lx} y1={hoopY} x2={lx + hook} y2={hoopY + hook} />
+                  <line x1={lx} y1={hoopY + hoopH} x2={lx - hook} y2={hoopY + hoopH - hook} />
+                </g>
+              );
+            });
+          })()}
           {barDots(rebar.topBars, 'top')}
           {barDots(rebar.botBars, 'bot')}
           {rebar.sideBars?.flatMap((grp, gi) => {
@@ -224,7 +247,7 @@ export default function SectionView({
           <text x={ox + scaledW + 8} y={topLabelY + 4}
             fontSize="10" fill={BARS.top} fontFamily="monospace"
             {...labelEvents('top')}>
-            {rebar.topBars[0] ? `${rebar.topBars[0].numBars}-${formatBarLabel(rebar.topBars[0].barSize)}` : '—'}
+            {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
           </text>
           <text x={ox + scaledW + 8} y={topLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
@@ -235,7 +258,7 @@ export default function SectionView({
           <text x={ox + scaledW + 8} y={botLabelY + 4}
             fontSize="10" fill={BARS.bot} fontFamily="monospace"
             {...labelEvents('bot')}>
-            {rebar.botBars[0] ? `${rebar.botBars[0].numBars}-${formatBarLabel(rebar.botBars[0].barSize)}` : '—'}
+            {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
           </text>
           <text x={ox + scaledW + 8} y={botLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
@@ -270,7 +293,7 @@ export default function SectionView({
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
                 fontSize="10" fill={BARS.tie} fontFamily="monospace"
                 {...labelEvents('stir')}>
-                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
+                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
               </text>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
                 fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>

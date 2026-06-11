@@ -6,7 +6,7 @@ import { formatBarLabel } from './rebar';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
 import {
   getBarArea, getBarDiam,
-  effectiveDepth as engineEffectiveDepth,
+  effectiveDepthMulti, layerCentroidOffset,
   computeFlexure, computeShear, computeTorsion, zonedShearCheck,
 } from './concreteDesign';
 
@@ -31,12 +31,6 @@ function fmt(n: number, dec = 2): string {
 function beta1(fc: number): number {
   if (fc <= 4000) return 0.85;
   return Math.max(0.65, 0.85 - 0.05 * (fc - 4000) / 1000);
-}
-
-// Same formula as the design engine (concreteDesign.effectiveDepth with #8
-// outermost bar) so the breakdown numbers match the results screen exactly.
-function effectiveDepth(section: SectionDimensions): number {
-  return engineEffectiveDepth(section, 8);
 }
 
 function effectiveFlange(section: SectionDimensions, span: number): number {
@@ -67,7 +61,11 @@ export function generateBreakdown(
   const h = section.h ?? 12;
   const b = section.b;
   const bw = section.bw ?? b;
-  const d = effectiveDepth(section);
+  const sClear = rebar.layerClearSpacing ?? 1.0;
+  const d = effectiveDepthMulti(section, rebar.botBars, sClear);       // to bottom steel centroid
+  const d_neg = effectiveDepthMulti(section, rebar.topBars, sClear);   // to top steel centroid
+  const yBot = layerCentroidOffset(section, rebar.botBars, sClear);
+  const botLayers = rebar.botBars.filter(g => g.numBars > 0).length;
   const b1 = beta1(fc);
   const beff = effectiveFlange(section, span);
 
@@ -89,11 +87,15 @@ export function generateBreakdown(
     },
     {
       ref: 'ACI 318-19 §22.2.2',
-      label: 'Effective depth',
-      equation: 'd = h − cc − d_stirrup − d_bar/2',
-      substitution: `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − 0.50`,
+      label: 'Effective depth (to bottom steel centroid)',
+      equation: botLayers > 1 ? 'd = h − ȳs (area-weighted steel centroid)' : 'd = h − cc − d_stirrup − d_bar/2',
+      substitution: botLayers > 1
+        ? `ȳs = ${fmt(yBot)}" over ${botLayers} layers (clear layer spacing ${sClear}");  d = ${h} − ${fmt(yBot)}`
+        : `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − ${fmt(getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2)}`,
       result: `${fmt(d)} in`,
-      note: 'Using assumed bar radius of 0.5" (#8) for outermost bar — same as results engine',
+      note: botLayers > 1
+        ? 'Multi-layer tension steel — d measured to the area-weighted centroid (same as results engine)'
+        : `Outermost bottom bar ${formatBarLabel(rebar.botBars[0]?.barSize ?? 8)} — same as results engine`,
     },
     {
       ref: 'ACI 318-19 §22.2.2.4.3',
@@ -169,6 +171,19 @@ export function generateBreakdown(
     },
   ];
 
+  if (botLayers > 1 || rebar.topBars.filter(g => g.numBars > 0).length > 1) {
+    const allLayers = [...rebar.topBars, ...rebar.botBars].filter(g => g.numBars > 0);
+    const dbMax = Math.max(...allLayers.map(g => getBarDiam(g.barSize)));
+    const sReq = Math.max(1.0, dbMax);
+    rebarSteps.push({
+      ref: 'ACI 318-19 §25.2.2',
+      label: 'Vertical clear spacing between bar layers',
+      equation: 's_layer ≥ max(1", db)',
+      substitution: `s_layer = ${sClear}"  vs  max(1", ${fmt(dbMax)}") = ${fmt(sReq)}"`,
+      result: `${sClear} in  ${sClear >= sReq ? '✓ OK' : '⚠ NG'}`,
+    });
+  }
+
   if (rebar.ties) {
     rebarSteps.push({
       ref: 'Input',
@@ -204,7 +219,9 @@ export function generateBreakdown(
   );
 
   // ── Flexure — engine call (identical numbers to the results screen) ──
-  const flex = computeFlexure(section, material, As_top, As_bot, span);
+  const flex = computeFlexure(section, material, As_top, As_bot, span,
+    rebar.topBars[0]?.barSize ?? 8, rebar.botBars[0]?.barSize ?? 8,
+    rebar.topBars, rebar.botBars, sClear);
   const a_pos = flex.a_pos;
   const c_pos = a_pos / b1;
   const et_pos = c_pos > 0 ? 0.003 * (d - c_pos) / c_pos : 99;
@@ -286,7 +303,7 @@ export function generateBreakdown(
       ref: 'ACI 318-19 §22.3.2',
       label: 'Nominal moment (negative)',
       equation: 'Mn⁻ = As\'·fy·(d − a/2)',
-      substitution: `Mn⁻ = ${fmt(As_top)} × ${fy} × (${fmt(d)} − ${fmt(a_neg / 2)}) / 12,000`,
+      substitution: `Mn⁻ = ${fmt(As_top)} × ${fy} × (${fmt(d_neg)} − ${fmt(a_neg / 2)}) / 12,000`,
       result: `Mn⁻ = ${fmt(Mn_neg)} kip-ft`,
     },
     {

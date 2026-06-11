@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getBarArea, getBarDiam, beta1, effectiveDepth, effectiveFlange,
   steelLimits, computeFlexure, computeShear, computeTorsion,
-  requiredAs, designMember,
+  requiredAs, designMember, effectiveDepthMulti, layerCentroidOffset,
 } from '../concreteDesign';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../../types';
 
@@ -491,5 +491,69 @@ describe('metric bar encoding (negative barSize = Ø mm)', () => {
     // 4-Ø20 = 1257 mm² ≈ 1.95 in² ≈ 2.5 #8 — capacity should be in a plausible band
     const rUS = designMember(rect16x24, mat4k, { ...metricRebar, botBars: [{ numBars: 4, barSize: 8 }] }, stdLoad);
     expect(r.phi_Mn_pos).toBeLessThan(rUS.phi_Mn_pos); // 1.95 in² < 3.16 in²
+  });
+});
+
+// ─── Multi-layer rebar (one BarGroup per layer, outermost first) ─────────────
+
+describe('effectiveDepthMulti / layerCentroidOffset', () => {
+  it('single layer reduces exactly to effectiveDepth for several bar sizes', () => {
+    for (const size of [5, 8, 9, 11]) {
+      const bars = [{ numBars: 4, barSize: size }];
+      expect(effectiveDepthMulti(rect16x24, bars)).toBeCloseTo(effectiveDepth(rect16x24, size), 10);
+    }
+  });
+
+  it('2-layer hand calc: h=24, cc=1.5, #4 stir, [4-#8, 2-#8], s=1" -> d = 20.83"', () => {
+    // y1 = 1.5 + 0.5 + 0.5 = 2.5"; y2 = 1.5 + 0.5 + 1.0 + 1.0 + 0.5 = 4.5"
+    // ybar = (3.16*2.5 + 1.58*4.5) / 4.74 = 3.1667"; d = 24 - 3.1667 = 20.833"
+    const bars = [{ numBars: 4, barSize: 8 }, { numBars: 2, barSize: 8 }];
+    expect(layerCentroidOffset(rect16x24, bars, 1.0)).toBeCloseTo(3.1667, 3);
+    expect(effectiveDepthMulti(rect16x24, bars, 1.0)).toBeCloseTo(20.833, 2);
+  });
+
+  it('2-layer beam has lower phiMn than the same As in a single layer', () => {
+    const single: RebarLayout = { topBars: [{ numBars: 2, barSize: 8 }], botBars: [{ numBars: 6, barSize: 8 }], ties: { barSize: 4, spacing: 6, legs: 2 } };
+    const layered: RebarLayout = { ...single, botBars: [{ numBars: 4, barSize: 8 }, { numBars: 2, barSize: 8 }] };
+    const r1 = designMember(rect16x24, mat4k, single, stdLoad);
+    const r2 = designMember(rect16x24, mat4k, layered, stdLoad);
+    expect(r2.phi_Mn_pos).toBeLessThan(r1.phi_Mn_pos);
+    expect(r2.phi_Mn_pos).toBeGreaterThan(0.85 * r1.phi_Mn_pos); // small reduction, not a collapse
+  });
+
+  it('ACI §25.2.2 warning fires when layer clear spacing < max(1", db)', () => {
+    const layered: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: 8 }],
+      botBars: [{ numBars: 3, barSize: 9 }, { numBars: 2, barSize: 9 }],
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+      layerClearSpacing: 0.5,
+    };
+    const r = designMember(rect16x24, mat4k, layered, stdLoad);
+    expect(r.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(true);
+    const ok = designMember(rect16x24, mat4k, { ...layered, layerClearSpacing: 1.2 }, stdLoad);
+    expect(ok.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(false);
+  });
+
+  it('no §25.2.2 warning for single-layer beams and results unchanged (regression)', () => {
+    const r = designMember(rect16x24, mat4k, rebar3_8, stdLoad);
+    expect(r.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(false);
+    // d = 24 - 1.5 - 0.5 - 0.5 = 21.5; a = 3.16*60/(0.85*4*16) = 3.485
+    // Mn = 3.16*60000*(21.5 - 1.743)/12000 = 312.2 k-ft, tension-controlled phi=0.9
+    expect(r.phi_Mn_pos).toBeCloseTo(0.9 * 312.2, 0);
+  });
+});
+
+describe('computeShear — Vs cap §22.5.1.2', () => {
+  it('caps Vs at 8*sqrt(fc)*bw*d and flags it', () => {
+    const heavyTies: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: 8 }], botBars: [{ numBars: 4, barSize: 8 }],
+      ties: { barSize: 6, spacing: 2, legs: 6 },
+    };
+    const r = computeShear(rect16x24, mat4k, heavyTies);
+    const VsMax = 8 * Math.sqrt(4000) * 16 * r.d_shear / 1000;
+    expect(r.Vs).toBeCloseTo(VsMax, 5);
+    expect(r.VsCapped).toBe(true);
+    const normal = computeShear(rect16x24, mat4k, rebar3_8);
+    expect(normal.VsCapped).toBe(false);
   });
 });

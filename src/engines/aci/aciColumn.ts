@@ -115,7 +115,8 @@ export function aciInteractionCurve(
     for (const bar of bars) {
       const eps = EPS_CU * (c - bar.y) / c;
       let fs = Math.max(-fy, Math.min(fy, eps * Es));
-      // bar displaces concrete inside the stress block
+      // Compression bar (fs > 0 in this sign convention) inside the stress
+      // block displaces concrete already counted in Cc — deduct 0.85f'c.
       if (bar.y < a && fs > 0) fs -= 0.85 * fc;
       P += bar.area * fs;
       M += bar.area * fs * (depth / 2 - bar.y);

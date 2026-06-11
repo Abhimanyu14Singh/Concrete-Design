@@ -7,9 +7,11 @@ interface Props {
   member: Member;
   width?: number;
   height?: number;
+  /** Visual zoom: the SVG is laid out at width×height and displayed at zoom× that size. */
+  zoom?: number;
 }
 
-export default function ElevationView({ member, width = 600, height = 160 }: Props) {
+export default function ElevationView({ member, width = 600, height = 160, zoom = 1 }: Props) {
   const { fmt } = useUnits();
   const pad = { l: 50, r: 30, t: 40, b: 40 };
   const drawW = width - pad.l - pad.r;
@@ -35,7 +37,8 @@ export default function ElevationView({ member, width = 600, height = 160 }: Pro
   }
 
   return (
-    <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 8 }}>
+    <svg width={width * zoom} height={height * zoom} viewBox={`0 0 ${width} ${height}`}
+      style={{ background: '#f8fafc', borderRadius: 8 }}>
       <defs>
         <pattern id="elvgrid" width="30" height="30" patternUnits="userSpaceOnUse">
           <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#e5e7eb" strokeWidth="0.5" />

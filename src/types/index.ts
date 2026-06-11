@@ -59,6 +59,12 @@ export interface RebarLayout {
    * `ties`. When absent the single `ties.spacing` applies full length.
    */
   tieZones?: [TieZone, TieZone, TieZone];
+  /**
+   * Vertical clear spacing between bar layers when topBars/botBars have more
+   * than one entry (each entry = one layer, outermost first). Default 1.0"
+   * (ACI §25.2.2 minimum).
+   */
+  layerClearSpacing?: number;
 }
 
 export interface TieZone {
@@ -114,7 +120,9 @@ export interface InteractionPoint {
 export interface BarGroup {
   numBars: number;
   barSize: number; // #3 = 3, #8 = 8, etc.
+  /** @deprecated unused — multi-layer is modeled as multiple BarGroup entries */
   rows?: number;
+  /** @deprecated unused — see RebarLayout.layerClearSpacing */
   rowSpacing?: number;
 }
 

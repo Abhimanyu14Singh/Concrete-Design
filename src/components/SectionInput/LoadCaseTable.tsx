@@ -59,11 +59,9 @@ export default function LoadCaseTable({ loads, onDone, onCancel, isColumn = fals
     setRows(prev => prev.filter((_, i) => i !== idx));
   }
 
-  function handlePaste(e: React.ClipboardEvent) {
-    const text = e.clipboardData.getData('text/plain');
+  function applyPastedText(text: string): boolean {
     const lines = text.trim().split('\n').filter(l => l.trim());
-    if (!lines.length) return;
-    e.preventDefault();
+    if (!lines.length) return false;
     const parsed: LoadCase[] = lines.map((line, i) => {
       const cols = line.split('\t');
       const base = blankRow(cols[0]?.trim() || `LC ${i + 1}`);
@@ -74,7 +72,30 @@ export default function LoadCaseTable({ loads, onDone, onCancel, isColumn = fals
       });
       return base;
     });
+    const hasData = rows.some(r => FIELDS.some(f2 => (r[f2.key] as number) !== 0));
+    if (hasData && !window.confirm(`Replace the ${rows.length} existing load case${rows.length !== 1 ? 's' : ''} with ${parsed.length} pasted row${parsed.length !== 1 ? 's' : ''}?`)) {
+      return false;
+    }
     setRows(parsed);
+    return true;
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text.includes('\t') && !text.includes('\n')) return; // single value → normal input paste
+    e.preventDefault();
+    applyPastedText(text);
+  }
+
+  async function pasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!applyPastedText(text) && !text.trim()) {
+        alert('Clipboard is empty. Copy rows from Excel first (columns: Label, ' + FIELDS.map(f2 => f2.label).join(', ') + ').');
+      }
+    } catch {
+      alert('Could not read the clipboard — paste directly into the table instead (Ctrl+V).');
+    }
   }
 
   const th: React.CSSProperties = {
@@ -148,12 +169,21 @@ export default function LoadCaseTable({ loads, onDone, onCancel, isColumn = fals
 
         {/* Footer */}
         <div style={{ padding: '12px 20px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <button
-            onClick={addRow}
-            style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#374151', background: 'white' }}
-          >
-            + Add row
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={addRow}
+              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#374151', background: 'white' }}
+            >
+              + Add row
+            </button>
+            <button
+              onClick={pasteFromClipboard}
+              title={`Paste rows copied from Excel (columns: Label, ${FIELDS.map(f2 => f2.label).join(', ')})`}
+              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#374151', background: 'white' }}
+            >
+              📋 Paste from clipboard
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               onClick={onCancel}

@@ -22,14 +22,26 @@ export default function ExportModal({ project, onClose }: Props) {
 
   async function handlePDF() {
     setBusy('pdf');
-    try { await exportPDF(project); }
-    finally { setBusy(null); onClose(); }
+    try {
+      await exportPDF(project);
+      onClose();
+    } catch (err) {
+      alert(`PDF export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(null);
+    }
   }
 
   function handleExcel() {
     setBusy('excel');
-    try { exportExcel(project); }
-    finally { setBusy(null); onClose(); }
+    try {
+      exportExcel(project);
+      onClose();
+    } catch (err) {
+      alert(`Excel export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (

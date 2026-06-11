@@ -5,7 +5,7 @@
 
 import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase,
-  DesignResults, DesignWarning, ComboForces,
+  DesignResults, DesignWarning, ComboForces, BarGroup,
 } from '../types';
 
 /** Max |V| within each third of the span — drives the zoned stirrup check. */
@@ -43,6 +43,42 @@ export function getBarDiam(size: number): number {
 
 function getRebarAs(bars: { numBars: number; barSize: number }[]): number {
   return bars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
+}
+
+/**
+ * Distance from the extreme tension fiber to the area-weighted centroid of a
+ * multi-layer bar group. Layers are listed outermost-first; layer i sits at
+ * cc + dstir + Σ_{j<i}(dbar_j + sClear) + dbar_i/2 from the face.
+ * For a single layer this reduces exactly to cc + dstir + dbar/2.
+ */
+export function layerCentroidOffset(
+  section: SectionDimensions,
+  bars: BarGroup[],
+  sClear = 1.0,
+): number {
+  const dStir = getBarDiam(section.stirrupDia);
+  let edge = section.coverClear + dStir; // running offset to top of next layer
+  let sumA = 0, sumAy = 0;
+  for (const g of bars) {
+    if (g.numBars <= 0) continue;
+    const db = getBarDiam(g.barSize);
+    const A  = g.numBars * getBarArea(g.barSize);
+    sumA  += A;
+    sumAy += A * (edge + db / 2);
+    edge  += db + sClear;
+  }
+  if (sumA <= 0) return section.coverClear + dStir + getBarDiam(8) / 2;
+  return sumAy / sumA;
+}
+
+/** Effective depth to the centroid of a (possibly multi-layer) bar group. */
+export function effectiveDepthMulti(
+  section: SectionDimensions,
+  bars: BarGroup[],
+  sClear = 1.0,
+): number {
+  const h = section.h ?? 12;
+  return h - layerCentroidOffset(section, bars, sClear);
 }
 
 // ── ACI helpers ───────────────────────────────────────────────────────────────
@@ -100,6 +136,9 @@ export function computeFlexure(
   span = 20,
   topBarSize = 8,
   botBarSize = 8,
+  topBars?: BarGroup[],
+  botBars?: BarGroup[],
+  layerClearSpacing = 1.0,
 ): {
   phi_Mn_pos: number; phi_Mn_neg: number;
   Mn_pos: number;     Mn_neg: number;
@@ -112,8 +151,12 @@ export function computeFlexure(
   const beff = effectiveFlange(section, span);
   const bw   = section.bw ?? section.b;
 
-  const d_pos = effectiveDepth(section, botBarSize);
-  const d_neg = effectiveDepth(section, topBarSize);
+  const d_pos = botBars?.length
+    ? effectiveDepthMulti(section, botBars, layerClearSpacing)
+    : effectiveDepth(section, botBarSize);
+  const d_neg = topBars?.length
+    ? effectiveDepthMulti(section, topBars, layerClearSpacing)
+    : effectiveDepth(section, topBarSize);
 
   function calcMn(As: number, d: number, bFlange: number): { Mn: number; a: number; phi: number } {
     if (As <= 0) return { Mn: 0, a: 0, phi: 0.9 };
@@ -162,13 +205,16 @@ export function computeShear(
   material: MaterialProps,
   rebar: RebarLayout,
   Nu = 0,
-): { Vc: number; Vs: number; phi_Vn: number; Av_req: number; Av_prov: number; d_shear: number; Av_min_per_s: number } {
+): { Vc: number; Vs: number; phi_Vn: number; Av_req: number; Av_prov: number; d_shear: number; Av_min_per_s: number; VsCapped: boolean } {
   const { fc, fyt, lambdaConcrete } = material;
   const bw  = section.bw ?? section.b;
   const h   = section.h ?? 12;
   const phi = 0.75;
 
-  const d_raw   = effectiveDepth(section, 8);
+  // d to the actual outermost bottom-bar centroid (multi-layer aware)
+  const d_raw   = rebar.botBars?.length
+    ? effectiveDepthMulti(section, rebar.botBars, rebar.layerClearSpacing ?? 1.0)
+    : effectiveDepth(section, 8);
   const d_shear = Math.max(d_raw, 0.8 * h);
 
   const Av_min_per_s = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
@@ -176,9 +222,13 @@ export function computeShear(
   const ties = rebar.ties;
   let Vs = 0;
   let Av_prov = 0;
+  let VsCapped = false;
   if (ties) {
     Av_prov = ties.legs * getBarArea(ties.barSize);
     Vs = (Av_prov * fyt * d_shear) / (ties.spacing * 1000);
+    // Vs ≤ 8√f'c·bw·d (ACI §22.5.1.2 upper limit on Vn − Vc)
+    const VsMax = 8 * Math.sqrt(fc) * bw * d_shear / 1000;
+    if (Vs > VsMax) { Vs = VsMax; VsCapped = true; }
   }
 
   const As_bot = getRebarAs(rebar.botBars);
@@ -193,7 +243,7 @@ export function computeShear(
   const Vc = (8 * lambdaConcrete * lambda_s * Math.pow(Math.max(rho_w, 1e-6), 1 / 3) * Math.sqrt(fc)
     + Nu / (6 * Ag)) * bw * d_shear / 1000;
 
-  return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s };
+  return { Vc, Vs, phi_Vn: phi * (Vc + Vs), Av_req: 0, Av_prov, d_shear, Av_min_per_s, VsCapped };
 }
 
 // ── Zoned shear (three stirrup spacings over thirds of the span) ─────────────
@@ -267,8 +317,7 @@ export function computeTorsion(
   let phi_Tn = 0;
   if (rebar?.ties && Ao > 0) {
     const At_s = getBarArea(rebar.ties.barSize) / rebar.ties.spacing; // in²/in per leg
-    phi_Tn = phi * 2 * Ao * At_s * fyt / 1000; // kip-ft (fyt in psi → /1000 kips, Ao in in² → /12 ft ... wait)
-    // Actually: Tn = 2*Ao*At*fyt/s  (units: in²·in²/in·psi = in²·psi = lb-in → /12000 kip-ft)
+    // Tn = 2·Ao·(At/s)·fyt — in²·(in²/in)·psi = lb-in → /12000 kip-ft
     phi_Tn = phi * 2 * Ao * At_s * fyt / 12000;
   }
 
@@ -317,7 +366,10 @@ export function designMember(
   const As_top = getRebarAs(rebar.topBars);
   const As_bot = getRebarAs(rebar.botBars);
 
-  const flex   = computeFlexure(section, material, As_top, As_bot, span);
+  const sClear = rebar.layerClearSpacing ?? 1.0;
+  const flex   = computeFlexure(section, material, As_top, As_bot, span,
+    rebar.topBars[0]?.barSize ?? 8, rebar.botBars[0]?.barSize ?? 8,
+    rebar.topBars, rebar.botBars, sClear);
   const shear  = computeShear(section, material, rebar, load.Pu);
   const torsion = computeTorsion(section, material, rebar);
 
@@ -400,6 +452,36 @@ export function designMember(
         warnings.push({ code: 'ACI §24.3.2', message: `Crack control: bar spacing ${s_actual.toFixed(1)}" > S_max ${s_max_crack.toFixed(1)}" at fs ≈ ${fs.toFixed(0)} ksi`, severity: 'warning' });
     }
   }
+
+  // Multi-layer checks: ACI §25.2.2 vertical clear spacing ≥ max(1", db); fit check
+  for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+    const layers = bars.filter(g => g.numBars > 0);
+    if (layers.length < 2) continue;
+    const dbMax = Math.max(...layers.map(g => getBarDiam(g.barSize)));
+    const sReq  = Math.max(1.0, dbMax);
+    if (sClear < sReq - 1e-9)
+      warnings.push({
+        code: 'ACI §25.2.2',
+        message: `${face} bars: layer clear spacing ${sClear}" < required max(1", db = ${dbMax.toFixed(2)}") = ${sReq.toFixed(2)}"`,
+        severity: 'warning',
+      });
+    const stack = section.coverClear + getBarDiam(section.stirrupDia)
+      + layers.reduce((s, g) => s + getBarDiam(g.barSize), 0) + sClear * (layers.length - 1);
+    if (stack >= h / 2)
+      warnings.push({
+        code: 'GEOM',
+        message: `${face} bar layers occupy ${stack.toFixed(1)}" ≥ h/2 = ${(h / 2).toFixed(1)}" — section cannot fit this layout`,
+        severity: 'error',
+      });
+  }
+
+  // Vs upper limit ACI §22.5.1.2
+  if (shear.VsCapped)
+    warnings.push({
+      code: 'ACI §22.5.1.2',
+      message: `Stirrup contribution capped at Vs,max = 8√f'c·bw·d = ${shear.Vs.toFixed(1)} kips — enlarge section instead of adding stirrups`,
+      severity: 'warning',
+    });
 
   // Face/skin steel ACI §9.7.2.3
   if (h > 36 && (!rebar.sideBars || rebar.sideBars.length === 0))

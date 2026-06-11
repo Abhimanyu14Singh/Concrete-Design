@@ -229,3 +229,16 @@ describe('designColumnACI', () => {
     expect(grossArea(true, 20, 20, 20)).toBeCloseTo(Math.PI * 100, 4);
   });
 });
+
+describe('aciInteractionCurve — displaced concrete (ACI §22.4.2.1)', () => {
+  it('swept curve approaches but never exceeds Pn0 (deduction keeps the cap honest)', () => {
+    const curve = aciInteractionCurve(rectCol, mat4k, rectRebar);
+    const Pn0 = curve[curve.length - 1].Pn;
+    const swept = curve.slice(1, -1); // exclude anchors
+    for (const p of swept) expect(p.Pn).toBeLessThan(Pn0 + 1e-6);
+    // deepest point is compression-controlled and close to (within 5% of) Pn0
+    const deepest = swept[swept.length - 1];
+    expect(deepest.phi).toBeCloseTo(0.65, 5);
+    expect(deepest.Pn).toBeGreaterThan(0.95 * Pn0);
+  });
+});
