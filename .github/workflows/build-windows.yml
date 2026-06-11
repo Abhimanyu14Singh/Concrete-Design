@@ -34,10 +34,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # winax is an optionalDependency — if its node-gyp build fails during
+      # `npm ci` the package is silently skipped and the app ships without it.
+      # This step forces a loud, mandatory install so the build fails visibly
+      # if the native module cannot be compiled.
+      - name: Install winax (COM bridge — must succeed)
+        run: npm install winax@^3.4.2 --no-save --foreground-scripts
+
       # Compile the winax COM native module against Electron's ABI so the
       # packaged desktop app can attach to a live ETABS instance.
       - name: Rebuild native modules for Electron
         run: npm run rebuild:native
+
+      - name: Verify winax native binary exists
+        run: |
+          node -e "require.resolve('winax'); console.log('winax OK:', require('winax/package.json').version)"
+          $nativeFile = Get-ChildItem -Path node_modules/winax/build/Release -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nativeFile) { Write-Error "winax .node binary not found in build/Release"; exit 1 }
+          Write-Host "winax binary: $($nativeFile.FullName)"
+        shell: pwsh
 
       - name: Build web assets (Vite)
         run: npm run build
@@ -48,6 +63,17 @@ jobs:
           # Prevents electron-builder from trying to sign the installer
           # (no certificate configured). Remove when a code-signing cert is added.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify winax is packaged in asar.unpacked
+        shell: pwsh
+        run: |
+          $unpackedPath = "release\win-unpacked\resources\app.asar.unpacked\node_modules\winax\build\Release"
+          $nativeFile = Get-ChildItem -Path $unpackedPath -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nativeFile) {
+            Write-Error "winax .node binary not found in asar.unpacked at: $unpackedPath"
+            exit 1
+          }
+          Write-Host "Packaged winax binary: $($nativeFile.FullName)"
 
       - name: Find installer path
         id: find_exe

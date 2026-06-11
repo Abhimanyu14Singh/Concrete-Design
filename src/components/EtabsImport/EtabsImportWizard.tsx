@@ -6,7 +6,7 @@
  *   4. Plan map  — beams colored by DCR; group editing; click-through to app
  */
 import { useMemo, useRef, useState } from 'react';
-import type { Member, DesignGroup, DesignCode } from '../../types';
+import type { Member, DesignGroup, DesignCode, ModelMap, MapFrame } from '../../types';
 import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { FileConnection } from '../../adapters/etabs/fileImport';
@@ -21,7 +21,7 @@ interface Props {
   code: DesignCode;
   onClose: () => void;
   /** Commit imported members + groups into the project; pickId opens that member. */
-  onImport: (members: Member[], groups: DesignGroup[], pickId?: string) => void;
+  onImport: (members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap) => void;
 }
 
 type SourceKind = 'com' | 'file' | 'mock';
@@ -65,6 +65,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   // step 4
   const [members, setMembers] = useState<Member[]>([]);
   const [designGroups, setDesignGroups] = useState<DesignGroup[]>([]);
+  const [capturedModelMap, setCapturedModelMap] = useState<ModelMap | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [minDCR, setMinDCR] = useState(0);
   const [dcrVersion, setDcrVersion] = useState(0); // bump to recompute DCRs after edits
@@ -129,10 +130,34 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     const conn = connRef.current;
     if (!conn) return;
     const ok = await run(async () => {
+      // Get all beams (no filter) for the connectivity map snapshot
+      const allBeams = await conn.getBeams({});
+      // Get filtered beams for design
       const beams = await conn.getBeams(filter);
       if (!beams.length) throw new Error('No beams match the current filter.');
       const forces = await conn.getStationForces(beams.map(b => b.name), [...selCombos]);
       const built = buildMembers(beams, sections, materials, forces, seed);
+      const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
+
+      // Build modelMap from all beams geometry
+      const uniqueStories = [...new Set(allBeams.map(b => b.story))].sort();
+      const frames: MapFrame[] = allBeams.map(b => ({
+        frameName: b.name,
+        story: b.story,
+        sectionName: b.section,
+        pt1: b.pt1,
+        pt2: b.pt2,
+        memberId: builtById.get(b.name),
+      }));
+      const modelMap: ModelMap = {
+        source,
+        modelName: connInfo?.modelName ?? 'ETABS model',
+        importedAt: new Date().toISOString(),
+        stories: uniqueStories,
+        frames,
+      };
+      setCapturedModelMap(modelMap);
+
       setDesignGroups(autoGroup(built));
       setMembers(built);
       setSelected(new Set());
@@ -186,7 +211,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       ...m,
       loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)],
     }));
-    onImport(labeled, designGroups, pickId);
+    onImport(labeled, designGroups, pickId, capturedModelMap ?? undefined);
   }
 
   // ── styles ──────────────────────────────────────────────────────────────────

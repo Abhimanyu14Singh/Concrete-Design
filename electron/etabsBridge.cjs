@@ -50,13 +50,36 @@ function attach() {
   try {
     helper = new winax.Object('CSiAPIv1.Helper');
   } catch {
-    throw new Error('CSI API not registered on this machine — is ETABS installed?');
+    throw new Error(
+      'CSI API helper (CSiAPIv1.Helper) is not registered on this machine. ' +
+      'Make sure ETABS is installed and has been run at least once.'
+    );
   }
   let etabsObject;
   try {
     etabsObject = helper.GetObject('CSI.ETABS.API.ETABSObject');
-  } catch {
-    throw new Error('Could not attach to a running ETABS instance. Open your model in ETABS first.');
+  } catch (attachErr) {
+    // GetObject attaches to an already-running instance. If none is found,
+    // fall back to CreateObjectProgID which can start a new one
+    // (only when the caller explicitly opts in via startIfNotRunning).
+    if (attach._startIfNotRunning) {
+      try {
+        etabsObject = helper.CreateObjectProgID('CSI.ETABS.API.ETABSObject');
+        etabsObject.ApplicationStart();
+      } catch (startErr) {
+        throw new Error(
+          'Could not start ETABS automatically. ' +
+          'Open ETABS, load your model, then try connecting again. ' +
+          `(start error: ${startErr && startErr.message ? startErr.message : startErr})`
+        );
+      }
+    } else {
+      throw new Error(
+        'No running ETABS instance found. ' +
+        'Open ETABS and load your model, then try connecting again. ' +
+        `(${attachErr && attachErr.message ? attachErr.message : attachErr})`
+      );
+    }
   }
   sapModel = etabsObject.SapModel;
   return sapModel;

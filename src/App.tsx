@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Project, Member } from './types';
+import type { Project, Member, ModelMap } from './types';
 import { defaultProject } from './utils/sampleData';
 import { saveProject, openProject } from './utils/electronBridge';
 import { exportPDF } from './utils/export/pdfExport';
@@ -8,11 +8,12 @@ import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
+import ModelMapView from './components/ModelMap/ModelMapView';
 import type { DesignGroup } from './types';
 import { useUnits } from './contexts/UnitsContext';
 import { MEMBER_COLOR } from './theme';
 
-type Tab = 'dashboard' | 'member';
+type Tab = 'dashboard' | 'map' | 'member';
 
 const hdrBtn: React.CSSProperties = {
   padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
@@ -196,7 +197,7 @@ export default function App() {
   // ── ETABS import ───────────────────────────────────────────────────────────
   const [showEtabsImport, setShowEtabsImport] = useState(false);
 
-  function handleEtabsImport(members: Member[], groups: DesignGroup[], pickId?: string) {
+  function handleEtabsImport(members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap) {
     setProject(p => {
       // Re-imports replace members with the same frame id
       const incoming = new Set(members.map(m => m.id));
@@ -204,12 +205,15 @@ export default function App() {
         ...p,
         members: [...p.members.filter(m => !incoming.has(m.id)), ...members],
         designGroups: [...(p.designGroups ?? []).filter(g => !g.memberIds.some(id => incoming.has(id))), ...groups],
+        ...(modelMap ? { modelMap } : {}),
       };
     });
     setShowEtabsImport(false);
     if (pickId) {
       setActiveMemberId(pickId);
       setTab('member');
+    } else if (modelMap) {
+      setTab('map');
     } else {
       setTab('dashboard');
     }
@@ -396,7 +400,7 @@ export default function App() {
         <header id="app-header" style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {([['dashboard', 'Dashboard'], ['member', 'Member']] as [Tab, string][]).map(([key, label]) => (
+            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member']] as [Tab, string][]).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
@@ -578,6 +582,16 @@ export default function App() {
                 onSelectMember={handleSelectMember}
                 onProjectUpdate={p => setProject(p)}
               />
+            )}
+            {tab === 'map' && (
+              <div style={{ margin: -16, height: 'calc(100% + 32px)', display: 'flex' }}>
+                <ModelMapView
+                  project={project}
+                  onProjectChange={p => setProject(p)}
+                  onOpenEtabsImport={() => setShowEtabsImport(true)}
+                  onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
+                />
+              </div>
             )}
             {tab === 'member' && (
               <div id="app-split" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
