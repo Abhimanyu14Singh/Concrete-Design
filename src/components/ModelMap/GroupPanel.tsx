@@ -48,7 +48,10 @@ export default function GroupPanel({
     const memberIds = [...selected]
       .map(fname => frames.find(f => f.frameName === fname)?.memberId)
       .filter(Boolean) as string[];
-    if (!memberIds.length) return;
+    if (!memberIds.length) {
+      alert('The selection contains no designed members. Only frames that have been imported as design members (solid lines) can be grouped — use "Design selected" or re-run the import first.');
+      return;
+    }
     const id = `grp-${Date.now()}`;
     const color = PALETTE[groups.length % PALETTE.length];
     const newGroup: DesignGroup = { id, label: `Group ${groups.length + 1}`, memberIds, color };

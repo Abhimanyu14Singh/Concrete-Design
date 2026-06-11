@@ -63,15 +63,6 @@ export default function MapCanvas({
   const tx = (x: number) => pad + (x - minX) * scale;
   const ty = (y: number) => height - pad - (y - minY) * scale;
 
-  // SVG → model space
-  const svgToModel = useCallback((sx: number, sy: number) => {
-    const vb = viewBox;
-    return {
-      mx: vb.x + (sx / width) * vb.w,
-      my: vb.y + (sy / height) * vb.h,
-    };
-  }, [viewBox, width, height]);
-
   // Group color lookup
   const groupColorMap = new Map<string, string>();
   designGroups.forEach((g, i) => {
@@ -101,21 +92,40 @@ export default function MapCanvas({
     return '#d1d5db'; // unlinked = light grey
   }
 
-  // Wheel zoom
-  function onWheel(e: React.WheelEvent) {
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 1.15 : 0.87;
+  /**
+   * Map a mouse event to base SVG user space. Uses the SVG's *rendered*
+   * size (rect.width/height), not the attribute size, so the math stays
+   * correct under the app's display-scale transform.
+   */
+  const mouseToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const cx = viewBox.x + ((e.clientX - rect.left) / width) * viewBox.w;
-    const cy = viewBox.y + ((e.clientY - rect.top) / height) * viewBox.h;
-    setViewBox(vb => ({
-      x: cx - (cx - vb.x) * factor,
-      y: cy - (cy - vb.y) * factor,
-      w: vb.w * factor,
-      h: vb.h * factor,
-    }));
-  }
+    if (!rect || !rect.width || !rect.height) return null;
+    return {
+      x: viewBox.x + ((clientX - rect.left) / rect.width) * viewBox.w,
+      y: viewBox.y + ((clientY - rect.top) / rect.height) * viewBox.h,
+    };
+  }, [viewBox]);
+
+  // Wheel zoom — native non-passive listener so preventDefault actually
+  // stops the page from scrolling (React attaches wheel passively).
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 1.15 : 0.87;
+      const pt = mouseToSvg(e.clientX, e.clientY);
+      if (!pt) return;
+      setViewBox(vb => ({
+        x: pt.x - (pt.x - vb.x) * factor,
+        y: pt.y - (pt.y - vb.y) * factor,
+        w: vb.w * factor,
+        h: vb.h * factor,
+      }));
+    };
+    svg.addEventListener('wheel', handler, { passive: false });
+    return () => svg.removeEventListener('wheel', handler);
+  }, [mouseToSvg]);
 
   // Pan
   function onMouseDown(e: React.MouseEvent) {
@@ -126,29 +136,25 @@ export default function MapCanvas({
       return;
     }
     if (e.button === 0 && !e.altKey) {
-      const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const sx = viewBox.x + ((e.clientX - rect.left) / width) * viewBox.w;
-      const sy = viewBox.y + ((e.clientY - rect.top) / height) * viewBox.h;
-      setLasso({ sx, sy, ex: sx, ey: sy });
+      const pt = mouseToSvg(e.clientX, e.clientY);
+      if (!pt) return;
+      setLasso({ sx: pt.x, sy: pt.y, ex: pt.x, ey: pt.y });
     }
   }
 
   function onMouseMove(e: React.MouseEvent) {
     if (isPanning && panStart.current) {
       const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const dx = ((e.clientX - panStart.current.mx) / width) * viewBox.w;
-      const dy = ((e.clientY - panStart.current.my) / height) * viewBox.h;
+      if (!rect || !rect.width) return;
+      const dx = ((e.clientX - panStart.current.mx) / rect.width) * viewBox.w;
+      const dy = ((e.clientY - panStart.current.my) / rect.height) * viewBox.h;
       setViewBox(vb => ({ ...vb, x: panStart.current!.vx - dx, y: panStart.current!.vy - dy }));
       return;
     }
     if (lasso) {
-      const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const ex = viewBox.x + ((e.clientX - rect.left) / width) * viewBox.w;
-      const ey = viewBox.y + ((e.clientY - rect.top) / height) * viewBox.h;
-      setLasso(l => l ? { ...l, ex, ey } : null);
+      const pt = mouseToSvg(e.clientX, e.clientY);
+      if (!pt) return;
+      setLasso(l => l ? { ...l, ex: pt.x, ey: pt.y } : null);
     }
   }
 
@@ -182,9 +188,24 @@ export default function MapCanvas({
     }
   }
 
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') onSelectionChange(new Set());
-  }
+  // End pan/lasso even if the mouse is released outside the SVG, and clear
+  // selection on Escape without requiring the canvas to have focus.
+  useEffect(() => {
+    const onWinMouseUp = () => {
+      if (isPanning) { setIsPanning(false); panStart.current = null; }
+      // an in-progress lasso released off-canvas is just cancelled
+      setLasso(l => (l ? null : l));
+    };
+    const onWinKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onSelectionChange(new Set());
+    };
+    window.addEventListener('mouseup', onWinMouseUp);
+    window.addEventListener('keydown', onWinKeyDown);
+    return () => {
+      window.removeEventListener('mouseup', onWinMouseUp);
+      window.removeEventListener('keydown', onWinKeyDown);
+    };
+  }, [isPanning, onSelectionChange]);
 
   function fitView() {
     setViewBox({ x: 0, y: 0, w: width, h: height });
@@ -193,13 +214,12 @@ export default function MapCanvas({
   const hovered = hover ? visibleFrames.find(f => f.frameName === hover) : null;
 
   return (
-    <div style={{ position: 'relative', userSelect: 'none' }} onKeyDown={onKeyDown} tabIndex={0}>
+    <div style={{ position: 'relative', userSelect: 'none' }}>
       <svg
         ref={svgRef}
         width={width} height={height}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
         style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : 'default', display: 'block' }}
-        onWheel={onWheel}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}

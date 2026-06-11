@@ -568,13 +568,15 @@ export default function App() {
         </header>
 
         {/* Content */}
-        <main id="app-main" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>
           <div style={{
             transform: `scale(${zoom})`,
             transformOrigin: 'top left',
             width: `${100 / zoom}%`,
             minHeight: `${100 / zoom}%`,
-            padding: 16,
+            // map tab needs a definite height so the canvas can fill it
+            height: tab === 'map' ? `${100 / zoom}%` : undefined,
+            padding: tab === 'map' ? 0 : 16,
           }}>
             {tab === 'dashboard' && (
               <Dashboard
@@ -584,7 +586,7 @@ export default function App() {
               />
             )}
             {tab === 'map' && (
-              <div style={{ margin: -16, height: 'calc(100% + 32px)', display: 'flex' }}>
+              <div style={{ height: '100%', display: 'flex' }}>
                 <ModelMapView
                   project={project}
                   onProjectChange={p => setProject(p)}

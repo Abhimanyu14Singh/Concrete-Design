@@ -2,8 +2,9 @@
  * ModelMapView — top-level Map tab: canvas (left) + group panel (right).
  * Shows the ETABS connectivity snapshot stored in project.modelMap.
  */
-import { useState } from 'react';
+import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Project, Member, DesignGroup, RebarLayout } from '../../types';
+import { runDesign } from '../../engines';
 import MapCanvas, { ColorMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -21,18 +22,39 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [colorMode, setColorMode] = useState<ColorMode>('dcr');
   const [story, setStory] = useState<string>('All');
 
+  // Size the canvas to its container
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
+  useLayoutEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const r = entries[0].contentRect;
+      if (r.width > 50 && r.height > 50) setCanvasSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const map = project.modelMap;
   const groups = project.designGroups ?? [];
   const members = project.members;
 
-  // Build DCR lookup
-  const dcrById: Record<string, number> = {};
-  for (const m of members) {
-    if (m.results?.length) {
-      const worst = Math.max(...m.results.map(r => Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear)));
-      dcrById[m.id] = worst;
+  // Live DCR lookup — recomputes when members (incl. rebar) change
+  const dcrById = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const m of members) {
+      if (m.memberType !== 'beam' || !m.loads.length) continue;
+      try {
+        const worst = Math.max(...m.loads.map(l => {
+          const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, m.crackParams);
+          return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
+        }));
+        out[m.id] = worst;
+      } catch { /* skip members the engine can't design */ }
     }
-  }
+    return out;
+  }, [members, project.code]);
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange({ ...project, designGroups: newGroups });
@@ -67,7 +89,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flex: 1, height: '100%', minWidth: 0, overflow: 'hidden' }}>
       {/* Canvas area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar */}
@@ -108,7 +130,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         </div>
 
         {/* Map canvas */}
-        <div style={{ flex: 1, overflow: 'hidden' }}>
+        <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden' }}>
           <MapCanvas
             frames={frames}
             dcrById={dcrById}
@@ -118,8 +140,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             selected={selectedFrames}
             onSelectionChange={setSelectedFrames}
             onDoubleClick={onPickMember}
-            width={900}
-            height={600}
+            width={canvasSize.w}
+            height={canvasSize.h}
           />
         </div>
       </div>
