@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import type { DesignGroup, RebarLayout, BarGroup, Member } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   group: DesignGroup;
@@ -18,7 +19,9 @@ const DEFAULT_REBAR: RebarLayout = {
   ties: { barSize: 3, spacing: 6, legs: 2 },
 };
 
-function BarGroupRow({ bg, onChange, label }: { bg: BarGroup; onChange: (b: BarGroup) => void; label: string }) {
+function BarGroupRow({ bg, onChange, label, units }: {
+  bg: BarGroup; onChange: (b: BarGroup) => void; label: string; units: 'imperial' | 'si';
+}) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
       <span style={{ fontSize: 11, color: '#6b7280', width: 60, flexShrink: 0 }}>{label}</span>
@@ -28,13 +31,14 @@ function BarGroupRow({ bg, onChange, label }: { bg: BarGroup; onChange: (b: BarG
       <span style={{ fontSize: 11, color: '#9ca3af' }}>×</span>
       <select value={bg.barSize} onChange={e => onChange({ ...bg, barSize: parseInt(e.target.value) })}
         style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
-        {barSizeOptions.map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
+        {barSizeOptions(units, bg.barSize).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
       </select>
     </div>
   );
 }
 
 export default function GroupRebarEditor({ group, members, onApply }: Props) {
+  const { units } = useUnits();
   const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? DEFAULT_REBAR);
 
   // Sync if group changes
@@ -71,7 +75,7 @@ export default function GroupRebarEditor({ group, members, onApply }: Props) {
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Top bars</div>
         {rebar.topBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} />
+            <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} units={units} />
             {rebar.topBars.length > 1 && (
               <button onClick={() => removeLayer('top', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14 }}>×</button>
             )}
@@ -84,7 +88,7 @@ export default function GroupRebarEditor({ group, members, onApply }: Props) {
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Bottom bars</div>
         {rebar.botBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} />
+            <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} units={units} />
             {rebar.botBars.length > 1 && (
               <button onClick={() => removeLayer('bot', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14 }}>×</button>
             )}
@@ -98,7 +102,8 @@ export default function GroupRebarEditor({ group, members, onApply }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <select value={ties.barSize} onChange={e => setRebar(r => ({ ...r, ties: { ...ties, barSize: parseInt(e.target.value) } }))}
             style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
-            {barSizeOptions.filter(s => s <= 6).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
+            {/* stirrup-size bars only: US #3–#6 or metric Ø8–Ø12 */}
+            {barSizeOptions(units, ties.barSize).filter(s => (s > 0 ? s <= 6 : -s <= 12)).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
           </select>
           <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>
           <input type="number" min={1} max={24} value={ties.spacing}

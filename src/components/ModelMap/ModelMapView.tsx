@@ -5,7 +5,7 @@
 import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Project, Member, DesignGroup, RebarLayout } from '../../types';
 import { runDesign } from '../../engines';
-import MapCanvas, { ColorMode } from './MapCanvas';
+import MapCanvas, { type ColorMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
 
