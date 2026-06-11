@@ -343,7 +343,7 @@ export function wallCapacityOnRay(
     // Segment: (Mn,Pn) = p1 + s*(dx,dy), s ∈ [0,1]
     const denom = dx * Pu - dy * Mu;
     if (Math.abs(denom) < 1e-9) continue;
-    const t = (p1.phiMn * Pu - p1.phiPn * Mu) / denom;
+    const t = (p1.phiPn * Mu - p1.phiMn * Pu) / denom;
     if (t < -0.001 || t > 1.001) continue;
     const s = Mu > 0 ? (p1.phiMn + t * dx) / Mu : (p1.phiPn + t * dy) / Pu;
     if (s <= 0) continue;
@@ -364,6 +364,27 @@ export function wallCapacityOnRay(
   const dcr = capLen > 0 ? demandLen / capLen : Infinity;
 
   return { phiPn: bestPhiPn, phiMn: bestPhiMn, dcr, c: bestC };
+}
+
+/**
+ * Neutral axis depth c at the wall's nominal moment strength for a given
+ * factored axial load — the "c consistent with Pu and Mn" of §18.10.6.2.
+ * Interpolates on the nominal Pn branch of the interaction curve.
+ */
+export function wallNeutralAxisAtP(curve: WallInteractionPoint[], Pu: number): number {
+  if (curve.length === 0) return 0;
+  // Curve runs from pure compression (max Pn) to pure tension (min Pn)
+  if (Pu >= curve[0].Pn) return curve[0].c;
+  for (let i = 0; i < curve.length - 1; i++) {
+    const p1 = curve[i];
+    const p2 = curve[i + 1];
+    if ((Pu <= p1.Pn && Pu >= p2.Pn) || (Pu >= p1.Pn && Pu <= p2.Pn)) {
+      const span = p2.Pn - p1.Pn;
+      const t = Math.abs(span) < 1e-9 ? 0 : (Pu - p1.Pn) / span;
+      return p1.c + t * (p2.c - p1.c);
+    }
+  }
+  return 0;
 }
 
 // ─── §18.10.6 SBZ triggers ───────────────────────────────────────────────
@@ -561,10 +582,11 @@ export function designWallACI(
   // 5. P-M interaction §18.10.5
   const curve = wallInteractionCurve(lw, tw, fc, fy, Es, wallRebar);
   const Mu = load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg; // use governing moment
-  const { phiPn, phiMn, dcr: dcr_PM, c: c_demand } = wallCapacityOnRay(curve, load.Pu, Math.abs(Mu));
+  const { phiMn, dcr: dcr_PM } = wallCapacityOnRay(curve, load.Pu, Math.abs(Mu));
   if (dcr_PM > 1) warnings.push(warn('ACI318-25-18.10.5', `§18.10.5: P-M interaction NG: DCR = ${dcr_PM.toFixed(2)}`, 'error'));
 
-  // 6. SBZ trigger §18.10.6
+  // 6. SBZ trigger §18.10.6 — c at nominal Mn consistent with Pu (§18.10.6.2)
+  const c_demand = wallNeutralAxisAtP(curve, load.Pu);
   const sbz = sbzTrigger(lw, tw, hw, fc, c_demand, driftRatio, load.Pu, Math.abs(Mu));
 
   let sbzLength = 0;

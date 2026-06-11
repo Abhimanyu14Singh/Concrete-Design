@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
-import { designWallACI } from '../../utils/wallDesign';
+import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -52,14 +52,36 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
-  // C1: compute all-LC results to find governing cases
-  const allResults = member.loads.map(l => ({ id: l.id, label: l.label, r: runDesign(member.section, member.material, member.rebar, l, member.span, code, member.crackParams) }));
+  // Neutral axis depth at Pn = Pu (§18.10.6.2) for the wall SBZ graphics
+  const wallC = isWall
+    ? wallNeutralAxisAtP(
+        wallInteractionCurve(
+          member.section.lw ?? member.section.b,
+          member.section.tw ?? member.section.h ?? 12,
+          member.material.fc, member.material.fy, member.material.Es,
+          member.wallRebar!,
+        ),
+        load.Pu,
+      )
+    : 0;
+
+  // C1: compute all-LC results to find governing cases (walls use the wall engine)
+  const allResults = member.loads.map(l => ({
+    id: l.id, label: l.label,
+    r: isWall
+      ? designWallACI(member.section, member.material, member.wallRebar!, l)
+      : runDesign(member.section, member.material, member.rebar, l, member.span, code, member.crackParams),
+  }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
   const govShear    = allResults.reduce((a, b) => b.r.DCR_shear     > a.r.DCR_shear     ? b : a).id;
   const govTorsion  = allResults.reduce((a, b) => b.r.DCR_torsion   > a.r.DCR_torsion   ? b : a).id;
   const govPM       = allResults.reduce((a, b) => (b.r.DCR_PM ?? 0) > (a.r.DCR_PM ?? 0) ? b : a).id;
-  const govSet      = isColumn
+  const govWallShear = allResults.reduce((a, b) => (b.r.DCR_shear_wall ?? 0) > (a.r.DCR_shear_wall ?? 0) ? b : a).id;
+  const govWallFlex  = allResults.reduce((a, b) => (b.r.DCR_flex_wall ?? 0) > (a.r.DCR_flex_wall ?? 0) ? b : a).id;
+  const govSet      = isWall
+    ? new Set([govWallShear, govWallFlex])
+    : isColumn
     ? new Set([govPM, govShear])
     : new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
 
@@ -157,7 +179,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
         </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          {onRebarChange && !isColumn && (
+          {onRebarChange && !isColumn && !isWall && (
             <button
               onClick={handleOptimize}
               style={{ padding: '5px 10px', border: '1px solid #d97706', borderRadius: 6, background: '#fffbeb', fontSize: 11, cursor: 'pointer', color: '#d97706', fontWeight: 600 }}
@@ -218,7 +240,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
               wallRebar={member.wallRebar}
               Pu={load.Pu}
               Mu={Math.abs(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg)}
-              c_demand={0}
+              c_demand={wallC}
               fc={member.material.fc}
               fyt={member.material.fyt}
               width={420}

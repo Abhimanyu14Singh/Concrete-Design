@@ -1,8 +1,8 @@
 # S-Concrete
 
-A structural reinforced concrete beam design web application built with **React + TypeScript + Vite**.
+A structural reinforced concrete design web application built with **React + TypeScript + Vite** — beams, columns, and special structural shear walls.
 
-Supports both **ACI 318-19** and **EN 1992-1-1 (Eurocode 2)** design codes with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
+Supports **ACI 318-19**, **ACI 318-25** (shear walls), and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
 
 > **Important:** All calculations must be independently verified by a licensed engineer before use in any real project.
 
@@ -22,6 +22,7 @@ S-Concrete provides a complete beam design workflow — from geometry and materi
 |------|---------|-------|---------|-----------|-------------|
 | ACI 318-19 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
 | ACI 318-14 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
+| ACI 318-25 (walls) | §18.10.5 P-M | §18.10.4 | — | §11.6, §18.10.2.2, §18.10.6 | — |
 | EN 1992-1-1 (EC2) | §6.1 M_Rd | §6.2 V_Rd,c/s/max | §6.3 T_Rd | §9.2 | §7.3.4 |
 
 **ACI 318-19 beam design**
@@ -37,6 +38,20 @@ S-Concrete provides a complete beam design workflow — from geometry and materi
 - Torsion capacity T_Rd and combined V+T interaction per §6.3.2(5)
 - Detailing checks per §9.2
 - Crack width w_k (§7.3.4) for bottom, top, and side faces; accepts per-face limits, M_qp/Mu ratio, and kt factor
+
+**ACI 318-19 / EC2 column design**
+- Rectangular and circular columns with full P-M interaction diagrams (strain compatibility)
+- Biaxial bending (Bresler / EC2 §5.8.9 exponent method), tied and spiral configurations
+- Column shear including axial-load enhancement; tie spacing detailing checks
+
+**ACI 318-25 special structural wall design**
+- Distributed vertical/horizontal web reinforcement, 1 or 2 curtains
+- Minimum reinforcement ratios ρl, ρt (§11.6) and bar spacing limits (§18.10.2.2)
+- In-plane shear Vn = Acv(αc·λ·√f'c + ρt·fyt) with hw/lw-dependent αc and the 10·Acv·√f'c cap (§18.10.4)
+- P-M interaction by strain compatibility over distributed web steel + boundary bars (§18.10.5)
+- Special boundary zone (SBZ) triggers: strain-based c-limit (§18.10.6.2) and 0.2f'c stress check (§18.10.6.3)
+- SBZ design: zone length lbe, confinement Ash, tie spacing ≤ min(6db, 6") (§18.10.6.4)
+- Plan-view SVG graphics showing web bars, SBZ zones, and confinement ties
 
 ### Design Code Selector
 Switch between ACI 318-19, ACI 318-14, and EN 1992-1-1 from the header without losing project data.
@@ -143,8 +158,10 @@ src/
     dispatcher.ts           # Routes calculations to the correct engine
   adapters/                 # Placeholder adapters (ETABS, SAP2000 import)
   utils/
+    wallDesign.ts           # ACI 318-25 shear wall engine (shear, P-M, SBZ)
     calcBreakdown.ts        # ACI step-by-step calculation sheet generator
     calcBreakdownEC2.ts     # EC2 step-by-step calculation sheet generator
+    calcBreakdownWall.ts    # ACI 318-25 wall calculation sheet generator
     units.ts                # SI / imperial conversion utilities
     rebar.ts                # Bar designation helpers (US customary + metric)
   contexts/
@@ -153,7 +170,7 @@ src/
   components/
     Dashboard/              # Project overview, member table, DCR chart
     Results/                # Per-member DCR bars, summary table, calc modal
-    Detailing/              # SVG section and elevation views
+    Detailing/              # SVG section, elevation, wall plan, P-M diagram views
     SectionInput/           # Member editor (geometry, materials, loads)
   App.tsx                   # Layout, state, code-selector
 electron/
@@ -161,12 +178,13 @@ electron/
 ```
 
 ### Plugin-Ready Design
-`src/engines/` and `src/adapters/` are structured to accept additional design engines (wall, column) and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines.
+`src/engines/` and `src/adapters/` are structured to accept additional design engines and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines. Beam, column, and shear wall engines are implemented today.
 
 ---
 
 ## Design Codes Supported
 
-- **ACI 318-19** — Building Code Requirements for Structural Concrete
+- **ACI 318-19** — Building Code Requirements for Structural Concrete (beams, columns)
 - **ACI 318-14** — Previous edition (same clause structure)
-- **EN 1992-1-1:2004 (Eurocode 2)** — Design of Concrete Structures, Part 1-1
+- **ACI 318-25** — Special structural walls (§11.6, §18.10)
+- **EN 1992-1-1:2004 (Eurocode 2)** — Design of Concrete Structures, Part 1-1 (beams, columns)

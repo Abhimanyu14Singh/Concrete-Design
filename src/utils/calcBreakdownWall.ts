@@ -11,6 +11,7 @@ import {
   wallShear,
   wallInteractionCurve,
   wallCapacityOnRay,
+  wallNeutralAxisAtP,
   sbzTrigger,
   sbzDesign,
 } from './wallDesign';
@@ -49,7 +50,9 @@ export function generateWallBreakdown(
   const shearResult = wallShear(lw, tw, hw, fc, lambdaConcrete, ratios.rhoT, fyt, load.Vu);
   const curve = wallInteractionCurve(lw, tw, fc, fy, Es, wallRebar);
   const Mu = Math.abs(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg);
-  const { phiMn, dcr: dcr_PM, c: c_demand } = wallCapacityOnRay(curve, load.Pu, Mu);
+  const { phiMn, dcr: dcr_PM } = wallCapacityOnRay(curve, load.Pu, Mu);
+  // §18.10.6.2: c at nominal Mn consistent with Pu — same as designWallACI
+  const c_demand = wallNeutralAxisAtP(curve, load.Pu);
   const sbz = sbzTrigger(lw, tw, hw, fc, c_demand, driftRatio, load.Pu, Mu);
 
   const Av_vert = n * getBarArea(wallRebar.vertBarSize);
@@ -287,9 +290,9 @@ export function generateWallBreakdown(
       },
       {
         ref: '§18.10.5',
-        label: 'Neutral axis depth c (at demand)',
-        equation: 'c from interaction curve at (Pu, Mu)',
-        substitution: `Pu=${load.Pu.toFixed(1)} kips, Mu=${Mu.toFixed(1)} kip-ft`,
+        label: 'Neutral axis depth c (at Mn consistent with Pu)',
+        equation: 'c from interaction curve at Pn = Pu (§18.10.6.2)',
+        substitution: `Pu=${load.Pu.toFixed(1)} kips`,
         result: `${c_demand.toFixed(2)}"`,
       },
       {

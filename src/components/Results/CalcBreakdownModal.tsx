@@ -107,7 +107,13 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
             borderRadius: 10, padding: '12px 16px', marginBottom: 16,
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8,
           }}>
-            {isColumn ? (
+            {isWall ? (
+              <>
+                <LoadItem label="Pu" value={`${load.Pu} kips`} />
+                <LoadItem label="Mu" value={`${load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg} kip-ft`} />
+                <LoadItem label="Vu" value={`${load.Vu} kips`} />
+              </>
+            ) : isColumn ? (
               <>
                 <LoadItem label="Pu" value={`${load.Pu} kips`} />
                 <LoadItem label="Mux" value={`${load.Mux ?? 0} kip-ft`} />

@@ -129,10 +129,10 @@ export const defaultProject: Project = {
         horizBarSize: 5,
         horizSpacing: 12,
         numCurtains: 2,
-        driftRatio: 0.01,
+        driftRatio: 0.005,
       },
       loads: [
-        { id: 'LC1', label: '1.2D + 1.0E', Mu_pos: 0, Mu_neg: 0, Vu: 180, Tu: 0, Pu: 600, Mux: 0, Muy: 0 },
+        { id: 'LC1', label: '1.2D + 1.0E', Mu_pos: 1200, Mu_neg: 0, Vu: 180, Tu: 0, Pu: 400, Mux: 0, Muy: 0 },
       ],
     },
     {
@@ -161,12 +161,12 @@ export const defaultProject: Project = {
         sbzBarSize: 8,
         sbzNumBars: 6,
         sbzTieBarSize: 4,
-        sbzTieSpacing: 4,
-        sbzTieLegs: 3,
+        sbzTieSpacing: 3,
+        sbzTieLegs: 4,
         driftRatio: 0.02,
       },
       loads: [
-        { id: 'LC1', label: '1.2D + 1.0E (Seismic)', Mu_pos: 0, Mu_neg: 0, Vu: 420, Tu: 0, Pu: 1200, Mux: 0, Muy: 0 },
+        { id: 'LC1', label: '1.2D + 1.0E (Seismic)', Mu_pos: 12000, Mu_neg: 0, Vu: 420, Tu: 0, Pu: 1200, Mux: 0, Muy: 0 },
       ],
     },
   ],
