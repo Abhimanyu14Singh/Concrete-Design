@@ -108,6 +108,8 @@ export interface DesignGroup {
   memberIds: string[];
   color?: string;      // display color on the model map
   rebar?: RebarLayout; // group template — fanned out to members on Apply
+  /** 'auto' = created by auto-grouping (replaceable); 'manual' = user-created. */
+  source?: 'auto' | 'manual';
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */

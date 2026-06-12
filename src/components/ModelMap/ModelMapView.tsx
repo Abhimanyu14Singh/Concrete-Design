@@ -1,14 +1,20 @@
 /**
- * ModelMapView — top-level Map tab: canvas (left) + group panel (right).
- * Shows the ETABS connectivity snapshot stored in project.modelMap.
+ * ModelMapView — top-level Map tab: canvas (left) + tabbed right panel
+ * (Groups | Auto-Group | Savings).
  */
 import { useState, useMemo, useRef, useLayoutEffect } from 'react';
-import type { Project, Member, DesignGroup, RebarLayout, ComboForces } from '../../types';
+import type { Project, Member, DesignGroup, RebarLayout, ComboForces, DesignResults } from '../../types';
 import { runDesign } from '../../engines';
 import { formatBarLabel } from '../../utils/rebar';
+import { flexSteelRatioPct, stirrupAvPerFt } from '../../utils/autoGroup';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
+import AutoGroupPanel from './AutoGroupPanel';
+import SavingsPanel from './SavingsPanel';
+
+type RightTab = 'groups' | 'autogroup' | 'savings';
+type FlexFace = 'top' | 'bot';
 
 interface Props {
   project: Project;
@@ -49,10 +55,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>('dcr');
+  const [flexFace, setFlexFace] = useState<FlexFace>('bot');
   const [story, setStory] = useState<string>('All');
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
+  const [rightTab, setRightTab] = useState<RightTab>('groups');
+  const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
 
-  // Size the canvas to its container
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
   useLayoutEffect(() => {
@@ -70,7 +78,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const groups = project.designGroups ?? [];
   const members = project.members;
 
-  // Live frame→member linkage from current project.members (not stale modelMap)
+  // Live frame→member linkage
   const enrichedFrames = useMemo(() => {
     const byFrameName = new Map<string, string>();
     for (const m of members) {
@@ -82,19 +90,24 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }));
   }, [map?.frames, members]);
 
-  // Rich per-member info for tooltip and DCR coloring
-  const infoById = useMemo(() => {
-    const out: Record<string, FrameInfo> = {};
+  // Single design pass — produces DesignResults + FrameInfo for all members
+  const { infoById, designResultsById } = useMemo(() => {
+    const info: Record<string, FrameInfo> = {};
+    const results: Record<string, DesignResults> = {};
     for (const m of members) {
       if (m.memberType !== 'beam' || !m.loads.length) continue;
       try {
         let dcrFlex = 0, dcrShear = 0;
+        let bestRes: DesignResults | null = null;
         for (const l of m.loads) {
           const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, m.crackParams);
+          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
+          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear)) bestRes = r;
           dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);
           dcrShear = Math.max(dcrShear, r.DCR_shear);
         }
-        out[m.id] = {
+        if (bestRes) results[m.id] = bestRes;
+        info[m.id] = {
           dcr: Math.max(dcrFlex, dcrShear),
           dcrFlex,
           dcrShear,
@@ -103,14 +116,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           stirrups: stirrupStr(m.rebar),
         };
       } catch (e) {
-        out[m.id] = {
+        info[m.id] = {
           dcr: 0, dcrFlex: 0, dcrShear: 0,
           top: '—', bot: '—', stirrups: '—',
           error: (e as Error).message,
         };
       }
     }
-    return out;
+    return { infoById: info, designResultsById: results };
   }, [members, project.code]);
 
   const dcrById = useMemo(() => {
@@ -119,7 +132,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return out;
   }, [infoById]);
 
-  // V/M diagram data per memberId
   const diagramDataById = useMemo(() => {
     if (diagramMode === 'off') return {} as Record<string, { x: number; v: number }[]>;
     const out: Record<string, { x: number; v: number }[]> = {};
@@ -129,6 +141,31 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }
     return out;
   }, [members, diagramMode]);
+
+  // Hotspot metric memos
+  const { metricById, metricRange, metricLabel } = useMemo(() => {
+    if (colorMode !== 'flexSteel' && colorMode !== 'stirrups') {
+      return { metricById: undefined, metricRange: undefined, metricLabel: undefined };
+    }
+    const out: Record<string, number> = {};
+    let min = Infinity, max = -Infinity;
+    for (const m of members) {
+      if (m.memberType !== 'beam') continue;
+      const v = colorMode === 'flexSteel'
+        ? flexSteelRatioPct(m, flexFace)
+        : stirrupAvPerFt(m);
+      out[m.id] = v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (min === Infinity) return { metricById: undefined, metricRange: undefined, metricLabel: undefined };
+    return {
+      metricById: out,
+      metricRange: { min, max },
+      metricLabel: colorMode === 'flexSteel'
+        ? `ρ${flexFace === 'bot' ? '⁺' : '⁻'} (%)` : 'Av/s (in²/ft)',
+    };
+  }, [members, colorMode, flexFace]);
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange({ ...project, designGroups: newGroups });
@@ -142,11 +179,25 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     onProjectChange({ ...project, designGroups: newGroups, members: newMembers });
   }
 
+  function handleAcceptSuggestion(suggested: DesignGroup[]) {
+    // Keep manual groups; replace all auto groups with the new suggestions
+    const manual = groups.filter(g => g.source !== 'auto');
+    handleGroupsChange([...manual, ...suggested]);
+    setRightTab('groups');
+  }
+
+  function handleMergeGroups(keepId: string, removeId: string) {
+    const keep = groups.find(g => g.id === keepId);
+    const remove = groups.find(g => g.id === removeId);
+    if (!keep || !remove) return;
+    const merged: DesignGroup = { ...keep, memberIds: [...new Set([...keep.memberIds, ...remove.memberIds])] };
+    handleGroupsChange(groups.filter(g => g.id !== removeId).map(g => g.id === keepId ? merged : g));
+  }
+
   const activeGroup = activeGroupId ? groups.find(g => g.id === activeGroupId) : null;
   const stories = map ? ['All', ...map.stories] : ['All'];
   const frames = enrichedFrames;
 
-  // Group-edit mode: clicking a linked beam toggles it in/out of the active group
   function handleFrameClick(frameName: string): boolean {
     if (!activeGroupId) return false;
     const frame = frames.find(f => f.frameName === frameName);
@@ -158,8 +209,15 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       ? grp.memberIds.filter(id => id !== mid)
       : [...grp.memberIds, mid];
     handleGroupsChange(groups.map(g => g.id === activeGroupId ? { ...g, memberIds: next } : g));
-    return true; // suppress default selection change
+    return true;
   }
+
+  const tabStyle = (active: boolean): React.CSSProperties => ({
+    flex: 1, padding: '7px 4px', border: 'none', background: active ? 'white' : '#f9fafb',
+    borderBottom: active ? '2px solid #2563eb' : '2px solid transparent',
+    color: active ? '#2563eb' : '#6b7280', fontWeight: active ? 700 : 500,
+    fontSize: 11, cursor: 'pointer', textAlign: 'center',
+  });
 
   if (!map) {
     return (
@@ -183,50 +241,57 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
-          {/* Story selector */}
           <select value={story} onChange={e => setStory(e.target.value)}
             style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}>
             {stories.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
 
-          {/* Color mode */}
+          {/* Color mode buttons */}
           <div style={{ display: 'flex', gap: 2 }}>
             {(['dcr', 'group', 'section'] as ColorMode[]).map(mode => (
               <button key={mode} onClick={() => setColorMode(mode)}
-                style={{
-                  padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
-                  fontSize: 11, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize',
-                  background: colorMode === mode ? '#2563eb' : 'white',
-                  color: colorMode === mode ? 'white' : '#374151',
-                }}>
+                style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === mode ? '#2563eb' : 'white', color: colorMode === mode ? 'white' : '#374151' }}>
                 {mode === 'dcr' ? 'DCR' : mode.charAt(0).toUpperCase() + mode.slice(1)}
               </button>
             ))}
+          </div>
+
+          {/* Hotspot modes */}
+          <div style={{ display: 'flex', gap: 2 }}>
+            <button
+              onClick={() => setColorMode(colorMode === 'flexSteel' ? 'dcr' : 'flexSteel')}
+              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'flexSteel' ? '#0891b2' : 'white', color: colorMode === 'flexSteel' ? 'white' : '#374151' }}
+              title="Longitudinal reinforcement ratio ρ (top or bottom face)">
+              Steel %
+            </button>
+            {colorMode === 'flexSteel' && (
+              <button onClick={() => setFlexFace(f => f === 'bot' ? 'top' : 'bot')}
+                style={{ padding: '5px 10px', border: '1px solid #0891b2', borderRadius: 6, fontSize: 11, cursor: 'pointer', background: '#e0f2fe', color: '#0369a1' }}>
+                {flexFace === 'bot' ? 'Bot ↕' : 'Top ↕'}
+              </button>
+            )}
+            <button
+              onClick={() => setColorMode(colorMode === 'stirrups' ? 'dcr' : 'stirrups')}
+              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'stirrups' ? '#0891b2' : 'white', color: colorMode === 'stirrups' ? 'white' : '#374151' }}
+              title="Stirrup area per unit length Av/s (in²/ft)">
+              Stirrups
+            </button>
           </div>
 
           {/* Diagram toggle */}
           <div style={{ display: 'flex', gap: 2, marginLeft: 4 }}>
             {(['off', 'moment', 'shear'] as DiagramMode[]).map(m => (
               <button key={m} onClick={() => setDiagramMode(m)}
-                style={{
-                  padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
-                  fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                  background: diagramMode === m ? '#7c3aed' : 'white',
-                  color: diagramMode === m ? 'white' : '#374151',
-                }}>
-                {m === 'off' ? 'Diagrams Off' : m === 'moment' ? 'M Diagram' : 'V Diagram'}
+                style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: diagramMode === m ? '#7c3aed' : 'white', color: diagramMode === m ? 'white' : '#374151' }}>
+                {m === 'off' ? 'Diag Off' : m === 'moment' ? 'M' : 'V'}
               </button>
             ))}
           </div>
 
           <div style={{ flex: 1 }} />
-
-          {/* Model info */}
           <span style={{ fontSize: 11, color: '#9ca3af' }}>
-            {map.modelName} · {frames.length} frames · imported {new Date(map.importedAt).toLocaleDateString()}
+            {map.modelName} · {frames.length} frames · {new Date(map.importedAt).toLocaleDateString()}
           </span>
-
-          {/* Re-sync */}
           <button onClick={onOpenEtabsImport}
             style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: '#374151', fontWeight: 600 }}>
             ↻ Re-sync
@@ -235,10 +300,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
         {/* Group-edit mode banner */}
         {activeGroup && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-            background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, flexShrink: 0,
-          }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, flexShrink: 0 }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: activeGroup.color ?? '#2563eb', display: 'inline-block', flexShrink: 0 }} />
             <span style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600 }}>
               Editing <strong>{activeGroup.label}</strong> — click beams to add or remove members
@@ -251,15 +313,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         )}
 
         {/* Map canvas */}
-        <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden' }}>
+        <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           <MapCanvas
-            frames={frames}
+            frames={frames.map(f => ({
+              ...f,
+              // Dim non-highlighted when auto-group panel is open and hovering a bin
+              ...( highlightedFrames.size > 0 && !highlightedFrames.has(f.frameName)
+                ? { _dimmed: true } : {}),
+            }))}
             dcrById={dcrById}
             infoById={infoById}
             designGroups={groups}
             story={story}
             colorMode={colorMode}
-            selected={selectedFrames}
+            selected={new Set([...selectedFrames, ...highlightedFrames])}
             onSelectionChange={setSelectedFrames}
             onDoubleClick={onPickMember}
             onFrameClick={activeGroup ? handleFrameClick : undefined}
@@ -267,34 +334,63 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             height={canvasSize.h}
             diagramMode={diagramMode}
             diagramDataById={diagramMode !== 'off' ? diagramDataById : undefined}
+            metricById={metricById}
+            metricRange={metricRange}
+            metricLabel={metricLabel}
           />
         </div>
       </div>
 
       {/* Right panel */}
-      <div style={{ width: 300, flexShrink: 0, borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 700, fontSize: 12, color: '#374151', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          Design Groups
+      <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+        {/* Tab bar */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+          <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}>Groups</button>
+          <button style={tabStyle(rightTab === 'autogroup')} onClick={() => setRightTab('autogroup')}>Auto-Group</button>
+          <button style={tabStyle(rightTab === 'savings')} onClick={() => setRightTab('savings')}>Savings</button>
         </div>
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <GroupPanel
-            groups={groups}
-            frames={frames}
-            selected={selectedFrames}
-            activeGroupId={activeGroupId}
-            onGroupsChange={handleGroupsChange}
-            onActiveGroupChange={setActiveGroupId}
-            onSelectionChange={setSelectedFrames}
-            dcrById={dcrById}
-          />
+
+        <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+          {rightTab === 'groups' && (
+            <>
+              <GroupPanel
+                groups={groups}
+                frames={frames}
+                selected={selectedFrames}
+                activeGroupId={activeGroupId}
+                onGroupsChange={handleGroupsChange}
+                onActiveGroupChange={setActiveGroupId}
+                onSelectionChange={setSelectedFrames}
+                dcrById={dcrById}
+              />
+              {activeGroup && (
+                <GroupRebarEditor
+                  group={activeGroup}
+                  members={members.filter(m => activeGroup.memberIds.includes(m.id))}
+                  onApply={handleApplyRebar}
+                />
+              )}
+            </>
+          )}
+
+          {rightTab === 'autogroup' && (
+            <AutoGroupPanel
+              members={members}
+              highlightedFrameNames={highlightedFrames}
+              onHighlightChange={setHighlightedFrames}
+              onApplySuggestion={handleAcceptSuggestion}
+            />
+          )}
+
+          {rightTab === 'savings' && (
+            <SavingsPanel
+              members={members}
+              resultsById={designResultsById}
+              designGroups={groups}
+              onMergeGroups={handleMergeGroups}
+            />
+          )}
         </div>
-        {activeGroup && (
-          <GroupRebarEditor
-            group={activeGroup}
-            members={members.filter(m => activeGroup.memberIds.includes(m.id))}
-            onApply={handleApplyRebar}
-          />
-        )}
       </div>
     </div>
   );

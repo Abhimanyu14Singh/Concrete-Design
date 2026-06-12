@@ -6,8 +6,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
+import { valueToRampColor, rampStops } from './colorRamp';
 
-export type ColorMode = 'dcr' | 'group' | 'section';
+export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups';
 export type DiagramMode = 'off' | 'moment' | 'shear';
 
 /** Rich per-member info shown in the tooltip. */
@@ -44,6 +45,10 @@ interface Props {
   height?: number;
   diagramMode?: DiagramMode;
   diagramDataById?: Record<string, { x: number; v: number }[]>;
+  /** For 'flexSteel' / 'stirrups' modes: metric value by memberId. */
+  metricById?: Record<string, number>;
+  metricRange?: { min: number; max: number };
+  metricLabel?: string;
 }
 
 export default function MapCanvas({
@@ -51,6 +56,7 @@ export default function MapCanvas({
   colorMode = 'dcr', selected, onSelectionChange, onDoubleClick, onFrameClick,
   width = 640, height = 480,
   diagramMode = 'off', diagramDataById = {},
+  metricById = {}, metricRange, metricLabel,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -97,6 +103,13 @@ export default function MapCanvas({
         if (c) return c;
       }
       return '#9ca3af';
+    }
+    if ((colorMode === 'flexSteel' || colorMode === 'stirrups') && f.memberId) {
+      const v = metricById[f.memberId];
+      if (v !== undefined && metricRange) {
+        return valueToRampColor(v, metricRange.min, metricRange.max);
+      }
+      return '#d1d5db';
     }
     if (colorMode === 'section') {
       let h = 0;
@@ -392,6 +405,12 @@ export default function MapCanvas({
           ) : (
             <div style={{ color: '#9ca3af' }}>Not yet designed</div>
           )}
+          {(colorMode === 'flexSteel' || colorMode === 'stirrups') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
+            <div style={{ marginTop: 4, fontSize: 10 }}>
+              <span style={{ color: '#374151' }}>{metricLabel ?? 'Metric'}: </span>
+              <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
+            </div>
+          )}
           <div style={{ color: '#9ca3af', marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
         </div>
       )}
@@ -405,6 +424,19 @@ export default function MapCanvas({
               {l}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Metric ramp legend */}
+      {(colorMode === 'flexSteel' || colorMode === 'stirrups') && metricRange && (
+        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280', minWidth: 140 }}>
+          <div style={{ marginBottom: 4, fontWeight: 600 }}>{metricLabel ?? ''}</div>
+          <div style={{ position: 'relative', height: 10, borderRadius: 4, overflow: 'hidden', background: `linear-gradient(to right, ${rampStops(metricRange.min, metricRange.max).map(s => s.color).join(',')}` }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+            <span>{metricRange.min.toFixed(2)}</span>
+            <span>{((metricRange.min + metricRange.max) / 2).toFixed(2)}</span>
+            <span>{metricRange.max.toFixed(2)}</span>
+          </div>
         </div>
       )}
 
