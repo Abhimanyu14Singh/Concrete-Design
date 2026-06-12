@@ -11,6 +11,7 @@ import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterial
 import { MockConnection } from '../../adapters/etabs/mock';
 import { FileConnection } from '../../adapters/etabs/fileImport';
 import { ComConnection } from '../../adapters/etabs/comClient';
+import { BridgeConnection, DEFAULT_BRIDGE_URL } from '../../adapters/etabs/bridgeClient';
 import { buildMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
@@ -24,7 +25,7 @@ interface Props {
   onImport: (members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap) => void;
 }
 
-type SourceKind = 'com' | 'file' | 'mock';
+type SourceKind = 'com' | 'bridge' | 'file' | 'mock';
 
 const STEPS = ['Connect', 'Filter', 'Rebar Defaults', 'Review & Import'];
 
@@ -40,6 +41,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
   // step 1
   const [source, setSource] = useState<SourceKind>(window.electronAPI?.etabs ? 'com' : 'mock');
+  const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_BRIDGE_URL);
   const connRef = useRef<EtabsConnection | null>(null);
   const [connInfo, setConnInfo] = useState<EtabsConnectInfo | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,6 +113,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   async function handleConnect() {
     if (source === 'mock') return connectWith(new MockConnection());
     if (source === 'com') return connectWith(new ComConnection());
+    if (source === 'bridge') return connectWith(new BridgeConnection(bridgeUrl));
     fileInputRef.current?.click(); // file: open the picker
   }
 
@@ -276,6 +279,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div style={lbl}>Model source</div>
               {([
                 ['com', 'Active ETABS instance', 'Attach to the model currently open in ETABS via the CSI API (Windows desktop app)', !window.electronAPI?.etabs],
+                ['bridge', 'ETABS bridge server (Python)', 'Local helper script over HTTP — works without COM registration. Run tools/etabs_bridge.py next to your open model.', false],
                 ['file', 'ETABS tables file (.xlsx)', 'Workbook exported from ETABS with Beams / Sections / Materials / Forces sheets', false],
                 ['mock', 'Sample model (demo)', 'Built-in 2-story demo model — try the workflow without ETABS', false],
               ] as [SourceKind, string, string, boolean][]).map(([kind, title, desc, disabled]) => (
@@ -287,10 +291,22 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 }}>
                   <input type="radio" checked={source === kind} disabled={disabled}
                     onChange={() => setSource(kind)} style={{ marginTop: 2 }} />
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{title}</div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{desc}</div>
                     {disabled && <div style={{ fontSize: 10, color: '#d97706', marginTop: 2 }}>Requires the Windows desktop app with ETABS running</div>}
+                    {kind === 'bridge' && source === 'bridge' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Server URL</span>
+                        <input
+                          value={bridgeUrl}
+                          onChange={e => setBridgeUrl(e.target.value)}
+                          onClick={e => e.preventDefault()}
+                          spellCheck={false}
+                          style={{ ...inp, flex: 1, fontSize: 11 }}
+                        />
+                      </div>
+                    )}
                   </div>
                 </label>
               ))}

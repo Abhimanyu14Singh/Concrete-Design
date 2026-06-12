@@ -48,7 +48,7 @@ export interface BeamFilter {
 }
 
 export interface EtabsConnection {
-  readonly kind: 'com' | 'file' | 'mock';
+  readonly kind: 'com' | 'file' | 'mock' | 'bridge';
   connect(): Promise<EtabsConnectInfo>;
   getStories(): Promise<string[]>;
   getGroups(): Promise<string[]>;
