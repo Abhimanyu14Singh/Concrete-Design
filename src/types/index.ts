@@ -252,8 +252,6 @@ export interface Project {
   hiddenMemberIds?: string[];
   /** Stories (floors) hidden from the map view. */
   hiddenStories?: string[];
-  /** Auto-group overlay bins — reference only, never touches designGroups. */
-  autoGroupOverlay?: AutoGroupBin[];
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */

@@ -100,7 +100,7 @@ The **Map → Auto-Group** tab suggests design groups automatically from analysi
 2. Within each family, every beam gets a **family-normalized governing demand**: max of Mu⁺, Mu⁻, and Vu, each divided by the family-wide maximum of that quantity (so heavy-shear beams don't disappear into a light-moment bin). Demands come from the imported envelope load case, with a station-forces fallback.
 3. The 1-D demand values are clustered with **Jenks natural breaks** (variance-minimizing dynamic program, O(k·n²)) or **quantile breaks** — selectable in the panel. With k = **Auto**, k = 2…5 is tried and scored by **goodness-of-variance fit** (GVF = 1 − SDAM/SDCM); the search stops early once GVF ≥ 0.85.
 4. Each family gets a **histogram** of demands with **draggable break sliders** for manual tuning; hovering a bin highlights its frames on the map.
-5. The tab is **reference-only**: suggestions render as a map overlay (toggled via the **Auto-G** color-mode button, persisted as `project.autoGroupOverlay`) and update live with every slider/algorithm change. Design groups only change when you click **Commit as Design Groups**, which creates groups tagged `source: 'auto'`. Re-committing replaces previous auto-groups but never touches manually created groups.
+5. The tab is **reference-only**: suggestions render as a map overlay (toggled via the **Auto-G** color-mode button, session-local) and update live with every slider/algorithm change. Design groups only change when you click **Commit as Design Groups**, which creates groups tagged `source: 'auto'`. Re-committing replaces previous auto-groups but never touches manually created groups.
 
 ### Savings Analytics
 The **Map → Savings** tab quantifies potential rebar savings against a project-wide **target DCR** slider (persisted as `targetDCR` in the project file):
@@ -139,7 +139,7 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 - **Sample model (demo)** — built-in 2-story model to try the workflow without ETABS.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
-4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by their first ETABS group name (`beam.groups[0]`), falling back to story · section for ungrouped beams; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
+4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story · section by default; the wizard's **"Design groups from ETABS"** picker lets you opt specific ETABS group names in — beams in a selected group mirror that name as their design group, the rest fall back to story · section. Shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
 
 Imported members keep their ETABS link (frame name, story, groups, node coordinates) and station forces, and the shear check is evaluated per stirrup zone against the max |V| within each third of the span.
 

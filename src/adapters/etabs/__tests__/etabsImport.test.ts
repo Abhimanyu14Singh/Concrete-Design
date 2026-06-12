@@ -148,7 +148,7 @@ describe('buildMembers + autoGroup', () => {
     expect(Number.isFinite(r.DCR_shear)).toBe(true);
   });
 
-  it('auto-groups by ETABS group name (or story × section fallback) and tags members', async () => {
+  it('auto-groups by story × section by default and tags members', async () => {
     const conn = new MockConnection();
     await conn.connect();
     const beams = await conn.getBeams({});
@@ -156,14 +156,34 @@ describe('buildMembers + autoGroup', () => {
       rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
     });
     const groups = autoGroup(members);
-    // Mock data has 2 distinct ETABS groups[0] values ('Girders', 'Infill')
-    // so we get 2 groups (ETABS group names take priority over story×section)
-    expect(groups.length).toBeGreaterThanOrEqual(2);
+    // 2 stories × 2 sections
+    expect(groups).toHaveLength(4);
     expect(groups.reduce((s, g) => s + g.memberIds.length, 0)).toBe(members.length);
     for (const m of members) {
       const g = groups.find(g => g.id === m.etabs!.designGroupId)!;
       expect(g.memberIds).toContain(m.id);
     }
+  });
+
+  it('mirrors only opted-in ETABS group names; others fall back to story × section', async () => {
+    const conn = new MockConnection();
+    await conn.connect();
+    const beams = await conn.getBeams({});
+    const members = buildMembers(beams, await conn.getFrameSections(), await conn.getMaterials(), {}, {
+      rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
+    });
+    const groups = autoGroup(members, new Set(['Girders']));
+    const girders = groups.find(g => g.label === 'Girders');
+    expect(girders).toBeDefined();
+    // Girders members all carry the ETABS 'Girders' group
+    for (const mid of girders!.memberIds) {
+      const m = members.find(mm => mm.id === mid)!;
+      expect(m.etabs!.groups).toContain('Girders');
+    }
+    // Non-girder beams still bucket by story · section
+    const fallback = groups.filter(g => g.label.includes(' · '));
+    expect(fallback.length).toBeGreaterThan(0);
+    expect(groups.reduce((s, g) => s + g.memberIds.length, 0)).toBe(members.length);
   });
 });
 

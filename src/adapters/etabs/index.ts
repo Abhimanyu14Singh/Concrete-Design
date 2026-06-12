@@ -100,15 +100,19 @@ export function buildMembers(
 }
 
 /**
- * Auto-group imported beams: one design group per (story, section) pair.
+ * Auto-group imported beams: one design group per (story, section) pair,
+ * or per ETABS group name for groups the user chose to mirror.
  * One rebar set per group, checked against every member in the group.
  */
-export function autoGroup(members: Member[]): DesignGroup[] {
+export function autoGroup(members: Member[], mirrorGroups?: Set<string>): DesignGroup[] {
   const byKey = new Map<string, DesignGroup>();
   for (const m of members) {
     if (!m.etabs) continue;
-    // Use first ETABS group name if available, else fall back to story·section
-    const etabsGroup = m.etabs.groups?.[0];
+    // Mirror an ETABS group name only when the user opted that group in;
+    // first matching group wins. Everything else buckets by story·section.
+    const etabsGroup = mirrorGroups?.size
+      ? m.etabs.groups?.find(g => mirrorGroups.has(g))
+      : undefined;
     const key = etabsGroup ?? `${m.etabs.story}|${m.etabs.sectionName}`;
     const label = etabsGroup ?? `${m.etabs.story} · ${m.etabs.sectionName}`;
     let g = byKey.get(key);

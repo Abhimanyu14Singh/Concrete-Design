@@ -68,6 +68,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [inspectMode, setInspectMode] = useState(false);
   const [inspectedMemberId, setInspectedMemberId] = useState<string | null>(null);
   const [inspectPos, setInspectPos] = useState({ x: 0, y: 0 });
+  // Reference overlay lives in component state, NOT the project — writing it to
+  // the project on every recompute caused an infinite render loop.
+  const [autoGroupOverlay, setAutoGroupOverlay] = useState<AutoGroupBin[]>([]);
   const [contextMenu, setContextMenu] = useState<{ memberId: string; frameName: string; x: number; y: number } | null>(null);
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
@@ -88,7 +91,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const members = project.members;
   const hiddenMemberIds = useMemo(() => new Set(project.hiddenMemberIds ?? []), [project.hiddenMemberIds]);
   const hiddenStories = useMemo(() => new Set(project.hiddenStories ?? []), [project.hiddenStories]);
-  const autoGroupOverlay = project.autoGroupOverlay ?? [];
 
   // Live frame→member linkage
   const enrichedFrames = useMemo(() => {
@@ -259,8 +261,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }
 
   const handleOverlayChange = useCallback((bins: AutoGroupBin[]) => {
-    onProjectChange({ ...project, autoGroupOverlay: bins });
-  }, [project, onProjectChange]);
+    setAutoGroupOverlay(bins);
+  }, []);
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
     flex: 1, padding: '7px 4px', border: 'none', background: active ? 'white' : '#f9fafb',

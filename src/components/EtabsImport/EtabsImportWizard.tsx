@@ -51,6 +51,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [selStory, setSelStory] = useState<string>('');           // '' = all
   const [selSections, setSelSections] = useState<Set<string>>(new Set());
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set()); // empty = all
+  // ETABS groups to mirror as design-group names (empty = group by story·section)
+  const [mirrorGroups, setMirrorGroups] = useState<Set<string>>(new Set());
   const [selCombos, setSelCombos] = useState<Set<string>>(new Set());
   const [matchCount, setMatchCount] = useState<number | null>(null);
 
@@ -151,7 +153,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       };
       setCapturedModelMap(modelMap);
 
-      setDesignGroups(autoGroup(built));
+      setDesignGroups(autoGroup(built, mirrorGroups));
       setMembers(built);
       setSelected(new Set());
       return true;
@@ -328,6 +330,21 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       </span>
                     ))}
                     {!groups.length && <span style={{ fontSize: 11, color: '#9ca3af' }}>No groups defined in model</span>}
+                  </div>
+                </div>
+                <div style={card}>
+                  <div style={lbl}>Design groups from ETABS (empty = story · section)</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {groups.map(g => (
+                      <span key={g} style={chip(mirrorGroups.has(g))}
+                        onClick={() => setMirrorGroups(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; })}>
+                        {g}
+                      </span>
+                    ))}
+                    {!groups.length && <span style={{ fontSize: 11, color: '#9ca3af' }}>No groups defined in model</span>}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                    Selected ETABS groups become design groups with the same name; remaining beams group by story · section.
                   </div>
                 </div>
                 <div style={card}>
