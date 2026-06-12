@@ -3,14 +3,17 @@
  * "Apply" fans the layout out to every member in the group.
  */
 import { useState, useEffect } from 'react';
-import type { DesignGroup, RebarLayout, BarGroup, Member } from '../../types';
+import type { DesignGroup, RebarLayout, BarGroup, Member, Project } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   group: DesignGroup;
   members: Member[];
   onApply: (groupId: string, rebar: RebarLayout, memberIds: string[]) => void;
+  code: Project['code'];
+  targetDCR: number;
 }
 
 const DEFAULT_REBAR: RebarLayout = {
@@ -61,14 +64,29 @@ function BarGroupRow({ bg, onChange, label, units }: {
   );
 }
 
-export default function GroupRebarEditor({ group, members, onApply }: Props) {
+export default function GroupRebarEditor({ group, members, onApply, code, targetDCR }: Props) {
   const { units } = useUnits();
   const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? DEFAULT_REBAR);
+  const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // Sync if group changes
   useEffect(() => {
     setRebar(group.rebar ?? DEFAULT_REBAR);
+    setSuggestNote(null);
   }, [group.id, group.rebar]);
+
+  function handleSuggest() {
+    const r = suggestGroupRebar(members, code, targetDCR);
+    if (isSuggestError(r)) {
+      setSuggestNote({ kind: 'err', text: r.error });
+      return;
+    }
+    setRebar(r.rebar);
+    setSuggestNote({
+      kind: 'ok',
+      text: `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)} at target ${targetDCR.toFixed(2)} — review, then Apply.`,
+    });
+  }
 
   function updateTop(i: number, bg: BarGroup) {
     setRebar(r => ({ ...r, topBars: r.topBars.map((b, j) => j === i ? bg : b) }));
@@ -91,9 +109,27 @@ export default function GroupRebarEditor({ group, members, onApply }: Props) {
 
   return (
     <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
-      <div style={{ fontWeight: 700, fontSize: 11, color: '#374151', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-        {group.label} — Rebar Template
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 11, color: '#374151', textTransform: 'uppercase', letterSpacing: 0.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {group.label} — Rebar Template
+        </div>
+        <button
+          onClick={handleSuggest}
+          title={`Pick the lightest practical layout meeting the group's worst demand at target DCR ${targetDCR.toFixed(2)}`}
+          style={{ flexShrink: 0, padding: '3px 8px', background: 'white', color: '#7c3aed', border: '1px solid #c4b5fd', borderRadius: 5, cursor: 'pointer', fontWeight: 700, fontSize: 10 }}>
+          ✨ Suggest
+        </button>
       </div>
+      {suggestNote && (
+        <div style={{
+          fontSize: 10, marginBottom: 8, padding: '4px 8px', borderRadius: 5,
+          background: suggestNote.kind === 'ok' ? '#f5f3ff' : '#fef2f2',
+          color: suggestNote.kind === 'ok' ? '#6d28d9' : '#dc2626',
+          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe' : '#fecaca'}`,
+        }}>
+          {suggestNote.text}
+        </div>
+      )}
 
       <div style={{ marginBottom: 6 }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Top bars</div>

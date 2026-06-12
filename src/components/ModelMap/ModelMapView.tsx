@@ -368,6 +368,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                   group={activeGroup}
                   members={members.filter(m => activeGroup.memberIds.includes(m.id))}
                   onApply={handleApplyRebar}
+                  code={project.code}
+                  targetDCR={project.targetDCR ?? 0.9}
                 />
               )}
             </>
@@ -388,6 +390,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               resultsById={designResultsById}
               designGroups={groups}
               onMergeGroups={handleMergeGroups}
+              targetDCR={project.targetDCR ?? 0.9}
+              onTargetDCRChange={v => onProjectChange({ ...project, targetDCR: v })}
             />
           )}
         </div>

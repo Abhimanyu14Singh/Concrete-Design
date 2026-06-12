@@ -11,6 +11,9 @@ interface SavingsPanelProps {
   resultsById: Record<string, DesignResults>;
   designGroups: DesignGroup[];
   onMergeGroups?: (keepId: string, removeId: string) => void;
+  /** Project-level target DCR (persisted in .scdb). */
+  targetDCR: number;
+  onTargetDCRChange: (v: number) => void;
 }
 
 export default function SavingsPanel({
@@ -18,8 +21,9 @@ export default function SavingsPanel({
   resultsById,
   designGroups,
   onMergeGroups,
+  targetDCR,
+  onTargetDCRChange,
 }: SavingsPanelProps) {
-  const [targetDCR, setTargetDCR] = useState(0.9);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   // Build memberId → groupId map
@@ -128,7 +132,7 @@ export default function SavingsPanel({
           Target DCR: <span style={{ fontWeight: 700, color: '#374151' }}>{(targetDCR * 100).toFixed(0)}%</span>
         </div>
         <input type="range" min={0.70} max={1.00} step={0.01} value={targetDCR}
-          onChange={e => setTargetDCR(parseFloat(e.target.value))}
+          onChange={e => onTargetDCRChange(parseFloat(e.target.value))}
           style={{ width: '100%', accentColor: '#2563eb' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#9ca3af' }}>
           <span>70% (conservative)</span><span>100% (use everything)</span>

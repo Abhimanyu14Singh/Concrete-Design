@@ -238,6 +238,8 @@ export interface Project {
   members: Member[];
   designGroups?: DesignGroup[]; // beam design groups (ETABS import)
   modelMap?: ModelMap;          // persistent connectivity snapshot
+  /** Target DCR for rebar suggestions and savings analytics (default 0.9). */
+  targetDCR?: number;
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */

@@ -33,6 +33,12 @@ describe('project save/load round-trip', () => {
     expect(back.designGroups![0].label).toBe('Gravity beams');
   });
 
+  it('round-trips the project-level targetDCR', () => {
+    const project: Project = { ...defaultProject, targetDCR: 0.85 };
+    const back = deserializeProject(serializeProject(project));
+    expect(back.targetDCR).toBe(0.85);
+  });
+
   it('rejects files that are not S-Concrete projects', () => {
     expect(() => deserializeProject('{"foo": 1}')).toThrow(/valid S-Concrete/i);
     expect(() => deserializeProject('not json at all')).toThrow();
