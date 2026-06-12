@@ -77,25 +77,35 @@ export default function App() {
 
   // ── File handlers ──────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
-    await saveProject(project);
-    setIsDirty(false);
+    try {
+      const saved = await saveProject(project);
+      // Only clear the dirty flag when the file was actually written
+      // (not when the user cancelled the save dialog).
+      if (saved) setIsDirty(false);
+    } catch (e) {
+      alert(`Could not save the project:\n${(e as Error).message}`);
+    }
   }, [project]);
 
   const handleOpen = useCallback(async () => {
     try {
       const loaded = await openProject();
-      if (!loaded) return;
+      if (!loaded) return; // cancelled
       setProjectRaw(loaded);
       historyRef.current = [loaded];
       historyIndexRef.current = 0;
       setActiveMemberId(loaded.members[0]?.id ?? '');
       setTab('dashboard');
       setIsDirty(false);
-    } catch { /* user cancelled */ }
+    } catch (e) {
+      alert(`Could not open the project file:\n${(e as Error).message}`);
+    }
   }, []);
 
   function handleNewProject() {
     if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
+    // Native confirm() can steal keyboard focus from the window in Electron
+    window.focus();
     setProjectRaw(defaultProject);
     historyRef.current = [defaultProject];
     historyIndexRef.current = 0;
@@ -276,6 +286,28 @@ export default function App() {
     setTab('member');
   }
 
+  function deleteMember(id: string) {
+    const m = project.members.find(mm => mm.id === id);
+    if (!m) return;
+    if (!confirm(`Delete member ${m.id} — "${m.label}"? (Ctrl+Z to undo)`)) return;
+    setProject(p => {
+      const members = p.members.filter(mm => mm.id !== id);
+      // Clean dangling group references; drop groups that become empty
+      const designGroups = (p.designGroups ?? [])
+        .map(g => ({ ...g, memberIds: g.memberIds.filter(mid => mid !== id) }))
+        .filter(g => g.memberIds.length > 0);
+      return { ...p, members, designGroups };
+    });
+    if (activeMemberId === id) {
+      const remaining = project.members.filter(mm => mm.id !== id);
+      if (remaining.length) {
+        setActiveMemberId(remaining[0].id);
+      } else {
+        setTab('dashboard');
+      }
+    }
+  }
+
   // A3: Drag-to-reorder
   function onDragStart(id: string) { setDragSrcId(id); }
   function onDragOver(e: React.DragEvent, id: string) { e.preventDefault(); setDragOverId(id); }
@@ -441,8 +473,15 @@ export default function App() {
                     <button
                       onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
                       title="Duplicate member"
-                      style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
+                      style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
                     >⧉</button>
+                    <button
+                      onClick={e => { e.stopPropagation(); deleteMember(m.id); }}
+                      title="Delete member"
+                      style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
+                      onMouseEnter={e => { (e.target as HTMLElement).style.color = '#dc2626'; }}
+                      onMouseLeave={e => { (e.target as HTMLElement).style.color = '#9ca3af'; }}
+                    >🗑</button>
                   </div>
                 ))}
               </div>

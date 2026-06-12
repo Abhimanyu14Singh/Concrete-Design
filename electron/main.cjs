@@ -61,24 +61,43 @@ function createWindow() {
 
 // ── IPC: native file dialogs ─────────────────────────────────────────────────
 
-ipcMain.handle('save-file', async (_, { content, defaultName }) => {
-  const { canceled, filePath } = await dialog.showSaveDialog({
-    defaultPath: defaultName,
-    filters: [{ name: 'S-Concrete Project', extensions: ['scdb'] }],
-  });
-  if (canceled || !filePath) return { success: false };
-  fs.writeFileSync(filePath, content, 'utf8');
-  return { success: true };
+// Dialogs are parented to the sender's window so they open modal and on top
+// (an unparented dialog can appear BEHIND the app window on Windows, which
+// looks like the Save/Open button did nothing).
+function windowFor(event) {
+  return BrowserWindow.fromWebContents(event.sender)
+    ?? BrowserWindow.getFocusedWindow()
+    ?? undefined;
+}
+
+ipcMain.handle('save-file', async (event, { content, defaultName }) => {
+  try {
+    const win = windowFor(event);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: defaultName,
+      filters: [{ name: 'S-Concrete Project', extensions: ['scdb'] }],
+    });
+    if (canceled || !filePath) return { success: false, canceled: true };
+    fs.writeFileSync(filePath, content, 'utf8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
 });
 
-ipcMain.handle('open-file', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog({
-    properties: ['openFile'],
-    filters: [{ name: 'S-Concrete Project', extensions: ['scdb', 'json'] }],
-  });
-  if (canceled || !filePaths.length) return null;
-  const content = fs.readFileSync(filePaths[0], 'utf8');
-  return { content };
+ipcMain.handle('open-file', async (event) => {
+  try {
+    const win = windowFor(event);
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      filters: [{ name: 'S-Concrete Project', extensions: ['scdb', 'json'] }],
+    });
+    if (canceled || !filePaths.length) return null;
+    const content = fs.readFileSync(filePaths[0], 'utf8');
+    return { content };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
 });
 
 // ── IPC: ETABS CSI OAPI bridge (Windows + ETABS running; errors elsewhere) ───

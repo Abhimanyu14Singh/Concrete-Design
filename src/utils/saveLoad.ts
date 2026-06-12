@@ -11,6 +11,9 @@ export function deserializeProject(json: string): Project {
   const data = JSON.parse(json);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { _version, ...project } = data;
+  if (!Array.isArray((project as Project).members)) {
+    throw new Error('Not a valid S-Concrete project file (missing members list).');
+  }
   return project as Project;
 }
 

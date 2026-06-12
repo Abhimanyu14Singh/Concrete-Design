@@ -330,7 +330,21 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </div>
                 </div>
                 <div style={card}>
-                  <div style={lbl}>Load combinations to import</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={lbl}>Load combinations to import</div>
+                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                      {selCombos.size} of {combos.length} selected
+                    </span>
+                    <div style={{ flex: 1 }} />
+                    <button onClick={() => setSelCombos(new Set(combos))}
+                      style={{ fontSize: 11, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '0 4px' }}>
+                      All
+                    </button>
+                    <button onClick={() => setSelCombos(new Set())}
+                      style={{ fontSize: 11, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '0 4px' }}>
+                      None
+                    </button>
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {combos.map(c => (
                       <span key={c} style={chip(selCombos.has(c))}
@@ -339,6 +353,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       </span>
                     ))}
                   </div>
+                  {selCombos.size === 0 && (
+                    <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>
+                      Select at least one combination to continue.
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={card}>
