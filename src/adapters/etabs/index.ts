@@ -107,12 +107,15 @@ export function autoGroup(members: Member[]): DesignGroup[] {
   const byKey = new Map<string, DesignGroup>();
   for (const m of members) {
     if (!m.etabs) continue;
-    const key = `${m.etabs.story}|${m.etabs.sectionName}`;
+    // Use first ETABS group name if available, else fall back to story·section
+    const etabsGroup = m.etabs.groups?.[0];
+    const key = etabsGroup ?? `${m.etabs.story}|${m.etabs.sectionName}`;
+    const label = etabsGroup ?? `${m.etabs.story} · ${m.etabs.sectionName}`;
     let g = byKey.get(key);
     if (!g) {
       g = {
         id: `dg-${byKey.size + 1}`,
-        label: `${m.etabs.story} · ${m.etabs.sectionName}`,
+        label,
         memberIds: [],
       };
       byKey.set(key, g);

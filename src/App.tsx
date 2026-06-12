@@ -25,6 +25,10 @@ export default function App() {
   const [activeMemberId, setActiveMemberId] = useState<string>(project.members[0].id);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarW, setSidebarW] = useState(220);
+  const sidebarDragging = useRef(false);
+  const sidebarDragStartX = useRef(0);
+  const sidebarDragStartW = useRef(220);
   const [zoom, setZoom] = useState<number>(() => {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
@@ -378,7 +382,7 @@ export default function App() {
         />
       )}
       {/* Sidebar */}
-      <aside id="app-sidebar" style={{ width: sidebarOpen ? 220 : 48, transition: 'width 0.2s', flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <aside id="app-sidebar" style={{ width: sidebarOpen ? sidebarW : 48, flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ width: 28, height: 28, background: '#2563eb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', color: 'white', flexShrink: 0 }}>
@@ -467,7 +471,7 @@ export default function App() {
                     >
                       <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>{m.id}</span>
                       <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {m.label.length > 12 ? m.label.slice(0, 12) + '…' : m.label}
+                        {m.label}
                       </span>
                     </button>
                     <button
@@ -503,6 +507,28 @@ export default function App() {
             </button>
           )}
         </div>
+
+        {/* Resize handle */}
+        {sidebarOpen && (
+          <div
+            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, cursor: 'col-resize', zIndex: 10, background: 'transparent' }}
+            onMouseDown={e => {
+              sidebarDragging.current = true;
+              sidebarDragStartX.current = e.clientX;
+              sidebarDragStartW.current = sidebarW;
+              const onMove = (me: MouseEvent) => {
+                if (!sidebarDragging.current) return;
+                const dx = me.clientX - sidebarDragStartX.current;
+                setSidebarW(Math.max(160, Math.min(480, sidebarDragStartW.current + dx)));
+              };
+              const onUp = () => { sidebarDragging.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+              window.addEventListener('mousemove', onMove);
+              window.addEventListener('mouseup', onUp);
+              e.preventDefault();
+            }}
+            title="Drag to resize"
+          />
+        )}
 
         {sidebarOpen && (
           <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb' }}>
@@ -714,6 +740,7 @@ export default function App() {
                   onProjectChange={p => setProject(p)}
                   onOpenEtabsImport={() => setShowEtabsImport(true)}
                   onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
+                  onDeleteMember={id => deleteMember(id)}
                 />
               </div>
             )}

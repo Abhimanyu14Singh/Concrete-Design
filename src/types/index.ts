@@ -228,6 +228,14 @@ export interface DesignResults {
   status: 'OK' | 'NG' | 'Warning';
 }
 
+/** One auto-group bin used as a reference overlay on the map. */
+export interface AutoGroupBin {
+  binKey: string;     // e.g. "14x24|4000|60000-0"
+  memberIds: string[];
+  color: string;
+  label: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -240,6 +248,12 @@ export interface Project {
   modelMap?: ModelMap;          // persistent connectivity snapshot
   /** Target DCR for rebar suggestions and savings analytics (default 0.9). */
   targetDCR?: number;
+  /** Member ids hidden from the map view (not deleted). */
+  hiddenMemberIds?: string[];
+  /** Stories (floors) hidden from the map view. */
+  hiddenStories?: string[];
+  /** Auto-group overlay bins — reference only, never touches designGroups. */
+  autoGroupOverlay?: AutoGroupBin[];
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */

@@ -5,8 +5,8 @@
  * group-boundary sliders (Jenks or quantile clustering). Lets the user
  * preview and apply the groupings as DesignGroups.
  */
-import { useState, useMemo } from 'react';
-import type { Member, DesignGroup } from '../../types';
+import { useState, useMemo, useEffect } from 'react';
+import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
   type AutoGroupSuggestion,
@@ -21,12 +21,14 @@ interface AutoGroupPanelProps {
   members: Member[];
   onHighlightChange?: (frameNames: Set<string>) => void;
   onApplySuggestion: (groups: DesignGroup[]) => void;
+  onOverlayChange?: (bins: AutoGroupBin[]) => void;
 }
 
 export default function AutoGroupPanel({
   members,
   onHighlightChange,
   onApplySuggestion,
+  onOverlayChange,
 }: AutoGroupPanelProps) {
   const [algorithm, setAlgorithm] = useState<'jenks' | 'quantile'>('jenks');
   const [kPerFamily, setKPerFamily] = useState<number | 'auto'>('auto');
@@ -71,6 +73,35 @@ export default function AutoGroupPanel({
     const bin = binAssignment[i] ?? 0;
     if (binMemberIds[bin]) binMemberIds[bin].push(d.memberId);
   });
+
+  // Compute full overlay (all families) and fire onOverlayChange
+  const allOverlayBins = useMemo<AutoGroupBin[]>(() => {
+    const bins: AutoGroupBin[] = [];
+    for (const sug of baseSuggestions) {
+      const breaks = getBreaks(sug.familyKey, sug);
+      const famDemands = demands.filter(d => d.familyKey === sug.familyKey);
+      const famVals = famDemands.map(d => d.governing);
+      const assign = famVals.length ? assignByBreaks(famVals, breaks) : [];
+      const numB = breaks.length + 1;
+      const binsArr: string[][] = Array.from({ length: numB }, () => []);
+      famDemands.forEach((d, i) => binsArr[assign[i] ?? 0].push(d.memberId));
+      binsArr.forEach((mIds, bi) => {
+        if (!mIds.length) return;
+        bins.push({
+          binKey: `${sug.familyKey}-${bi}`,
+          memberIds: mIds,
+          color: GROUP_PALETTE[bi % GROUP_PALETTE.length],
+          label: `${sug.familyLabel} G${bi + 1}`,
+        });
+      });
+    }
+    return bins;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseSuggestions, tweakedBreaks, demands]);
+
+  useEffect(() => {
+    onOverlayChange?.(allOverlayBins);
+  }, [allOverlayBins, onOverlayChange]);
 
   // Member → frame name for highlight sync
   const memberToFrame = useMemo(() => {
@@ -227,10 +258,10 @@ export default function AutoGroupPanel({
       <button
         onClick={handleApply}
         style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: 6, padding: '7px 0', fontWeight: 600, fontSize: 12, cursor: 'pointer', width: '100%' }}>
-        Apply as Design Groups
+        Commit as Design Groups
       </button>
       <div style={{ fontSize: 9, color: '#9ca3af' }}>
-        Replaces existing auto-groups; manual groups untouched.
+        Overlay is reference-only. Commit replaces existing auto-groups; manual groups untouched.
       </div>
     </div>
   );

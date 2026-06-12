@@ -4,11 +4,11 @@
  * V/M diagram overlays; and a rich hover tooltip showing DCR split + rebar.
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import type { MapFrame, DesignGroup } from '../../types';
+import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { valueToRampColor, rampStops } from './colorRamp';
 
-export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight';
+export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight' | 'autoGroup';
 export type DiagramMode = 'off' | 'moment' | 'shear';
 
 /** Rich per-member info shown in the tooltip. */
@@ -43,6 +43,10 @@ interface Props {
   onDoubleClick?: (memberId: string) => void;
   /** When provided and returns true, default selection change is suppressed. */
   onFrameClick?: (frameName: string) => boolean;
+  /** Called on single click in inspect mode; provides screen coords. */
+  onBeamInspect?: (memberId: string, clientX: number, clientY: number) => void;
+  /** Called on right-click on a designed frame. */
+  onBeamContextMenu?: (memberId: string, frameName: string, clientX: number, clientY: number) => void;
   width?: number;
   height?: number;
   diagramMode?: DiagramMode;
@@ -51,14 +55,25 @@ interface Props {
   metricById?: Record<string, number>;
   metricRange?: { min: number; max: number };
   metricLabel?: string;
+  /** Auto-group overlay bins for 'autoGroup' color mode. */
+  autoGroupOverlay?: AutoGroupBin[];
+  /** Member ids to hide from the canvas. */
+  hiddenMemberIds?: Set<string>;
+  /** Stories to hide from the canvas. */
+  hiddenStories?: Set<string>;
+  /** Whether click-to-inspect is active. */
+  inspectMode?: boolean;
 }
 
 export default function MapCanvas({
   frames, dcrById = {}, infoById = {}, designGroups = [], story = 'All',
   colorMode = 'dcr', selected, onSelectionChange, onDoubleClick, onFrameClick,
+  onBeamInspect, onBeamContextMenu,
   width = 640, height = 480,
   diagramMode = 'off', diagramDataById = {},
   metricById = {}, metricRange, metricLabel,
+  autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
+  inspectMode = false,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -68,7 +83,11 @@ export default function MapCanvas({
   const lassoBgOnly = useRef(false);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const visibleFrames = story === 'All' ? frames : frames.filter(f => f.story === story);
+  const visibleFrames = frames.filter(f =>
+    (story === 'All' || f.story === story) &&
+    !hiddenStories.has(f.story) &&
+    !(f.memberId && hiddenMemberIds.has(f.memberId))
+  );
 
   // Compute bounds
   const pts = visibleFrames.flatMap(f => [f.pt1, f.pt2]);
@@ -98,7 +117,20 @@ export default function MapCanvas({
     g.memberIds.forEach(mid => groupColorMap.set(mid, color));
   });
 
+  // Auto-group overlay color lookup
+  const autoGroupColorMap = new Map<string, string>();
+  autoGroupOverlay.forEach(bin => {
+    bin.memberIds.forEach(mid => autoGroupColorMap.set(mid, bin.color));
+  });
+
   function frameColor(f: MapFrame): string {
+    if (colorMode === 'autoGroup') {
+      if (f.memberId) {
+        const c = autoGroupColorMap.get(f.memberId);
+        if (c) return c;
+      }
+      return '#9ca3af';
+    }
     if (colorMode === 'group') {
       if (f.memberId) {
         const c = groupColorMap.get(f.memberId);
@@ -305,10 +337,19 @@ export default function MapCanvas({
         ref={svgRef}
         width={width} height={height}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-        style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : 'default', display: 'block' }}
+        style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : inspectMode ? 'zoom-in' : 'default', display: 'block' }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
+        onContextMenu={e => {
+          e.preventDefault();
+          // Find which frame was right-clicked via data attribute
+          const el = (e.target as Element).closest('[data-framename]');
+          const frameName = el?.getAttribute('data-framename');
+          if (!frameName) return;
+          const frame = visibleFrames.find(f => f.frameName === frameName);
+          if (frame?.memberId) onBeamContextMenu?.(frame.memberId, frameName, e.clientX, e.clientY);
+        }}
       >
         <defs>
           <pattern id="mmgrid" width="24" height="24" patternUnits="userSpaceOnUse">
@@ -329,11 +370,17 @@ export default function MapCanvas({
           const linked = !!f.memberId;
           return (
             <g key={f.frameName}
+              data-framename={f.frameName}
               style={{ cursor: 'pointer' }}
               onMouseEnter={() => setHover(f.frameName)}
               onMouseLeave={() => setHover(h => h === f.frameName ? null : h)}
               onClick={e => {
                 e.stopPropagation();
+                // Inspect mode: show beam card instead of selecting
+                if (inspectMode && f.memberId) {
+                  onBeamInspect?.(f.memberId, e.clientX, e.clientY);
+                  return;
+                }
                 // Group-edit mode: delegate to onFrameClick; it returns true if handled
                 if (onFrameClick && onFrameClick(f.frameName)) return;
                 const additive = e.shiftKey || e.ctrlKey || e.metaKey;

@@ -134,6 +134,10 @@ export default function SavingsPanel({
 
   const hasResults = savings.perMember.length > 0;
 
+  // Total in-place steel for % savings computation
+  const totalInPlaceLb = weightTotals.totalLb;
+  const savingsPct = totalInPlaceLb > 0 ? (savings.totalLb / totalInPlaceLb * 100) : 0;
+
   return (
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Header */}
@@ -141,6 +145,9 @@ export default function SavingsPanel({
         <div>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
             {hasResults ? `~${savings.totalTons.toFixed(2)} tons` : '—'} potential savings
+            {hasResults && totalInPlaceLb > 0 && (
+              <span style={{ marginLeft: 6, fontSize: 11, color: '#16a34a' }}>({savingsPct.toFixed(0)}%)</span>
+            )}
           </div>
           <div style={{ fontSize: 10, color: '#6b7280' }}>at target DCR {(targetDCR * 100).toFixed(0)}%</div>
         </div>
@@ -231,6 +238,7 @@ export default function SavingsPanel({
                 <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>Members</th>
                 <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>DCR</th>
                 <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>Savings</th>
+                <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>%</th>
               </tr>
             </thead>
             <tbody>
@@ -249,6 +257,9 @@ export default function SavingsPanel({
                     </td>
                     <td style={{ padding: '3px 4px', textAlign: 'right', color: lb > 50 ? '#16a34a' : '#6b7280', fontWeight: lb > 50 ? 600 : 400 }}>
                       {lb.toFixed(0)} lb
+                    </td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', color: '#6b7280', fontSize: 9 }}>
+                      {totalInPlaceLb > 0 ? (lb / totalInPlaceLb * 100).toFixed(1) + '%' : '—'}
                     </td>
                   </tr>
                   {expanded === group.id && savings.perMember

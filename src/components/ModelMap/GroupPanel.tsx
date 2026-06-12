@@ -3,7 +3,8 @@
  * Also highlights group members on the map when a group is selected.
  */
 import { useState } from 'react';
-import type { DesignGroup, MapFrame } from '../../types';
+import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
+import { flexSteelRatioPct } from '../../utils/autoGroup';
 
 const PALETTE = [
   '#2563eb','#16a34a','#d97706','#9333ea','#0891b2',
@@ -19,14 +20,18 @@ interface Props {
   onActiveGroupChange: (id: string | null) => void;
   onSelectionChange: (names: Set<string>) => void;
   dcrById?: Record<string, number>;
+  designResultsById?: Record<string, DesignResults>;
+  members?: Member[];
 }
 
 export default function GroupPanel({
   groups, frames, selected, activeGroupId,
   onGroupsChange, onActiveGroupChange, onSelectionChange, dcrById = {},
+  designResultsById = {}, members = [],
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
+  const [expandedStats, setExpandedStats] = useState<string | null>(null);
 
   const framesByMember = new Map<string, MapFrame>();
   for (const f of frames) if (f.memberId) framesByMember.set(f.memberId, f);
@@ -63,9 +68,12 @@ export default function GroupPanel({
     const memberIds = [...selected]
       .map(fname => frames.find(f => f.frameName === fname)?.memberId)
       .filter(Boolean) as string[];
-    onGroupsChange(groups.map(g => g.id === gId
-      ? { ...g, memberIds: [...new Set([...g.memberIds, ...memberIds])] }
-      : g));
+    // Exclusivity: remove these members from all other groups
+    onGroupsChange(groups.map(g =>
+      g.id === gId
+        ? { ...g, memberIds: [...new Set([...g.memberIds, ...memberIds])] }
+        : { ...g, memberIds: g.memberIds.filter(id => !memberIds.includes(id)) }
+    ));
   }
 
   function removeSelectionFromGroup(gId: string) {
@@ -119,9 +127,33 @@ export default function GroupPanel({
   }
 
   function addMemberToGroup(gId: string, memberId: string) {
-    onGroupsChange(groups.map(g => g.id === gId && !g.memberIds.includes(memberId)
-      ? { ...g, memberIds: [...g.memberIds, memberId] }
-      : g));
+    // Exclusivity: remove from all other groups first
+    onGroupsChange(groups.map(g =>
+      g.id === gId
+        ? { ...g, memberIds: g.memberIds.includes(memberId) ? g.memberIds : [...g.memberIds, memberId] }
+        : { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
+    ));
+  }
+
+  function groupStats(g: DesignGroup) {
+    const gMembers = members.filter(m => g.memberIds.includes(m.id));
+    if (!gMembers.length) return null;
+    const dcrs = gMembers.map(m => {
+      const r = designResultsById[m.id];
+      return r ? { pos: r.DCR_flex_pos, neg: r.DCR_flex_neg, shear: r.DCR_shear } : null;
+    }).filter(Boolean) as { pos: number; neg: number; shear: number }[];
+    if (!dcrs.length) return null;
+    const mean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+    const std = (arr: number[]) => { const m = mean(arr); return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length); };
+    const posArr = dcrs.map(d => d.pos), negArr = dcrs.map(d => d.neg), shArr = dcrs.map(d => d.shear);
+    const rhoTopArr = gMembers.map(m => flexSteelRatioPct(m, 'top'));
+    const rhoBotArr = gMembers.map(m => flexSteelRatioPct(m, 'bot'));
+    return {
+      posM: mean(posArr), posS: std(posArr),
+      negM: mean(negArr), negS: std(negArr),
+      shM: mean(shArr), shS: std(shArr),
+      rhoTop: mean(rhoTopArr), rhoBot: mean(rhoBotArr),
+    };
   }
 
   return (
@@ -179,15 +211,17 @@ export default function GroupPanel({
         {groups.map(g => {
           const dcr = worstDCR(g);
           const isActive = activeGroupId === g.id;
+          const stats = groupStats(g);
+          const statsOpen = expandedStats === g.id;
           return (
+            <div key={g.id}>
             <div
-              key={g.id}
               onClick={() => selectGroup(g)}
               style={{
                 padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
                 background: isActive ? '#eff6ff' : 'white',
                 borderLeft: `3px solid ${isActive ? '#2563eb' : 'transparent'}`,
-                borderBottom: '1px solid #f3f4f6',
+                borderBottom: statsOpen ? 'none' : '1px solid #f3f4f6',
               }}
             >
               {/* Color chip — click to cycle color */}
@@ -229,12 +263,37 @@ export default function GroupPanel({
                 </span>
               )}
 
+              {/* Stats toggle */}
+              {stats && (
+                <button
+                  onClick={e => { e.stopPropagation(); setExpandedStats(statsOpen ? null : g.id); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 10, padding: '0 2px' }}
+                  title="Show group statistics"
+                >{statsOpen ? '▾' : '▸'}</button>
+              )}
+
               {/* Dissolve */}
               <button
                 onClick={e => { e.stopPropagation(); dissolveGroup(g.id); }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14, padding: '0 2px' }}
                 title="Dissolve group"
               >×</button>
+            </div>
+
+            {/* Expandable stats */}
+            {statsOpen && stats && (
+              <div style={{ padding: '4px 12px 6px 28px', background: '#f8fafc', borderLeft: `3px solid ${isActive ? '#2563eb' : 'transparent'}`, borderBottom: '1px solid #f3f4f6', fontSize: 10, color: '#374151', lineHeight: 1.7 }}>
+                <div>
+                  <span style={{ color: '#9ca3af' }}>Flex+:</span> {stats.posM.toFixed(2)} ±{stats.posS.toFixed(2)}
+                  {' '}<span style={{ color: '#9ca3af' }}>Flex−:</span> {stats.negM.toFixed(2)} ±{stats.negS.toFixed(2)}
+                  {' '}<span style={{ color: '#9ca3af' }}>V:</span> {stats.shM.toFixed(2)} ±{stats.shS.toFixed(2)}
+                </div>
+                <div>
+                  <span style={{ color: '#9ca3af' }}>ρ top:</span> {stats.rhoTop.toFixed(2)}%
+                  {'  '}<span style={{ color: '#9ca3af' }}>ρ bot:</span> {stats.rhoBot.toFixed(2)}%
+                </div>
+              </div>
+            )}
             </div>
           );
         })}
