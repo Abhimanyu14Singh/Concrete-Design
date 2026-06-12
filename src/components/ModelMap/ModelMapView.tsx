@@ -3,9 +3,10 @@
  * Shows the ETABS connectivity snapshot stored in project.modelMap.
  */
 import { useState, useMemo, useRef, useLayoutEffect } from 'react';
-import type { Project, Member, DesignGroup, RebarLayout } from '../../types';
+import type { Project, Member, DesignGroup, RebarLayout, ComboForces } from '../../types';
 import { runDesign } from '../../engines';
-import MapCanvas, { type ColorMode } from './MapCanvas';
+import { formatBarLabel } from '../../utils/rebar';
+import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
 
@@ -16,11 +17,40 @@ interface Props {
   onPickMember: (memberId: string) => void;
 }
 
+/** Build "2-#8 + 3-#6" style rebar string from layers. */
+function rebarStr(bars: { numBars: number; barSize: number }[]): string {
+  return bars.map(b => `${b.numBars}-${formatBarLabel(b.barSize)}`).join(' + ');
+}
+
+/** Build stirrup string: "#4 @ 6 in" or "#4 @ 6/12/6 in". */
+function stirrupStr(rebar: { ties?: { barSize: number; spacing: number; legs: number }; tieZones?: { spacing: number }[] }): string {
+  const t = rebar.ties;
+  if (!t) return '—';
+  const bar = formatBarLabel(t.barSize);
+  if (rebar.tieZones) {
+    return `${bar} @ ${rebar.tieZones.map(z => z.spacing).join('/')} in`;
+  }
+  return `${bar} @ ${t.spacing} in`;
+}
+
+/** Per-station envelope: max |M| or |V| across all combos. */
+function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V'): { x: number; v: number }[] {
+  const byX = new Map<number, number>();
+  for (const cf of stationForces) {
+    for (const s of cf.stations) {
+      const val = Math.abs(type === 'M' ? s.M : s.V);
+      byX.set(s.x, Math.max(byX.get(s.x) ?? 0, val));
+    }
+  }
+  return [...byX.entries()].sort((a, b) => a[0] - b[0]).map(([x, v]) => ({ x, v }));
+}
+
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember }: Props) {
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>('dcr');
   const [story, setStory] = useState<string>('All');
+  const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
 
   // Size the canvas to its container
   const canvasWrapRef = useRef<HTMLDivElement>(null);
@@ -40,8 +70,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const groups = project.designGroups ?? [];
   const members = project.members;
 
-  // Live frame→member linkage: derive memberId from project.members so grouping
-  // works even when modelMap was captured before members were imported.
+  // Live frame→member linkage from current project.members (not stale modelMap)
   const enrichedFrames = useMemo(() => {
     const byFrameName = new Map<string, string>();
     for (const m of members) {
@@ -53,21 +82,53 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }));
   }, [map?.frames, members]);
 
-  // Live DCR lookup — recomputes when members (incl. rebar) change
-  const dcrById = useMemo(() => {
-    const out: Record<string, number> = {};
+  // Rich per-member info for tooltip and DCR coloring
+  const infoById = useMemo(() => {
+    const out: Record<string, FrameInfo> = {};
     for (const m of members) {
       if (m.memberType !== 'beam' || !m.loads.length) continue;
       try {
-        const worst = Math.max(...m.loads.map(l => {
+        let dcrFlex = 0, dcrShear = 0;
+        for (const l of m.loads) {
           const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, m.crackParams);
-          return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
-        }));
-        out[m.id] = worst;
-      } catch { /* skip members the engine can't design */ }
+          dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);
+          dcrShear = Math.max(dcrShear, r.DCR_shear);
+        }
+        out[m.id] = {
+          dcr: Math.max(dcrFlex, dcrShear),
+          dcrFlex,
+          dcrShear,
+          top: rebarStr(m.rebar.topBars),
+          bot: rebarStr(m.rebar.botBars),
+          stirrups: stirrupStr(m.rebar),
+        };
+      } catch (e) {
+        out[m.id] = {
+          dcr: 0, dcrFlex: 0, dcrShear: 0,
+          top: '—', bot: '—', stirrups: '—',
+          error: (e as Error).message,
+        };
+      }
     }
     return out;
   }, [members, project.code]);
+
+  const dcrById = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [id, info] of Object.entries(infoById)) out[id] = info.dcr;
+    return out;
+  }, [infoById]);
+
+  // V/M diagram data per memberId
+  const diagramDataById = useMemo(() => {
+    if (diagramMode === 'off') return {} as Record<string, { x: number; v: number }[]>;
+    const out: Record<string, { x: number; v: number }[]> = {};
+    for (const m of members) {
+      if (!m.stationForces?.length) continue;
+      out[m.id] = stationEnvelope(m.stationForces, diagramMode === 'moment' ? 'M' : 'V');
+    }
+    return out;
+  }, [members, diagramMode]);
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange({ ...project, designGroups: newGroups });
@@ -84,6 +145,21 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const activeGroup = activeGroupId ? groups.find(g => g.id === activeGroupId) : null;
   const stories = map ? ['All', ...map.stories] : ['All'];
   const frames = enrichedFrames;
+
+  // Group-edit mode: clicking a linked beam toggles it in/out of the active group
+  function handleFrameClick(frameName: string): boolean {
+    if (!activeGroupId) return false;
+    const frame = frames.find(f => f.frameName === frameName);
+    if (!frame?.memberId) return false;
+    const mid = frame.memberId;
+    const grp = groups.find(g => g.id === activeGroupId);
+    if (!grp) return false;
+    const next = grp.memberIds.includes(mid)
+      ? grp.memberIds.filter(id => id !== mid)
+      : [...grp.memberIds, mid];
+    handleGroupsChange(groups.map(g => g.id === activeGroupId ? { ...g, memberIds: next } : g));
+    return true; // suppress default selection change
+  }
 
   if (!map) {
     return (
@@ -128,6 +204,21 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             ))}
           </div>
 
+          {/* Diagram toggle */}
+          <div style={{ display: 'flex', gap: 2, marginLeft: 4 }}>
+            {(['off', 'moment', 'shear'] as DiagramMode[]).map(m => (
+              <button key={m} onClick={() => setDiagramMode(m)}
+                style={{
+                  padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  background: diagramMode === m ? '#7c3aed' : 'white',
+                  color: diagramMode === m ? 'white' : '#374151',
+                }}>
+                {m === 'off' ? 'Diagrams Off' : m === 'moment' ? 'M Diagram' : 'V Diagram'}
+              </button>
+            ))}
+          </div>
+
           <div style={{ flex: 1 }} />
 
           {/* Model info */}
@@ -142,19 +233,40 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           </button>
         </div>
 
+        {/* Group-edit mode banner */}
+        {activeGroup && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+            background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, flexShrink: 0,
+          }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: activeGroup.color ?? '#2563eb', display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600 }}>
+              Editing <strong>{activeGroup.label}</strong> — click beams to add or remove members
+            </span>
+            <button onClick={() => setActiveGroupId(null)}
+              style={{ marginLeft: 'auto', padding: '3px 10px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+              Done
+            </button>
+          </div>
+        )}
+
         {/* Map canvas */}
         <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden' }}>
           <MapCanvas
             frames={frames}
             dcrById={dcrById}
+            infoById={infoById}
             designGroups={groups}
             story={story}
             colorMode={colorMode}
             selected={selectedFrames}
             onSelectionChange={setSelectedFrames}
             onDoubleClick={onPickMember}
+            onFrameClick={activeGroup ? handleFrameClick : undefined}
             width={canvasSize.w}
             height={canvasSize.h}
+            diagramMode={diagramMode}
+            diagramDataById={diagramMode !== 'off' ? diagramDataById : undefined}
           />
         </div>
       </div>

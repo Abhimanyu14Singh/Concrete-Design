@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Project, Member, ModelMap } from './types';
+import type { Project, Member, ModelMap, DesignGroup } from './types';
 import { defaultProject } from './utils/sampleData';
 import { saveProject, openProject } from './utils/electronBridge';
 import { exportPDF } from './utils/export/pdfExport';
@@ -9,7 +9,6 @@ import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
 import ModelMapView from './components/ModelMap/ModelMapView';
-import type { DesignGroup } from './types';
 import { useUnits } from './contexts/UnitsContext';
 import { MEMBER_COLOR } from './theme';
 
@@ -44,6 +43,13 @@ export default function App() {
   // A3: drag-to-reorder state
   const [dragSrcId, setDragSrcId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // Collapsible group sections in sidebar
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('sc-collapsed-groups') ?? '[]')); } catch { return new Set(); }
+  });
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupLabel, setEditGroupLabel] = useState('');
 
   // A1: split-pane width
   const [splitPos, setSplitPos] = useState<number>(() => {
@@ -293,6 +299,43 @@ export default function App() {
     return `${fmt(s.b, 'length')} × ${fmt(s.h, 'length')}`;
   };
 
+  function toggleGroupCollapse(gid: string) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(gid)) next.delete(gid); else next.add(gid);
+      localStorage.setItem('sc-collapsed-groups', JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  function renameGroupStart(g: DesignGroup) {
+    setEditingGroupId(g.id);
+    setEditGroupLabel(g.label);
+  }
+
+  function renameGroupCommit() {
+    if (!editingGroupId || !editGroupLabel.trim()) { setEditingGroupId(null); return; }
+    setProject(p => ({
+      ...p,
+      designGroups: (p.designGroups ?? []).map(g => g.id === editingGroupId ? { ...g, label: editGroupLabel.trim() } : g),
+    }));
+    setEditingGroupId(null);
+  }
+
+  // Build ordered group sections: each group + ungrouped at end
+  function buildSidebarSections(): Array<{ groupId: string | null; label: string; color?: string; members: Member[] }> {
+    const groups = project.designGroups ?? [];
+    const assignedIds = new Set(groups.flatMap(g => g.memberIds));
+    const sections: Array<{ groupId: string | null; label: string; color?: string; members: Member[] }> = [];
+    for (const g of groups) {
+      const gMembers = project.members.filter(m => g.memberIds.includes(m.id));
+      if (gMembers.length) sections.push({ groupId: g.id, label: g.label, color: g.color, members: gMembers });
+    }
+    const ungrouped = project.members.filter(m => !assignedIds.has(m.id));
+    if (ungrouped.length) sections.push({ groupId: null, label: 'Ungrouped', members: ungrouped });
+    return sections;
+  }
+
   return (
     <div id="app-root" style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
       {showEtabsImport && (
@@ -320,7 +363,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* Members list */}
+        {/* Members list — grouped sections */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           {sidebarOpen && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 6px' }}>
@@ -328,59 +371,93 @@ export default function App() {
               <button onClick={addMember} style={{ color: '#2563eb', fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
             </div>
           )}
-          {project.members.map(m => (
-            <div
-              key={m.id}
-              draggable={sidebarOpen}
-              onDragStart={() => onDragStart(m.id)}
-              onDragOver={e => onDragOver(e, m.id)}
-              onDrop={() => onDrop(m.id)}
-              onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
-              style={{
-                display: 'flex', alignItems: 'center',
-                borderTop: dragOverId === m.id && dragSrcId !== m.id ? '2px solid #2563eb' : '2px solid transparent',
-                opacity: dragSrcId === m.id ? 0.5 : 1,
-              }}
-            >
-              {sidebarOpen && (
-                <span style={{ fontSize: 14, color: '#d1d5db', cursor: 'grab', padding: '0 4px 0 8px', flexShrink: 0 }}>⠿</span>
-              )}
-              <button
-                onClick={() => handleSelectMember(m.id)}
-                style={{
-                  flex: 1, textAlign: 'left', padding: '7px 8px', display: 'flex', alignItems: 'center', gap: 6,
-                  background: activeMemberId === m.id ? '#eff6ff' : 'none',
-                  borderRight: `3px solid ${activeMemberId === m.id ? '#2563eb' : 'transparent'}`,
-                  border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>
-                  {m.id}
-                </span>
-                {sidebarOpen && (() => {
-                  const grp = (project.designGroups ?? []).find(g => g.memberIds.includes(m.id));
-                  return grp ? (
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: grp.color ?? '#2563eb', flexShrink: 0, display: 'inline-block', border: '1px solid rgba(0,0,0,0.15)' }} title={grp.label} />
-                  ) : null;
-                })()}
-                {sidebarOpen && (
-                  <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {m.label.length > 14 ? m.label.slice(0, 14) + '…' : m.label}
-                  </span>
-                )}
-              </button>
-              {sidebarOpen && (
-                <button
-                  onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
-                  title="Duplicate member"
-                  style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 0 2px', flexShrink: 0 }}
+          {sidebarOpen ? buildSidebarSections().map(section => {
+            const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
+            return (
+              <div key={section.groupId ?? '__ungrouped'}>
+                {/* Section header */}
+                <div
+                  onClick={() => section.groupId && toggleGroupCollapse(section.groupId)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 10px',
+                    background: '#f9fafb', borderTop: '1px solid #f3f4f6',
+                    cursor: section.groupId ? 'pointer' : 'default',
+                  }}
                 >
-                  ⧉
-                </button>
-              )}
-            </div>
-          ))}
+                  {section.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: section.color, flexShrink: 0 }} />}
+                  {section.groupId && editingGroupId === section.groupId ? (
+                    <input
+                      autoFocus value={editGroupLabel}
+                      onChange={e => setEditGroupLabel(e.target.value)}
+                      onBlur={renameGroupCommit}
+                      onKeyDown={e => { if (e.key === 'Enter') renameGroupCommit(); if (e.key === 'Escape') setEditingGroupId(null); }}
+                      onClick={e => e.stopPropagation()}
+                      style={{ flex: 1, fontSize: 11, fontWeight: 700, border: '1px solid #2563eb', borderRadius: 3, padding: '1px 4px', minWidth: 0 }}
+                    />
+                  ) : (
+                    <span
+                      onDoubleClick={e => { e.stopPropagation(); const g = (project.designGroups ?? []).find(g => g.id === section.groupId); if (g) renameGroupStart(g); }}
+                      style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                      title={section.groupId ? 'Double-click to rename' : undefined}
+                    >
+                      {section.label}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>{section.members.length}</span>
+                  {section.groupId && <span style={{ fontSize: 9, color: '#9ca3af' }}>{collapsed ? '▸' : '▾'}</span>}
+                </div>
+                {/* Member rows */}
+                {!collapsed && section.members.map(m => (
+                  <div
+                    key={m.id}
+                    draggable
+                    onDragStart={() => onDragStart(m.id)}
+                    onDragOver={e => onDragOver(e, m.id)}
+                    onDrop={() => onDrop(m.id)}
+                    onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
+                    style={{
+                      display: 'flex', alignItems: 'center',
+                      borderTop: dragOverId === m.id && dragSrcId !== m.id ? '2px solid #2563eb' : '2px solid transparent',
+                      opacity: dragSrcId === m.id ? 0.5 : 1,
+                      paddingLeft: section.groupId ? 8 : 0,
+                    }}
+                  >
+                    <span style={{ fontSize: 14, color: '#d1d5db', cursor: 'grab', padding: '0 4px 0 4px', flexShrink: 0 }}>⠿</span>
+                    <button
+                      onClick={() => handleSelectMember(m.id)}
+                      style={{
+                        flex: 1, textAlign: 'left', padding: '6px 6px', display: 'flex', alignItems: 'center', gap: 5,
+                        background: activeMemberId === m.id ? '#eff6ff' : 'none',
+                        borderRight: `3px solid ${activeMemberId === m.id ? '#2563eb' : 'transparent'}`,
+                        border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
+                        cursor: 'pointer', minWidth: 0,
+                      }}
+                    >
+                      <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>{m.id}</span>
+                      <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {m.label.length > 12 ? m.label.slice(0, 12) + '…' : m.label}
+                      </span>
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
+                      title="Duplicate member"
+                      style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
+                    >⧉</button>
+                  </div>
+                ))}
+              </div>
+            );
+          }) : (
+            // Collapsed sidebar — just member dots
+            project.members.map(m => (
+              <button key={m.id} onClick={() => handleSelectMember(m.id)}
+                style={{ display: 'block', width: '100%', padding: '8px 0', background: 'none', border: 'none', cursor: 'pointer' }}
+                title={m.id}
+              >
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam, margin: '0 auto' }} />
+              </button>
+            ))
+          )}
           {sidebarOpen && (
             <button onClick={addMember} style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', gap: 6 }}>
               <span>+</span><span>Add Member</span>

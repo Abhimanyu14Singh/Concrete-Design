@@ -19,14 +19,38 @@ const DEFAULT_REBAR: RebarLayout = {
   ties: { barSize: 3, spacing: 6, legs: 2 },
 };
 
+/**
+ * Numeric input with a local string draft so the user can type freely.
+ * Commits (clamps, calls onChange) on blur and Enter; reverts to prop value on invalid.
+ */
+function NumberField({ value, min, max, onChange, style }: {
+  value: number; min: number; max: number;
+  onChange: (v: number) => void; style?: React.CSSProperties;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  function commit(raw: string) {
+    const n = parseFloat(raw);
+    if (Number.isFinite(n)) onChange(Math.min(max, Math.max(min, n)));
+    setDraft(String(value));
+  }
+  return (
+    <input type="number" min={min} max={max} value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={e => commit(e.target.value)}
+      onKeyDown={e => { if (e.key === 'Enter') { commit((e.target as HTMLInputElement).value); (e.target as HTMLInputElement).blur(); } }}
+      style={style} />
+  );
+}
+
 function BarGroupRow({ bg, onChange, label, units }: {
   bg: BarGroup; onChange: (b: BarGroup) => void; label: string; units: 'imperial' | 'si';
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
       <span style={{ fontSize: 11, color: '#6b7280', width: 60, flexShrink: 0 }}>{label}</span>
-      <input type="number" min={1} max={20} value={bg.numBars}
-        onChange={e => onChange({ ...bg, numBars: Math.max(1, parseInt(e.target.value) || 1) })}
+      <NumberField value={bg.numBars} min={1} max={20}
+        onChange={v => onChange({ ...bg, numBars: Math.round(v) })}
         style={{ width: 44, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
       <span style={{ fontSize: 11, color: '#9ca3af' }}>×</span>
       <select value={bg.barSize} onChange={e => onChange({ ...bg, barSize: parseInt(e.target.value) })}
@@ -106,12 +130,12 @@ export default function GroupRebarEditor({ group, members, onApply }: Props) {
             {barSizeOptions(units, ties.barSize).filter(s => (s > 0 ? s <= 6 : -s <= 12)).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
           </select>
           <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>
-          <input type="number" min={1} max={24} value={ties.spacing}
-            onChange={e => setRebar(r => ({ ...r, ties: { ...ties, spacing: parseFloat(e.target.value) || 6 } }))}
+          <NumberField value={ties.spacing} min={1} max={24}
+            onChange={v => setRebar(r => ({ ...r, ties: { ...ties, spacing: v } }))}
             style={{ width: 50, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
           <span style={{ fontSize: 11, color: '#9ca3af' }}>in,</span>
-          <input type="number" min={2} max={8} value={ties.legs}
-            onChange={e => setRebar(r => ({ ...r, ties: { ...ties, legs: parseInt(e.target.value) || 2 } }))}
+          <NumberField value={ties.legs} min={2} max={8}
+            onChange={v => setRebar(r => ({ ...r, ties: { ...ties, legs: Math.round(v) } }))}
             style={{ width: 40, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
           <span style={{ fontSize: 11, color: '#9ca3af' }}>legs</span>
         </div>

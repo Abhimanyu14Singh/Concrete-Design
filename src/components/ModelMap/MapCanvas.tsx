@@ -1,44 +1,62 @@
 /**
  * MapCanvas — generalized plan-view SVG canvas for model frames.
- * Supports coloring by DCR, group, or section; lasso multi-select; zoom/pan.
+ * Supports coloring by DCR, group, or section; lasso multi-select; zoom/pan;
+ * V/M diagram overlays; and a rich hover tooltip showing DCR split + rebar.
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 
 export type ColorMode = 'dcr' | 'group' | 'section';
+export type DiagramMode = 'off' | 'moment' | 'shear';
+
+/** Rich per-member info shown in the tooltip. */
+export interface FrameInfo {
+  dcr: number;
+  dcrFlex: number;
+  dcrShear: number;
+  top: string;
+  bot: string;
+  stirrups: string;
+  error?: string;
+}
 
 const GROUP_PALETTE = [
   '#2563eb','#16a34a','#d97706','#9333ea','#0891b2',
   '#dc2626','#65a30d','#7c3aed','#0284c7','#be185d',
 ];
 
+const DIAGRAM_MAX_PX = 18; // max perpendicular offset for diagram in SVG user-space pixels
+
 interface Props {
   frames: MapFrame[];
-  /** DCR value keyed by memberId (undefined for unlinked frames) */
   dcrById?: Record<string, number>;
+  infoById?: Record<string, FrameInfo>;
   designGroups?: DesignGroup[];
-  story?: string; // 'All' or a specific story
+  story?: string;
   colorMode?: ColorMode;
-  selected: Set<string>;            // frameName keys
+  selected: Set<string>;
   onSelectionChange: (names: Set<string>) => void;
-  onDoubleClick?: (frameName: string) => void;
+  onDoubleClick?: (memberId: string) => void;
+  /** When provided and returns true, default selection change is suppressed. */
+  onFrameClick?: (frameName: string) => boolean;
   width?: number;
   height?: number;
+  diagramMode?: DiagramMode;
+  diagramDataById?: Record<string, { x: number; v: number }[]>;
 }
 
 export default function MapCanvas({
-  frames, dcrById = {}, designGroups = [], story = 'All',
-  colorMode = 'dcr', selected, onSelectionChange, onDoubleClick,
+  frames, dcrById = {}, infoById = {}, designGroups = [], story = 'All',
+  colorMode = 'dcr', selected, onSelectionChange, onDoubleClick, onFrameClick,
   width = 640, height = 480,
+  diagramMode = 'off', diagramDataById = {},
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
   const [lasso, setLasso] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ mx: number; my: number; vx: number; vy: number } | null>(null);
-  // Track whether the lasso started on a frame element (not the background).
-  // If it did, background-click logic (clear selection) should be suppressed.
   const lassoBgOnly = useRef(false);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -58,7 +76,6 @@ export default function MapCanvas({
   const scaleY = (height - 2 * pad) / Math.max(maxY - minY, 1);
   const scale = Math.min(scaleX, scaleY);
 
-  // Reset viewBox when frames change
   useEffect(() => {
     setViewBox({ x: 0, y: 0, w: width, h: height });
   }, [frames, width, height]);
@@ -66,7 +83,7 @@ export default function MapCanvas({
   const tx = (x: number) => pad + (x - minX) * scale;
   const ty = (y: number) => height - pad - (y - minY) * scale;
 
-  // Group color lookup
+  // Group color lookup (by memberId)
   const groupColorMap = new Map<string, string>();
   designGroups.forEach((g, i) => {
     const color = g.color ?? GROUP_PALETTE[i % GROUP_PALETTE.length];
@@ -82,24 +99,17 @@ export default function MapCanvas({
       return '#9ca3af';
     }
     if (colorMode === 'section') {
-      // Simple hash of section name → color
       let h = 0;
       for (const ch of f.sectionName) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
       return `hsl(${(h * 137) % 360},60%,45%)`;
     }
-    // DCR mode
     if (f.memberId) {
       const dcr = dcrById[f.memberId] ?? 0;
       return dcrToColor(dcr);
     }
-    return '#d1d5db'; // unlinked = light grey
+    return '#d1d5db';
   }
 
-  /**
-   * Map a mouse event to base SVG user space. Uses the SVG's *rendered*
-   * size (rect.width/height), not the attribute size, so the math stays
-   * correct under the app's display-scale transform.
-   */
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect || !rect.width || !rect.height) return null;
@@ -109,8 +119,7 @@ export default function MapCanvas({
     };
   }, [viewBox]);
 
-  // Wheel zoom — native non-passive listener so preventDefault actually
-  // stops the page from scrolling (React attaches wheel passively).
+  // Wheel zoom — native non-passive
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -130,7 +139,6 @@ export default function MapCanvas({
     return () => svg.removeEventListener('wheel', handler);
   }, [mouseToSvg]);
 
-  // Pan
   function onMouseDown(e: React.MouseEvent) {
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       setIsPanning(true);
@@ -141,8 +149,6 @@ export default function MapCanvas({
     if (e.button === 0 && !e.altKey) {
       const pt = mouseToSvg(e.clientX, e.clientY);
       if (!pt) return;
-      // True when the press starts on background (rect, svg root, grid pattern),
-      // not on a frame <g> element. Frame clicks are handled by onClick on the <g>.
       const tag = (e.target as Element).tagName.toLowerCase();
       lassoBgOnly.current = tag === 'svg' || tag === 'rect' || tag === 'pattern';
       setLasso({ sx: pt.x, sy: pt.y, ex: pt.x, ey: pt.y });
@@ -188,19 +194,15 @@ export default function MapCanvas({
         }
         onSelectionChange(e.shiftKey ? new Set([...selected, ...hit]) : hit);
       } else if (!e.shiftKey && !e.ctrlKey && !e.metaKey && lassoBgOnly.current) {
-        // bare click on canvas background (not on a frame) → clear selection
         onSelectionChange(new Set());
       }
       setLasso(null);
     }
   }
 
-  // End pan/lasso even if the mouse is released outside the SVG, and clear
-  // selection on Escape without requiring the canvas to have focus.
   useEffect(() => {
     const onWinMouseUp = () => {
       if (isPanning) { setIsPanning(false); panStart.current = null; }
-      // an in-progress lasso released off-canvas is just cancelled
       setLasso(l => (l ? null : l));
     };
     const onWinKeyDown = (e: KeyboardEvent) => {
@@ -219,6 +221,68 @@ export default function MapCanvas({
   }
 
   const hovered = hover ? visibleFrames.find(f => f.frameName === hover) : null;
+  const hoveredInfo = hovered?.memberId ? infoById[hovered.memberId] : null;
+
+  // ── V/M diagram overlay ────────────────────────────────────────────────────
+  // For each visible linked frame with diagram data, render a filled polygon
+  // perpendicular to the beam axis, scaled to the global max.
+  const diagramPolygons = (() => {
+    if (diagramMode === 'off') return null;
+
+    // Global max for normalization
+    let globalMax = 0;
+    for (const f of visibleFrames) {
+      if (!f.memberId) continue;
+      const data = diagramDataById[f.memberId];
+      if (data) for (const pt of data) globalMax = Math.max(globalMax, pt.v);
+    }
+    if (globalMax === 0) return null;
+
+    const color = diagramMode === 'moment' ? 'rgba(124,58,237,0.25)' : 'rgba(8,145,178,0.25)';
+    const stroke = diagramMode === 'moment' ? '#7c3aed' : '#0891b2';
+
+    return visibleFrames.map(f => {
+      if (!f.memberId) return null;
+      const data = diagramDataById[f.memberId];
+      if (!data || data.length < 2) return null;
+
+      const x1s = tx(f.pt1.x), y1s = ty(f.pt1.y);
+      const x2s = tx(f.pt2.x), y2s = ty(f.pt2.y);
+      const dx = x2s - x1s, dy = y2s - y1s;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) return null;
+
+      // Unit perpendicular (90° CCW from beam direction)
+      const nx = -dy / len, ny = dx / len;
+
+      // Map station x (ft from I-node) to SVG coordinates along the beam
+      const beamLenFt = f.pt1 && f.pt2
+        ? Math.hypot(f.pt2.x - f.pt1.x, f.pt2.y - f.pt1.y)
+        : 0;
+      if (beamLenFt < 0.001) return null;
+
+      const pts: string[] = [];
+      // Bottom edge (baseline along the beam)
+      pts.push(`${x1s},${y1s}`);
+      pts.push(`${x2s},${y2s}`);
+      // Top edge (offset by diagram value)
+      for (let i = data.length - 1; i >= 0; i--) {
+        const t = data[i].x / beamLenFt; // 0..1
+        const bx = x1s + t * dx;
+        const by = y1s + t * dy;
+        const off = (data[i].v / globalMax) * DIAGRAM_MAX_PX;
+        pts.push(`${bx + nx * off},${by + ny * off}`);
+      }
+
+      return (
+        <polygon key={f.frameName + '-diag'}
+          points={pts.join(' ')}
+          fill={color} stroke={stroke} strokeWidth={0.8} opacity={0.85}
+          style={{ pointerEvents: 'none' }}
+        />
+      );
+    });
+  })();
 
   return (
     <div style={{ position: 'relative', userSelect: 'none' }}>
@@ -238,6 +302,9 @@ export default function MapCanvas({
         </defs>
         <rect width={width} height={height} fill="url(#mmgrid)" rx="10" />
 
+        {/* Diagram overlays (below beams) */}
+        {diagramPolygons}
+
         {visibleFrames.map(f => {
           const isSel = selected.has(f.frameName);
           const isHov = hover === f.frameName;
@@ -252,6 +319,8 @@ export default function MapCanvas({
               onMouseLeave={() => setHover(h => h === f.frameName ? null : h)}
               onClick={e => {
                 e.stopPropagation();
+                // Group-edit mode: delegate to onFrameClick; it returns true if handled
+                if (onFrameClick && onFrameClick(f.frameName)) return;
                 const additive = e.shiftKey || e.ctrlKey || e.metaKey;
                 if (additive) {
                   const next = new Set(selected);
@@ -300,17 +369,30 @@ export default function MapCanvas({
           position: 'absolute', top: 8, right: 8, background: 'white',
           border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
           fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-          pointerEvents: 'none', maxWidth: 220,
+          pointerEvents: 'none', maxWidth: 240,
         }}>
-          <div style={{ fontWeight: 700, color: '#111827' }}>{hovered.frameName}</div>
-          <div>{hovered.story} · {hovered.sectionName}</div>
-          {hovered.memberId && dcrById[hovered.memberId] !== undefined && (
-            <div>DCR = <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(dcrById[hovered.memberId]!) }}>
-              {dcrById[hovered.memberId]!.toFixed(3)}
-            </span></div>
+          <div style={{ fontWeight: 700, color: '#111827', marginBottom: 3 }}>{hovered.frameName}</div>
+          <div style={{ color: '#6b7280', marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
+          {hoveredInfo ? (
+            hoveredInfo.error ? (
+              <div style={{ color: '#dc2626', fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
+                  <span>Flex <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(3)}</span></span>
+                  <span>Shear <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(3)}</span></span>
+                </div>
+                <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.6 }}>
+                  <div>Top: <span style={{ color: '#111827' }}>{hoveredInfo.top}</span></div>
+                  <div>Bot: <span style={{ color: '#111827' }}>{hoveredInfo.bot}</span></div>
+                  <div>Stirrups: <span style={{ color: '#111827' }}>{hoveredInfo.stirrups}</span></div>
+                </div>
+              </>
+            )
+          ) : (
+            <div style={{ color: '#9ca3af' }}>Not yet designed</div>
           )}
-          {!hovered.memberId && <div style={{ color: '#9ca3af' }}>Not yet designed</div>}
-          <div style={{ color: '#9ca3af', marginTop: 2 }}>click=select · dbl=open · shift+click=add</div>
+          <div style={{ color: '#9ca3af', marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
         </div>
       )}
 
@@ -323,6 +405,13 @@ export default function MapCanvas({
               {l}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Diagram legend */}
+      {diagramMode !== 'off' && (
+        <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: diagramMode === 'moment' ? '#7c3aed' : '#0891b2' }}>
+          {diagramMode === 'moment' ? '▮ Moment envelope (max |M|)' : '▮ Shear envelope (max |V|)'}
         </div>
       )}
     </div>

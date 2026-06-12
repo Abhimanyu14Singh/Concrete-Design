@@ -80,6 +80,8 @@ export default function GroupPanel({
   }
 
   function dissolveGroup(gId: string) {
+    const grp = groups.find(g => g.id === gId);
+    if (!confirm(`Delete group "${grp?.label ?? 'this group'}"? Members are not removed, only the group.`)) return;
     onGroupsChange(groups.filter(g => g.id !== gId));
     if (activeGroupId === gId) onActiveGroupChange(null);
   }
@@ -102,6 +104,26 @@ export default function GroupPanel({
   const unassignedCount = frames.filter(f => f.memberId && !groups.some(g => g.memberIds.includes(f.memberId!))).length;
   const designedCount = frames.filter(f => f.memberId).length;
 
+  // Chips: selected frames that are designed members, with group membership info
+  const selectionChips = [...selected]
+    .map(fname => {
+      const f = frames.find(fr => fr.frameName === fname);
+      return f?.memberId ? { frameName: fname, memberId: f.memberId } : null;
+    })
+    .filter(Boolean) as { frameName: string; memberId: string }[];
+
+  function removeMemberFromGroup(gId: string, memberId: string) {
+    onGroupsChange(groups.map(g => g.id === gId
+      ? { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
+      : g));
+  }
+
+  function addMemberToGroup(gId: string, memberId: string) {
+    onGroupsChange(groups.map(g => g.id === gId && !g.memberIds.includes(memberId)
+      ? { ...g, memberIds: [...g.memberIds, memberId] }
+      : g));
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 12 }}>
       {/* Header actions */}
@@ -113,19 +135,39 @@ export default function GroupPanel({
         >
           + Group selection ({selected.size})
         </button>
-        {activeGroupId && (
-          <>
-            <button onClick={() => addSelectionToGroup(activeGroupId)} disabled={selected.size === 0}
-              style={{ padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer', fontSize: 11, background: 'white' }}>
-              Add to group
-            </button>
-            <button onClick={() => removeSelectionFromGroup(activeGroupId)} disabled={selected.size === 0}
-              style={{ padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer', fontSize: 11, background: 'white' }}>
-              Remove
-            </button>
-          </>
-        )}
       </div>
+
+      {/* Selection chips — per-frame add/remove buttons */}
+      {selectionChips.length > 0 && activeGroupId && (
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid #f3f4f6', background: '#f9fafb' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 4, textTransform: 'uppercase' }}>
+            Selected frames
+          </div>
+          {(selectionChips.length > 8 ? selectionChips.slice(0, 8) : selectionChips).map(chip => {
+            const grp = groups.find(g => g.id === activeGroupId);
+            const inGroup = grp?.memberIds.includes(chip.memberId) ?? false;
+            return (
+              <div key={chip.frameName} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', fontSize: 11 }}>
+                <span style={{ flex: 1, fontFamily: 'monospace', color: '#374151' }}>{chip.frameName}</span>
+                {inGroup ? (
+                  <button onClick={() => removeMemberFromGroup(activeGroupId, chip.memberId)}
+                    style={{ padding: '2px 7px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    − Remove
+                  </button>
+                ) : (
+                  <button onClick={() => addMemberToGroup(activeGroupId, chip.memberId)}
+                    style={{ padding: '2px 7px', background: '#dcfce7', color: '#16a34a', border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    + Add
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {selectionChips.length > 8 && (
+            <div style={{ fontSize: 10, color: '#9ca3af' }}>+{selectionChips.length - 8} more selected</div>
+          )}
+        </div>
+      )}
 
       {/* Group list */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
