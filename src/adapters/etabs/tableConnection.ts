@@ -120,7 +120,7 @@ export abstract class TableConnection implements EtabsConnection {
    * subsequently fetched display tables (ETABS-side filter). Best-effort —
    * the client-side row filter in getStationForces remains the backstop.
    */
-  protected selectCombosAtSource(_combos: string[]): Promise<void> { return Promise.resolve(); }
+  protected selectCombosAtSource(combos: string[]): Promise<void> { void combos; return Promise.resolve(); }
   /**
    * Optional transport hook: return the ETABS eUnits integer for the present
    * display units, or null if not available (e.g. HTTP bridge).

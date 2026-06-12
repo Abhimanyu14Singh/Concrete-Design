@@ -167,7 +167,6 @@ describe('memberSteelWeightLb', () => {
 describe('computeSavings', () => {
   const m = makeMember({ id: 'm1', span: 20 });
   // 3 #8 bars = 3 × 0.79 = 2.37 in²
-  const AsProvBot = 3 * 0.79;
   // Target = 0.9 → effective AsReq/0.9
   // Suppose As_req_pos = 1.5 in², As_min = 0.5 — floor = max(1.5/0.9, 0.5) = 1.667
   const res: Partial<DesignResults> = {

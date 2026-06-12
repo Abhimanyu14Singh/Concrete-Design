@@ -8,7 +8,7 @@
 import { useState, useMemo } from 'react';
 import type { Member, DesignGroup } from '../../types';
 import {
-  suggestGroups, extractDemands, jenksBreaks, quantileBreaks, assignByBreaks,
+  suggestGroups, extractDemands, assignByBreaks,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
 import HistogramPanel from './HistogramPanel';
@@ -19,8 +19,6 @@ const GROUP_PALETTE = [
 
 interface AutoGroupPanelProps {
   members: Member[];
-  /** Currently highlighted frame names (controlled by parent for hover sync). */
-  highlightedFrameNames?: Set<string>;
   onHighlightChange?: (frameNames: Set<string>) => void;
   onApplySuggestion: (groups: DesignGroup[]) => void;
 }
@@ -32,7 +30,6 @@ export default function AutoGroupPanel({
 }: AutoGroupPanelProps) {
   const [algorithm, setAlgorithm] = useState<'jenks' | 'quantile'>('jenks');
   const [kPerFamily, setKPerFamily] = useState<number | 'auto'>('auto');
-  const [customK, setCustomK] = useState(3);
 
   // Live suggestions (recomputed on algorithm / k change)
   const baseSuggestions = useMemo(
@@ -102,11 +99,10 @@ export default function AutoGroupPanel({
     const newGroups: DesignGroup[] = [];
     let groupCount = 0;
     for (const sug of baseSuggestions) {
+      // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
-      const brkFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
       const famDemands = demands.filter(d => d.familyKey === sug.familyKey);
       const famVals = famDemands.map(d => d.governing);
-      // Use current tweaked breaks (already user-adjusted)
       const assign = assignByBreaks(famVals, breaks);
       const numB = breaks.length + 1;
       const bins: string[][] = Array.from({ length: numB }, () => []);
@@ -114,16 +110,16 @@ export default function AutoGroupPanel({
 
       bins.forEach((mIds, bi) => {
         if (!mIds.length) return;
-        // Worst demands for label
         const worstMuPos = Math.max(...famDemands.filter(d => mIds.includes(d.memberId)).map(d => d.MuPos));
         const label = `${sug.familyLabel} — G${bi + 1} (Mu≤${Math.round(worstMuPos)} k-ft)`;
         newGroups.push({
           id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount++}`,
           label,
           memberIds: mIds,
-          color: GROUP_PALETTE[groupCount % GROUP_PALETTE.length],
+          // bin index keys the color so applied groups match the preview swatches
+          color: GROUP_PALETTE[bi % GROUP_PALETTE.length],
           source: 'auto',
-        } as DesignGroup & { source: string });
+        });
       });
     }
     onApplySuggestion(newGroups);
@@ -165,7 +161,7 @@ export default function AutoGroupPanel({
             </button>
             {[2, 3, 4, 5].map(k => (
               <button key={k}
-                onClick={() => { setKPerFamily(k); setCustomK(k); setTweakedBreaks({}); }}
+                onClick={() => { setKPerFamily(k); setTweakedBreaks({}); }}
                 style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: kPerFamily === k ? '#2563eb' : 'white', color: kPerFamily === k ? 'white' : '#374151', cursor: 'pointer' }}>
                 {k}
               </button>

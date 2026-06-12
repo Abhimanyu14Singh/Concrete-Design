@@ -2,7 +2,7 @@
  * SavingsPanel — shows DCR slack per group/member as potential rebar tonnage savings,
  * with a target-DCR slider and a consolidation advisor for adjacent bins.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import type { Member, DesignResults, DesignGroup } from '../../types';
 import { computeSavings, familyKey, steelWeightPerFt } from '../../utils/autoGroup';
 
@@ -87,19 +87,23 @@ export default function SavingsPanel({
       const sorted = [...famGroups].sort((a, b) => a.worstDCR - b.worstDCR);
       for (let i = 0; i < sorted.length - 1; i++) {
         const light = sorted[i], heavy = sorted[i + 1];
-        // Extra steel if light group adopts heavy group's demand: rough estimate
+        // Cost of merging = light members adopt the heavy group's required
+        // areas (the merged group is sized for the heaviest demand): extra
+        // steel = Σ (AsReq_heavy − AsReq_own)⁺ per face × length × 3.4.
         const lightMems = savings.perMember.filter(m => memberGroupId[m.memberId] === light.group.id);
-        const heavyWorstDCR = heavy.worstDCR;
+        const heavyMems = savings.perMember.filter(m => memberGroupId[m.memberId] === heavy.group.id);
+        if (!lightMems.length || !heavyMems.length) continue;
+        const heavyReqTop = Math.max(...heavyMems.map(m => m.AsReqTop));
+        const heavyReqBot = Math.max(...heavyMems.map(m => m.AsReqBot));
         const extraLb = lightMems.reduce((s, m) => {
-          // If light member adopts heavy's DCR demand: less slack
-          const reducedSlack = m.totalSlackLb * Math.max(0, 1 - (heavyWorstDCR - m.dcrGov) / Math.max(heavyWorstDCR, 0.01));
-          return s + reducedSlack;
+          const dAs = Math.max(0, heavyReqTop - m.AsReqTop) + Math.max(0, heavyReqBot - m.AsReqBot);
+          return s + dAs * m.lengthFt * 3.4;
         }, 0);
-        if (light.lb - extraLb > 5 && extraLb < light.lb * 0.5) {
+        if (extraLb < Math.max(50, light.lb * 0.5)) {
           tips.push({
             keepId: heavy.group.id,
             removeId: light.group.id,
-            extraLb: Math.max(0, extraLb),
+            extraLb,
             label: `Merge "${light.group.label}" → "${heavy.group.label}": +${Math.round(extraLb)} lb, −1 callout`,
           });
         }
@@ -231,8 +235,8 @@ export default function SavingsPanel({
             </thead>
             <tbody>
               {groupSavings.map(({ group, lb, worstDCR, count }) => (
-                <>
-                  <tr key={group.id}
+                <Fragment key={group.id}>
+                  <tr
                     style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
                     onClick={() => setExpanded(expanded === group.id ? null : group.id)}>
                     <td style={{ padding: '3px 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -256,7 +260,7 @@ export default function SavingsPanel({
                         <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 9, color: '#374151' }}>{m.totalSlackLb.toFixed(0)}</td>
                       </tr>
                     ))}
-                </>
+                </Fragment>
               ))}
               {/* Ungrouped members */}
               {savings.perMember.filter(m => !memberGroupId[m.memberId]).length > 0 && (

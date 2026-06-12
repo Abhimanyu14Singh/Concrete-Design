@@ -181,10 +181,7 @@ export function assignByBreaks(values: number[], breaks: number[]): number[] {
 function computeGVF(values: number[], breaks: number[]): number {
   if (values.length === 0) return 1;
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const SDCM = values.reduce((s, v) => {
-    const bin = breaks.filter(b => v > b).length;
-    return s + (v - mean) ** 2;
-  }, 0);
+  const SDCM = values.reduce((s, v) => s + (v - mean) ** 2, 0); // total sum of squares
   if (SDCM === 0) return 1;
 
   // SDAM: sum of squared deviations for array means
@@ -248,7 +245,6 @@ export function suggestGroups(
     const vals = fdemands.map(d => d.governing);
 
     let breaks: number[];
-    let kUsed: number;
     const breakFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
 
     if (kPerFamily === 'auto') {
@@ -260,10 +256,8 @@ export function suggestGroups(
         if (gvf >= 0.85) break;
       }
       breaks = best.breaks;
-      kUsed = best.k;
     } else {
-      kUsed = Math.min(kPerFamily, fdemands.length);
-      breaks = breakFn(vals, kUsed);
+      breaks = breakFn(vals, Math.min(kPerFamily, fdemands.length));
     }
 
     const binAssign = assignByBreaks(vals, breaks);
@@ -335,12 +329,8 @@ function stirrupAvProvPerIn(rebar: RebarLayout): number {
   const barSize = rebar.ties?.barSize ?? 4;
   const legs = rebar.ties?.legs ?? 2;
   const Ab = getBarArea(barSize);
-  if (rebar.tieZones) {
-    const s = rebar.tieZones[0].spacing; // end zone
-    return legs * Ab / s;
-  }
-  const s = rebar.ties?.spacing ?? 12;
-  return legs * Ab / s;
+  const s = rebar.tieZones ? rebar.tieZones[0].spacing : (rebar.ties?.spacing ?? 12);
+  return s > 0 ? legs * Ab / s : 0;
 }
 
 export function computeSavings(

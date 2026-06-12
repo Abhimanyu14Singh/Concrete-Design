@@ -436,7 +436,7 @@ export default function MapCanvas({
       {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && metricRange && (
         <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280', minWidth: 140 }}>
           <div style={{ marginBottom: 4, fontWeight: 600 }}>{metricLabel ?? ''}</div>
-          <div style={{ position: 'relative', height: 10, borderRadius: 4, overflow: 'hidden', background: `linear-gradient(to right, ${rampStops(metricRange.min, metricRange.max).map(s => s.color).join(',')}` }} />
+          <div style={{ position: 'relative', height: 10, borderRadius: 4, overflow: 'hidden', background: `linear-gradient(to right, ${rampStops(metricRange.min, metricRange.max).map(s => s.color).join(',')})` }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
             <span>{metricRange.min.toFixed(2)}</span>
             <span>{((metricRange.min + metricRange.max) / 2).toFixed(2)}</span>

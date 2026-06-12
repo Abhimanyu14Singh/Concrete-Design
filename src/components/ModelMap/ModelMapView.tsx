@@ -3,7 +3,7 @@
  * (Groups | Auto-Group | Savings).
  */
 import { useState, useMemo, useRef, useLayoutEffect } from 'react';
-import type { Project, Member, DesignGroup, RebarLayout, ComboForces, DesignResults } from '../../types';
+import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults } from '../../types';
 import { runDesign } from '../../engines';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
@@ -324,12 +324,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         {/* Map canvas */}
         <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           <MapCanvas
-            frames={frames.map(f => ({
-              ...f,
-              // Dim non-highlighted when auto-group panel is open and hovering a bin
-              ...( highlightedFrames.size > 0 && !highlightedFrames.has(f.frameName)
-                ? { _dimmed: true } : {}),
-            }))}
+            frames={frames}
             dcrById={dcrById}
             infoById={infoById}
             designGroups={groups}
@@ -387,7 +382,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           {rightTab === 'autogroup' && (
             <AutoGroupPanel
               members={members}
-              highlightedFrameNames={highlightedFrames}
               onHighlightChange={setHighlightedFrames}
               onApplySuggestion={handleAcceptSuggestion}
             />

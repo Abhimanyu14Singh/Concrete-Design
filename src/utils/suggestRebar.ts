@@ -207,6 +207,9 @@ export function suggestGroupRebar(
       } else if (stirrups.legs === 2) {
         stirrups.legs = 4;
         stirrups.spacing = STIRRUP_SPACINGS[STIRRUP_SPACINGS.length - 1];
+        stirrups.tieZones = [
+          { spacing: stirrups.spacing }, { spacing: stirrups.spacing }, { spacing: stirrups.spacing },
+        ];
       } else {
         return { error: 'Shear demand exceeds practical stirrup layouts — consider a wider section.' };
       }

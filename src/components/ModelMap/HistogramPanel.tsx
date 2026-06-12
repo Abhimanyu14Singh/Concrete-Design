@@ -6,7 +6,7 @@
  */
 import { useMemo } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, ReferenceLine,
+  BarChart, Bar, Cell, XAxis, YAxis, ReferenceLine,
   Tooltip as RechartsTip, ResponsiveContainer,
 } from 'recharts';
 import { valueToRampColor } from './colorRamp';
@@ -111,16 +111,25 @@ export default function HistogramPanel({
             labelFormatter={(l) => `≈${Number(l).toFixed(0)}`}
           />
           {rampMode
-            ? bins.map((b, i) => (
-                <Bar key={i} dataKey="count" fill={valueToRampColor(b.label, minVal, maxVal)} isAnimationActive={false} />
-              ))
+            ? (
+              <Bar dataKey="count" isAnimationActive={false}>
+                {bins.map((b, i) => (
+                  <Cell key={i} fill={valueToRampColor(b.label, minVal, maxVal)} />
+                ))}
+              </Bar>
+            )
             : groupKeys.map((k, i) => (
                 <Bar key={k} dataKey={k} stackId="a" fill={BIN_COLORS[i % BIN_COLORS.length]} isAnimationActive={false} />
               ))
           }
-          {breaks.map((br, i) => (
-            <ReferenceLine key={i} x={br} stroke="#1e293b" strokeWidth={1.5} strokeDasharray="3 2" />
-          ))}
+          {/* Snap each break to its bucket midpoint — the categorical XAxis only
+              renders ReferenceLines at existing category values. */}
+          {breaks.map((br, i) => {
+            const bucket = bins.find(b => br >= b.x0 && br <= b.x1) ?? bins[bins.length - 1];
+            return (
+              <ReferenceLine key={i} x={bucket.label} stroke="#1e293b" strokeWidth={1.5} strokeDasharray="3 2" />
+            );
+          })}
         </BarChart>
       </ResponsiveContainer>
 

@@ -37,7 +37,9 @@ export class BridgeConnection extends TableConnection {
     return { modelName: String(body.message ?? 'ETABS model') };
   }
 
-  protected async fetchTable(key: string, _group?: string): Promise<TableRow[]> {
+  // group param intentionally omitted — the HTTP bridge can't filter at source;
+  // the client-side row filter in TableConnection remains the backstop.
+  protected async fetchTable(key: string): Promise<TableRow[]> {
     let res: Response;
     try {
       res = await fetch(`${this.base}/table?key=${encodeURIComponent(key)}`);
