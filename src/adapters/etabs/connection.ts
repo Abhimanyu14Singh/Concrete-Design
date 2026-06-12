@@ -57,7 +57,7 @@ export interface EtabsConnection {
   getCombos(): Promise<string[]>;
   getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
-  getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>>;
+  getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
 }
 
 export function matchesFilter(beam: EtabsBeamGeom, filter: BeamFilter): boolean {

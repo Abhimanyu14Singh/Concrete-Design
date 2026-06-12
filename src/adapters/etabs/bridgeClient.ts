@@ -37,7 +37,7 @@ export class BridgeConnection extends TableConnection {
     return { modelName: String(body.message ?? 'ETABS model') };
   }
 
-  protected async fetchTable(key: string): Promise<TableRow[]> {
+  protected async fetchTable(key: string, _group?: string): Promise<TableRow[]> {
     let res: Response;
     try {
       res = await fetch(`${this.base}/table?key=${encodeURIComponent(key)}`);

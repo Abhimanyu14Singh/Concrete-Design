@@ -39,8 +39,8 @@ export class ComConnection extends TableConnection {
     } catch { return null; }
   }
 
-  protected async fetchTable(key: string): Promise<TableRow[]> {
-    const r = await ipc()('getTable', { key }) as { fields?: string[]; rows?: string[][] };
+  protected async fetchTable(key: string, group?: string): Promise<TableRow[]> {
+    const r = await ipc()('getTable', { key, group: group ?? '' }) as { fields?: string[]; rows?: string[][] };
     const fields = r?.fields ?? [];
     const rows = r?.rows ?? [];
     return rows.map(row => {
@@ -48,5 +48,9 @@ export class ComConnection extends TableConnection {
       fields.forEach((f, i) => { obj[f] = row[i]; });
       return obj;
     });
+  }
+
+  protected async selectCombosAtSource(combos: string[]): Promise<void> {
+    try { await ipc()('selectCombos', { combos }); } catch { /* best effort */ }
   }
 }

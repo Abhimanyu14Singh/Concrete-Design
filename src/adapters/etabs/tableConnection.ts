@@ -108,8 +108,19 @@ export abstract class TableConnection implements EtabsConnection {
 
   /** Transport: establish the session, return the model name. */
   protected abstract openSession(): Promise<{ modelName: string }>;
-  /** Transport: fetch one ETABS table as row objects ([] when unavailable). */
-  protected abstract fetchTable(key: string): Promise<TableRow[]>;
+  /**
+   * Transport: fetch one ETABS table as row objects ([] when unavailable).
+   * `group` (optional) restricts rows to an ETABS group AT THE SOURCE —
+   * transports that can't filter may ignore it; callers must still filter
+   * rows client-side.
+   */
+  protected abstract fetchTable(key: string, group?: string): Promise<TableRow[]>;
+  /**
+   * Optional transport hook: restrict which combos/cases appear in
+   * subsequently fetched display tables (ETABS-side filter). Best-effort —
+   * the client-side row filter in getStationForces remains the backstop.
+   */
+  protected selectCombosAtSource(_combos: string[]): Promise<void> { return Promise.resolve(); }
   /**
    * Optional transport hook: return the ETABS eUnits integer for the present
    * display units, or null if not available (e.g. HTTP bridge).
@@ -124,6 +135,7 @@ export abstract class TableConnection implements EtabsConnection {
   private groupsByBeam = new Map<string, string[]>();
   private groupNames: string[] = [];
   private forcesCache: TableRow[] | null = null;
+  private forcesCacheKey = '';
 
   async connect(): Promise<EtabsConnectInfo> {
     const { modelName } = await this.openSession();
@@ -317,13 +329,21 @@ export abstract class TableConnection implements EtabsConnection {
     return [...seen];
   }
 
-  async getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>> {
-    if (!this.forcesCache) {
-      this.forcesCache = await this.fetchTable('Design Forces - Beams');
+  async getStationForces(
+    frameNames: string[],
+    combos: string[],
+    sourceGroup?: string,
+  ): Promise<Record<string, ComboForces[]>> {
+    const cacheKey = `${sourceGroup ?? ''}|${combos.slice().sort().join(',')}`;
+    if (!this.forcesCache || this.forcesCacheKey !== cacheKey) {
+      // Restrict which combos/cases ETABS returns (best-effort; client filter is the backstop).
+      await this.selectCombosAtSource(combos);
+      this.forcesCache = await this.fetchTable('Design Forces - Beams', sourceGroup);
       if (!this.forcesCache.length) {
         // Design tables need design combos selected; analysis output always exists
-        this.forcesCache = await this.fetchTable('Element Forces - Beams');
+        this.forcesCache = await this.fetchTable('Element Forces - Beams', sourceGroup);
       }
+      this.forcesCacheKey = cacheKey;
       if (!this.forcesCache.length) {
         throw new Error(
           'No beam force results — has the analysis been run? ' +

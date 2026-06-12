@@ -69,7 +69,7 @@ function mockHttp(tables: Record<string, Row[]>) {
  * calling SetPresentUnits). When null/undefined, getUnits throws (no sidecar).
  */
 function mockIpc(tables: Record<string, Row[]>, unitsEnum?: number | null) {
-  const etabs = vi.fn(async (method: string, args?: { key?: string }) => {
+  const etabs = vi.fn(async (method: string, args?: { key?: string; group?: string; combos?: string[] }) => {
     if (method === 'connect') return { modelName: 'tower.edb' };
     if (method === 'getUnits') {
       if (unitsEnum == null) throw new Error('getUnits not available');
@@ -81,6 +81,7 @@ function mockIpc(tables: Record<string, Row[]>, unitsEnum?: number | null) {
       // helper returns flat string matrices
       return { fields, rows: rows.map(r => fields.map(f => String(r[f]))) };
     }
+    if (method === 'selectCombos') return { combos: true, cases: true, count: args?.combos?.length ?? 0 };
     throw new Error(`unexpected method ${method}`);
   });
   vi.stubGlobal('window', { electronAPI: { etabs } });
@@ -233,6 +234,43 @@ describe('eUnitsToFactors', () => {
   });
   it('returns null for unknown enum value', () => {
     expect(eUnitsToFactors(99)).toBeNull();
+  });
+});
+
+describe('ComConnection: selectCombos called before force table fetch', () => {
+  it('calls selectCombos with the combo list before getTable for forces', async () => {
+    const etabs = mockIpc(TABLES);
+    const conn = new ComConnection();
+    await conn.connect();
+    await conn.getStationForces(['101'], ['Env_ULS']);
+    const calls = etabs.mock.calls.map(c => c[0] as string);
+    const selectIdx = calls.lastIndexOf('selectCombos');
+    const tableIdx = calls.findIndex((m, i) => i > selectIdx && m === 'getTable' &&
+      (etabs.mock.calls[i][1] as { key?: string })?.key?.includes('Forces'));
+    expect(selectIdx).toBeGreaterThanOrEqual(0);
+    expect(tableIdx).toBeGreaterThan(selectIdx);
+    const selectArgs = etabs.mock.calls[selectIdx][1] as { combos?: string[] };
+    expect(selectArgs.combos).toEqual(['Env_ULS']);
+  });
+
+  it('passes group to getTable when sourceGroup is provided', async () => {
+    const etabs = mockIpc(TABLES);
+    const conn = new ComConnection();
+    await conn.connect();
+    await conn.getStationForces(['101'], ['Env_ULS'], 'GravityBeams');
+    const forceCall = etabs.mock.calls.find(c =>
+      c[0] === 'getTable' && (c[1] as { key?: string })?.key?.includes('Forces')
+    );
+    expect(forceCall).toBeDefined();
+    expect((forceCall![1] as { group?: string }).group).toBe('GravityBeams');
+  });
+
+  it('BridgeConnection getStationForces still works without selectCombos (no-op)', async () => {
+    mockHttp(TABLES);
+    const conn = new BridgeConnection();
+    await conn.connect();
+    const out = await conn.getStationForces(['101'], ['Env_ULS']);
+    expect(out['101'].length).toBeGreaterThan(0);
   });
 });
 

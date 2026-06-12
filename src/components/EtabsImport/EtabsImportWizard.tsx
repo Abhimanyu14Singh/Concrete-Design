@@ -127,7 +127,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       // Get filtered beams for design
       const beams = await conn.getBeams(filter);
       if (!beams.length) throw new Error('No beams match the current filter.');
-      const forces = await conn.getStationForces(beams.map(b => b.name), [...selCombos]);
+      const sourceGroup = selGroups.size === 1 ? [...selGroups][0] : undefined;
+      const forces = await conn.getStationForces(beams.map(b => b.name), [...selCombos], sourceGroup);
       const built = buildMembers(beams, sections, materials, forces, seed);
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
@@ -356,6 +357,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   {selCombos.size === 0 && (
                     <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>
                       Select at least one combination to continue.
+                    </div>
+                  )}
+                  {selCombos.size > 0 && (
+                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4 }}>
+                      Only the selected combinations are requested from ETABS.
                     </div>
                   )}
                 </div>

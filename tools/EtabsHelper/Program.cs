@@ -26,6 +26,7 @@ internal static class Program
     private static MethodInfo? _getTableMethod;
     private static object? _sapModel;
     private static Type? _iSapInterface;
+    private static Type? _iDbTablesInterface;
 
     private static int Main()
     {
@@ -46,8 +47,11 @@ internal static class Program
                     "ping"       => JsonValue.Create("pong"),
                     "connect"    => Connect(p?["dll"]?.GetValue<string>()),
                     "getUnits"   => GetUnits(),
-                    "getTable"   => GetTable(p?["key"]?.GetValue<string>()
-                                        ?? throw new ArgumentException("getTable requires params.key")),
+                    "getTable"   => GetTable(
+                                        p?["key"]?.GetValue<string>()
+                                            ?? throw new ArgumentException("getTable requires params.key"),
+                                        p?["group"]?.GetValue<string>() ?? ""),
+                    "selectCombos" => SelectCombos(p?["combos"]?.AsArray()),
                     "disconnect" => Disconnect(),
                     _ => throw new ArgumentException($"Unknown method: {method}"),
                 };
@@ -137,7 +141,8 @@ internal static class Program
 
         _dbTables = iSap.GetProperty("DatabaseTables")?.GetValue(sap)
             ?? throw new InvalidOperationException("cSapModel.DatabaseTables returned null");
-        _getTableMethod = Iface("cDatabaseTables").GetMethod("GetTableForDisplayArray")
+        _iDbTablesInterface = Iface("cDatabaseTables");
+        _getTableMethod = _iDbTablesInterface.GetMethod("GetTableForDisplayArray")
             ?? throw new InvalidOperationException("cDatabaseTables.GetTableForDisplayArray not found");
 
         // Force display units to kip-ft so GetTableForDisplayArray returns consistent units.
@@ -171,7 +176,52 @@ internal static class Program
         _getTableMethod = null;
         _sapModel = null;
         _iSapInterface = null;
+        _iDbTablesInterface = null;
         return JsonValue.Create(true)!;
+    }
+
+    // ── selectCombos ─────────────────────────────────────────────────────────
+    // Limits which load combinations/cases appear in subsequently fetched display
+    // tables, so a model with 50 combos only ships the rows the user asked for.
+    // Both setters are attempted (combos govern "Design Forces", cases govern
+    // "Element Forces"); per-call failures are tolerated because the renderer
+    // keeps its client-side row filter as the correctness backstop.
+
+    private static JsonNode SelectCombos(JsonArray? combosNode)
+    {
+        var db = _dbTables ?? throw new InvalidOperationException("Not connected — call connect first.");
+        var iDb = _iDbTablesInterface ?? throw new InvalidOperationException("Not connected — call connect first.");
+
+        var names = (combosNode ?? new JsonArray())
+            .Select(n => n?.GetValue<string>() ?? "")
+            .Where(s => s.Length > 0)
+            .ToArray();
+
+        bool combosOk = false, casesOk = false;
+        // int SetLoadCombinationsSelectedForDisplay(ref string[] names)
+        try
+        {
+            var m = iDb.GetMethod("SetLoadCombinationsSelectedForDisplay");
+            if (m != null)
+            {
+                var args = new object?[] { names };
+                combosOk = (int)(m.Invoke(db, args) ?? -1) == 0;
+            }
+        }
+        catch { /* tolerated */ }
+        // int SetLoadCasesSelectedForDisplay(ref string[] names)
+        try
+        {
+            var m = iDb.GetMethod("SetLoadCasesSelectedForDisplay");
+            if (m != null)
+            {
+                var args = new object?[] { names };
+                casesOk = (int)(m.Invoke(db, args) ?? -1) == 0;
+            }
+        }
+        catch { /* tolerated */ }
+
+        return new JsonObject { ["combos"] = combosOk, ["cases"] = casesOk, ["count"] = names.Length };
     }
 
     // ── getUnits ──────────────────────────────────────────────────────────────
@@ -203,7 +253,7 @@ internal static class Program
 
     // ── getTable ──────────────────────────────────────────────────────────
 
-    private static JsonNode GetTable(string key)
+    private static JsonNode GetTable(string key, string group)
     {
         var db = _dbTables ?? throw new InvalidOperationException("Not connected — call connect first.");
 
@@ -218,7 +268,7 @@ internal static class Program
         {
             key,
             Array.Empty<string>(), // FieldKeyList (all fields)
-            "",                    // GroupName (all objects)
+            group,                 // GroupName ("" = all objects)
             0,                     // TableVersion
             Array.Empty<string>(), // FieldsKeysIncluded (out)
             0,                     // NumberRecords (out)
