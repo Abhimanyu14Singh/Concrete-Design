@@ -78,11 +78,17 @@ Bar charts showing Demand/Capacity Ratios for all members and load cases. Status
 A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view snapshot of the imported ETABS model:
 - **Story selector** and three color modes — DCR, Group, or Section. Frames that haven't been imported as design members render dashed.
 - **Navigation** — wheel zoom, drag to pan, and a fit-to-view button.
-- **Selection** — click a beam, shift-click to add to the selection, or drag a lasso to multi-select.
-- **Design groups** — create, rename, or dissolve groups from the current map selection. Each group gets a color chip and a worst-DCR badge.
-- **Group rebar** — edit a rebar template for a group (bars + stirrup zones) and click **Apply** to fan the layout out to every member in the group.
+- **Selection** — click a beam, shift-click to add to the selection, or drag a lasso to multi-select. Click and lasso are properly independent — a lasso drag on the canvas background no longer clears a frame click.
+- **Rich hover tooltip** — hovering a beam shows Flex DCR and Shear DCR (color-coded) plus Top/Bottom bars and stirrup string. Import or design errors surface in the tooltip instead of silently skipping.
+- **V/M diagram overlays** — toolbar toggle cycles through Off / M Diagram / V Diagram. Each beam draws a filled polygon perpendicular to its axis scaled to the per-station envelope (max |M| or |V| across all combos). A legend chip appears in the bottom-right corner when overlays are active.
+- **Design groups** — create, rename, or dissolve groups from the current map selection. Each group gets a color chip and a worst-DCR badge. Dissolve requires confirmation to prevent accidental deletion.
+- **Group-edit mode** — click **Edit** on a group to enter group-edit mode (blue banner above canvas). Clicking any beam in the map toggles it into or out of the active group without changing the map selection. Per-frame **+ Add** / **− Remove** chip buttons appear in the group panel for fine-grained single-member management.
+- **Group rebar** — edit a rebar template for a group (bars + stirrup zones) using fully typeable numeric inputs and click **Apply** to fan the layout out to every member in the group.
 
-The map geometry (`project.modelMap`) is captured during ETABS import — all beam frames, not just the ones filtered into design members — and is saved with the project file.
+The map geometry (`project.modelMap`) is captured during ETABS import — all beam frames, not just the ones filtered into design members — and is saved with the project file. Group membership resolves live from `project.members` so newly imported members appear in their groups immediately without a re-sync.
+
+### Collapsible Grouped Sidebar
+The members list is organised into collapsible sections — one per design group plus an **Ungrouped** section. Each section header shows a color dot, member count, and a collapse chevron; double-click a header to rename the group inline. Collapse state is persisted in `localStorage`. When sidebar items are collapsed, a per-type color dot still indicates membership at a glance.
 
 ### Multiple Load Cases
 Each member supports multiple load cases; all are checked independently.
@@ -96,7 +102,7 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 ### ETABS Import
 "⇪ ETABS" in the header opens a 4-step wizard with two model sources:
 
-- **ETABS Active Instance** — one click attaches to the model currently open in ETABS. The desktop app ships a bundled .NET sidecar (`EtabsHelper.exe`, built from `tools/EtabsHelper/`) that connects through the ETABS .NET API (`ETABSv1.dll`, loaded by reflection — no COM registration, no scripts, no extra installs). Requirements: the **Windows desktop app**, ETABS v20+ installed, a model open, and the **analysis already run**. The model's display units are auto-detected (Program Control table) and converted to kip/ft/psi on import. Geometry, sections (exact b×h from the concrete-rectangular definitions), materials, ETABS groups, and per-station P/V2/M3/T forces are all pulled from ETABS database tables.
+- **ETABS Active Instance** — one click attaches to the model currently open in ETABS. The desktop app ships a bundled .NET sidecar (`EtabsHelper.exe`, built from `tools/EtabsHelper/`) that connects through the ETABS .NET API (`ETABSv1.dll`, loaded by reflection — no COM registration, no scripts, no extra installs). Requirements: the **Windows desktop app**, ETABS v20+ installed, a model open, and the **analysis already run**. The sidecar calls `SetPresentUnits(kip_ft_F)` at connect time so `GetTableForDisplayArray` always returns kip-ft regardless of the model's GUI display settings; a `getUnits` handler exposes the active `eUnits` integer for verification. The renderer's `eUnitsToFactors()` maps all 16 ETABS unit systems and falls back to the Program Control string if the enum call is unavailable. Geometry, sections (exact b×h from the concrete-rectangular definitions), materials, ETABS groups, and per-station P/V2/M3/T forces are all pulled from ETABS database tables.
 - **Sample model (demo)** — built-in 2-story model to try the workflow without ETABS.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
@@ -208,7 +214,7 @@ tools/
 ```
 
 ### ETABS Connection Architecture
-The renderer's `ComConnection` (and the shared `TableConnection` base in `src/adapters/etabs/tableConnection.ts`) reads everything from ETABS **database tables** (`GetTableForDisplayArray`) — beam connectivity, point coordinates, section definitions, materials, groups, combos, and "Design Forces - Beams" (fallback "Element Forces - Beams"). Display units are detected from the Program Control table and converted to kip/ft/psi in the renderer. The Electron main process (`electron/etabsBridge.cjs`) spawns the bundled `EtabsHelper.exe` sidecar and proxies `connect` / `getTable` requests over stdio.
+The renderer's `ComConnection` (and the shared `TableConnection` base in `src/adapters/etabs/tableConnection.ts`) reads everything from ETABS **database tables** (`GetTableForDisplayArray`) — beam connectivity, point coordinates, section definitions, materials, groups, combos, and "Design Forces - Beams" (fallback "Element Forces - Beams"). The sidecar enforces kip-ft units by calling `SetPresentUnits` at connect time; `tableConnection.ts` resolves the active unit system via `fetchUnitsEnum()` (IPC `getUnits`) and maps it through `eUnitsToFactors()`, falling back to the Program Control string for older sidecars. The Electron main process (`electron/etabsBridge.cjs`) spawns the bundled `EtabsHelper.exe` sidecar and proxies `connect` / `getTable` / `getUnits` requests over stdio.
 
 The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidecar with `dotnet publish` (framework-dependent, .NET 6 `RollForward LatestMajor` — the runtime ships with ETABS 21+) and verifies it exists both in `build-helper/` and inside the packaged `resources/etabs-helper/`.
 
