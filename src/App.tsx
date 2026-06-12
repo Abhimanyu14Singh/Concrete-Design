@@ -358,6 +358,12 @@ export default function App() {
                 <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>
                   {m.id}
                 </span>
+                {sidebarOpen && (() => {
+                  const grp = (project.designGroups ?? []).find(g => g.memberIds.includes(m.id));
+                  return grp ? (
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: grp.color ?? '#2563eb', flexShrink: 0, display: 'inline-block', border: '1px solid rgba(0,0,0,0.15)' }} title={grp.label} />
+                  ) : null;
+                })()}
                 {sidebarOpen && (
                   <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {m.label.length > 14 ? m.label.slice(0, 14) + '…' : m.label}

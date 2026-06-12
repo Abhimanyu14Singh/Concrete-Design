@@ -24,6 +24,8 @@ internal static class Program
 {
     private static object? _dbTables;
     private static MethodInfo? _getTableMethod;
+    private static object? _sapModel;
+    private static Type? _iSapInterface;
 
     private static int Main()
     {
@@ -43,6 +45,7 @@ internal static class Program
                 {
                     "ping"       => JsonValue.Create("pong"),
                     "connect"    => Connect(p?["dll"]?.GetValue<string>()),
+                    "getUnits"   => GetUnits(),
                     "getTable"   => GetTable(p?["key"]?.GetValue<string>()
                                         ?? throw new ArgumentException("getTable requires params.key")),
                     "disconnect" => Disconnect(),
@@ -129,10 +132,27 @@ internal static class Program
             ?? throw new InvalidOperationException("cOAPI.SapModel returned null");
 
         var iSap = Iface("cSapModel");
+        _sapModel = sap;
+        _iSapInterface = iSap;
+
         _dbTables = iSap.GetProperty("DatabaseTables")?.GetValue(sap)
             ?? throw new InvalidOperationException("cSapModel.DatabaseTables returned null");
         _getTableMethod = Iface("cDatabaseTables").GetMethod("GetTableForDisplayArray")
             ?? throw new InvalidOperationException("cDatabaseTables.GetTableForDisplayArray not found");
+
+        // Force display units to kip-ft so GetTableForDisplayArray returns consistent units.
+        // eUnits.kip_ft_F = 4. Use reflection through the interface type.
+        try
+        {
+            var setPU = iSap.GetMethod("SetPresentUnits");
+            if (setPU != null)
+            {
+                var eUnitsType = asm.GetType("ETABSv1.eUnits");
+                var val = eUnitsType != null ? Enum.ToObject(eUnitsType, 4) : (object)4;
+                setPU.Invoke(sap, new[] { val });
+            }
+        }
+        catch { /* best-effort — unit conversion will still work via string detection */ }
 
         string modelName = "ETABS model";
         try
@@ -149,7 +169,36 @@ internal static class Program
     {
         _dbTables = null;
         _getTableMethod = null;
+        _sapModel = null;
+        _iSapInterface = null;
         return JsonValue.Create(true)!;
+    }
+
+    // ── getUnits ──────────────────────────────────────────────────────────────
+    // Returns the eUnits enum integer that is currently active for display tables.
+    // We call SetPresentUnits(4=kip_ft_F) at connect so this should always be 4.
+
+    private static JsonNode GetUnits()
+    {
+        if (_sapModel == null || _iSapInterface == null)
+            throw new InvalidOperationException("Not connected — call connect first.");
+
+        // Attempt to read back via GetPresentUnits(ref eUnits)
+        // Signature: int GetPresentUnits(ref eUnits units)
+        try
+        {
+            var method = _iSapInterface.GetMethod("GetPresentUnits");
+            if (method != null)
+            {
+                var args = new object?[] { 0 }; // ref eUnits — pass 0, read back
+                method.Invoke(_sapModel, args);
+                return JsonValue.Create(Convert.ToInt32(args[0]));
+            }
+        }
+        catch { /* fall through */ }
+
+        // If reflection failed, return the value we set at connect (4 = kip_ft_F)
+        return JsonValue.Create(4);
     }
 
     // ── getTable ──────────────────────────────────────────────────────────

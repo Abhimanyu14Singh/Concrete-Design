@@ -32,6 +32,13 @@ export class ComConnection extends TableConnection {
     return { modelName: String(r?.modelName ?? 'ETABS model') };
   }
 
+  protected async fetchUnitsEnum(): Promise<number | null> {
+    try {
+      const r = await ipc()('getUnits') as number | null;
+      return typeof r === 'number' ? r : null;
+    } catch { return null; }
+  }
+
   protected async fetchTable(key: string): Promise<TableRow[]> {
     const r = await ipc()('getTable', { key }) as { fields?: string[]; rows?: string[][] };
     const fields = r?.fields ?? [];

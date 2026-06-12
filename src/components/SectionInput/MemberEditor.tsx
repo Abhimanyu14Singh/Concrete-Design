@@ -28,14 +28,14 @@ interface InputRowProps {
 }
 function InputRow({ label, value, onChange, unit = '', type = 'number', min, step }: InputRowProps) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-      <label style={{ fontSize: 12, color: '#6b7280', width: 112, flexShrink: 0 }}>{label}</label>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
+      <label style={{ fontSize: 12, color: '#6b7280', minWidth: 80, flexShrink: 0 }}>{label}</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 80 }}>
         <input
           type={type} value={value} min={min} step={step}
           onChange={e => onChange(e.target.value)}
           style={{
-            flex: 1, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6,
+            flex: 1, minWidth: 0, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6,
             fontSize: 12, color: '#111827', background: 'white', outline: 'none',
             fontFamily: type === 'text' ? 'inherit' : 'monospace',
           }}
@@ -75,11 +75,11 @@ interface SelectRowProps {
 }
 function SelectRow({ label, value, options, onChange }: SelectRowProps) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-      <label style={{ fontSize: 12, color: '#6b7280', width: 112, flexShrink: 0 }}>{label}</label>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
+      <label style={{ fontSize: 12, color: '#6b7280', minWidth: 80, flexShrink: 0 }}>{label}</label>
       <select
         value={value} onChange={e => onChange(e.target.value)}
-        style={{ flex: 1, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', outline: 'none' }}
+        style={{ flex: 1, minWidth: 80, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', outline: 'none' }}
       >
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>

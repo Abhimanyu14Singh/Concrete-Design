@@ -37,6 +37,9 @@ export default function MapCanvas({
   const [lasso, setLasso] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ mx: number; my: number; vx: number; vy: number } | null>(null);
+  // Track whether the lasso started on a frame element (not the background).
+  // If it did, background-click logic (clear selection) should be suppressed.
+  const lassoBgOnly = useRef(false);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const visibleFrames = story === 'All' ? frames : frames.filter(f => f.story === story);
@@ -138,6 +141,10 @@ export default function MapCanvas({
     if (e.button === 0 && !e.altKey) {
       const pt = mouseToSvg(e.clientX, e.clientY);
       if (!pt) return;
+      // True when the press starts on background (rect, svg root, grid pattern),
+      // not on a frame <g> element. Frame clicks are handled by onClick on the <g>.
+      const tag = (e.target as Element).tagName.toLowerCase();
+      lassoBgOnly.current = tag === 'svg' || tag === 'rect' || tag === 'pattern';
       setLasso({ sx: pt.x, sy: pt.y, ex: pt.x, ey: pt.y });
     }
   }
@@ -180,8 +187,8 @@ export default function MapCanvas({
           }
         }
         onSelectionChange(e.shiftKey ? new Set([...selected, ...hit]) : hit);
-      } else if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        // bare click on canvas background → clear selection
+      } else if (!e.shiftKey && !e.ctrlKey && !e.metaKey && lassoBgOnly.current) {
+        // bare click on canvas background (not on a frame) → clear selection
         onSelectionChange(new Set());
       }
       setLasso(null);

@@ -40,6 +40,19 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const groups = project.designGroups ?? [];
   const members = project.members;
 
+  // Live frame→member linkage: derive memberId from project.members so grouping
+  // works even when modelMap was captured before members were imported.
+  const enrichedFrames = useMemo(() => {
+    const byFrameName = new Map<string, string>();
+    for (const m of members) {
+      if (m.etabs?.frameName) byFrameName.set(m.etabs.frameName, m.id);
+    }
+    return (map?.frames ?? []).map(f => ({
+      ...f,
+      memberId: byFrameName.get(f.frameName) ?? f.memberId,
+    }));
+  }, [map?.frames, members]);
+
   // Live DCR lookup — recomputes when members (incl. rebar) change
   const dcrById = useMemo(() => {
     const out: Record<string, number> = {};
@@ -70,7 +83,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   const activeGroup = activeGroupId ? groups.find(g => g.id === activeGroupId) : null;
   const stories = map ? ['All', ...map.stories] : ['All'];
-  const frames = map?.frames ?? [];
+  const frames = enrichedFrames;
 
   if (!map) {
     return (

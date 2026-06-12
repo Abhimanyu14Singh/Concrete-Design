@@ -52,6 +52,35 @@ export function parseUnits(currUnits: string): UnitFactors | null {
 
 const DEFAULT_UNITS: UnitFactors = { forceToKip: 1, lengthToFt: 1, label: 'kip-ft (assumed)' };
 
+/**
+ * Map ETABS eUnits integer → UnitFactors.
+ * Enum values from ETABS API (cSapModel.eUnits):
+ *   1=lb_in  2=lb_ft  3=kip_in  4=kip_ft  5=kN_mm  6=kN_m
+ *   7=kgf_mm 8=kgf_m  9=N_mm   10=N_m   11=tonf_mm 12=tonf_m
+ *  13=kN_cm 14=kgf_cm 15=N_cm  16=tonf_cm
+ */
+export function eUnitsToFactors(e: number): UnitFactors | null {
+  const map: Record<number, UnitFactors> = {
+    1:  { forceToKip: 0.001,       lengthToFt: 1/12,           label: 'lb-in'   },
+    2:  { forceToKip: 0.001,       lengthToFt: 1,              label: 'lb-ft'   },
+    3:  { forceToKip: 1,           lengthToFt: 1/12,           label: 'kip-in'  },
+    4:  { forceToKip: 1,           lengthToFt: 1,              label: 'kip-ft'  },
+    5:  { forceToKip: 0.2248089,   lengthToFt: 1/304.8,        label: 'kn-mm'   },
+    6:  { forceToKip: 0.2248089,   lengthToFt: 3.280839895,    label: 'kn-m'    },
+    7:  { forceToKip: 0.0022046,   lengthToFt: 1/304.8,        label: 'kgf-mm'  },
+    8:  { forceToKip: 0.0022046,   lengthToFt: 3.280839895,    label: 'kgf-m'   },
+    9:  { forceToKip: 0.0002248089,lengthToFt: 1/304.8,        label: 'n-mm'    },
+    10: { forceToKip: 0.0002248089,lengthToFt: 3.280839895,    label: 'n-m'     },
+    11: { forceToKip: 2.2046,      lengthToFt: 1/304.8,        label: 'tonf-mm' },
+    12: { forceToKip: 2.2046,      lengthToFt: 3.280839895,    label: 'tonf-m'  },
+    13: { forceToKip: 0.2248089,   lengthToFt: 1/30.48,        label: 'kn-cm'   },
+    14: { forceToKip: 0.0022046,   lengthToFt: 1/30.48,        label: 'kgf-cm'  },
+    15: { forceToKip: 0.0002248089,lengthToFt: 1/30.48,        label: 'n-cm'    },
+    16: { forceToKip: 2.2046,      lengthToFt: 1/30.48,        label: 'tonf-cm' },
+  };
+  return map[e] ?? null;
+}
+
 /** Read a column by any of several names; falls back to case-insensitive match. */
 function col(r: TableRow, ...names: string[]): unknown {
   for (const n of names) if (n in r) return r[n];
@@ -81,6 +110,12 @@ export abstract class TableConnection implements EtabsConnection {
   protected abstract openSession(): Promise<{ modelName: string }>;
   /** Transport: fetch one ETABS table as row objects ([] when unavailable). */
   protected abstract fetchTable(key: string): Promise<TableRow[]>;
+  /**
+   * Optional transport hook: return the ETABS eUnits integer for the present
+   * display units, or null if not available (e.g. HTTP bridge).
+   * ComConnection overrides this to query the sidecar after SetPresentUnits.
+   */
+  protected fetchUnitsEnum(): Promise<number | null> { return Promise.resolve(null); }
 
   protected units: UnitFactors = DEFAULT_UNITS;
   private beamsCache: EtabsBeamGeom[] | null = null;
@@ -92,12 +127,27 @@ export abstract class TableConnection implements EtabsConnection {
 
   async connect(): Promise<EtabsConnectInfo> {
     const { modelName } = await this.openSession();
+
+    // Primary: enum-based units from transport (deterministic, set by sidecar via SetPresentUnits)
+    let resolvedFromEnum = false;
     try {
-      const pc = await this.fetchTable('Program Control');
-      const cu = str(pc[0] ?? {}, 'CurrUnits', 'Curr Units');
-      const parsed = cu ? parseUnits(cu) : null;
-      if (parsed) this.units = parsed;
-    } catch { /* keep defaults */ }
+      const enumVal = await this.fetchUnitsEnum();
+      if (enumVal != null) {
+        const factors = eUnitsToFactors(enumVal);
+        if (factors) { this.units = factors; resolvedFromEnum = true; }
+      }
+    } catch { /* best effort */ }
+
+    // Fallback: parse the "Program Control" CurrUnits string
+    if (!resolvedFromEnum) {
+      try {
+        const pc = await this.fetchTable('Program Control');
+        const cu = str(pc[0] ?? {}, 'CurrUnits', 'Curr Units');
+        const parsed = cu ? parseUnits(cu) : null;
+        if (parsed) this.units = parsed;
+      } catch { /* keep defaults */ }
+    }
+
     return { modelName, units: this.units.label };
   }
 

@@ -114,6 +114,7 @@ function killHelper() {
 
 const handlers = {
   connect: () => call('connect'),
+  getUnits: () => call('getUnits'),
   getTable: ({ key }) => call('getTable', { key }),
   disconnect: async () => {
     try { await call('disconnect', {}, 5000); } catch { /* best effort */ }

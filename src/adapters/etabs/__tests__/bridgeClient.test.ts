@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BridgeConnection } from '../bridgeClient';
 import { ComConnection } from '../comClient';
+import { eUnitsToFactors } from '../tableConnection';
 
 type Row = Record<string, unknown>;
 
@@ -62,10 +63,18 @@ function mockHttp(tables: Record<string, Row[]>) {
   }));
 }
 
-/** Mock window.electronAPI.etabs serving the same tables in helper format. */
-function mockIpc(tables: Record<string, Row[]>) {
+/**
+ * Mock window.electronAPI.etabs serving the same tables in helper format.
+ * unitsEnum: if provided, the mock returns it from getUnits (simulates sidecar
+ * calling SetPresentUnits). When null/undefined, getUnits throws (no sidecar).
+ */
+function mockIpc(tables: Record<string, Row[]>, unitsEnum?: number | null) {
   const etabs = vi.fn(async (method: string, args?: { key?: string }) => {
     if (method === 'connect') return { modelName: 'tower.edb' };
+    if (method === 'getUnits') {
+      if (unitsEnum == null) throw new Error('getUnits not available');
+      return unitsEnum;
+    }
     if (method === 'getTable') {
       const rows = tables[args?.key ?? ''] ?? [];
       const fields = rows.length ? Object.keys(rows[0]) : [];
@@ -145,6 +154,7 @@ describeMapping('TableConnection via BridgeConnection (HTTP)', () => {
 });
 
 describeMapping('TableConnection via ComConnection (IPC sidecar)', () => {
+  // No unitsEnum — getUnits throws, falls back to Program Control string (kN-m)
   mockIpc(TABLES);
   return new ComConnection();
 });
@@ -205,5 +215,48 @@ describe('bridge unreachable', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
     const conn = new BridgeConnection();
     await expect(conn.connect()).rejects.toThrow(/Start it first/);
+  });
+});
+
+describe('eUnitsToFactors', () => {
+  it('maps kip-ft (4) correctly', () => {
+    const f = eUnitsToFactors(4)!;
+    expect(f.forceToKip).toBe(1);
+    expect(f.lengthToFt).toBe(1);
+    expect(f.label).toBe('kip-ft');
+  });
+  it('maps kN-m (6) correctly', () => {
+    const f = eUnitsToFactors(6)!;
+    expect(f.forceToKip).toBeCloseTo(0.2248089, 6);
+    expect(f.lengthToFt).toBeCloseTo(3.280839895, 6);
+    expect(f.label).toBe('kn-m');
+  });
+  it('returns null for unknown enum value', () => {
+    expect(eUnitsToFactors(99)).toBeNull();
+  });
+});
+
+describe('ComConnection: enum-based units override Program Control', () => {
+  it('uses kip-ft when getUnits returns 4, ignoring kN-m Program Control', async () => {
+    // Tables still report kN-m in Program Control, but getUnits returns 4 (kip-ft)
+    // because the sidecar called SetPresentUnits(4) — so table data is already in kip-ft.
+    const kipFtTables = {
+      ...TABLES,
+      // Section dims now in ft (since display units = kip-ft): 0.3m=0.984ft, 0.6m=1.969ft
+      'Frame Section Property Definitions - Concrete Rectangular': [
+        { Name: 'B300X600', Material: 'C30', t3: 0.3 / 0.3048, t2: 0.6 / (0.3048 * 2) },
+      ],
+    };
+    mockIpc(kipFtTables, 4); // getUnits returns 4 = kip-ft
+    const conn = new ComConnection();
+    const info = await conn.connect();
+    expect(info.units).toBe('kip-ft');
+  });
+
+  it('falls back to Program Control when getUnits throws', async () => {
+    mockIpc(TABLES); // getUnits throws (no enum provided)
+    const conn = new ComConnection();
+    const info = await conn.connect();
+    expect(info.units).toBe('kn-m'); // parsed from Program Control CurrUnits
   });
 });
