@@ -8,7 +8,7 @@ import type { MapFrame, DesignGroup } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { valueToRampColor, rampStops } from './colorRamp';
 
-export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups';
+export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight';
 export type DiagramMode = 'off' | 'moment' | 'shear';
 
 /** Rich per-member info shown in the tooltip. */
@@ -19,6 +19,8 @@ export interface FrameInfo {
   top: string;
   bot: string;
   stirrups: string;
+  /** Steel weight intensity, e.g. "23.4 lb/ft (L 16.1 + S 7.3)". */
+  weight?: string;
   error?: string;
 }
 
@@ -104,7 +106,7 @@ export default function MapCanvas({
       }
       return '#9ca3af';
     }
-    if ((colorMode === 'flexSteel' || colorMode === 'stirrups') && f.memberId) {
+    if ((colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && f.memberId) {
       const v = metricById[f.memberId];
       if (v !== undefined && metricRange) {
         return valueToRampColor(v, metricRange.min, metricRange.max);
@@ -399,13 +401,16 @@ export default function MapCanvas({
                   <div>Top: <span style={{ color: '#111827' }}>{hoveredInfo.top}</span></div>
                   <div>Bot: <span style={{ color: '#111827' }}>{hoveredInfo.bot}</span></div>
                   <div>Stirrups: <span style={{ color: '#111827' }}>{hoveredInfo.stirrups}</span></div>
+                  {hoveredInfo.weight && (
+                    <div>Steel: <span style={{ color: '#111827', fontFamily: 'monospace' }}>{hoveredInfo.weight}</span></div>
+                  )}
                 </div>
               </>
             )
           ) : (
             <div style={{ color: '#9ca3af' }}>Not yet designed</div>
           )}
-          {(colorMode === 'flexSteel' || colorMode === 'stirrups') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
+          {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
             <div style={{ marginTop: 4, fontSize: 10 }}>
               <span style={{ color: '#374151' }}>{metricLabel ?? 'Metric'}: </span>
               <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
@@ -428,7 +433,7 @@ export default function MapCanvas({
       )}
 
       {/* Metric ramp legend */}
-      {(colorMode === 'flexSteel' || colorMode === 'stirrups') && metricRange && (
+      {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && metricRange && (
         <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280', minWidth: 140 }}>
           <div style={{ marginBottom: 4, fontWeight: 600 }}>{metricLabel ?? ''}</div>
           <div style={{ position: 'relative', height: 10, borderRadius: 4, overflow: 'hidden', background: `linear-gradient(to right, ${rampStops(metricRange.min, metricRange.max).map(s => s.color).join(',')}` }} />

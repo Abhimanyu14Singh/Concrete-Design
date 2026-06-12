@@ -4,7 +4,7 @@
  */
 import { useState, useMemo } from 'react';
 import type { Member, DesignResults, DesignGroup } from '../../types';
-import { computeSavings, familyKey, jenksBreaks, assignByBreaks } from '../../utils/autoGroup';
+import { computeSavings, familyKey, steelWeightPerFt } from '../../utils/autoGroup';
 
 interface SavingsPanelProps {
   members: Member[];
@@ -37,6 +37,23 @@ export default function SavingsPanel({
     () => computeSavings(members, resultsById, memberGroupId, targetDCR),
     [members, resultsById, memberGroupId, targetDCR]
   );
+
+  // Total steel in place, split longitudinal vs stirrups (lb and avg lb/ft)
+  const weightTotals = useMemo(() => {
+    let longLb = 0, stirrupLb = 0, totalLenFt = 0;
+    for (const m of members) {
+      if (m.memberType !== 'beam') continue;
+      const w = steelWeightPerFt(m);
+      const p1 = m.etabs?.pt1, p2 = m.etabs?.pt2;
+      const len = (p1 && p2)
+        ? Math.hypot(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
+        : (m.span ?? 20);
+      longLb += w.longLbFt * len;
+      stirrupLb += w.stirrupLbFt * len;
+      totalLenFt += len;
+    }
+    return { longLb, stirrupLb, totalLb: longLb + stirrupLb, totalLenFt };
+  }, [members]);
 
   // Per-group rollup
   const groupSavings = useMemo(() => {
@@ -92,12 +109,16 @@ export default function SavingsPanel({
   }, [designGroups, groupSavings, savings.perMember, memberGroupId, members]);
 
   function exportCSV() {
-    const header = 'Group,Member,Story,Family,DCR,AsProvTop(in²),AsProvBot(in²),SlackLb';
+    const header = 'Group,Member,Story,Family,DCR,AsProvTop(in²),AsProvBot(in²),LongLbPerFt,StirrupLbPerFt,TotalLbPerFt,SlackLb';
+    const weightById = new Map(members.map(m => [m.id, steelWeightPerFt(m)]));
     const rows = savings.perMember.map(m => {
       const gid = memberGroupId[m.memberId];
       const gLabel = designGroups.find(g => g.id === gid)?.label ?? 'Ungrouped';
+      const w = weightById.get(m.memberId) ?? { longLbFt: 0, stirrupLbFt: 0, totalLbFt: 0 };
       return [gLabel, m.label, m.story, m.familyKey, m.dcrGov.toFixed(3),
-              m.AsProvTop.toFixed(2), m.AsProvBot.toFixed(2), m.totalSlackLb.toFixed(1)].join(',');
+              m.AsProvTop.toFixed(2), m.AsProvBot.toFixed(2),
+              w.longLbFt.toFixed(2), w.stirrupLbFt.toFixed(2), w.totalLbFt.toFixed(2),
+              m.totalSlackLb.toFixed(1)].join(',');
     });
     const csv = [header, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -138,6 +159,36 @@ export default function SavingsPanel({
           <span>70% (conservative)</span><span>100% (use everything)</span>
         </div>
       </div>
+
+      {/* Steel in place, split longitudinal vs stirrups */}
+      {weightTotals.totalLenFt > 0 && (
+        <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px' }}>
+          <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>Steel in place</div>
+          <div style={{ display: 'flex', gap: 12, fontSize: 10 }}>
+            <div>
+              <div style={{ color: '#9ca3af' }}>Longitudinal</div>
+              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#374151' }}>
+                {weightTotals.longLb.toFixed(0)} lb
+              </div>
+              <div style={{ color: '#6b7280' }}>{(weightTotals.longLb / weightTotals.totalLenFt).toFixed(1)} lb/ft avg</div>
+            </div>
+            <div>
+              <div style={{ color: '#9ca3af' }}>Stirrups</div>
+              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#374151' }}>
+                {weightTotals.stirrupLb.toFixed(0)} lb
+              </div>
+              <div style={{ color: '#6b7280' }}>{(weightTotals.stirrupLb / weightTotals.totalLenFt).toFixed(1)} lb/ft avg</div>
+            </div>
+            <div>
+              <div style={{ color: '#9ca3af' }}>Total</div>
+              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#111827' }}>
+                {(weightTotals.totalLb / 2000).toFixed(2)} tons
+              </div>
+              <div style={{ color: '#6b7280' }}>{(weightTotals.totalLb / weightTotals.totalLenFt).toFixed(1)} lb/ft avg</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!hasResults && (
         <div style={{ fontSize: 11, color: '#9ca3af' }}>

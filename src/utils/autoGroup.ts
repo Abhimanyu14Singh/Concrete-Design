@@ -424,3 +424,41 @@ export function flexSteelRatioPct(m: Member, face: 'top' | 'bot'): number {
 export function stirrupAvPerFt(m: Member): number {
   return stirrupAvProvPerIn(m.rebar) * 12;
 }
+
+// ── Steel weight intensity (lb per ft of beam) ───────────────────────────────
+
+export interface SteelWeightPerFt {
+  longLbFt: number;     // longitudinal (top + bot + side) lb/ft
+  stirrupLbFt: number;  // transverse lb/ft (span-averaged across zones)
+  totalLbFt: number;
+}
+
+/**
+ * Steel weight per foot of beam, split longitudinal vs stirrups.
+ *
+ * Longitudinal: Σ As × 3.4 lb/(ft·in²) — the bars run the span.
+ * Stirrups: one closed hoop ≈ 2[(bw−2cc) + (h−2cc)] of bar, plus (legs−2)
+ * interior legs of (h−2cc) each; weight/ft = Ab × hoopLenIn × 3.4 / spacing.
+ * Zoned layouts are averaged over the three equal-thirds zones.
+ */
+export function steelWeightPerFt(m: Member): SteelWeightPerFt {
+  const longAs = rebarAs(m.rebar.topBars) + rebarAs(m.rebar.botBars)
+    + (m.rebar.sideBars ? rebarAs(m.rebar.sideBars) : 0);
+  const longLbFt = longAs * STEEL_LB_PER_FT_IN2;
+
+  let stirrupLbFt = 0;
+  const t = m.rebar.ties;
+  if (t) {
+    const Ab = getBarArea(t.barSize);
+    const cc = m.section.coverClear;
+    const bw = m.section.bw ?? m.section.b;
+    const hoopLenIn = 2 * ((bw - 2 * cc) + (m.section.h - 2 * cc))
+      + Math.max(0, (t.legs ?? 2) - 2) * (m.section.h - 2 * cc);
+    const lbFtAt = (spacing: number) => spacing > 0 ? Ab * hoopLenIn * STEEL_LB_PER_FT_IN2 / spacing : 0;
+    stirrupLbFt = m.rebar.tieZones
+      ? m.rebar.tieZones.reduce((s, z) => s + lbFtAt(z.spacing), 0) / 3
+      : lbFtAt(t.spacing);
+  }
+
+  return { longLbFt, stirrupLbFt, totalLbFt: longLbFt + stirrupLbFt };
+}

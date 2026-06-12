@@ -3,7 +3,7 @@ import {
   jenksBreaks, quantileBreaks, assignByBreaks,
   familyKey, extractDemands, suggestGroups,
   memberSteelWeightLb, computeSavings,
-  flexSteelRatioPct, stirrupAvPerFt,
+  flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt,
 } from '../autoGroup';
 import type { Member, DesignResults } from '../../types';
 
@@ -218,5 +218,38 @@ describe('stirrupAvPerFt', () => {
     // ties: #4 @ 6", 2 legs → Ab=0.20, AvPerIn = 2×0.20/6 = 0.0667 in²/in
     // AvPerFt = 0.0667 × 12 = 0.80 in²/ft
     expect(stirrupAvPerFt(m)).toBeCloseTo(0.80, 2);
+  });
+});
+
+describe('steelWeightPerFt', () => {
+  it('computes longitudinal weight from total As × 3.4', () => {
+    const m = makeMember({ id: 'a' });
+    // 3-#8 top + 3-#8 bot = 6 × 0.79 = 4.74 in² → 4.74 × 3.4 = 16.12 lb/ft
+    const w = steelWeightPerFt(m);
+    expect(w.longLbFt).toBeCloseTo(4.74 * 3.4, 2);
+  });
+
+  it('computes stirrup weight from hoop length and spacing', () => {
+    const m = makeMember({ id: 'a' });
+    // 14×24, cc=1.5 → hoop = 2×((14−3)+(24−3)) = 64 in; #4 @ 6", 2 legs
+    // lb/ft = 0.20 × 64 × 3.4 / 6 = 7.253
+    const w = steelWeightPerFt(m);
+    expect(w.stirrupLbFt).toBeCloseTo(0.20 * 64 * 3.4 / 6, 2);
+    expect(w.totalLbFt).toBeCloseTo(w.longLbFt + w.stirrupLbFt, 6);
+  });
+
+  it('averages zoned stirrup spacing over the three zones', () => {
+    const m = makeMember({ id: 'a' });
+    m.rebar.tieZones = [{ spacing: 4 }, { spacing: 12 }, { spacing: 4 }];
+    const w = steelWeightPerFt(m);
+    const perFt = (s: number) => 0.20 * 64 * 3.4 / s;
+    expect(w.stirrupLbFt).toBeCloseTo((perFt(4) + perFt(12) + perFt(4)) / 3, 2);
+  });
+
+  it('adds interior legs for 4-leg stirrups', () => {
+    const m2 = makeMember({ id: 'b' });
+    const m4 = makeMember({ id: 'c' });
+    m4.rebar.ties = { barSize: 4, spacing: 6, legs: 4 };
+    expect(steelWeightPerFt(m4).stirrupLbFt).toBeGreaterThan(steelWeightPerFt(m2).stirrupLbFt);
   });
 });

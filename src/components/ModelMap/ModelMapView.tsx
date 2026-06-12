@@ -6,7 +6,7 @@ import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Project, Member, DesignGroup, RebarLayout, ComboForces, DesignResults } from '../../types';
 import { runDesign } from '../../engines';
 import { formatBarLabel } from '../../utils/rebar';
-import { flexSteelRatioPct, stirrupAvPerFt } from '../../utils/autoGroup';
+import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -107,6 +107,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           dcrShear = Math.max(dcrShear, r.DCR_shear);
         }
         if (bestRes) results[m.id] = bestRes;
+        const w = steelWeightPerFt(m);
         info[m.id] = {
           dcr: Math.max(dcrFlex, dcrShear),
           dcrFlex,
@@ -114,6 +115,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           top: rebarStr(m.rebar.topBars),
           bot: rebarStr(m.rebar.botBars),
           stirrups: stirrupStr(m.rebar),
+          weight: `${w.totalLbFt.toFixed(1)} lb/ft (L ${w.longLbFt.toFixed(1)} + S ${w.stirrupLbFt.toFixed(1)})`,
         };
       } catch (e) {
         info[m.id] = {
@@ -144,16 +146,16 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   // Hotspot metric memos
   const { metricById, metricRange, metricLabel } = useMemo(() => {
-    if (colorMode !== 'flexSteel' && colorMode !== 'stirrups') {
+    if (colorMode !== 'flexSteel' && colorMode !== 'stirrups' && colorMode !== 'weight') {
       return { metricById: undefined, metricRange: undefined, metricLabel: undefined };
     }
     const out: Record<string, number> = {};
     let min = Infinity, max = -Infinity;
     for (const m of members) {
       if (m.memberType !== 'beam') continue;
-      const v = colorMode === 'flexSteel'
-        ? flexSteelRatioPct(m, flexFace)
-        : stirrupAvPerFt(m);
+      const v = colorMode === 'flexSteel' ? flexSteelRatioPct(m, flexFace)
+        : colorMode === 'stirrups' ? stirrupAvPerFt(m)
+        : steelWeightPerFt(m).totalLbFt;
       out[m.id] = v;
       if (v < min) min = v;
       if (v > max) max = v;
@@ -162,8 +164,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return {
       metricById: out,
       metricRange: { min, max },
-      metricLabel: colorMode === 'flexSteel'
-        ? `ρ${flexFace === 'bot' ? '⁺' : '⁻'} (%)` : 'Av/s (in²/ft)',
+      metricLabel: colorMode === 'flexSteel' ? `ρ${flexFace === 'bot' ? '⁺' : '⁻'} (%)`
+        : colorMode === 'stirrups' ? 'Av/s (in²/ft)'
+        : 'Steel (lb/ft)',
     };
   }, [members, colorMode, flexFace]);
 
@@ -275,6 +278,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'stirrups' ? '#0891b2' : 'white', color: colorMode === 'stirrups' ? 'white' : '#374151' }}
               title="Stirrup area per unit length Av/s (in²/ft)">
               Stirrups
+            </button>
+            <button
+              onClick={() => setColorMode(colorMode === 'weight' ? 'dcr' : 'weight')}
+              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'weight' ? '#0891b2' : 'white', color: colorMode === 'weight' ? 'white' : '#374151' }}
+              title="Total steel weight intensity, longitudinal + stirrups (lb per ft of beam)">
+              lb/ft
             </button>
           </div>
 
