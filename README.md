@@ -85,6 +85,12 @@ A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view 
 - **Group-edit mode** — click **Edit** on a group to enter group-edit mode (blue banner above canvas). Clicking any beam in the map toggles it into or out of the active group without changing the map selection. Per-frame **+ Add** / **− Remove** chip buttons appear in the group panel for fine-grained single-member management.
 - **Group rebar** — edit a rebar template for a group (bars + stirrup zones) using fully typeable numeric inputs and click **Apply** to fan the layout out to every member in the group.
 - **Hotspot overlays** — three reinforcement-intensity color modes in the toolbar alongside DCR/Group/Section: **Steel %** (ρ = As/(b·d), with a Top/Bot face toggle), **Stirrups** (provided Av/s in in²/ft, governing zone), and **lb/ft** (total steel weight intensity). All three render on a continuous blue→green→yellow→red ramp with a gradient legend (min/max auto-scaled to the visible story); the hover tooltip shows the metric value, and in lb/ft mode the longitudinal/stirrup split, e.g. `23.4 lb/ft (L 16.1 + S 7.3)`.
+- **Beam inspect card** — a 🔍 **Inspect** toolbar toggle; with it on, clicking a designed beam opens a floating card with an SVG section sketch (b×h, bar dots, stirrup outline), M and V envelope sparklines along the span, and the Flex+ / Flex− / Shear DCRs.
+- **Right-click context menu** — right-clicking a designed beam offers **Navigate to Design**, **Move to group** (submenu of existing groups), **Hide beam**, and **Delete beam**. Hidden beams persist as `project.hiddenMemberIds`.
+- **Story visibility chips** — a floor chip row above the plan; click a chip to hide/show that floor (persisted as `project.hiddenStories`), with a **Show all** reset.
+- **Group exclusivity** — adding a member to a group removes it from all other groups, whether via the group panel, a map click in group-edit mode, or the context-menu move.
+- **Group statistics** — each group row has an expandable ▸ stats row showing mean ± std for Flex+ / Flex− / Shear DCR plus mean ρ top/bot across the group's members.
+- **Resizable sidebar** — drag the right edge of the member sidebar (clamped 160–480 px); full member names display with CSS ellipsis instead of 12-character truncation.
 - **Tabbed right panel** — Groups | Auto-Group | Savings (the latter two are described below).
 
 ### Auto-Group (demand clustering)
@@ -94,13 +100,13 @@ The **Map → Auto-Group** tab suggests design groups automatically from analysi
 2. Within each family, every beam gets a **family-normalized governing demand**: max of Mu⁺, Mu⁻, and Vu, each divided by the family-wide maximum of that quantity (so heavy-shear beams don't disappear into a light-moment bin). Demands come from the imported envelope load case, with a station-forces fallback.
 3. The 1-D demand values are clustered with **Jenks natural breaks** (variance-minimizing dynamic program, O(k·n²)) or **quantile breaks** — selectable in the panel. With k = **Auto**, k = 2…5 is tried and scored by **goodness-of-variance fit** (GVF = 1 − SDAM/SDCM); the search stops early once GVF ≥ 0.85.
 4. Each family gets a **histogram** of demands with **draggable break sliders** for manual tuning; hovering a bin highlights its frames on the map.
-5. **Apply as Design Groups** creates groups tagged `source: 'auto'`. Re-applying replaces previous auto-groups but never touches manually created groups.
+5. The tab is **reference-only**: suggestions render as a map overlay (toggled via the **Auto-G** color-mode button, persisted as `project.autoGroupOverlay`) and update live with every slider/algorithm change. Design groups only change when you click **Commit as Design Groups**, which creates groups tagged `source: 'auto'`. Re-committing replaces previous auto-groups but never touches manually created groups.
 
 ### Savings Analytics
 The **Map → Savings** tab quantifies potential rebar savings against a project-wide **target DCR** slider (persisted as `targetDCR` in the project file):
 
 - **Slack per member** — longitudinal: `(As_prov − max(As_req / targetDCR, As_min))⁺` per face, converted to weight via `As (in²) × length (ft) × 3.4 lb/(ft·in²)` (490 lb/ft³ ÷ 144). Stirrup slack compares provided Av/s (governing end zone) against `Av_req / targetDCR`, never below Av,min.
-- **Per-group and per-member tables** of potential savings in lb and tons, sorted by slack, with CSV export.
+- **Per-group and per-member tables** of potential savings in lb and tons, sorted by slack, with CSV export. Percent savings appear next to the tons figure and as a % column per group.
 - **Consolidation advisor** — suggests merging adjacent same-family groups when adopting the heavier group's steel costs less than the detailing simplification is worth, with the steel-cost delta shown.
 - **Steel in place** card — total steel currently detailed, split longitudinal vs stirrups with lb/ft averages. Stirrup weight uses the actual hoop perimeter, `2[(bw−2cc) + (h−2cc)]` plus `(legs−2)` interior legs of `(h−2cc)`, averaged over the three stirrup zones.
 
@@ -133,7 +139,7 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 - **Sample model (demo)** — built-in 2-story model to try the workflow without ETABS.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
-4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story × section for envelope design; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
+4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by their first ETABS group name (`beam.groups[0]`), falling back to story · section for ungrouped beams; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
 
 Imported members keep their ETABS link (frame name, story, groups, node coordinates) and station forces, and the shear check is evaluated per stirrup zone against the max |V| within each third of the span.
 
