@@ -34,28 +34,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # winax is an optionalDependency — if its node-gyp build fails during
-      # `npm ci` the package is silently skipped and the app ships without it.
-      # Install it explicitly WITHOUT running its build script: winax 3.6.x
-      # targets a newer V8 than Node 22 ships (HolderV2 API), so compiling
-      # against Node fails — but that compile is a throwaway anyway. The only
-      # build that matters is the electron-rebuild below, which compiles
-      # against Electron's (much newer) V8 headers.
-      - name: Install winax sources (COM bridge, no node build)
-        run: npm install winax@^3.4.2 --no-save --ignore-scripts
+      # Build the .NET sidecar that attaches to the running ETABS instance
+      # through the .NET API (ETABSv1.dll via reflection — no COM, no native
+      # node modules). Bundled into the installer as resources/etabs-helper.
+      - name: Build ETABS helper (.NET sidecar)
+        run: npm run build:helper
 
-      # Compile the winax COM native module against Electron's ABI so the
-      # packaged desktop app can attach to a live ETABS instance.
-      - name: Rebuild native modules for Electron
-        run: npm run rebuild:native
-
-      - name: Verify winax native binary exists
-        run: |
-          node -e "require.resolve('winax/package.json'); console.log('winax present:', require('winax/package.json').version)"
-          $nativeFile = Get-ChildItem -Path node_modules/winax/build/Release -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nativeFile) { Write-Error "winax .node binary not found in build/Release — electron-rebuild did not compile it"; exit 1 }
-          Write-Host "winax binary: $($nativeFile.FullName)"
+      - name: Verify ETABS helper exists
         shell: pwsh
+        run: |
+          if (-not (Test-Path "build-helper/EtabsHelper.exe")) {
+            Write-Error "EtabsHelper.exe not produced by dotnet publish"; exit 1
+          }
+          Write-Host "Helper: $((Get-Item build-helper/EtabsHelper.exe).FullName)"
 
       - name: Build web assets (Vite)
         run: npm run build
@@ -67,16 +58,15 @@ jobs:
           # (no certificate configured). Remove when a code-signing cert is added.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Verify winax is packaged in asar.unpacked
+      - name: Verify ETABS helper is packaged
         shell: pwsh
         run: |
-          $unpackedPath = "release\win-unpacked\resources\app.asar.unpacked\node_modules\winax\build\Release"
-          $nativeFile = Get-ChildItem -Path $unpackedPath -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nativeFile) {
-            Write-Error "winax .node binary not found in asar.unpacked at: $unpackedPath"
+          $exe = "release\win-unpacked\resources\etabs-helper\EtabsHelper.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "EtabsHelper.exe not found in packaged resources at: $exe"
             exit 1
           }
-          Write-Host "Packaged winax binary: $($nativeFile.FullName)"
+          Write-Host "Packaged helper: $((Get-Item $exe).FullName)"
 
       - name: Find installer path
         id: find_exe

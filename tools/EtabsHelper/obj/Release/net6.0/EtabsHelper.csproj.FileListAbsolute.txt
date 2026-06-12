@@ -1,0 +1,14 @@
+/home/user/Concrete-Design/tools/EtabsHelper/bin/Release/net6.0/EtabsHelper
+/home/user/Concrete-Design/tools/EtabsHelper/bin/Release/net6.0/EtabsHelper.deps.json
+/home/user/Concrete-Design/tools/EtabsHelper/bin/Release/net6.0/EtabsHelper.runtimeconfig.json
+/home/user/Concrete-Design/tools/EtabsHelper/bin/Release/net6.0/EtabsHelper.dll
+/home/user/Concrete-Design/tools/EtabsHelper/bin/Release/net6.0/EtabsHelper.pdb
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.GeneratedMSBuildEditorConfig.editorconfig
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.AssemblyInfoInputs.cache
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.AssemblyInfo.cs
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.csproj.CoreCompileInputs.cache
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.dll
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/refint/EtabsHelper.dll
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.pdb
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/EtabsHelper.genruntimeconfig.cache
+/home/user/Concrete-Design/tools/EtabsHelper/obj/Release/net6.0/ref/EtabsHelper.dll

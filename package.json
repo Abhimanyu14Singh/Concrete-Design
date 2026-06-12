@@ -13,8 +13,8 @@
     "test:watch": "vitest",
     "electron:dev": "NODE_ENV=development electron electron/main.cjs",
     "electron:build": "npm run build && electron-builder",
-    "rebuild:native": "electron-rebuild -w winax",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build:helper": "dotnet publish tools/EtabsHelper -c Release -r win-x64 --no-self-contained -o build-helper"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
@@ -23,9 +23,6 @@
     "react-dom": "^19.2.6",
     "recharts": "^3.8.1",
     "xlsx": "^0.18.5"
-  },
-  "optionalDependencies": {
-    "winax": "^3.4.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -56,11 +53,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json",
-      "node_modules/winax/**/*"
-    ],
-    "asarUnpack": [
-      "node_modules/winax/**/*"
+      "package.json"
     ],
     "win": {
       "target": [
@@ -80,6 +73,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build-helper",
+        "to": "etabs-helper"
+      }
+    ]
   }
 }

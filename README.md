@@ -93,18 +93,11 @@ Projects are saved and opened as JSON files for portability and version control.
 ### Section Detailing Views
 SVG cross-section and elevation views showing rebar layout and spacing. Beam elevations support zoned stirrups — three distinct spacings over thirds of the span.
 
-### ETABS Import (CSI API)
-"⇪ ETABS" in the header opens a 4-step wizard:
-1. **Connect** — attach to the active ETABS instance via the CSI OAPI (Windows desktop app), connect through the **Python bridge server**, read an exported ETABS tables workbook (.xlsx), or use the built-in demo model.
+### ETABS Import
+"⇪ ETABS" in the header opens a 4-step wizard with two model sources:
 
-   *Live connection requirements:* the **Windows desktop (Electron) app**, with ETABS open, a model loaded, and the **analysis already run** — frame forces are read from the active results, and the import reports a clear error if no analysis results exist.
-
-   *ETABS bridge server (recommended when the COM connection fails):* the bridge attaches to ETABS through the .NET API (`ETABSv1.dll` via pythonnet) — no COM registration or native modules needed — and serves model data on `http://127.0.0.1:8744`. It works from both the desktop app and the browser:
-   ```
-   py -3.11 -m pip install pythonnet      # one-time
-   py -3.11 tools/etabs_bridge.py         # with your model open + analysis run
-   ```
-   Then pick **"ETABS bridge server (Python)"** in the wizard. The bridge auto-detects the model's display units (Program Control table) and the app converts to kip/ft/psi on import.
+- **ETABS Active Instance** — one click attaches to the model currently open in ETABS. The desktop app ships a bundled .NET sidecar (`EtabsHelper.exe`, built from `tools/EtabsHelper/`) that connects through the ETABS .NET API (`ETABSv1.dll`, loaded by reflection — no COM registration, no scripts, no extra installs). Requirements: the **Windows desktop app**, ETABS v20+ installed, a model open, and the **analysis already run**. The model's display units are auto-detected (Program Control table) and converted to kip/ft/psi on import. Geometry, sections (exact b×h from the concrete-rectangular definitions), materials, ETABS groups, and per-station P/V2/M3/T forces are all pulled from ETABS database tables.
+- **Sample model (demo)** — built-in 2-story model to try the workflow without ETABS.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
 4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story × section for envelope design; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
@@ -208,13 +201,16 @@ src/
   App.tsx                   # Layout, state, code-selector
 electron/
   main.cjs                  # Electron main process
-  etabsBridge.cjs           # CSI OAPI COM bridge (winax, Windows only)
+  etabsBridge.cjs           # spawns the .NET sidecar, JSON-lines over stdio
+tools/
+  EtabsHelper/              # C# sidecar: attaches to running ETABS via the
+                            #   .NET API (ETABSv1.dll by reflection, no COM)
 ```
 
-### ETABS COM Bridge Units Convention
-`electron/etabsBridge.cjs` calls `SetPresentUnits` before each handler group so results arrive in known units: **kip-in** for section/material reads, **kip-ft** for geometry and frame forces. FrameForce results follow the official CSI API result-array indices (ObjSta=4, LoadCase=7, P=10, V2=11, T=13, M3=15); axial P and torsion T are captured per station and enveloped into Pu/Tu.
+### ETABS Connection Architecture
+The renderer's `ComConnection` (and the shared `TableConnection` base in `src/adapters/etabs/tableConnection.ts`) reads everything from ETABS **database tables** (`GetTableForDisplayArray`) — beam connectivity, point coordinates, section definitions, materials, groups, combos, and "Design Forces - Beams" (fallback "Element Forces - Beams"). Display units are detected from the Program Control table and converted to kip/ft/psi in the renderer. The Electron main process (`electron/etabsBridge.cjs`) spawns the bundled `EtabsHelper.exe` sidecar and proxies `connect` / `getTable` requests over stdio.
 
-The Windows CI build (`.github/workflows/build-windows.yml`) installs the `winax` native module with `--foreground-scripts` so a failed native build fails loudly, and verifies the compiled `.node` binary exists both before and after packaging.
+The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidecar with `dotnet publish` (framework-dependent, .NET 6 `RollForward LatestMajor` — the runtime ships with ETABS 21+) and verifies it exists both in `build-helper/` and inside the packaged `resources/etabs-helper/`.
 
 ### Plugin-Ready Design
 `src/engines/` and `src/adapters/` are structured to accept additional design engines and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines. Beam, column, and shear wall engines are implemented today.

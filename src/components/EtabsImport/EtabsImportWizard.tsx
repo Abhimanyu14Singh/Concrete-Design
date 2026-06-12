@@ -9,9 +9,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { Member, DesignGroup, DesignCode, ModelMap, MapFrame } from '../../types';
 import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
 import { MockConnection } from '../../adapters/etabs/mock';
-import { FileConnection } from '../../adapters/etabs/fileImport';
 import { ComConnection } from '../../adapters/etabs/comClient';
-import { BridgeConnection, DEFAULT_BRIDGE_URL } from '../../adapters/etabs/bridgeClient';
 import { buildMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
@@ -25,7 +23,7 @@ interface Props {
   onImport: (members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap) => void;
 }
 
-type SourceKind = 'com' | 'bridge' | 'file' | 'mock';
+type SourceKind = 'com' | 'mock';
 
 const STEPS = ['Connect', 'Filter', 'Rebar Defaults', 'Review & Import'];
 
@@ -41,10 +39,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
   // step 1
   const [source, setSource] = useState<SourceKind>(window.electronAPI?.etabs ? 'com' : 'mock');
-  const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_BRIDGE_URL);
   const connRef = useRef<EtabsConnection | null>(null);
   const [connInfo, setConnInfo] = useState<EtabsConnectInfo | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // step 2 — model lists + selections
   const [stories, setStories] = useState<string[]>([]);
@@ -112,14 +108,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
   async function handleConnect() {
     if (source === 'mock') return connectWith(new MockConnection());
-    if (source === 'com') return connectWith(new ComConnection());
-    if (source === 'bridge') return connectWith(new BridgeConnection(bridgeUrl));
-    fileInputRef.current?.click(); // file: open the picker
-  }
-
-  async function handleFile(file: File) {
-    const buf = await file.arrayBuffer();
-    return connectWith(new FileConnection(buf, file.name));
+    return connectWith(new ComConnection());
   }
 
   async function refreshMatchCount() {
@@ -278,9 +267,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 560 }}>
               <div style={lbl}>Model source</div>
               {([
-                ['com', 'Active ETABS instance', 'Attach to the model currently open in ETABS via the CSI API (Windows desktop app)', !window.electronAPI?.etabs],
-                ['bridge', 'ETABS bridge server (Python)', 'Local helper script over HTTP — works without COM registration. Run tools/etabs_bridge.py next to your open model.', false],
-                ['file', 'ETABS tables file (.xlsx)', 'Workbook exported from ETABS with Beams / Sections / Materials / Forces sheets', false],
+                ['com', 'ETABS Active Instance', 'One click — attaches to the model open in ETABS and reads geometry, sections, and forces (run the analysis first)', !window.electronAPI?.etabs],
                 ['mock', 'Sample model (demo)', 'Built-in 2-story demo model — try the workflow without ETABS', false],
               ] as [SourceKind, string, string, boolean][]).map(([kind, title, desc, disabled]) => (
                 <label key={kind} style={{
@@ -295,25 +282,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{title}</div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{desc}</div>
                     {disabled && <div style={{ fontSize: 10, color: '#d97706', marginTop: 2 }}>Requires the Windows desktop app with ETABS running</div>}
-                    {kind === 'bridge' && source === 'bridge' && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
-                        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Server URL</span>
-                        <input
-                          value={bridgeUrl}
-                          onChange={e => setBridgeUrl(e.target.value)}
-                          onClick={e => e.preventDefault()}
-                          spellCheck={false}
-                          style={{ ...inp, flex: 1, fontSize: 11 }}
-                        />
-                      </div>
-                    )}
                   </div>
                 </label>
               ))}
-              <input ref={fileInputRef} type="file" accept=".xlsx" style={{ display: 'none' }}
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
               <button style={btn(true)} disabled={busy} onClick={handleConnect}>
-                {busy ? 'Connecting…' : source === 'file' ? 'Choose file…' : 'Connect'}
+                {busy ? 'Connecting…' : 'Connect'}
               </button>
             </div>
           )}

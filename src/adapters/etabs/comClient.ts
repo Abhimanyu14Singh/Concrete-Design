@@ -1,17 +1,16 @@
 /**
- * ComConnection — renderer-side client for the live CSI OAPI connection.
+ * ComConnection — "ETABS Active Instance", the app's primary import source.
  *
- * All COM work happens in the Electron main process (electron/etabsBridge.cjs),
- * reached over the context-isolated `window.electronAPI.etabs(method, args)`
- * IPC channel. In the browser (no Electron) construction succeeds but
- * connect() rejects with a clear message so the wizard can offer file import.
+ * Transport for TableConnection over the context-isolated
+ * `window.electronAPI.etabs(method, args)` IPC channel. The Electron main
+ * process (electron/etabsBridge.cjs) spawns the bundled .NET sidecar
+ * (EtabsHelper.exe), which attaches to the running ETABS through the .NET
+ * API — no COM registration, no scripts, one click.
+ *
+ * In the browser (no Electron) construction succeeds but connect() rejects
+ * with a clear message so the wizard can offer the demo model.
  */
-import type { ComboForces } from '../../types';
-import type {
-  EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, BeamFilter,
-} from './connection';
-import { matchesFilter } from './connection';
+import { TableConnection, type TableRow } from './tableConnection';
 
 type EtabsIpc = (method: string, args?: unknown) => Promise<unknown>;
 
@@ -19,51 +18,28 @@ function ipc(): EtabsIpc {
   const api = (window as Window & { electronAPI?: { etabs?: EtabsIpc } }).electronAPI;
   if (!api?.etabs) {
     throw new Error(
-      'Live ETABS connection requires the desktop app on Windows with ETABS running. ' +
-      'Use "ETABS tables file" import instead.'
+      'Live ETABS connection requires the desktop app on Windows with ETABS running.'
     );
   }
   return api.etabs.bind(api);
 }
 
-export class ComConnection implements EtabsConnection {
+export class ComConnection extends TableConnection {
   readonly kind = 'com' as const;
-  private beamsCache: EtabsBeamGeom[] | null = null;
 
-  async connect(): Promise<EtabsConnectInfo> {
-    return await ipc()('connect') as EtabsConnectInfo;
+  protected async openSession(): Promise<{ modelName: string }> {
+    const r = await ipc()('connect') as { modelName?: string };
+    return { modelName: String(r?.modelName ?? 'ETABS model') };
   }
 
-  async getStories(): Promise<string[]> {
-    return await ipc()('getStories') as string[];
-  }
-
-  async getGroups(): Promise<string[]> {
-    return await ipc()('getGroups') as string[];
-  }
-
-  async getFrameSections(): Promise<EtabsSectionInfo[]> {
-    return await ipc()('getFrameSections') as EtabsSectionInfo[];
-  }
-
-  async getMaterials(): Promise<EtabsMaterialInfo[]> {
-    return await ipc()('getMaterials') as EtabsMaterialInfo[];
-  }
-
-  async getCombos(): Promise<string[]> {
-    return await ipc()('getCombos') as string[];
-  }
-
-  async getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]> {
-    // Geometry is fetched once; filtering happens client-side so the wizard's
-    // live "N beams match" count doesn't round-trip COM on every checkbox.
-    if (!this.beamsCache) {
-      this.beamsCache = await ipc()('getBeams') as EtabsBeamGeom[];
-    }
-    return this.beamsCache.filter(b => matchesFilter(b, filter));
-  }
-
-  async getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>> {
-    return await ipc()('getStationForces', { frameNames, combos }) as Record<string, ComboForces[]>;
+  protected async fetchTable(key: string): Promise<TableRow[]> {
+    const r = await ipc()('getTable', { key }) as { fields?: string[]; rows?: string[][] };
+    const fields = r?.fields ?? [];
+    const rows = r?.rows ?? [];
+    return rows.map(row => {
+      const obj: TableRow = {};
+      fields.forEach((f, i) => { obj[f] = row[i]; });
+      return obj;
+    });
   }
 }

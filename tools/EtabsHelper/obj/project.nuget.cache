@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "9h1XBLYsw+iAlBYSldi78l2AbgxIAfQ03hc/z/esfZfiNLuEQr8P4cgR/lSuSHejk3FRLl8aV9rOvHL/KmKCEw==",
+  "success": true,
+  "projectFilePath": "/home/user/Concrete-Design/tools/EtabsHelper/EtabsHelper.csproj",
+  "expectedPackageFiles": [
+    "/root/.nuget/packages/microsoft.netcore.app.ref/6.0.36/microsoft.netcore.app.ref.6.0.36.nupkg.sha512",
+    "/root/.nuget/packages/microsoft.aspnetcore.app.ref/6.0.36/microsoft.aspnetcore.app.ref.6.0.36.nupkg.sha512",
+    "/root/.nuget/packages/microsoft.netcore.app.host.linux-x64/6.0.36/microsoft.netcore.app.host.linux-x64.6.0.36.nupkg.sha512"
+  ],
+  "logs": []
+}

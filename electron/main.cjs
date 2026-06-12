@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs   = require('fs');
-const { registerEtabsBridge } = require('./etabsBridge.cjs');
+const { registerEtabsBridge, killHelper } = require('./etabsBridge.cjs');
 const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow() {
@@ -96,3 +96,5 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
+app.on('will-quit', () => killHelper());
