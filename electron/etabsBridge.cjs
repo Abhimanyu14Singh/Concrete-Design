@@ -48,16 +48,33 @@ function attach() {
       'or use the "ETABS tables file" import instead.'
     );
   }
-  let helper;
-  try {
-    helper = new winax.Object('CSiAPIv1.Helper');
-  } catch {
-    throw new Error(
-      'CSI API helper (CSiAPIv1.Helper) is not registered on this machine. ' +
-      'Make sure ETABS is installed and has been run at least once.'
-    );
+  // Per the CSI API docs (VBA example): Set myHelper = New ETABSv1.Helper.
+  // "CSiAPIv1.Helper" is the SAP2000-family name, tried second for old installs.
+  let helper = null;
+  const helperProgIDs = ['ETABSv1.Helper', 'CSiAPIv1.Helper'];
+  for (const progId of helperProgIDs) {
+    try {
+      helper = new winax.Object(progId);
+      break;
+    } catch { /* try next */ }
   }
   let etabsObject;
+  if (!helper) {
+    // No helper class registered — last resort: attach straight from the
+    // Running Object Table (winax GetActiveObject path).
+    try {
+      etabsObject = new winax.Object('CSI.ETABS.API.ETABSObject', { activate: true });
+    } catch {
+      throw new Error(
+        `CSI API helper is not registered on this machine (tried ${helperProgIDs.join(', ')}, ` +
+        'and could not attach to a running ETABS via the Running Object Table). ' +
+        'Make sure ETABS v18 or later is installed and has been run at least once, ' +
+        'or use the "ETABS tables file" import instead.'
+      );
+    }
+    sapModel = etabsObject.SapModel;
+    return sapModel;
+  }
   try {
     etabsObject = helper.GetObject('CSI.ETABS.API.ETABSObject');
   } catch (attachErr) {

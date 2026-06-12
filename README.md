@@ -95,9 +95,16 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 
 ### ETABS Import (CSI API)
 "⇪ ETABS" in the header opens a 4-step wizard:
-1. **Connect** — attach to the active ETABS instance via the CSI OAPI (Windows desktop app), read an exported ETABS tables workbook (.xlsx), or use the built-in demo model.
+1. **Connect** — attach to the active ETABS instance via the CSI OAPI (Windows desktop app), connect through the **Python bridge server**, read an exported ETABS tables workbook (.xlsx), or use the built-in demo model.
 
    *Live connection requirements:* the **Windows desktop (Electron) app**, with ETABS open, a model loaded, and the **analysis already run** — frame forces are read from the active results, and the import reports a clear error if no analysis results exist.
+
+   *ETABS bridge server (recommended when the COM connection fails):* the bridge attaches to ETABS through the .NET API (`ETABSv1.dll` via pythonnet) — no COM registration or native modules needed — and serves model data on `http://127.0.0.1:8744`. It works from both the desktop app and the browser:
+   ```
+   py -3.11 -m pip install pythonnet      # one-time
+   py -3.11 tools/etabs_bridge.py         # with your model open + analysis run
+   ```
+   Then pick **"ETABS bridge server (Python)"** in the wizard. The bridge auto-detects the model's display units (Program Control table) and the app converts to kip/ft/psi on import.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
 4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story × section for envelope design; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.

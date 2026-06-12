@@ -124,7 +124,7 @@ export interface Point3D { x: number; y: number; z: number; }
 
 /** Persistent connectivity snapshot of the ETABS model, saved in .scdb. */
 export interface ModelMap {
-  source: 'com' | 'file' | 'mock';
+  source: 'com' | 'file' | 'mock' | 'bridge';
   modelName: string;
   importedAt: string;
   stories: string[];
