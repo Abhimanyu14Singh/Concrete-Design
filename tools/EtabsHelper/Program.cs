@@ -22,8 +22,8 @@ using System.Text.Json.Nodes;
 
 internal static class Program
 {
-    private static object? _sapModel;
     private static object? _dbTables;
+    private static MethodInfo? _getTableMethod;
 
     private static int Main()
     {
@@ -99,15 +99,23 @@ internal static class Program
         var dll = FindDll(dllOverride);
         var asm = Assembly.LoadFrom(dll);
 
-        var helperType = asm.GetType("ETABSv1.Helper")
-            ?? throw new InvalidOperationException($"ETABSv1.Helper type not found in {dll}");
-        dynamic helper = Activator.CreateInstance(helperType)!;
+        // CSI implements the API explicitly on the c* interfaces, so members are
+        // NOT public on the concrete classes — every call must go through the
+        // interface types (same reason the Python bridges cast cHelper(Helper())).
+        Type Iface(string name) => asm.GetType($"ETABSv1.{name}")
+            ?? throw new InvalidOperationException($"ETABSv1.{name} type not found in {dll}");
 
-        dynamic etabs;
+        var helperType = Iface("Helper");
+        object helper = Activator.CreateInstance(helperType)
+            ?? throw new InvalidOperationException("Could not create ETABSv1.Helper");
+
+        object etabs;
         try
         {
-            etabs = helper.GetObject("CSI.ETABS.API.ETABSObject");
-            if (etabs is null) throw new InvalidOperationException("GetObject returned null");
+            var getObject = Iface("cHelper").GetMethod("GetObject", new[] { typeof(string) })
+                ?? throw new InvalidOperationException("cHelper.GetObject not found");
+            etabs = getObject.Invoke(helper, new object[] { "CSI.ETABS.API.ETABSObject" })
+                ?? throw new InvalidOperationException("GetObject returned null");
         }
         catch (Exception e)
         {
@@ -117,20 +125,30 @@ internal static class Program
                 $"your model first. ({inner})");
         }
 
-        dynamic sap = etabs.SapModel;
-        _sapModel = sap;
-        _dbTables = sap.DatabaseTables;
+        object sap = Iface("cOAPI").GetProperty("SapModel")?.GetValue(etabs)
+            ?? throw new InvalidOperationException("cOAPI.SapModel returned null");
+
+        var iSap = Iface("cSapModel");
+        _dbTables = iSap.GetProperty("DatabaseTables")?.GetValue(sap)
+            ?? throw new InvalidOperationException("cSapModel.DatabaseTables returned null");
+        _getTableMethod = Iface("cDatabaseTables").GetMethod("GetTableForDisplayArray")
+            ?? throw new InvalidOperationException("cDatabaseTables.GetTableForDisplayArray not found");
 
         string modelName = "ETABS model";
-        try { modelName = (string)sap.GetModelFilename(false); } catch { /* optional */ }
+        try
+        {
+            var gmf = iSap.GetMethod("GetModelFilename", new[] { typeof(bool) });
+            if (gmf?.Invoke(sap, new object[] { false }) is string s && s.Length > 0) modelName = s;
+        }
+        catch { /* optional */ }
 
         return new JsonObject { ["modelName"] = modelName, ["dll"] = dll };
     }
 
     private static JsonNode Disconnect()
     {
-        _sapModel = null;
         _dbTables = null;
+        _getTableMethod = null;
         return JsonValue.Create(true)!;
     }
 
@@ -143,8 +161,9 @@ internal static class Program
         // int GetTableForDisplayArray(string TableKey, ref string[] FieldKeyList,
         //   string GroupName, ref int TableVersion, ref string[] FieldsKeysIncluded,
         //   ref int NumberRecords, ref string[] TableData)
-        var mi = db.GetType().GetMethod("GetTableForDisplayArray")
-            ?? throw new InvalidOperationException("GetTableForDisplayArray not found on DatabaseTables");
+        // Resolved from the cDatabaseTables INTERFACE at connect time (explicit impl).
+        var mi = _getTableMethod
+            ?? throw new InvalidOperationException("Not connected — call connect first.");
 
         var args = new object?[]
         {
