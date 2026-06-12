@@ -84,6 +84,33 @@ A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view 
 - **Design groups** — create, rename, or dissolve groups from the current map selection. Each group gets a color chip and a worst-DCR badge. Dissolve requires confirmation to prevent accidental deletion.
 - **Group-edit mode** — click **Edit** on a group to enter group-edit mode (blue banner above canvas). Clicking any beam in the map toggles it into or out of the active group without changing the map selection. Per-frame **+ Add** / **− Remove** chip buttons appear in the group panel for fine-grained single-member management.
 - **Group rebar** — edit a rebar template for a group (bars + stirrup zones) using fully typeable numeric inputs and click **Apply** to fan the layout out to every member in the group.
+- **Hotspot overlays** — three reinforcement-intensity color modes in the toolbar alongside DCR/Group/Section: **Steel %** (ρ = As/(b·d), with a Top/Bot face toggle), **Stirrups** (provided Av/s in in²/ft, governing zone), and **lb/ft** (total steel weight intensity). All three render on a continuous blue→green→yellow→red ramp with a gradient legend (min/max auto-scaled to the visible story); the hover tooltip shows the metric value, and in lb/ft mode the longitudinal/stirrup split, e.g. `23.4 lb/ft (L 16.1 + S 7.3)`.
+- **Tabbed right panel** — Groups | Auto-Group | Savings (the latter two are described below).
+
+### Auto-Group (demand clustering)
+The **Map → Auto-Group** tab suggests design groups automatically from analysis demands:
+
+1. Beams are partitioned into **section families** — same b×h and materials (`familyKey`) — so a 14×24 never groups with an 18×30.
+2. Within each family, every beam gets a **family-normalized governing demand**: max of Mu⁺, Mu⁻, and Vu, each divided by the family-wide maximum of that quantity (so heavy-shear beams don't disappear into a light-moment bin). Demands come from the imported envelope load case, with a station-forces fallback.
+3. The 1-D demand values are clustered with **Jenks natural breaks** (variance-minimizing dynamic program, O(k·n²)) or **quantile breaks** — selectable in the panel. With k = **Auto**, k = 2…5 is tried and scored by **goodness-of-variance fit** (GVF = 1 − SDAM/SDCM); the search stops early once GVF ≥ 0.85.
+4. Each family gets a **histogram** of demands with **draggable break sliders** for manual tuning; hovering a bin highlights its frames on the map.
+5. **Apply as Design Groups** creates groups tagged `source: 'auto'`. Re-applying replaces previous auto-groups but never touches manually created groups.
+
+### Savings Analytics
+The **Map → Savings** tab quantifies potential rebar savings against a project-wide **target DCR** slider (persisted as `targetDCR` in the project file):
+
+- **Slack per member** — longitudinal: `(As_prov − max(As_req / targetDCR, As_min))⁺` per face, converted to weight via `As (in²) × length (ft) × 3.4 lb/(ft·in²)` (490 lb/ft³ ÷ 144). Stirrup slack compares provided Av/s (governing end zone) against `Av_req / targetDCR`, never below Av,min.
+- **Per-group and per-member tables** of potential savings in lb and tons, sorted by slack, with CSV export.
+- **Consolidation advisor** — suggests merging adjacent same-family groups when adopting the heavier group's steel costs less than the detailing simplification is worth, with the steel-cost delta shown.
+- **Steel in place** card — total steel currently detailed, split longitudinal vs stirrups with lb/ft averages. Stirrup weight uses the actual hoop perimeter, `2[(bw−2cc) + (h−2cc)]` plus `(legs−2)` interior legs of `(h−2cc)`, averaged over the three stirrup zones.
+
+### One-Click Rebar Suggestion
+The **✨ Suggest** button in the group rebar editor picks the lightest *practical* layout meeting the group's worst demand at the project target DCR:
+
+- Longitudinal: #5–#9 bars, ≥ 2 bars/layer, max 2 layers (outer ≥ inner), with a width-fit check (clear spacing ≥ max(1″, db) inside cover + stirrup).
+- Stirrups: #4 or #5, 2 then 4 legs, spacings {4, 6, 8, 10, 12} in, zoned end/mid/end with the mid zone one increment more relaxed.
+- Candidate areas come from the engine's worst As_req/Av_req across all members and load cases; the winning layout is **re-verified per-member with `runDesign`** (up to 5 retries bumping to the next candidate) so strain-compatibility effects can't sneak a failing layout through.
+- The result prefills the editor form for review — nothing is applied until you click **Apply**.
 
 The map geometry (`project.modelMap`) is captured during ETABS import — all beam frames, not just the ones filtered into design members — and is saved with the project file. Group membership resolves live from `project.members` so newly imported members appear in their groups immediately without a re-sync.
 
@@ -109,6 +136,8 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story × section for envelope design; shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
 
 Imported members keep their ETABS link (frame name, story, groups, node coordinates) and station forces, and the shear check is evaluated per stirrup zone against the max |V| within each third of the span.
+
+**Source-level filtering** keeps large-model imports fast: before fetching the force table, the selected combos are pushed into ETABS via `SetLoadCombinationsSelectedForDisplay` / `SetLoadCasesSelectedForDisplay` (sidecar `selectCombos` request), so ETABS only serializes the rows you asked for. When exactly **one** ETABS group is selected in the wizard, its name is passed as the `GroupName` argument of `GetTableForDisplayArray`, filtering at the source too. The bridge's `getTable` timeout is 600 s (other calls 120 s) to tolerate very large force tables.
 
 ---
 
@@ -193,13 +222,21 @@ src/
     calcBreakdownWall.ts    # ACI 318-25 wall calculation sheet generator
     units.ts                # SI / imperial conversion utilities
     rebar.ts                # Bar designation helpers (US customary + metric)
+    autoGroup.ts            # Pure functions: familyKey, extractDemands, jenksBreaks,
+                            #   quantileBreaks, assignByBreaks, suggestGroups,
+                            #   computeSavings, flexSteelRatioPct, stirrupAvPerFt,
+                            #   steelWeightPerFt
+    suggestRebar.ts         # suggestGroupRebar — lightest practical layout at target DCR,
+                            #   verified per-member with runDesign
   contexts/
     UnitsContext.tsx         # React context for active unit system
   types/                    # TypeScript interfaces (beam, column, wall, common)
   components/
     Dashboard/              # Project overview, member table, DCR chart
     ModelMap/               # Map tab: SVG plan canvas (MapCanvas), group panel,
-                            #   group rebar editor (ModelMapView composes them)
+                            #   group rebar editor, AutoGroupPanel + HistogramPanel
+                            #   (demand clustering UI), SavingsPanel, colorRamp.ts
+                            #   (continuous hotspot ramp; ModelMapView composes them)
     EtabsImport/            # 4-step ETABS import wizard
     Results/                # Per-member DCR bars, summary table, calc modal
     Detailing/              # SVG section, elevation, wall plan, P-M diagram views
@@ -214,7 +251,9 @@ tools/
 ```
 
 ### ETABS Connection Architecture
-The renderer's `ComConnection` (and the shared `TableConnection` base in `src/adapters/etabs/tableConnection.ts`) reads everything from ETABS **database tables** (`GetTableForDisplayArray`) — beam connectivity, point coordinates, section definitions, materials, groups, combos, and "Design Forces - Beams" (fallback "Element Forces - Beams"). The sidecar enforces kip-ft units by calling `SetPresentUnits` at connect time; `tableConnection.ts` resolves the active unit system via `fetchUnitsEnum()` (IPC `getUnits`) and maps it through `eUnitsToFactors()`, falling back to the Program Control string for older sidecars. The Electron main process (`electron/etabsBridge.cjs`) spawns the bundled `EtabsHelper.exe` sidecar and proxies `connect` / `getTable` / `getUnits` requests over stdio.
+The renderer's `ComConnection` (and the shared `TableConnection` base in `src/adapters/etabs/tableConnection.ts`) reads everything from ETABS **database tables** (`GetTableForDisplayArray`) — beam connectivity, point coordinates, section definitions, materials, groups, combos, and "Design Forces - Beams" (fallback "Element Forces - Beams"). The sidecar enforces kip-ft units by calling `SetPresentUnits` at connect time; `tableConnection.ts` resolves the active unit system via `fetchUnitsEnum()` (IPC `getUnits`) and maps it through `eUnitsToFactors()`, falling back to the Program Control string for older sidecars. The Electron main process (`electron/etabsBridge.cjs`) spawns the bundled `EtabsHelper.exe` sidecar and proxies `connect` / `getTable` / `getUnits` / `selectCombos` requests over stdio (`getTable` timeout 600 s, others 120 s).
+
+`TableConnection` exposes a `selectCombosAtSource(combos)` hook (no-op for file-based imports) that `ComConnection` overrides to send a best-effort `selectCombos` IPC before fetching forces; the sidecar's `SelectCombos` handler calls `SetLoadCombinationsSelectedForDisplay` and `SetLoadCasesSelectedForDisplay` by reflection. `getTable` accepts an optional `group` parameter forwarded as the `GroupName` argument of `GetTableForDisplayArray` (`""` = all objects); the import wizard passes it when exactly one ETABS group is selected.
 
 The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidecar with `dotnet publish` (framework-dependent, .NET 6 `RollForward LatestMajor` — the runtime ships with ETABS 21+) and verifies it exists both in `build-helper/` and inside the packaged `resources/etabs-helper/`.
 
