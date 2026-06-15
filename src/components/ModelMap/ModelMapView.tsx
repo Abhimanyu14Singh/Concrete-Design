@@ -86,9 +86,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   useLayoutEffect(() => {
     const el = canvasWrapRef.current;
     if (!el) return;
+    // Apply a measured size, deduping no-op updates. Uses layout (untransformed)
+    // dimensions so the canvas fills its box correctly at any preferences zoom.
+    const apply = (w: number, h: number) => {
+      if (w > 50 && h > 50) {
+        setCanvasSize(prev => (prev.w === w && prev.h === h ? prev : { w, h }));
+      }
+    };
+    // Measure synchronously on mount — the ResizeObserver's first callback can be
+    // dropped in Electron/Chromium when the element is sized in the same frame it
+    // is observed, which would leave the canvas stuck at its default size.
+    apply(el.clientWidth, el.clientHeight);
     const ro = new ResizeObserver(entries => {
       const r = entries[0].contentRect;
-      if (r.width > 50 && r.height > 50) setCanvasSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+      apply(Math.floor(r.width), Math.floor(r.height));
     });
     ro.observe(el);
     return () => ro.disconnect();
