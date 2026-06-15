@@ -473,6 +473,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             hiddenMemberIds={hiddenMemberIds}
             hiddenStories={hiddenStories}
             inspectMode={inspectMode}
+            inspectedMemberId={inspectedMemberId}
           />
 
           {/* Beam inspect card */}
@@ -480,6 +481,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             <BeamInspectCard
               member={inspectedMember}
               designResults={designResultsById[inspectedMember.id]}
+              code={project.code}
               clientX={inspectPos.x}
               clientY={inspectPos.y}
               containerWidth={canvasSize.w}

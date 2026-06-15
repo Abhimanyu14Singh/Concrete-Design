@@ -63,6 +63,8 @@ interface Props {
   hiddenStories?: Set<string>;
   /** Whether click-to-inspect is active. */
   inspectMode?: boolean;
+  /** Member currently shown in the rich inspect card (tooltip suppressed for it). */
+  inspectedMemberId?: string | null;
 }
 
 export default function MapCanvas({
@@ -73,7 +75,7 @@ export default function MapCanvas({
   diagramMode = 'off', diagramDataById = {},
   metricById = {}, metricRange, metricLabel,
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
-  inspectMode = false,
+  inspectMode = false, inspectedMemberId = null,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -425,8 +427,8 @@ export default function MapCanvas({
         <button onClick={fitView} style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: '#374151' }} title="Fit to view">⊡ Fit</button>
       </div>
 
-      {/* Hover tooltip */}
-      {hovered && (
+      {/* Hover tooltip — suppressed for the beam currently shown in the rich card. */}
+      {hovered && !(inspectMode && hovered.memberId === inspectedMemberId) && (
         <div style={{
           position: 'absolute', top: 8, right: 8, background: 'white',
           border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
