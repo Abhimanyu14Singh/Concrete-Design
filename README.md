@@ -37,7 +37,8 @@ S-Concrete provides a complete beam design workflow — from geometry and materi
 - V_Rd,c (concrete contribution), V_Rd,s (stirrups), V_Rd,max (crushing limit) (§6.2)
 - Torsion capacity T_Rd and combined V+T interaction per §6.3.2(5)
 - Detailing checks per §9.2
-- Crack width w_k (§7.3.4) for bottom, top, and side faces; accepts per-face limits, M_qp/Mu ratio, and kt factor
+- Crack width w_k (§7.3.4) for bottom, top, and side faces; accepts per-face limits, M_qp/Mu ratio, and kt factor. The quasi-permanent moment M_qp can be resolved automatically from a **project-wide SLS combination** (see below) instead of the ratio fallback
+- UK National Annex value α_cc = 0.85 is applied for the concrete design strength (base EN 1992-1-1 uses 1.0)
 
 **ACI 318-19 / EC2 column design**
 - Rectangular and circular columns with full P-M interaction diagrams (strain compatibility)
@@ -54,7 +55,7 @@ S-Concrete provides a complete beam design workflow — from geometry and materi
 - Plan-view SVG graphics showing web bars, SBZ zones, and confinement ties
 
 ### Design Code Selector
-Switch between ACI 318-19, ACI 318-14, and EN 1992-1-1 from the header without losing project data.
+Switch between ACI 318-19, ACI 318-14, ACI 318-25 (walls), and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the header without losing project data.
 
 ### Step-by-Step Calculation Sheet
 "Show Calculations" opens a modal with every check displayed as:
@@ -71,6 +72,8 @@ Bar sizes use a signed encoding: positive values are US customary bars (e.g. `5`
 ### Crack Control Inputs (EC2)
 Per-face crack width limits, quasi-permanent moment ratio M_qp/Mu, and kt factor are configurable inputs for EC2 crack width calculations.
 
+**Project-wide SLS quasi-permanent combination** — rather than entering M_qp per beam, the SLS quasi-permanent combination is chosen **once** in the ETABS import wizard (Step 2) and stored project-wide (`project.slsCombo`). When EC2 is the active code, each beam's §7.3.4 crack-width check auto-resolves its M_qp⁺ / M_qp⁻ from that combo's per-station signed-moment envelope (kip-ft) — no per-beam setup. If no project SLS combo is set, the check falls back to the legacy per-member SLS load case, then to the M_qp/Mu ratio. A **per-member override** picker remains for one-off cases. Side / skin reinforcement (which drives the side-face crack check) is set in the Member editor under **"Side Bars"**.
+
 ### DCR Dashboard
 Bar charts showing Demand/Capacity Ratios for all members and load cases. Status indicators: OK / Warning / NG.
 
@@ -81,11 +84,14 @@ A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view 
 - **Selection** — click a beam, shift-click to add to the selection, or drag a lasso to multi-select. Click and lasso are properly independent — a lasso drag on the canvas background no longer clears a frame click.
 - **Rich hover tooltip** — hovering a beam shows Flex DCR and Shear DCR (color-coded) plus Top/Bottom bars and stirrup string. Import or design errors surface in the tooltip instead of silently skipping.
 - **V/M diagram overlays** — toolbar toggle cycles through Off / M Diagram / V Diagram. Each beam draws a filled polygon perpendicular to its axis scaled to the per-station envelope (max |M| or |V| across all combos). A legend chip appears in the bottom-right corner when overlays are active.
-- **Design groups** — create, rename, or dissolve groups from the current map selection. Each group gets a color chip and a worst-DCR badge. Dissolve requires confirmation to prevent accidental deletion.
+- **Design groups** — create, rename, or dissolve groups from the current map selection. Each group gets a color chip and a worst-DCR badge.
+- **Group deletion — two modes** — **Dissolve** removes the group but keeps its member beams (they fall back to Ungrouped); **Delete + beams** deletes the group *and* permanently removes its member beams from the project. Both require confirmation; the destructive "delete the N beams too" path warns that it cannot be undone.
+- **Per-member group editing** — beyond the group-edit map clicks, each member in a group row has **+ Add** / **− Remove** chips for fine-grained single-member management without touching the map selection.
+- **Suggest all groups** — the group panel's **✨ Suggest all groups** button runs the rebar suggester (below) across every group with designed beams in one pass, applying each result and reporting an `ok/total` summary (e.g. "Suggested 5/7 groups · 2 need larger sections"). Groups with no designed beams are skipped.
 - **Group-edit mode** — click **Edit** on a group to enter group-edit mode (blue banner above canvas). Clicking any beam in the map toggles it into or out of the active group without changing the map selection. Per-frame **+ Add** / **− Remove** chip buttons appear in the group panel for fine-grained single-member management.
 - **Group rebar** — edit a rebar template for a group (bars + stirrup zones) using fully typeable numeric inputs and click **Apply** to fan the layout out to every member in the group.
 - **Hotspot overlays** — three reinforcement-intensity color modes in the toolbar alongside DCR/Group/Section: **Steel %** (ρ = As/(b·d), with a Top/Bot face toggle), **Stirrups** (provided Av/s in in²/ft, governing zone), and **lb/ft** (total steel weight intensity). All three render on a continuous blue→green→yellow→red ramp with a gradient legend (min/max auto-scaled to the visible story); the hover tooltip shows the metric value, and in lb/ft mode the longitudinal/stirrup split, e.g. `23.4 lb/ft (L 16.1 + S 7.3)`.
-- **Beam inspect card** — a 🔍 **Inspect** toolbar toggle; with it on, clicking a designed beam opens a floating card with an SVG section sketch (b×h, bar dots, stirrup outline), M and V envelope sparklines along the span, and the Flex+ / Flex− / Shear DCRs.
+- **Beam inspect card** — a 🔍 **Inspect** toolbar toggle; with it on, clicking a designed beam opens a single combined floating card (it replaces the old separate hover tooltip and click card). It shows an enlarged SVG section sketch with top, bottom, and side (skin) bar dots inside the stirrup outline; rebar callouts (top / bottom / side / stirrup strings) and the total steel `lb/ft` with its longitudinal + stirrup split; M and V envelope sparklines along the span; a **Flex+ / Flex− / Shear** DCR table evaluated at the three 1/3-span zones (**End L / Mid / End R**, each re-run through the design engine on its own station-force envelope); and a whole-member **Envelope** DCR summary row.
 - **Right-click context menu** — right-clicking a designed beam offers **Navigate to Design**, **Move to group** (submenu of existing groups), **Hide beam**, and **Delete beam**. Hidden beams persist as `project.hiddenMemberIds`.
 - **Story visibility chips** — a floor chip row above the plan; click a chip to hide/show that floor (persisted as `project.hiddenStories`), with a **Show all** reset.
 - **Group exclusivity** — adding a member to a group removes it from all other groups, whether via the group panel, a map click in group-edit mode, or the context-menu move.
@@ -97,10 +103,11 @@ A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view 
 The **Map → Auto-Group** tab suggests design groups automatically from analysis demands:
 
 1. Beams are partitioned into **section families** — same b×h and materials (`familyKey`) — so a 14×24 never groups with an 18×30.
-2. Within each family, every beam gets a **family-normalized governing demand**: max of Mu⁺, Mu⁻, and Vu, each divided by the family-wide maximum of that quantity (so heavy-shear beams don't disappear into a light-moment bin). Demands come from the imported envelope load case, with a station-forces fallback.
-3. The 1-D demand values are clustered with **Jenks natural breaks** (variance-minimizing dynamic program, O(k·n²)) or **quantile breaks** — selectable in the panel. With k = **Auto**, k = 2…5 is tried and scored by **goodness-of-variance fit** (GVF = 1 − SDAM/SDCM); the search stops early once GVF ≥ 0.85.
-4. Each family gets a **histogram** of demands with **draggable break sliders** for manual tuning; hovering a bin highlights its frames on the map.
-5. The tab is **reference-only**: suggestions render as a map overlay (toggled via the **Auto-G** color-mode button, session-local) and update live with every slider/algorithm change. Design groups only change when you click **Commit as Design Groups**, which creates groups tagged `source: 'auto'`. Re-committing replaces previous auto-groups but never touches manually created groups.
+2. A **Cluster by** selector chooses which demand metric drives the histogram, bins, and per-group value: **Governing** (the blended, family-normalized demand below), **M⁺** (positive moment), **M⁻** (negative moment), or **Shear**. The moment/shear metrics cluster on raw values (shown as kip-ft / kips); **Governing** clusters on a normalized 0–1 score (shown as %). Switching the metric recomputes the suggestion live.
+3. For the **Governing** metric, every beam gets a **family-normalized governing demand**: max of Mu⁺, Mu⁻, and Vu, each divided by the family-wide maximum of that quantity (so heavy-shear beams don't disappear into a light-moment bin). Demands come from the imported envelope load case, with a station-forces fallback.
+4. The 1-D demand values are clustered with **Jenks natural breaks** (variance-minimizing dynamic program, O(k·n²)) or **quantile breaks** — selectable in the panel. With k = **Auto**, k = 2…5 is tried and scored by **goodness-of-variance fit** (GVF = 1 − SDAM/SDCM); the search stops early once GVF ≥ 0.85.
+5. Each family gets a **histogram** of the selected metric with **draggable break sliders** for manual tuning; hovering a bin highlights its frames on the map.
+6. The tab is **reference-only**: suggestions render as a map overlay (toggled via the **Auto-G** color-mode button, session-local) and update live with every slider/algorithm/metric change. Design groups only change when you click **Commit as Design Groups**, which creates groups tagged `source: 'auto'`. Re-committing replaces previous auto-groups but never touches manually created groups.
 
 ### Savings Analytics
 The **Map → Savings** tab quantifies potential rebar savings against a project-wide **target DCR** slider (persisted as `targetDCR` in the project file):
@@ -113,7 +120,7 @@ The **Map → Savings** tab quantifies potential rebar savings against a project
 ### One-Click Rebar Suggestion
 The **✨ Suggest** button in the group rebar editor picks the lightest *practical* layout meeting the group's worst demand at the project target DCR:
 
-- Longitudinal: #5–#9 bars, ≥ 2 bars/layer, max 2 layers (outer ≥ inner), with a width-fit check (clear spacing ≥ max(1″, db) inside cover + stirrup).
+- Longitudinal: #5–#9 bars, ≥ 2 bars/layer, max 2 layers (outer ≥ inner), with a width-fit check (clear spacing ≥ max(1″, db) inside cover + stirrup). The top and bottom faces always share **one common bar size** (the smallest size where both faces have a feasible layout); only the bar counts and layer arrangement may differ between faces. During per-member verification a face is bumped within the common size first, stepping up to the next common size — and recomputing both faces — only when a size is exhausted.
 - Stirrups: #4 or #5, 2 then 4 legs, spacings {4, 6, 8, 10, 12} in, zoned end/mid/end with the mid zone one increment more relaxed.
 - Candidate areas come from the engine's worst As_req/Av_req across all members and load cases; the winning layout is **re-verified per-member with `runDesign`** (up to 5 retries bumping to the next candidate) so strain-compatibility effects can't sneak a failing layout through.
 - The result prefills the editor form for review — nothing is applied until you click **Apply**.
@@ -137,7 +144,7 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 
 - **ETABS Active Instance** — one click attaches to the model currently open in ETABS. The desktop app ships a bundled .NET sidecar (`EtabsHelper.exe`, built from `tools/EtabsHelper/`) that connects through the ETABS .NET API (`ETABSv1.dll`, loaded by reflection — no COM registration, no scripts, no extra installs). Requirements: the **Windows desktop app**, ETABS v20+ installed, a model open, and the **analysis already run**. The sidecar calls `SetPresentUnits(kip_ft_F)` at connect time so `GetTableForDisplayArray` always returns kip-ft regardless of the model's GUI display settings; a `getUnits` handler exposes the active `eUnits` integer for verification. The renderer's `eUnitsToFactors()` maps all 16 ETABS unit systems and falls back to the Program Control string if the enum call is unavailable. Geometry, sections (exact b×h from the concrete-rectangular definitions), materials, ETABS groups, and per-station P/V2/M3/T forces are all pulled from ETABS database tables.
 - **Sample model (demo)** — built-in 2-story model to try the workflow without ETABS.
-2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import.
+2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import. This step also picks the **SLS quasi-permanent combo** used for EC2 §7.3.4 crack-width checks; the choice is stored project-wide so every beam's M_qp resolves from that combo's station-force envelope. The selected SLS combo's forces are always fetched even if it was not selected for design import.
 3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
 4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story · section by default; the wizard's **"Design groups from ETABS"** picker lets you opt specific ETABS group names in — beams in a selected group mirror that name as their design group, the rest fall back to story · section. Shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
 
@@ -232,8 +239,10 @@ src/
                             #   quantileBreaks, assignByBreaks, suggestGroups,
                             #   computeSavings, flexSteelRatioPct, stirrupAvPerFt,
                             #   steelWeightPerFt
-    suggestRebar.ts         # suggestGroupRebar — lightest practical layout at target DCR,
-                            #   verified per-member with runDesign
+    suggestRebar.ts         # suggestGroupRebar — lightest practical layout at target DCR
+                            #   (common top/bottom bar size), verified per-member with runDesign
+    resolveCrack.ts         # resolves EC2 M_qp from the project SLS combo's station-force
+                            #   envelope (falls back to per-member SLS case, then M_qp/Mu ratio)
   contexts/
     UnitsContext.tsx         # React context for active unit system
   types/                    # TypeScript interfaces (beam, column, wall, common)
