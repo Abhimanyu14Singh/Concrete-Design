@@ -252,6 +252,11 @@ export interface Project {
   hiddenMemberIds?: string[];
   /** Stories (floors) hidden from the map view. */
   hiddenStories?: string[];
+  /**
+   * EC2 crack-width quasi-permanent combo (NAME, e.g. "SLS-QP"); resolved per
+   * beam from stationForces. Chosen in the ETABS import wizard.
+   */
+  slsCombo?: string;
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */

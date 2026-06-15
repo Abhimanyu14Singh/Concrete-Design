@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import type { Member, DesignResults, RebarLayout, DesignCode, CrackControlParams } from '../../types';
+import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { runDesign } from '../../engines';
+import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { capacityLabels } from '../../utils/units';
@@ -19,6 +20,8 @@ import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLO
 interface Props {
   member: Member;
   code?: DesignCode;
+  /** Project-level EC2 SLS quasi-permanent combo name (auto-applied to crack checks). */
+  slsCombo?: string;
   onRebarChange?: (updated: Member) => void;
 }
 
@@ -40,15 +43,7 @@ function dcrStyle(dcr: number): React.CSSProperties {
   return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
-function resolvedCrack(member: Member, code: string): CrackControlParams | undefined {
-  const cp = member.crackParams;
-  if (!cp || code !== 'EN1992-1-1' || !cp.slsLoadCaseId) return cp;
-  const slsCase = member.loads.find(l => l.id === cp.slsLoadCaseId);
-  if (!slsCase) return cp;
-  return { ...cp, Mqp_pos: slsCase.Mu_pos, Mqp_neg: slsCase.Mu_neg };
-}
-
-export default function MemberResults({ member, code = 'ACI318-19', onRebarChange }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, onRebarChange }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -60,7 +55,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   const isWall = member.memberType === 'wall' && !!member.wallRebar;
   const result: DesignResults = isWall
     ? designWallACI(member.section, member.material, member.wallRebar!, load)
-    : runDesign(member.section, member.material, member.rebar, load, member.span, code, resolvedCrack(member, code));
+    : runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
@@ -91,7 +86,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
     id: l.id, label: l.label,
     r: isWall
       ? designWallACI(member.section, member.material, member.wallRebar!, l)
-      : runDesign(member.section, member.material, member.rebar, l, member.span, code, resolvedCrack(member, code)),
+      : runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo)),
   }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
@@ -114,7 +109,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolvedCrack(member, code)));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo)));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 

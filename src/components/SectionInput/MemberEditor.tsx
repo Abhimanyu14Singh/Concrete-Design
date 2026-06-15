@@ -541,6 +541,10 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               <option key={lc.id} value={lc.id}>{lc.label}</option>
             ))}
           </select>
+          <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+            If a project-level SLS combo is set in the ETABS import, it is applied
+            automatically per beam from its station forces; this picker is a manual override.
+          </div>
         </div>
         <div style={{ opacity: crackP.slsLoadCaseId ? 0.4 : 1 }}>
           <InputRow label="M_qp / Mu ratio" value={crackP.qpFactor} step={0.05} min={0}

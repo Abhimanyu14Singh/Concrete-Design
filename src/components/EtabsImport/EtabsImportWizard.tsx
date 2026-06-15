@@ -21,7 +21,7 @@ interface Props {
   code: DesignCode;
   onClose: () => void;
   /** Commit imported members + groups into the project; pickId opens that member. */
-  onImport: (members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap) => void;
+  onImport: (members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap, slsCombo?: string) => void;
 }
 
 type SourceKind = 'com' | 'mock';
@@ -132,7 +132,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const beams = await conn.getBeams(filter);
       if (!beams.length) throw new Error('No beams match the current filter.');
       const sourceGroup = selGroups.size === 1 ? [...selGroups][0] : undefined;
-      const forces = await conn.getStationForces(beams.map(b => b.name), [...selCombos], sourceGroup);
+      // Always fetch the SLS combo's forces too, even if it wasn't selected for
+      // ULS import, so per-beam crack-width resolution from stationForces works.
+      const forceCombos = new Set(selCombos);
+      if (slsComboId) forceCombos.add(slsComboId);
+      const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
       const built = buildMembers(beams, sections, materials, forces, seed);
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
@@ -203,19 +207,14 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   }
 
   function commit(pickId?: string) {
-    // refresh envelope load labels with the chosen combos before handing off
-    const labeled = members.map(m => {
-      const newLoads = [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)];
-      let crackParams = m.crackParams;
-      if (slsComboId) {
-        const matchingLc = m.loads.find(lc => lc.label === slsComboId);
-        if (matchingLc) {
-          crackParams = { ...(m.crackParams ?? DEFAULT_CRACK_PARAMS), slsLoadCaseId: matchingLc.id };
-        }
-      }
-      return { ...m, loads: newLoads, crackParams };
-    });
-    onImport(labeled, designGroups, pickId, capturedModelMap ?? undefined);
+    // refresh envelope load labels with the chosen combos before handing off.
+    // The SLS quasi-permanent combo is stored at PROJECT level (project.slsCombo)
+    // and resolved per beam from stationForces at design time — no per-member id.
+    const labeled = members.map(m => ({
+      ...m,
+      loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)],
+    }));
+    onImport(labeled, designGroups, pickId, capturedModelMap ?? undefined, slsComboId || undefined);
   }
 
   // ── styles ──────────────────────────────────────────────────────────────────

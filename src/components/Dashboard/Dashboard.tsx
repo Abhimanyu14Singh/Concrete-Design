@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { Project, Member, DesignResults, DesignCode, CrackControlParams } from '../../types';
+import type { Project, Member, DesignResults, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
+import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI } from '../../utils/wallDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import CodeBadge from '../common/CodeBadge';
@@ -27,19 +28,11 @@ function worstOf(r: DesignResults): number {
   );
 }
 
-function resolvedCrack(member: Member, code: string): CrackControlParams | undefined {
-  const cp = member.crackParams;
-  if (!cp || code !== 'EN1992-1-1' || !cp.slsLoadCaseId) return cp;
-  const slsCase = member.loads.find(l => l.id === cp.slsLoadCaseId);
-  if (!slsCase) return cp;
-  return { ...cp, Mqp_pos: slsCase.Mu_pos, Mqp_neg: slsCase.Mu_neg };
-}
-
-function summarize(m: Member, code: DesignCode): MemberSummary {
+function summarize(m: Member, code: DesignCode, slsCombo?: string): MemberSummary {
   const isWall = m.memberType === 'wall' && !!m.wallRebar;
   const results = m.loads.map(l => isWall
     ? designWallACI(m.section, m.material, m.wallRebar!, l)
-    : runDesign(m.section, m.material, m.rebar, l, m.span, code, resolvedCrack(m, code)));
+    : runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo)));
   const maxDCR = Math.max(...results.map(worstOf));
   const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
   return { member: m, worstResult, maxDCR };
@@ -55,7 +48,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const [editingMeta, setEditingMeta] = useState(false);
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
 
-  const summaries = project.members.map(m => summarize(m, project.code));
+  const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;
