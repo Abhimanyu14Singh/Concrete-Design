@@ -6,6 +6,8 @@ import { designWallACI } from '../../utils/wallDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import CodeBadge from '../common/CodeBadge';
 import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
+import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -44,14 +46,38 @@ const dcrBg = themeDcrBg;
 const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
 
 export default function Dashboard({ project, onSelectMember, onProjectUpdate }: Props) {
-  const { setUnits } = useUnits();
+  const { units, setUnits } = useUnits();
   const [editingMeta, setEditingMeta] = useState(false);
+  const [skinNumBars, setSkinNumBars] = useState(2);
+  const [skinBarSize, setSkinBarSize] = useState(units === 'si' ? -16 : 5);
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
 
   const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;
+
+  // Members with issues (NG or Warning), sorted NG / highest DCR first.
+  const issues = summaries
+    .filter(s => s.worstResult.status !== 'OK')
+    .sort((a, b) => {
+      const an = a.worstResult.status === 'NG' ? 1 : 0;
+      const bn = b.worstResult.status === 'NG' ? 1 : 0;
+      if (an !== bn) return bn - an;
+      return b.maxDCR - a.maxDCR;
+    });
+
+  // Beams flagged with a skin/side-face reinforcement warning (EC2 only).
+  const skinFlagged = summaries.filter(s => s.worstResult.warnings.some(isSkinWarning));
+  const flaggedIdSet = new Set(skinFlagged.map(s => s.member.id));
+  const showSkinControl = project.code === 'EN1992-1-1' && skinFlagged.length > 0;
+
+  function applySkinReinforcement() {
+    onProjectUpdate?.({
+      ...project,
+      members: applyMinSkinReinforcement(project.members, flaggedIdSet, { numBars: skinNumBars, barSize: skinBarSize }),
+    });
+  }
 
   const barData = summaries.map(s => {
     const r = s.worstResult;
@@ -155,6 +181,122 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
         </div>
       </div>
 
+      {/* Issues panel */}
+      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Issues</span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>
+            {ngCount} exceeding DCR · {warnCount} warning{warnCount !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {issues.length === 0 ? (
+          <div style={{ padding: '14px 16px', fontSize: 12, color: '#9ca3af' }}>No issues — all members pass.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {issues.map(({ member, worstResult, maxDCR }) => {
+              const isNG = worstResult.status === 'NG';
+              const msgs = Array.from(new Set(worstResult.warnings.map(w => w.message)));
+              const sevOf = (msg: string) =>
+                worstResult.warnings.find(w => w.message === msg)?.severity ?? 'warning';
+              const shown = msgs.slice(0, 3);
+              const extra = msgs.length - shown.length;
+              return (
+                <div
+                  key={member.id}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 16px',
+                    borderBottom: '1px solid #f3f4f6',
+                    background: isNG ? '#fef2f2' : 'white',
+                    borderLeft: `3px solid ${isNG ? '#dc2626' : '#d97706'}`,
+                  }}
+                >
+                  <button
+                    onClick={() => onSelectMember(member.id)}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                      fontSize: 13, fontWeight: 700, color: '#2563eb', textAlign: 'left', minWidth: 110,
+                    }}
+                  >
+                    {member.label}
+                  </button>
+                  <span style={{
+                    fontFamily: 'monospace', fontWeight: 700, fontSize: 12,
+                    color: dcrColor(maxDCR), background: dcrBg(maxDCR), padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+                  }}>
+                    {maxDCR.toFixed(3)}
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, flexShrink: 0, padding: '2px 8px', borderRadius: 10,
+                    color: isNG ? '#dc2626' : '#d97706',
+                    background: isNG ? '#fee2e2' : '#fef3c7',
+                  }}>
+                    {isNG ? 'NG' : 'WARN'}
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 0 }}>
+                    {shown.map(msg => (
+                      <div key={msg} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#4b5563' }}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                          background: sevOf(msg) === 'error' ? '#dc2626' : '#d97706',
+                        }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg}</span>
+                      </div>
+                    ))}
+                    {extra > 0 && (
+                      <div style={{ fontSize: 10, color: '#9ca3af', paddingLeft: 12 }}>+{extra} more</div>
+                    )}
+                    {shown.length === 0 && (
+                      <div style={{ fontSize: 11, color: '#9ca3af' }}>DCR exceeds capacity.</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {showSkinControl && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '10px 16px', borderTop: '1px solid #e5e7eb', background: '#fffbeb',
+          }}>
+            <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>
+              {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''} need skin/side-face reinforcement.
+            </span>
+            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+              Bars/face
+              <input
+                type="number" min={1} value={skinNumBars}
+                onChange={e => setSkinNumBars(Math.max(1, +e.target.value || 1))}
+                style={{ ...inp, width: 56, fontFamily: 'monospace' }}
+              />
+            </label>
+            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+              Bar size
+              <select
+                value={skinBarSize}
+                onChange={e => setSkinBarSize(+e.target.value)}
+                style={inp}
+              >
+                {barSizeOptions(units, skinBarSize).map(s => (
+                  <option key={s} value={s}>{formatBarLabel(s)}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={applySkinReinforcement}
+              style={{
+                padding: '6px 14px', background: '#d97706', color: 'white', border: 'none',
+                borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              Apply min skin reinforcement to {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 16 }}>
         {/* Member table */}
         <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
@@ -227,7 +369,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
                 <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 8 }}>Eurocode 2 — Partial Factor Method</div>
                 <div style={{ marginTop: 10, fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>
                   <div>γ_c = 1.50, γ_s = 1.15</div>
-                  <div>α_cc = 1.0</div>
+                  <div>α_cc = 0.85 (UK NA)</div>
                   <div>cot θ = 2.5 (variable strut)</div>
                 </div>
               </>

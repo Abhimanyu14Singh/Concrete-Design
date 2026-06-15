@@ -69,6 +69,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [rightTab, setRightTab] = useState<RightTab>('groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
   const [inspectedMemberId, setInspectedMemberId] = useState<string | null>(null);
   const [inspectPos, setInspectPos] = useState({ x: 0, y: 0 });
   // Reference overlay lives in component state, NOT the project — writing it to
@@ -145,17 +146,30 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           bot: rebarStr(m.rebar.botBars),
           stirrups: stirrupStr(m.rebar),
           weight: `${w.totalLbFt.toFixed(1)} lb/ft (L ${w.longLbFt.toFixed(1)} + S ${w.stirrupLbFt.toFixed(1)})`,
+          warnings: bestRes?.warnings,
+          status: bestRes?.status,
         };
       } catch (e) {
         info[m.id] = {
           dcr: 0, dcrFlex: 0, dcrShear: 0,
           top: '—', bot: '—', stirrups: '—',
           error: (e as Error).message,
+          status: 'NG',
         };
       }
     }
     return { infoById: info, designResultsById: results };
   }, [members, project.code, project.slsCombo]);
+
+  const errorMemberIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const [id, info] of Object.entries(infoById)) {
+      if (info.status === 'NG' || info.error || info.warnings?.some(w => w.severity === 'error')) {
+        out.add(id);
+      }
+    }
+    return out;
+  }, [infoById]);
 
   const dcrById = useMemo(() => {
     const out: Record<string, number> = {};
@@ -440,6 +454,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             🔍 Inspect
           </button>
 
+          {/* Error highlight toggle */}
+          <button
+            onClick={() => setShowErrors(s => !s)}
+            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: showErrors ? '#dc2626' : 'white', color: showErrors ? 'white' : '#374151' }}
+            title="Highlight beams with design errors or warnings">
+            ⚠ Errors
+          </button>
+
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 11, color: '#9ca3af' }}>
             {map.modelName} · {frames.length} frames · {new Date(map.importedAt).toLocaleDateString()}
@@ -517,6 +539,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             hiddenStories={hiddenStories}
             inspectMode={inspectMode}
             inspectedMemberId={inspectedMemberId}
+            showErrors={showErrors}
+            errorMemberIds={errorMemberIds}
           />
 
           {/* Beam inspect card */}

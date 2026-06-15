@@ -22,6 +22,8 @@ export interface FrameInfo {
   /** Steel weight intensity, e.g. "23.4 lb/ft (L 16.1 + S 7.3)". */
   weight?: string;
   error?: string;
+  warnings?: { code: string; message: string; severity: 'error' | 'warning' }[];
+  status?: 'OK' | 'NG' | 'Warning';
 }
 
 const GROUP_PALETTE = [
@@ -65,6 +67,10 @@ interface Props {
   inspectMode?: boolean;
   /** Member currently shown in the rich inspect card (tooltip suppressed for it). */
   inspectedMemberId?: string | null;
+  /** When true, draw red halos under flagged members. */
+  showErrors?: boolean;
+  /** Member ids flagged as having errors. */
+  errorMemberIds?: Set<string>;
 }
 
 export default function MapCanvas({
@@ -76,6 +82,7 @@ export default function MapCanvas({
   metricById = {}, metricRange, metricLabel,
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
+  showErrors = false, errorMemberIds = new Set(),
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -370,6 +377,7 @@ export default function MapCanvas({
           const x2 = tx(f.pt2.x), y2 = ty(f.pt2.y);
           const color = frameColor(f);
           const linked = !!f.memberId;
+          const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);
           return (
             <g key={f.frameName}
               data-framename={f.frameName}
@@ -397,6 +405,7 @@ export default function MapCanvas({
               onDoubleClick={() => f.memberId && onDoubleClick?.(f.memberId)}
             >
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
+              {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#dc2626" strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
               {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={9} opacity={0.35} strokeLinecap="round" />}
               <line x1={x1} y1={y1} x2={x2} y2={y2}
                 stroke={color}
@@ -433,7 +442,7 @@ export default function MapCanvas({
           position: 'absolute', top: 8, right: 8, background: 'white',
           border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
           fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-          pointerEvents: 'none', maxWidth: 240,
+          pointerEvents: 'none', maxWidth: 280,
         }}>
           <div style={{ fontWeight: 700, color: '#111827', marginBottom: 3 }}>{hovered.frameName}</div>
           <div style={{ color: '#6b7280', marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
@@ -459,6 +468,26 @@ export default function MapCanvas({
           ) : (
             <div style={{ color: '#9ca3af' }}>Not yet designed</div>
           )}
+          {hoveredInfo?.warnings && hoveredInfo.warnings.length > 0 && (() => {
+            const sorted = [...hoveredInfo.warnings].sort((a, b) =>
+              (a.severity === 'error' ? 0 : 1) - (b.severity === 'error' ? 0 : 1));
+            const shown = sorted.slice(0, 3);
+            const extra = sorted.length - shown.length;
+            return (
+              <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f3f4f6', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {shown.map((w, i) => {
+                  const txt = `${w.code}: ${w.message}`;
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 4, fontSize: 10 }}>
+                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginTop: 3, flexShrink: 0, background: w.severity === 'error' ? '#dc2626' : '#d97706' }} />
+                      <span style={{ color: '#4b5563' }}>{txt.length > 60 ? txt.slice(0, 60) + '…' : txt}</span>
+                    </div>
+                  );
+                })}
+                {extra > 0 && <div style={{ fontSize: 9, color: '#9ca3af' }}>+{extra} more</div>}
+              </div>
+            );
+          })()}
           {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
             <div style={{ marginTop: 4, fontSize: 10 }}>
               <span style={{ color: '#374151' }}>{metricLabel ?? 'Metric'}: </span>
@@ -466,6 +495,14 @@ export default function MapCanvas({
             </div>
           )}
           <div style={{ color: '#9ca3af', marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
+        </div>
+      )}
+
+      {/* Error highlight hint */}
+      {showErrors && (
+        <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#dc2626' }}>
+          <span style={{ display: 'inline-block', width: 14, height: 3, background: '#dc2626', borderRadius: 2, opacity: 0.45 }} />
+          ⚠ has errors
         </div>
       )}
 
