@@ -32,7 +32,8 @@ const IN2_TO_MM2 = 645.16;
 // Partial safety factors (EN 1992-1-1 Table 2.1N)
 const GAMMA_C = 1.5;
 const GAMMA_S = 1.15;
-const ALPHA_CC = 1.0;
+// UK National Annex value (base EN 1992-1-1 uses 1.0)
+const ALPHA_CC = 0.85;
 
 // ── §3.1.7 rectangular stress block factors ─────────────────────────────────
 export function lambdaEta(fck: number): { lambda: number; eta: number } {

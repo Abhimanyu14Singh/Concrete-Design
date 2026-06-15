@@ -33,7 +33,7 @@ export function generateBreakdownEC2(
   const fck = material.fc * PSI_TO_MPA;
   const fyk = material.fy * PSI_TO_MPA;
   const fywk = material.fyt * PSI_TO_MPA;
-  const fcd = fck / 1.5;
+  const fcd = 0.85 * fck / 1.5;
   const fyd = fyk / 1.15;
   const fywd = fywk / 1.15;
   const { lambda, eta } = lambdaEta(fck);
@@ -51,7 +51,7 @@ export function generateBreakdownEC2(
   sections.push({
     title: '1. Design Values (EN 1992-1-1 §2.4, §3.1)',
     steps: [
-      { ref: '§3.1.6', label: 'Design compressive strength', equation: 'fcd = αcc·fck/γc', substitution: `1.0 × ${f(fck)} / 1.5`, result: `fcd = ${f(fcd)} MPa` },
+      { ref: '§3.1.6', label: 'Design compressive strength', equation: 'fcd = αcc·fck/γc', substitution: `0.85 × ${f(fck)} / 1.5`, result: `fcd = ${f(fcd)} MPa` },
       { ref: '§3.2.7', label: 'Design steel strength', equation: 'fyd = fyk/γs', substitution: `${f(fyk, 0)} / 1.15`, result: `fyd = ${f(fyd, 0)} MPa` },
       { ref: '§3.1.7', label: 'Stress block factors', equation: 'λ, η (fck ≤ 50 MPa)', substitution: `fck = ${f(fck)} MPa`, result: `λ = ${f(lambda, 2)}, η = ${f(eta, 2)}` },
       { ref: '—', label: 'Effective depth', equation: 'd = h − c − Øst − Øbar/2', substitution: `${f(h, 0)} − ${f(cover, 0)} − ${f(stirrupD, 1)} − ${f(botBarD / 2, 1)}`, result: `d = ${f(d, 0)} mm`, note: `Bottom steel: ${botDesc}, As = ${f(As, 0)} mm²` },

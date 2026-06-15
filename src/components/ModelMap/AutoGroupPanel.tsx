@@ -32,11 +32,12 @@ export default function AutoGroupPanel({
 }: AutoGroupPanelProps) {
   const [algorithm, setAlgorithm] = useState<'jenks' | 'quantile'>('jenks');
   const [kPerFamily, setKPerFamily] = useState<number | 'auto'>('auto');
+  const [metric, setMetric] = useState<import('../../utils/autoGroup').DemandMetric>('governing');
 
   // Live suggestions (recomputed on algorithm / k change)
   const baseSuggestions = useMemo(
-    () => suggestGroups(members, kPerFamily, algorithm),
-    [members, algorithm, kPerFamily]
+    () => suggestGroups(members, kPerFamily, algorithm, metric),
+    [members, algorithm, kPerFamily, metric]
   );
 
   // Per-family user-tweaked breaks (initially from suggestion)
@@ -168,6 +169,18 @@ export default function AutoGroupPanel({
 
   return (
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Demand metric selector */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        <span style={{ fontSize: 10, color: '#9ca3af', alignSelf: 'center', marginRight: 4 }}>Cluster by:</span>
+        {(['governing', 'Mu_pos', 'Mu_neg', 'Vu'] as const).map(m => (
+          <button key={m} onClick={() => setMetric(m)}
+            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
+              background: metric === m ? '#2563eb' : 'white', color: metric === m ? 'white' : '#374151' }}>
+            {m === 'governing' ? 'Governing' : m === 'Mu_pos' ? 'M⁺' : m === 'Mu_neg' ? 'M⁻' : 'Shear'}
+          </button>
+        ))}
+      </div>
+
       {/* Controls */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <div>

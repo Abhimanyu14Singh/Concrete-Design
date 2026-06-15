@@ -28,10 +28,10 @@ describe('mRd §6.1 — 3Ø20 B500, b=300, d=450', () => {
   const As = 3 * Math.PI * 10 * 10; // 942.5 mm²
   it('hand-check: M_Rd ≈ 170 kN·m', () => {
     const { MRd, x } = mRd(As, 450, 300, fck, fcd, fyd);
-    // x = As·fyd/(η·fcd·λ·b) = 409,772/4800 ≈ 85.4 mm
-    expect(x).toBeCloseTo(85.37, 0);
-    // M_Rd = As·fyd·(d − λx/2) ≈ 170.4 kN·m
-    expect(MRd).toBeCloseTo(170.4, 0);
+    // x = As·fyd/(η·fcd·λ·b); UK NA fcd=0.85×30/1.5=17 MPa → x≈100.4 mm
+    expect(x).toBeCloseTo(100.43, 0);
+    // M_Rd = As·fyd·(d − λx/2) ≈ 168.0 kN·m
+    expect(MRd).toBeCloseTo(167.94, 0);
   });
   it('zero steel → zero capacity', () => {
     expect(mRd(0, 450, 300, fck, fcd, fyd).MRd).toBe(0);
@@ -75,7 +75,7 @@ describe('vRds / vRdMax §6.2.3 — Ø8@200 2-leg, z=405', () => {
     expect(vRds(Asw, 200, 405, fyd, 2.5)).toBeCloseTo(221.3, 0);
   });
   it('hand-check: V_Rd,max ≈ 442 kN', () => {
-    expect(vRdMax(300, 405, fck, fcd, 2.5)).toBeCloseTo(442.4, 0);
+    expect(vRdMax(300, 405, fck, fcd, 2.5)).toBeCloseTo(376.1, 0);
   });
   it('V_Rd,max governs at very tight spacing', () => {
     const vrds = vRds(Asw, 25, 405, fyd, 2.5); // s=25mm — huge V_Rd,s
@@ -134,7 +134,9 @@ describe('designMemberEC2 — imperial in / imperial out', () => {
 
   it('M_Rd matches direct SI calc converted to kip-ft', () => {
     // d = 500 − 25 − 8 − 10 = 457 mm, As = 942.5 mm²
-    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd, fyd).MRd / 1.35582;
+    // UK NA: αcc = 0.85 → fcd_uk = 0.85 * fck / γc
+    const fcd_uk = 0.85 * fck / 1.5;
+    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd_uk, fyd).MRd / 1.35582;
     expect(r.phi_Mn_pos).toBeCloseTo(expected, 0);
   });
 

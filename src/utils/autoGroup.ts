@@ -9,6 +9,9 @@ import { getBarArea, getBarDiam } from './concreteDesign';
 
 // ── Family key ───────────────────────────────────────────────────────────────
 
+export type DemandMetric = 'governing' | 'Mu_pos' | 'Mu_neg' | 'Vu';
+
+
 /** Beams only cluster within the same section size + material. */
 export function familyKey(m: Member): string {
   const { b, h, bw } = m.section;
@@ -219,6 +222,8 @@ export interface AutoGroupSuggestion {
   bins: AutoGroupBin[];
   algorithm: 'jenks' | 'quantile';
   gvf: number;               // goodness-of-variance fit
+  metric: DemandMetric;
+  metricUnit: string;
 }
 
 export function familyLabel(fk: string): string {
@@ -230,8 +235,21 @@ export function suggestGroups(
   members: Member[],
   kPerFamily: number | 'auto' = 'auto',
   algorithm: 'jenks' | 'quantile' = 'jenks',
+  metric: DemandMetric = 'governing',
 ): AutoGroupSuggestion[] {
   const demands = extractDemands(members);
+
+  function demandValue(d: MemberDemand): number {
+    switch (metric) {
+      case 'Mu_pos': return d.MuPos;
+      case 'Mu_neg': return d.MuNeg;
+      case 'Vu': return d.Vu;
+      default: return d.governing;
+    }
+  }
+
+  const metricUnit = metric === 'Vu' ? 'kips' : metric === 'governing' ? '' : 'kip-ft';
+
   const byFamily = new Map<string, MemberDemand[]>();
   for (const d of demands) {
     const list = byFamily.get(d.familyKey) ?? [];
@@ -242,7 +260,7 @@ export function suggestGroups(
   const suggestions: AutoGroupSuggestion[] = [];
 
   for (const [fk, fdemands] of byFamily) {
-    const vals = fdemands.map(d => d.governing);
+    const vals = fdemands.map(d => demandValue(d));
 
     let breaks: number[];
     const breakFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
@@ -270,8 +288,9 @@ export function suggestGroups(
       const d = fdemands[i];
       const b = bins[binAssign[i]];
       b.memberIds.push(d.memberId);
-      if (d.governing < b.demandMin) b.demandMin = d.governing;
-      if (d.governing > b.demandMax) b.demandMax = d.governing;
+      const dv = demandValue(d);
+      if (dv < b.demandMin) b.demandMin = dv;
+      if (dv > b.demandMax) b.demandMax = dv;
       if (d.governing > b.worstGoverning) { b.worstGoverning = d.governing; b.worstMuPos = d.MuPos; b.worstMuNeg = d.MuNeg; b.worstVu = d.Vu; }
     }
     for (const b of bins) { if (b.demandMin === Infinity) b.demandMin = 0; if (b.demandMax === -Infinity) b.demandMax = 0; }
@@ -283,6 +302,8 @@ export function suggestGroups(
       bins: bins.filter(b => b.memberIds.length > 0),
       algorithm,
       gvf: computeGVF(vals, breaks),
+      metric,
+      metricUnit,
     });
   }
 
