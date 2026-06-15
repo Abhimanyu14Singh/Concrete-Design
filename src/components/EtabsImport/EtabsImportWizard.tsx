@@ -7,6 +7,7 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import type { Member, DesignGroup, DesignCode, ModelMap, MapFrame } from '../../types';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
@@ -54,6 +55,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   // ETABS groups to mirror as design-group names (empty = group by story·section)
   const [mirrorGroups, setMirrorGroups] = useState<Set<string>>(new Set());
   const [selCombos, setSelCombos] = useState<Set<string>>(new Set());
+  const [slsComboId, setSlsComboId] = useState<string>('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
 
   // step 3
@@ -202,10 +204,16 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
   function commit(pickId?: string) {
     // refresh envelope load labels with the chosen combos before handing off
-    const labeled = members.map(m => ({
-      ...m,
-      loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)],
-    }));
+    const labeled = members.map(m => {
+      const loads = [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)];
+      let crackParams = m.crackParams;
+      if (slsComboId) {
+        // Find the matching load case in the built loads by label (combo name)
+        const matchingLc = loads.find(lc => lc.label === slsComboId) ?? loads[0];
+        crackParams = { ...DEFAULT_CRACK_PARAMS, slsLoadCaseId: matchingLc?.id };
+      }
+      return { ...m, loads, crackParams };
+    });
     onImport(labeled, designGroups, pickId, capturedModelMap ?? undefined);
   }
 
@@ -381,6 +389,20 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       Only the selected combinations are requested from ETABS.
                     </div>
                   )}
+                  <div style={{ marginTop: 10 }}>
+                    <div style={lbl}>SLS quasi-permanent combo (for EC2 crack width)</div>
+                    <select
+                      style={{ ...inp, width: '100%' }}
+                      value={slsComboId}
+                      onChange={e => setSlsComboId(e.target.value)}
+                    >
+                      <option value="">— none / use M_qp ratio —</option>
+                      {combos.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                      If selected, this combo's moments are used as M_qp for EC2 §7.3.4 crack width checks.
+                    </div>
+                  </div>
                 </div>
               </div>
               <div style={card}>

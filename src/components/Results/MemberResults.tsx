@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode, CrackControlParams } from '../../types';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { runDesign } from '../../engines';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
@@ -362,8 +363,8 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
           <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} />
           <KV k={`${cap.Mn}−`} v={fmt(result.phi_Mn_neg, 'moment')} />
           <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg} />
-          {code !== 'EN1992-1-1' && <KV k="As req+" v={fmt(result.As_req_pos, 'area')} />}
-          {code !== 'EN1992-1-1' && <KV k="As req−" v={fmt(result.As_req_neg, 'area')} />}
+          <KV k="As req+" v={fmt(result.As_req_pos, 'area')} />
+          <KV k="As req−" v={fmt(result.As_req_neg, 'area')} />
           <KV k="As min" v={fmt(result.As_min, 'area')} />
           <KV k="As max" v={fmt(result.As_max, 'area')} />
 
@@ -395,6 +396,22 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
                   dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} />
               )}
               <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`} />
+              {(result.wk_bot !== undefined || result.wk_top !== undefined) && (() => {
+                const crack = { ...DEFAULT_CRACK_PARAMS, ...member.crackParams };
+                const slsFails = (result.wk_bot ?? 0) > crack.wLimitBot || (result.wk_top ?? 0) > crack.wLimitTop;
+                return (
+                  <div style={{ marginTop: 6 }}>
+                    <span style={{
+                      fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700,
+                      background: slsFails ? '#fef2f2' : '#f0fdf4',
+                      color: slsFails ? '#dc2626' : '#16a34a',
+                      border: `1px solid ${slsFails ? '#fecaca' : '#bbf7d0'}`,
+                    }}>
+                      {slsFails ? '⚠ SLS governs — upsize bars for crack width' : '✓ ULS governs'}
+                    </span>
+                  </div>
+                );
+              })()}
             </>
           )}
             </>
