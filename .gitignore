@@ -27,3 +27,4 @@ dist-ssr
 tools/EtabsHelper/bin/
 tools/EtabsHelper/obj/
 build-helper/
+.claude/
