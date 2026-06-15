@@ -51,29 +51,30 @@ function maxBarsPerLayer(member: Member, barSize: number): number {
   return Math.max(0, Math.floor((usable + clear) / (db + clear)));
 }
 
-/** All practical layouts for one face with As ≥ required, lightest first. */
-function faceCandidates(member: Member, AsRequired: number): FaceCandidate[] {
+/**
+ * Practical layouts for one face at a SINGLE bar size with As ≥ required,
+ * lightest first. Number of bars / layers may vary, but the size is fixed.
+ */
+function faceCandidatesAtSize(member: Member, AsRequired: number, size: number): FaceCandidate[] {
   const out: FaceCandidate[] = [];
-  for (const size of LONG_BAR_SIZES) {
-    const Ab = getBarArea(size);
-    const nMax = maxBarsPerLayer(member, size);
-    if (nMax < 2) continue;
-    // single layer
-    for (let n = 2; n <= nMax; n++) {
-      const As = n * Ab;
-      if (As >= AsRequired) { out.push({ layers: [{ numBars: n, barSize: size }], As }); break; }
-    }
-    // two layers (outer ≥ inner, inner ≥ 2)
-    const maxTotal = 2 * nMax;
-    for (let total = Math.max(4, nMax + 1); total <= maxTotal; total++) {
-      const As = total * Ab;
-      if (As < AsRequired) continue;
-      const outer = Math.min(nMax, Math.ceil(total / 2) > nMax ? nMax : Math.ceil(total / 2));
-      const inner = total - outer;
-      if (inner < 2 || inner > outer) continue;
-      out.push({ layers: [{ numBars: outer, barSize: size }, { numBars: inner, barSize: size }], As });
-      break;
-    }
+  const Ab = getBarArea(size);
+  const nMax = maxBarsPerLayer(member, size);
+  if (nMax < 2) return out;
+  // single layer
+  for (let n = 2; n <= nMax; n++) {
+    const As = n * Ab;
+    if (As >= AsRequired) { out.push({ layers: [{ numBars: n, barSize: size }], As }); break; }
+  }
+  // two layers (outer ≥ inner, inner ≥ 2)
+  const maxTotal = 2 * nMax;
+  for (let total = Math.max(4, nMax + 1); total <= maxTotal; total++) {
+    const As = total * Ab;
+    if (As < AsRequired) continue;
+    const outer = Math.min(nMax, Math.ceil(total / 2) > nMax ? nMax : Math.ceil(total / 2));
+    const inner = total - outer;
+    if (inner < 2 || inner > outer) continue;
+    out.push({ layers: [{ numBars: outer, barSize: size }, { numBars: inner, barSize: size }], As });
+    break;
   }
   return out.sort((a, b) => a.As - b.As);
 }
@@ -135,9 +136,17 @@ export function suggestGroupRebar(
   const AsTopReq = Math.max(worstAsTop / targetDCR, worstAsMin);
   const AsBotReq = Math.max(worstAsBot / targetDCR, worstAsMin);
 
-  const topCands = faceCandidates(governing, AsTopReq);
-  const botCands = faceCandidates(governing, AsBotReq);
-  if (!topCands.length || !botCands.length) {
+  // Pick the smallest COMMON bar size where both faces have a feasible layout.
+  // Top and bottom must share one bar size (bar count / layers may still differ).
+  let sizeIdx = -1;
+  let topCands: FaceCandidate[] = [];
+  let botCands: FaceCandidate[] = [];
+  for (let i = 0; i < LONG_BAR_SIZES.length; i++) {
+    const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i]);
+    const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i]);
+    if (t.length && b.length) { sizeIdx = i; topCands = t; botCands = b; break; }
+  }
+  if (sizeIdx < 0) {
     return { error: 'No practical bar layout fits this section — consider a larger section.' };
   }
   const stirrups = stirrupCandidate(worstAv, targetDCR);
@@ -146,6 +155,9 @@ export function suggestGroupRebar(
   }
 
   // 2. Verify the layout on every member; bump candidates if DCR exceeds target.
+  //    Bumping a face stays at the current common size (more bars / a layer);
+  //    only when a face is exhausted at this size do we step up to the next
+  //    common size and recompute both faces.
   let ti = 0, bi = 0;
   for (let retry = 0; retry <= MAX_VERIFY_RETRIES; retry++) {
     const candidate: RebarLayout = {
@@ -191,13 +203,27 @@ export function suggestGroupRebar(
       };
     }
 
-    // Bump the failing face's candidate
+    // Bump the failing face's candidate. Prefer bumping within the current
+    // common bar size (more bars / a layer). If both faces are exhausted at
+    // this size, step up to the next common size and recompute both faces so
+    // top and bottom keep a shared bar size.
     if (!flexOk) {
       if (worstFlexFace === 'top' && ti < topCands.length - 1) ti++;
       else if (worstFlexFace === 'bot' && bi < botCands.length - 1) bi++;
       else if (ti < topCands.length - 1) ti++;
       else if (bi < botCands.length - 1) bi++;
-      else return { error: 'Even the largest practical layout exceeds the target DCR — consider a larger section.' };
+      else {
+        // Exhausted at this size — step up to the next common size.
+        let stepped = false;
+        for (let i = sizeIdx + 1; i < LONG_BAR_SIZES.length; i++) {
+          const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i]);
+          const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i]);
+          if (t.length && b.length) {
+            sizeIdx = i; topCands = t; botCands = b; ti = 0; bi = 0; stepped = true; break;
+          }
+        }
+        if (!stepped) return { error: 'Even the largest practical layout exceeds the target DCR — consider a larger section.' };
+      }
     } else if (!shearOk) {
       // tighten end-zone spacing one increment, or add legs via next stirrupCandidate demand bump
       const idx = STIRRUP_SPACINGS.indexOf(stirrups.spacing);

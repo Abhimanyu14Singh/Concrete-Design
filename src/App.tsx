@@ -312,6 +312,26 @@ export default function App() {
     }
   }
 
+  function deleteMembers(ids: string[]) {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    setProject(p => {
+      const members = p.members.filter(mm => !idSet.has(mm.id));
+      const designGroups = (p.designGroups ?? [])
+        .map(g => ({ ...g, memberIds: g.memberIds.filter(mid => !idSet.has(mid)) }))
+        .filter(g => g.memberIds.length > 0);
+      return { ...p, members, designGroups };
+    });
+    if (activeMemberId && idSet.has(activeMemberId)) {
+      const remaining = project.members.filter(mm => !idSet.has(mm.id));
+      if (remaining.length) {
+        setActiveMemberId(remaining[0].id);
+      } else {
+        setTab('dashboard');
+      }
+    }
+  }
+
   // A3: Drag-to-reorder
   function onDragStart(id: string) { setDragSrcId(id); }
   function onDragOver(e: React.DragEvent, id: string) { e.preventDefault(); setDragOverId(id); }
@@ -753,6 +773,7 @@ export default function App() {
                   onOpenEtabsImport={() => setShowEtabsImport(true)}
                   onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
                   onDeleteMember={id => deleteMember(id)}
+                  onDeleteMembers={ids => deleteMembers(ids)}
                 />
               </div>
             )}

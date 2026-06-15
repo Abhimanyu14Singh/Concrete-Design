@@ -53,11 +53,15 @@ describe('suggestGroupRebar', () => {
     const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
     expect(isSuggestError(r)).toBe(false);
     if (isSuggestError(r)) return;
-    for (const g of [...r.rebar.topBars, ...r.rebar.botBars]) {
+    const allBars = [...r.rebar.topBars, ...r.rebar.botBars];
+    for (const g of allBars) {
       expect(g.barSize).toBeGreaterThanOrEqual(5);
       expect(g.barSize).toBeLessThanOrEqual(9);
       expect(g.numBars).toBeGreaterThanOrEqual(2);
     }
+    // Top and bottom faces must share a single bar size.
+    const sizes = new Set(allBars.map(g => g.barSize));
+    expect(sizes.size).toBe(1);
     expect([4, 5]).toContain(r.rebar.ties!.barSize);
     expect([4, 6, 8, 10, 12]).toContain(r.rebar.ties!.spacing);
     expect(r.rebar.tieZones).toHaveLength(3);

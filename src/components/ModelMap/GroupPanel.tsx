@@ -22,12 +22,16 @@ interface Props {
   dcrById?: Record<string, number>;
   designResultsById?: Record<string, DesignResults>;
   members?: Member[];
+  onDeleteGroupWithMembers?: (groupId: string) => void;
+  onSuggestAll?: () => void;
+  suggestAllNote?: string | null;
 }
 
 export default function GroupPanel({
   groups, frames, selected, activeGroupId,
   onGroupsChange, onActiveGroupChange, onSelectionChange, dcrById = {},
   designResultsById = {}, members = [],
+  onDeleteGroupWithMembers, onSuggestAll, suggestAllNote,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
@@ -92,6 +96,12 @@ export default function GroupPanel({
     if (!confirm(`Delete group "${grp?.label ?? 'this group'}"? Members are not removed, only the group.`)) return;
     onGroupsChange(groups.filter(g => g.id !== gId));
     if (activeGroupId === gId) onActiveGroupChange(null);
+  }
+
+  function deleteGroupWithMembers(g: DesignGroup) {
+    if (!confirm(`Delete group "${g.label}" AND its ${g.memberIds.length} beams permanently? This cannot be undone.`)) return;
+    onDeleteGroupWithMembers?.(g.id);
+    if (activeGroupId === g.id) onActiveGroupChange(null);
   }
 
   function renameStart(g: DesignGroup) {
@@ -167,6 +177,19 @@ export default function GroupPanel({
         >
           + Group selection ({selected.size})
         </button>
+        {onSuggestAll && (
+          <button
+            onClick={onSuggestAll}
+            disabled={groups.length === 0}
+            title="Suggest the lightest practical rebar for every group at once"
+            style={{ flexShrink: 0, padding: '6px 8px', background: groups.length ? 'white' : '#f3f4f6', color: groups.length ? '#7c3aed' : '#9ca3af', border: `1px solid ${groups.length ? '#c4b5fd' : '#e5e7eb'}`, borderRadius: 6, cursor: groups.length ? 'pointer' : 'default', fontWeight: 700, fontSize: 11 }}
+          >
+            ✨ Suggest all groups
+          </button>
+        )}
+        {suggestAllNote && (
+          <div style={{ flexBasis: '100%', fontSize: 10, color: '#6d28d9' }}>{suggestAllNote}</div>
+        )}
       </div>
 
       {/* Selection chips — per-frame add/remove buttons */}
@@ -272,11 +295,20 @@ export default function GroupPanel({
                 >{statsOpen ? '▾' : '▸'}</button>
               )}
 
+              {/* Delete group + its beams */}
+              {onDeleteGroupWithMembers && (
+                <button
+                  onClick={e => { e.stopPropagation(); deleteGroupWithMembers(g); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 12, padding: '0 2px' }}
+                  title="Delete group AND its beams permanently"
+                >🗑</button>
+              )}
+
               {/* Dissolve */}
               <button
                 onClick={e => { e.stopPropagation(); dissolveGroup(g.id); }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14, padding: '0 2px' }}
-                title="Dissolve group"
+                title="Dissolve group (keep beams)"
               >×</button>
             </div>
 

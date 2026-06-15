@@ -7,6 +7,7 @@ import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, Aut
 import { runDesign } from '../../engines';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
+import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -24,6 +25,7 @@ interface Props {
   onOpenEtabsImport: () => void;
   onPickMember: (memberId: string) => void;
   onDeleteMember?: (memberId: string) => void;
+  onDeleteMembers?: (ids: string[]) => void;
 }
 
 function resolvedCrack(member: Member, code: string): CrackControlParams | undefined {
@@ -64,7 +66,7 @@ function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V'): { x: nu
 
 // stationEnvelope is used inside BeamInspectCard too, exported there locally.
 
-export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember }: Props) {
+export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>('dcr');
@@ -80,6 +82,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // the project on every recompute caused an infinite render loop.
   const [autoGroupOverlay, setAutoGroupOverlay] = useState<AutoGroupBin[]>([]);
   const [contextMenu, setContextMenu] = useState<{ memberId: string; frameName: string; x: number; y: number } | null>(null);
+  const [suggestAllNote, setSuggestAllNote] = useState<string | null>(null);
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
@@ -213,6 +216,50 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       memberIds.includes(m.id) ? { ...m, rebar } : m
     );
     onProjectChange({ ...project, designGroups: newGroups, members: newMembers });
+  }
+
+  function handleDeleteGroupWithMembers(groupId: string) {
+    const grp = groups.find(g => g.id === groupId);
+    if (!grp) return;
+    onDeleteMembers?.(grp.memberIds);
+    // deleteMembers already drops groups that become empty, but remove the group
+    // explicitly in case it isn't empty (shouldn't happen) — keep behavior robust.
+    onProjectChange({ ...project, designGroups: groups.filter(g => g.id !== groupId) });
+    if (activeGroupId === groupId) setActiveGroupId(null);
+  }
+
+  function handleSuggestAllGroups() {
+    const target = project.targetDCR ?? 0.9;
+    let nextGroups = groups;
+    let nextMembers = members;
+    let ok = 0, fail = 0;
+    let firstError: string | null = null;
+
+    for (const g of groups) {
+      const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
+      const designed = membersInGroup.filter(m => m.memberType === 'beam' && m.loads.length > 0);
+      if (!designed.length) continue; // skip empty / no designed beams
+      const r = suggestGroupRebar(membersInGroup, project.code, target);
+      if (isSuggestError(r)) {
+        fail++;
+        if (!firstError) firstError = r.error;
+        continue;
+      }
+      ok++;
+      const memberIdSet = new Set(g.memberIds);
+      nextGroups = nextGroups.map(gg => gg.id === g.id ? { ...gg, rebar: r.rebar } : gg);
+      nextMembers = nextMembers.map(m => memberIdSet.has(m.id) ? { ...m, rebar: r.rebar } : m);
+    }
+
+    if (ok > 0) {
+      onProjectChange({ ...project, designGroups: nextGroups, members: nextMembers });
+    }
+    const total = ok + fail;
+    setSuggestAllNote(
+      total === 0
+        ? 'No groups with designed beams to suggest.'
+        : `Suggested ${ok}/${total} groups${fail > 0 ? ` · ${fail} need larger sections${firstError ? ` (${firstError})` : ''}` : ''}`
+    );
   }
 
   function handleAcceptSuggestion(suggested: DesignGroup[]) {
@@ -515,6 +562,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                 dcrById={dcrById}
                 designResultsById={designResultsById}
                 members={members}
+                onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
+                onSuggestAll={handleSuggestAllGroups}
+                suggestAllNote={suggestAllNote}
               />
               {activeGroup && (
                 <GroupRebarEditor
