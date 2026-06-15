@@ -293,18 +293,27 @@ export function designMemberEC2(
     warnings.push({ code: 'EC2 §6.2.3', message: `Strut crushing governs: V_Rd,max = ${VRdmax.toFixed(1)} kN < V_Rd,s = ${VRds.toFixed(1)} kN`, severity: 'warning' });
 
   // ── Torsion ──
-  let TRd = 0, TRdc_val = 0;
+  let TRd = 0, TRdc_val = 0, TRdMax_val = 0;
   if (rebar.ties) {
     const AtLeg_mm2 = getBarArea(rebar.ties.barSize) * IN2_TO_MM2; // one leg
     const s_mm = rebar.ties.spacing * IN_TO_MM;
     const t = tRd(b_mm, h_mm, AtLeg_mm2, s_mm, fywd, fck, fcd, cotTheta);
     TRd = Math.min(t.TRds, t.TRdMax);
     TRdc_val = t.TRdc;
+    TRdMax_val = t.TRdMax;
     if (TEd > 0 && t.TRds > t.TRdMax)
       warnings.push({ code: 'EC2 §6.3.2', message: `Torsion strut crushing governs: T_Rd,max = ${t.TRdMax.toFixed(1)} kN·m`, severity: 'warning' });
   } else {
     const t = tRd(b_mm, h_mm, 0, 1, fywd, fck, fcd, cotTheta);
     TRdc_val = t.TRdc;
+  }
+
+  // Combined shear+torsion interaction §6.3.2(4) Eq 6.29
+  if (TEd > TRdc_val && TRdMax_val > 0 && VRdmax > 0) {
+    const combined = TEd / TRdMax_val + VEd / VRdmax;
+    if (combined > 1.0) {
+      warnings.push({ code: 'EC2 §6.3.2(4)', message: `Combined V+T interaction: T_Ed/T_Rd,max + V_Ed/V_Rd,max = ${combined.toFixed(2)} > 1.0 — strut crushing governs`, severity: 'error' });
+    }
   }
 
   // ── Detailing checks ──
@@ -412,9 +421,10 @@ export function designMemberEC2(
     DCR_flex_pos, DCR_flex_neg,
     Vc: toKip(VRdc), Vs: toKip(VRds), phi_Vn: toKip(VRd), DCR_shear,
     Tcr: toKipFt(TRdc_val), Tu_threshold: toKipFt(TRdc_val), phi_Tn: toKipFt(TRd), DCR_torsion,
-    As_req_pos: 0, As_req_neg: 0,
+    As_req_pos: toIn2(Math.max(MEd_pos > 0 ? MEd_pos * 1e6 / (fyd * 0.9 * d_bot) : 0, AsMin_mm2)),
+    As_req_neg: toIn2(Math.max(MEd_neg > 0 ? MEd_neg * 1e6 / (fyd * 0.9 * d_top) : 0, AsMin_mm2)),
     As_min: toIn2(AsMin_mm2), As_max: toIn2(AsMax_mm2),
-    Av_req: 0,
+    Av_req: Math.max(0, VEd - VRdc) > 0 ? (Math.max(0, VEd - VRdc) * 1000) / (z * fywd * cotTheta) * IN_TO_MM / IN2_TO_MM2 : 0,
     Av_min_per_s: (0.08 * Math.sqrt(fck) / fywk) * b_mm / IN_TO_MM, // in²/in equivalent
     wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face,
     warnings, status,

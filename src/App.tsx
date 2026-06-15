@@ -391,7 +391,7 @@ export default function App() {
           {sidebarOpen && (
             <div style={{ overflow: 'hidden' }}>
               <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: '#111827' }}>S-Concrete</div>
-              <div style={{ color: '#9ca3af', fontSize: 10, whiteSpace: 'nowrap' }}>ACI 318-19</div>
+              <div style={{ color: '#9ca3af', fontSize: 10, whiteSpace: 'nowrap' }}>{project.code}</div>
             </div>
           )}
           <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
@@ -710,9 +710,21 @@ export default function App() {
 
           {/* Project info */}
           <div style={{ fontSize: 11, color: '#6b7280' }}>{project.name}</div>
-          <div style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 8px', fontWeight: 700 }}>
-            {project.code}
-          </div>
+          <select
+            value={project.code}
+            onChange={e => {
+              const newCode = e.target.value as import('./types').DesignCode;
+              if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') {
+                setUnits('si');
+              }
+              setProject(p => ({ ...p, code: newCode }));
+            }}
+            style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
+          >
+            {(['ACI318-19', 'ACI318-14', 'ACI318-25', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
         </header>
 
         {/* Content */}
