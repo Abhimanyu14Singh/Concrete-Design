@@ -9,6 +9,7 @@ import { useState, useMemo, useEffect } from 'react';
 import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
+  demandValueFor, metricUnitFor, metricLabelFor,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
 import HistogramPanel from './HistogramPanel';
@@ -64,7 +65,7 @@ export default function AutoGroupPanel({
   );
 
   const currentBreaks = activeSuggestion ? getBreaks(activeFamily, activeSuggestion) : [];
-  const vals = familyDemands.map(d => d.governing);
+  const vals = familyDemands.map(d => demandValueFor(d, metric));
   const binAssignment = vals.length ? assignByBreaks(vals, currentBreaks) : [];
 
   // Bin preview
@@ -81,7 +82,7 @@ export default function AutoGroupPanel({
     for (const sug of baseSuggestions) {
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = demands.filter(d => d.familyKey === sug.familyKey);
-      const famVals = famDemands.map(d => d.governing);
+      const famVals = famDemands.map(d => demandValueFor(d, metric));
       const assign = famVals.length ? assignByBreaks(famVals, breaks) : [];
       const numB = breaks.length + 1;
       const binsArr: string[][] = Array.from({ length: numB }, () => []);
@@ -98,7 +99,7 @@ export default function AutoGroupPanel({
     }
     return bins;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseSuggestions, tweakedBreaks, demands]);
+  }, [baseSuggestions, tweakedBreaks, demands, metric]);
 
   useEffect(() => {
     onOverlayChange?.(allOverlayBins);
@@ -134,7 +135,7 @@ export default function AutoGroupPanel({
       // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = demands.filter(d => d.familyKey === sug.familyKey);
-      const famVals = famDemands.map(d => d.governing);
+      const famVals = famDemands.map(d => demandValueFor(d, metric));
       const assign = assignByBreaks(famVals, breaks);
       const numB = breaks.length + 1;
       const bins: string[][] = Array.from({ length: numB }, () => []);
@@ -243,7 +244,7 @@ export default function AutoGroupPanel({
             binAssignment={binAssignment}
             breaks={currentBreaks}
             onBreaksChange={br => handleBreaksChange(activeFamily, br)}
-            xLabel="Normalised governing demand →"
+            xLabel={`${metricLabelFor(metric)} →`}
           />
         </div>
       )}
@@ -253,7 +254,7 @@ export default function AutoGroupPanel({
         <div style={lbl}>Group preview ({numBins} groups)</div>
         {binMemberIds.map((mIds, bi) => {
           if (!mIds.length) return null;
-          const worstDemand = Math.max(...familyDemands.filter(d => mIds.includes(d.memberId)).map(d => d.governing));
+          const worstDemand = Math.max(...familyDemands.filter(d => mIds.includes(d.memberId)).map(d => demandValueFor(d, metric)));
           return (
             <div key={bi}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer' }}
@@ -262,7 +263,7 @@ export default function AutoGroupPanel({
               <span style={{ width: 10, height: 10, borderRadius: 2, background: GROUP_PALETTE[bi % GROUP_PALETTE.length], flexShrink: 0 }} />
               <span style={{ fontSize: 11, flex: 1 }}>Group {bi + 1}</span>
               <span style={{ fontSize: 10, color: '#6b7280' }}>{mIds.length} beams</span>
-              <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>{(worstDemand * 100).toFixed(0)}%</span>
+              <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>{metric === 'governing' ? `${(worstDemand * 100).toFixed(0)}%` : `${Math.round(worstDemand)} ${metricUnitFor(metric)}`}</span>
             </div>
           );
         })}

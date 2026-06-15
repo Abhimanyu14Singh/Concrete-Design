@@ -11,6 +11,24 @@ import { getBarArea, getBarDiam } from './concreteDesign';
 
 export type DemandMetric = 'governing' | 'Mu_pos' | 'Mu_neg' | 'Vu';
 
+/** Extract the value for a given demand metric from a MemberDemand. */
+export function demandValueFor(d: MemberDemand, metric: DemandMetric): number {
+  switch (metric) {
+    case 'Mu_pos': return d.MuPos;
+    case 'Mu_neg': return d.MuNeg;
+    case 'Vu': return d.Vu;
+    default: return d.governing;
+  }
+}
+
+export function metricUnitFor(metric: DemandMetric): string {
+  return metric === 'Vu' ? 'kips' : metric === 'governing' ? '' : 'kip-ft';
+}
+
+export function metricLabelFor(metric: DemandMetric): string {
+  return metric === 'Mu_pos' ? 'M⁺ (kip-ft)' : metric === 'Mu_neg' ? 'M⁻ (kip-ft)' : metric === 'Vu' ? 'Shear (kips)' : 'Governing demand';
+}
+
 
 /** Beams only cluster within the same section size + material. */
 export function familyKey(m: Member): string {
@@ -239,16 +257,9 @@ export function suggestGroups(
 ): AutoGroupSuggestion[] {
   const demands = extractDemands(members);
 
-  function demandValue(d: MemberDemand): number {
-    switch (metric) {
-      case 'Mu_pos': return d.MuPos;
-      case 'Mu_neg': return d.MuNeg;
-      case 'Vu': return d.Vu;
-      default: return d.governing;
-    }
-  }
+  const demandValue = (d: MemberDemand): number => demandValueFor(d, metric);
 
-  const metricUnit = metric === 'Vu' ? 'kips' : metric === 'governing' ? '' : 'kip-ft';
+  const metricUnit = metricUnitFor(metric);
 
   const byFamily = new Map<string, MemberDemand[]>();
   for (const d of demands) {
