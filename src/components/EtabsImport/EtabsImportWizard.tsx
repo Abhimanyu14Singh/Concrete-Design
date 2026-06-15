@@ -205,14 +205,15 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   function commit(pickId?: string) {
     // refresh envelope load labels with the chosen combos before handing off
     const labeled = members.map(m => {
-      const loads = [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)];
+      const newLoads = [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)];
       let crackParams = m.crackParams;
       if (slsComboId) {
-        // Find the matching load case in the built loads by label (combo name)
-        const matchingLc = loads.find(lc => lc.label === slsComboId) ?? loads[0];
-        crackParams = { ...DEFAULT_CRACK_PARAMS, slsLoadCaseId: matchingLc?.id };
+        const matchingLc = m.loads.find(lc => lc.label === slsComboId);
+        if (matchingLc) {
+          crackParams = { ...(m.crackParams ?? DEFAULT_CRACK_PARAMS), slsLoadCaseId: matchingLc.id };
+        }
       }
-      return { ...m, loads, crackParams };
+      return { ...m, loads: newLoads, crackParams };
     });
     onImport(labeled, designGroups, pickId, capturedModelMap ?? undefined);
   }

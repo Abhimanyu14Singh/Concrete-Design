@@ -396,18 +396,18 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
                   dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} />
               )}
               <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`} />
-              {(result.wk_bot !== undefined || result.wk_top !== undefined) && (() => {
-                const crack = { ...DEFAULT_CRACK_PARAMS, ...member.crackParams };
-                const slsFails = (result.wk_bot ?? 0) > crack.wLimitBot || (result.wk_top ?? 0) > crack.wLimitTop;
+              {code === 'EN1992-1-1' && (result.wk_bot !== undefined || result.wk_top !== undefined) && (() => {
+                const cp = member.crackParams ?? DEFAULT_CRACK_PARAMS;
+                const slsFails = (result.wk_bot ?? 0) > cp.wLimitBot || (result.wk_top ?? 0) > cp.wLimitTop || (result.wk_face !== undefined && result.wk_face > cp.wLimitFace);
                 return (
-                  <div style={{ marginTop: 6 }}>
+                  <div style={{ marginTop: 4 }}>
                     <span style={{
-                      fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700,
-                      background: slsFails ? '#fef2f2' : '#f0fdf4',
-                      color: slsFails ? '#dc2626' : '#16a34a',
-                      border: `1px solid ${slsFails ? '#fecaca' : '#bbf7d0'}`,
+                      fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 600,
+                      background: slsFails ? '#fee2e2' : '#dcfce7',
+                      color: slsFails ? '#b91c1c' : '#15803d',
+                      border: `1px solid ${slsFails ? '#fca5a5' : '#86efac'}`,
                     }}>
-                      {slsFails ? '⚠ SLS governs — upsize bars for crack width' : '✓ ULS governs'}
+                      {slsFails ? '⚠ SLS governs — upsize bars for crack width' : '✓ ULS governs — crack width OK'}
                     </span>
                   </div>
                 );
