@@ -346,8 +346,8 @@ export function designMemberEC2(
 
   // ── Crack width §7.3.4 (quasi-permanent combination) ──
   const Es_MPa = material.Es * PSI_TO_MPA;
-  const Mqp_pos = crack.qpFactor * MEd_pos;
-  const Mqp_neg = crack.qpFactor * MEd_neg;
+  const Mqp_pos = crack.Mqp_pos !== undefined ? crack.Mqp_pos * KIPFT_TO_KNM : crack.qpFactor * MEd_pos;
+  const Mqp_neg = crack.Mqp_neg !== undefined ? crack.Mqp_neg * KIPFT_TO_KNM : crack.qpFactor * MEd_neg;
 
   // Bottom face (positive bending → bottom steel in tension)
   const cw_bot = crackWidth(Mqp_pos, As_bot_mm2, botBarD_mm, b_mm, h_mm, d_bot,

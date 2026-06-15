@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Project, Member, DesignResults, DesignCode } from '../../types';
+import type { Project, Member, DesignResults, DesignCode, CrackControlParams } from '../../types';
 import { runDesign } from '../../engines';
 import { designWallACI } from '../../utils/wallDesign';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -27,11 +27,19 @@ function worstOf(r: DesignResults): number {
   );
 }
 
+function resolvedCrack(member: Member, code: string): CrackControlParams | undefined {
+  const cp = member.crackParams;
+  if (!cp || code !== 'EN1992-1-1' || !cp.slsLoadCaseId) return cp;
+  const slsCase = member.loads.find(l => l.id === cp.slsLoadCaseId);
+  if (!slsCase) return cp;
+  return { ...cp, Mqp_pos: slsCase.Mu_pos, Mqp_neg: slsCase.Mu_neg };
+}
+
 function summarize(m: Member, code: DesignCode): MemberSummary {
   const isWall = m.memberType === 'wall' && !!m.wallRebar;
   const results = m.loads.map(l => isWall
     ? designWallACI(m.section, m.material, m.wallRebar!, l)
-    : runDesign(m.section, m.material, m.rebar, l, m.span, code, m.crackParams));
+    : runDesign(m.section, m.material, m.rebar, l, m.span, code, resolvedCrack(m, code)));
   const maxDCR = Math.max(...results.map(worstOf));
   const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
   return { member: m, worstResult, maxDCR };

@@ -3,7 +3,7 @@
  * (Groups | Auto-Group | Savings).
  */
 import { useState, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
-import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin } from '../../types';
+import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin, Member, CrackControlParams } from '../../types';
 import { runDesign } from '../../engines';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
@@ -24,6 +24,14 @@ interface Props {
   onOpenEtabsImport: () => void;
   onPickMember: (memberId: string) => void;
   onDeleteMember?: (memberId: string) => void;
+}
+
+function resolvedCrack(member: Member, code: string): CrackControlParams | undefined {
+  const cp = member.crackParams;
+  if (!cp || code !== 'EN1992-1-1' || !cp.slsLoadCaseId) return cp;
+  const slsCase = member.loads.find(l => l.id === cp.slsLoadCaseId);
+  if (!slsCase) return cp;
+  return { ...cp, Mqp_pos: slsCase.Mu_pos, Mqp_neg: slsCase.Mu_neg };
 }
 
 /** Build "2-#8 + 3-#6" style rebar string from layers. */
@@ -114,7 +122,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         let dcrFlex = 0, dcrShear = 0;
         let bestRes: DesignResults | null = null;
         for (const l of m.loads) {
-          const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, m.crackParams);
+          const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolvedCrack(m, project.code));
           const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
           if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear)) bestRes = r;
           dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);

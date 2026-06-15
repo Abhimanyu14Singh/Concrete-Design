@@ -527,10 +527,24 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             <InputRow label="w limit, face" value={crackP.wLimitFace} unit="mm" step={0.05} min={0}
               onChange={v => crack({ wLimitFace: +v })} />
           </div>
-          <div style={{ flex: 1 }}>
-            <InputRow label="M_qp / Mu ratio" value={crackP.qpFactor} step={0.05} min={0}
-              onChange={v => crack({ qpFactor: +v })} />
-          </div>
+        </div>
+        {/* SLS Load Combo picker */}
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>SLS quasi-permanent combo</div>
+          <select
+            value={crackP.slsLoadCaseId ?? ''}
+            onChange={e => crack({ slsLoadCaseId: e.target.value || undefined })}
+            style={{ width: '100%', fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 5 }}
+          >
+            <option value="">— use M_qp/Mu ratio —</option>
+            {m.loads.map(lc => (
+              <option key={lc.id} value={lc.id}>{lc.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ opacity: crackP.slsLoadCaseId ? 0.4 : 1 }}>
+          <InputRow label="M_qp / Mu ratio" value={crackP.qpFactor} step={0.05} min={0}
+            onChange={v => crack({ qpFactor: +v })} />
         </div>
         <SelectRow label="Load duration kt" value={crackP.kt}
           options={[

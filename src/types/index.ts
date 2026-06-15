@@ -261,6 +261,10 @@ export interface CrackControlParams {
   wLimitFace: number;  // allowable crack width at side faces (mm)
   qpFactor: number;    // quasi-permanent moment ratio: M_qp = qpFactor × Mu (0–1)
   kt: number;          // load duration factor: 0.4 long-term, 0.6 short-term
+  // NEW: when set, these override qpFactor × Mu for crack width checks
+  slsLoadCaseId?: string;   // ID of the SLS quasi-permanent load case
+  Mqp_pos?: number;         // kip-ft, resolved from slsLoadCaseId at call site
+  Mqp_neg?: number;         // kip-ft, resolved from slsLoadCaseId at call site
 }
 
 export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
