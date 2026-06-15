@@ -4,7 +4,7 @@ import { designMember } from '../../../utils/concreteDesign';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../../types';
 
 // ── Pure SI function checks (textbook: 300×500 C30/37, B500) ─────────────────
-const fck = 30, fcd = fck / 1.5, fyk = 500, fyd = fyk / 1.15;
+const fck = 30, fcd = 0.85 * fck / 1.5, fyk = 500, fyd = fyk / 1.15; // UK NA: αcc = 0.85
 
 describe('lambdaEta §3.1.7', () => {
   it('fck ≤ 50: λ=0.8, η=1.0', () => {
