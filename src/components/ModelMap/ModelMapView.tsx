@@ -214,10 +214,13 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   function handleDeleteGroupWithMembers(groupId: string) {
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
+    // deleteMembers (App-level) removes the members AND drops any group that
+    // becomes empty as a result — all within a single functional setProject,
+    // so the group disappears with its members. We must NOT also call
+    // onProjectChange here: that runs setProject with a literal object built
+    // from the stale `project` prop (still containing the deleted members),
+    // which would clobber the deletion and resurrect the beams.
     onDeleteMembers?.(grp.memberIds);
-    // deleteMembers already drops groups that become empty, but remove the group
-    // explicitly in case it isn't empty (shouldn't happen) — keep behavior robust.
-    onProjectChange({ ...project, designGroups: groups.filter(g => g.id !== groupId) });
     if (activeGroupId === groupId) setActiveGroupId(null);
   }
 
