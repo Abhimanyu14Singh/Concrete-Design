@@ -192,14 +192,14 @@ export default function AutoGroupPanel({
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ fontSize: 10, color: '#6b7280' }}>Pool:</span>
           <button
-            onClick={() => { setGroupAllBeams(false); setTweakedBreaks({}); }}
+            onClick={() => { setGroupAllBeams(false); setSelectedFamily(''); setTweakedBreaks({}); }}
             style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
               background: !groupAllBeams ? '#2563eb' : 'white', color: !groupAllBeams ? 'white' : '#374151' }}
             title="Group beams within each section family independently">
             By family
           </button>
           <button
-            onClick={() => { setGroupAllBeams(true); setTweakedBreaks({}); }}
+            onClick={() => { setGroupAllBeams(true); setSelectedFamily(''); setTweakedBreaks({}); }}
             style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
               background: groupAllBeams ? '#2563eb' : 'white', color: groupAllBeams ? 'white' : '#374151' }}
             title="Cluster all beams together regardless of section dimensions or material">
