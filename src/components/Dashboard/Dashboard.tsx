@@ -158,8 +158,11 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const selectedMemberId = selection.kind === 'member' ? selection.id : null;
   const selectedMember = selectedMemberId ? (project.members.find(m => m.id === selectedMemberId) ?? null) : null;
   const selectedGroupId = selection.kind === 'group' ? selection.id : null;
+  const ungroupedEntry = ungrouped.length
+    ? { id: '__ungrouped', label: 'Ungrouped', color: '#9ca3af', rebar: undefined as RebarLayout | undefined, members: ungrouped }
+    : null;
   const selectedGroupSection = selectedGroupId
-    ? groupSections.find(g => g.id === selectedGroupId) ?? null
+    ? (groupSections.find(g => g.id === selectedGroupId) ?? (ungroupedEntry?.id === selectedGroupId ? ungroupedEntry : null))
     : null;
 
   function handleMemberUpdate(updated: Member) {
@@ -314,7 +317,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
 
   const allGroups = [
     ...groupSections,
-    ...(ungrouped.length ? [{ id: '__ungrouped', label: 'Ungrouped', color: '#9ca3af', rebar: undefined, members: ungrouped }] : []),
+    ...(ungroupedEntry ? [ungroupedEntry] : []),
   ];
 
   return (
