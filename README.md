@@ -66,6 +66,8 @@ Covers all EC2 checks including V+T interaction, negative flexure, and top/side 
 ### SI / Imperial Unit Toggle
 Display units can be toggled between SI and imperial at any time. Project data is stored internally in imperial units; conversions are applied on display.
 
+Switching the global unit system to **SI** now updates **all** displayed quantities — moments, forces, areas, and steel weights (lb → kg, lb/ft → kg/m, in² → mm², in → mm) — consistently across **MemberResults**, the **Dashboard**, the **Model Map** (including hotspot overlays and the inspect card), the **Savings** panel, and the step-by-step calculation breakdowns.
+
 ### Metric Rebar Support
 Bar sizes use a signed encoding: positive values are US customary bars (e.g. `5` = #5), negative values are metric bars (e.g. `-16` = Ø16 mm).
 
@@ -74,8 +76,16 @@ Per-face crack width limits, quasi-permanent moment ratio M_qp/Mu, and kt factor
 
 **Project-wide SLS quasi-permanent combination** — rather than entering M_qp per beam, the SLS quasi-permanent combination is chosen **once** in the ETABS import wizard (Step 2) and stored project-wide (`project.slsCombo`). When EC2 is the active code, each beam's §7.3.4 crack-width check auto-resolves its M_qp⁺ / M_qp⁻ from that combo's per-station signed-moment envelope (kip-ft) — no per-beam setup. If no project SLS combo is set, the check falls back to the legacy per-member SLS load case, then to the M_qp/Mu ratio. A **per-member override** picker remains for one-off cases. Side / skin reinforcement (which drives the side-face crack check) is set in the Member editor under **"Side Bars"**.
 
+### Skin / Face Reinforcement
+Minimum skin (side / face) reinforcement is handled automatically:
+
+- **On import**, beams that require it are given the code-minimum skin reinforcement per **EC2 §7.3.3** (when EC2 is active) or **ACI §9.7.2.3** (deep-beam side-face bars) so imported members start compliant.
+- A **Dashboard button** applies the minimum skin reinforcement to any beams still flagged for it, in one click. Skin bars drive the EC2 side-face crack-width check and are also editable per member under **"Side Bars"**.
+
 ### DCR Dashboard
 Bar charts showing Demand/Capacity Ratios for all members and load cases. Status indicators: OK / Warning / NG.
+
+**Split workspace** — the Dashboard is laid out as two panes: the left pane lists members grouped by design group; selecting a member loads its inline editor and results in the right pane. A **Skin reinforcement** action applies the code-minimum skin/face reinforcement to flagged beams (see below).
 
 ### Model Map
 A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view snapshot of the imported ETABS model:
@@ -102,7 +112,8 @@ A top-level **Map** tab (Dashboard | Map | Member) shows a persistent plan-view 
 ### Auto-Group (demand clustering)
 The **Map → Auto-Group** tab suggests design groups automatically from analysis demands:
 
-1. Beams are partitioned into **section families** — same b×h and materials (`familyKey`) — so a 14×24 never groups with an 18×30.
+0. A **Pool** toggle chooses the demand pool: **By family** (default) or **All beams**. **By family** partitions beams into section families (next step). **All beams** clusters *every* beam across the model as a single demand pool, ignoring section family — useful when you want a fixed number of detailing groups regardless of section size. It works with the **Total groups (model)** budget and respects per-family k. Switching the toggle resets the family selection.
+1. Beams are partitioned into **section families** — same b×h and materials (`familyKey`) — so a 14×24 never groups with an 18×30 (skipped in **All beams** pool mode).
 2. A **Cluster by** selector chooses which demand metric drives the histogram, bins, and per-group value: **Governing** (the blended, family-normalized demand below), **M⁺** (positive moment), **M⁻** (negative moment), or **Shear**. The moment/shear metrics cluster on raw values (shown as kip-ft / kips); **Governing** clusters on a normalized 0–1 score (shown as %). Switching the metric recomputes the suggestion live.
 3. For the **Governing** metric, every beam gets a **family-normalized governing demand**: max of Mu⁺, Mu⁻, and Vu, each divided by the family-wide maximum of that quantity (so heavy-shear beams don't disappear into a light-moment bin). Demands come from the imported envelope load case, with a station-forces fallback.
 4. The 1-D demand values are clustered with **Jenks natural breaks** (variance-minimizing dynamic program, O(k·n²)) or **quantile breaks** — selectable in the panel. With k = **Auto**, k = 2…5 is tried and scored by **goodness-of-variance fit** (GVF = 1 − SDAM/SDCM); the search stops early once GVF ≥ 0.85.
@@ -145,7 +156,7 @@ SVG cross-section and elevation views showing rebar layout and spacing. Beam ele
 - **ETABS Active Instance** — one click attaches to the model currently open in ETABS. The desktop app ships a bundled .NET sidecar (`EtabsHelper.exe`, built from `tools/EtabsHelper/`) that connects through the ETABS .NET API (`ETABSv1.dll`, loaded by reflection — no COM registration, no scripts, no extra installs). Requirements: the **Windows desktop app**, ETABS v20+ installed, a model open, and the **analysis already run**. The sidecar calls `SetPresentUnits(kip_ft_F)` at connect time so `GetTableForDisplayArray` always returns kip-ft regardless of the model's GUI display settings; a `getUnits` handler exposes the active `eUnits` integer for verification. The renderer's `eUnitsToFactors()` maps all 16 ETABS unit systems and falls back to the Program Control string if the enum call is unavailable. Geometry, sections (exact b×h from the concrete-rectangular definitions), materials, ETABS groups, and per-station P/V2/M3/T forces are all pulled from ETABS database tables.
 - **Sample model (demo)** — built-in 2-story model to try the workflow without ETABS.
 2. **Filter** — choose story, beam frame properties (sections + materials preview), ETABS groups, and which load combinations to import. This step also picks the **SLS quasi-permanent combo** used for EC2 §7.3.4 crack-width checks; the choice is stored project-wide so every beam's M_qp resolves from that combo's station-force envelope. The selected SLS combo's forces are always fetched even if it was not selected for design import.
-3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section.
+3. **Rebar defaults** — typical top/bottom steel percentages and three stirrup-zone spacings; bar sizes/counts are auto-selected per section. A **wizard-local Design code** dropdown (ACI 318-19 / EN 1992-1-1) and **Units** toggle (Imperial / SI) tailor this step — they change the rebar size lists (US customary vs metric bars) and the stirrup-spacing units (in vs mm) shown here **without** altering the global project design code or unit settings.
 4. **Plan map** — beams drawn from their I/J node coordinates, color-coded by DCR (green < 0.7 → red ≥ 1.0). Beams auto-group by story · section by default; the wizard's **"Design groups from ETABS"** picker lets you opt specific ETABS group names in — beams in a selected group mirror that name as their design group, the rest fall back to story · section. Shift-click to merge custom groups and batch-adjust bars. Double-click a beam to import and open it with shear/moment diagrams (envelope of imported combos with φVn / φMn capacity overlays) and editable rebar.
 
 Imported members keep their ETABS link (frame name, story, groups, node coordinates) and station forces, and the shear check is evaluated per stirrup zone against the max |V| within each third of the span.
