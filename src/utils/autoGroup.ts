@@ -245,6 +245,7 @@ export interface AutoGroupSuggestion {
 }
 
 export function familyLabel(fk: string): string {
+  if (fk === ALL_BEAMS_FAMILY_KEY) return 'All beams';
   const dim = fk.split('|')[0]; // e.g. "14x24"
   return dim.replace('x', '×');
 }
@@ -322,12 +323,16 @@ export function allocateGroupBudget(
   return alloc;
 }
 
+export const ALL_BEAMS_FAMILY_KEY = '__all__';
+
 export function suggestGroups(
   members: Member[],
   kPerFamily: number | 'auto' = 'auto',
   algorithm: 'jenks' | 'quantile' = 'jenks',
   metric: DemandMetric = 'governing',
   totalGroups?: number,
+  /** When true, cluster ALL beams together ignoring section family boundaries. */
+  groupAllBeams = false,
 ): AutoGroupSuggestion[] {
   const demands = extractDemands(members);
 
@@ -336,10 +341,15 @@ export function suggestGroups(
   const metricUnit = metricUnitFor(metric);
 
   const byFamily = new Map<string, MemberDemand[]>();
-  for (const d of demands) {
-    const list = byFamily.get(d.familyKey) ?? [];
-    list.push(d);
-    byFamily.set(d.familyKey, list);
+  if (groupAllBeams) {
+    // Treat every beam as part of one "All beams" pseudo-family.
+    byFamily.set(ALL_BEAMS_FAMILY_KEY, demands);
+  } else {
+    for (const d of demands) {
+      const list = byFamily.get(d.familyKey) ?? [];
+      list.push(d);
+      byFamily.set(d.familyKey, list);
+    }
   }
 
   // Global budget mode: per-family k comes from the allocation.

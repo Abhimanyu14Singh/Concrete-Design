@@ -10,6 +10,7 @@ import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
   demandValueFor, metricUnitFor, metricLabelFor,
+  ALL_BEAMS_FAMILY_KEY,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
 import HistogramPanel from './HistogramPanel';
@@ -36,11 +37,13 @@ export default function AutoGroupPanel({
   const [metric, setMetric] = useState<import('../../utils/autoGroup').DemandMetric>('governing');
   // Global budget: total groups across the whole model (null = use per-family k)
   const [totalGroups, setTotalGroups] = useState<number | null>(null);
+  // Cross-family: ignore section boundaries and cluster all beams as one pool
+  const [groupAllBeams, setGroupAllBeams] = useState(false);
 
   // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
-    () => suggestGroups(members, kPerFamily, algorithm, metric, totalGroups ?? undefined),
-    [members, algorithm, kPerFamily, metric, totalGroups]
+    () => suggestGroups(members, kPerFamily, algorithm, metric, totalGroups ?? undefined, groupAllBeams),
+    [members, algorithm, kPerFamily, metric, totalGroups, groupAllBeams]
   );
 
   // Per-family user-tweaked breaks (initially from suggestion)
@@ -83,7 +86,9 @@ export default function AutoGroupPanel({
     const bins: AutoGroupBin[] = [];
     for (const sug of baseSuggestions) {
       const breaks = getBreaks(sug.familyKey, sug);
-      const famDemands = demands.filter(d => d.familyKey === sug.familyKey);
+      const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
+        ? demands
+        : demands.filter(d => d.familyKey === sug.familyKey);
       const famVals = famDemands.map(d => demandValueFor(d, metric));
       const assign = famVals.length ? assignByBreaks(famVals, breaks) : [];
       const numB = breaks.length + 1;
@@ -136,7 +141,9 @@ export default function AutoGroupPanel({
     for (const sug of baseSuggestions) {
       // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
-      const famDemands = demands.filter(d => d.familyKey === sug.familyKey);
+      const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
+        ? demands
+        : demands.filter(d => d.familyKey === sug.familyKey);
       const famVals = famDemands.map(d => demandValueFor(d, metric));
       const assign = assignByBreaks(famVals, breaks);
       const numB = breaks.length + 1;
@@ -173,7 +180,7 @@ export default function AutoGroupPanel({
   return (
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Demand metric selector */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 10, color: '#9ca3af', alignSelf: 'center', marginRight: 4 }}>Cluster by:</span>
         {(['governing', 'Mu_pos', 'Mu_neg', 'Vu'] as const).map(m => (
           <button key={m} onClick={() => setMetric(m)}
@@ -182,6 +189,23 @@ export default function AutoGroupPanel({
             {m === 'governing' ? 'Governing' : m === 'Mu_pos' ? 'M⁺' : m === 'Mu_neg' ? 'M⁻' : 'Shear'}
           </button>
         ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 10, color: '#6b7280' }}>Pool:</span>
+          <button
+            onClick={() => { setGroupAllBeams(false); setTweakedBreaks({}); }}
+            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
+              background: !groupAllBeams ? '#2563eb' : 'white', color: !groupAllBeams ? 'white' : '#374151' }}
+            title="Group beams within each section family independently">
+            By family
+          </button>
+          <button
+            onClick={() => { setGroupAllBeams(true); setTweakedBreaks({}); }}
+            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
+              background: groupAllBeams ? '#2563eb' : 'white', color: groupAllBeams ? 'white' : '#374151' }}
+            title="Cluster all beams together regardless of section dimensions or material">
+            All beams
+          </button>
+        </div>
       </div>
 
       {/* Controls */}
@@ -244,19 +268,24 @@ export default function AutoGroupPanel({
         </div>
       </div>
 
-      {/* Family selector */}
+      {/* Family selector — hidden when all-beams mode has a single pseudo-family */}
       {families.length > 1 && (
         <div>
-          <div style={lbl}>Section family</div>
+          <div style={lbl}>{groupAllBeams ? 'Pool' : 'Section family'}</div>
           <select
             value={activeFamily}
             onChange={e => setSelectedFamily(e.target.value)}
             style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', width: '100%' }}>
-            {baseSuggestions.map(s => (
-              <option key={s.familyKey} value={s.familyKey}>
-                {s.familyLabel} ({demands.filter(d => d.familyKey === s.familyKey).length} beams)
-              </option>
-            ))}
+            {baseSuggestions.map(s => {
+              const count = groupAllBeams
+                ? demands.length
+                : demands.filter(d => d.familyKey === s.familyKey).length;
+              return (
+                <option key={s.familyKey} value={s.familyKey}>
+                  {s.familyLabel} ({count} beams)
+                </option>
+              );
+            })}
           </select>
         </div>
       )}
