@@ -42,6 +42,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Wizard-local code + units — user can override without touching global settings
+  const [wizardCode, setWizardCode] = useState<DesignCode>(code);
+  const [wizardUnits, setWizardUnits] = useState<'imperial' | 'si'>(units);
+
   // step 1
   const [source, setSource] = useState<SourceKind>(window.electronAPI?.etabs ? 'com' : 'mock');
   const connRef = useRef<EtabsConnection | null>(null);
@@ -70,6 +74,16 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     imposeSkinReinf: true, skinBarSize: units === 'si' ? -12 : 5,
   }));
 
+  // When the user switches units inside the wizard, reset bar size defaults
+  function handleWizardUnitsChange(u: 'imperial' | 'si') {
+    setWizardUnits(u);
+    setSeed(s => ({
+      ...s,
+      stirrupBarSize: u === 'si' ? -10 : 4,
+      skinBarSize: u === 'si' ? -12 : 5,
+    }));
+  }
+
   // step 4
   const [members, setMembers] = useState<Member[]>([]);
   const [designGroups, setDesignGroups] = useState<DesignGroup[]>([]);
@@ -80,10 +94,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
   const dcrById = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const m of members) out[m.id] = worstDCR(m, code);
+    for (const m of members) out[m.id] = worstDCR(m, wizardCode);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [members, code, dcrVersion]);
+  }, [members, wizardCode, dcrVersion]);
 
   const filter = useMemo(() => ({
     stories: selStory ? [selStory] : undefined,
@@ -143,7 +157,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const forceCombos = new Set(selCombos);
       if (slsComboId) forceCombos.add(slsComboId);
       const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
-      const built = buildMembers(beams, sections, materials, forces, seed, code);
+      const built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
       // Build modelMap from all beams geometry
@@ -440,6 +454,37 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
           {/* ── Step 3: Rebar defaults ── */}
           {step === 2 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 620 }}>
+              {/* Code + units picker */}
+              <div style={{ ...card, display: 'flex', gap: 24, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={lbl}>Design code</div>
+                  <select
+                    style={inp}
+                    value={wizardCode}
+                    onChange={e => setWizardCode(e.target.value as DesignCode)}>
+                    <option value="ACI318-19">ACI 318-19</option>
+                    <option value="EN1992-1-1">EN 1992-1-1 (EC2)</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={lbl}>Units (rebar display)</div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button
+                      onClick={() => handleWizardUnitsChange('imperial')}
+                      style={{ ...btn(wizardUnits === 'imperial'), padding: '5px 14px', fontSize: 12 }}>
+                      Imperial (in)
+                    </button>
+                    <button
+                      onClick={() => handleWizardUnitsChange('si')}
+                      style={{ ...btn(wizardUnits === 'si'), padding: '5px 14px', fontSize: 12 }}>
+                      SI (mm)
+                    </button>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af', maxWidth: 240 }}>
+                  These are wizard-local settings — they don't change the global project code or unit system.
+                </div>
+              </div>
               <div style={card}>
                 <div style={lbl}>Typical longitudinal steel (% of b·d)</div>
                 <div style={{ display: 'flex', gap: 18 }}>
@@ -454,19 +499,19 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
               </div>
               <div style={card}>
-                <div style={lbl}>Stirrup spacing by zone — thirds of span ({units === 'si' ? 'mm' : 'in'})</div>
-                <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                <div style={lbl}>Stirrup spacing by zone — thirds of span ({wizardUnits === 'si' ? 'mm' : 'in'})</div>
+                <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
                   {['End (0–L/3)', 'Middle (L/3–2L/3)', 'End (2L/3–L)'].map((zl, i) => (
                     <label key={zl} style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {zl}
                       <input type="number"
-                        step={units === 'si' ? 10 : 0.5} min={units === 'si' ? 50 : 2}
+                        step={wizardUnits === 'si' ? 10 : 0.5} min={wizardUnits === 'si' ? 50 : 2}
                         style={{ ...inp, width: 80 }}
-                        value={units === 'si' ? Math.round(seed.stirrupSpacings[i] * IN_TO_MM) : seed.stirrupSpacings[i]}
+                        value={wizardUnits === 'si' ? Math.round(seed.stirrupSpacings[i] * IN_TO_MM) : seed.stirrupSpacings[i]}
                         onChange={e => setSeed(s => {
                           const sp = [...s.stirrupSpacings] as [number, number, number];
                           const v = +e.target.value;
-                          sp[i] = units === 'si' ? v / IN_TO_MM : v; // store inches internally
+                          sp[i] = wizardUnits === 'si' ? v / IN_TO_MM : v;
                           return { ...s, stirrupSpacings: sp };
                         })} />
                     </label>
@@ -476,7 +521,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     <select style={inp} value={seed.stirrupBarSize}
                       onChange={e => setSeed(s => ({ ...s, stirrupBarSize: +e.target.value }))}>
                       {/* stirrup-gauge bars only: US #3–#6 or metric Ø8–Ø12 */}
-                      {barSizeOptions(units, seed.stirrupBarSize)
+                      {barSizeOptions(wizardUnits, seed.stirrupBarSize)
                         .filter(b => (b > 0 ? b <= 6 : -b <= 12))
                         .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
                     </select>
@@ -492,21 +537,21 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   <label style={{ fontSize: 12, color: '#374151', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                     <input type="checkbox" checked={!!seed.imposeSkinReinf}
                       onChange={e => setSeed(s => ({ ...s, imposeSkinReinf: e.target.checked }))} />
-                    Auto-impose per {code === 'EN1992-1-1' ? 'EC2' : 'ACI'}
+                    Auto-impose per {wizardCode === 'EN1992-1-1' ? 'EC2' : 'ACI'}
                   </label>
                   <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3, opacity: seed.imposeSkinReinf ? 1 : 0.4 }}>
                     Skin bar size
-                    <select style={inp} value={seed.skinBarSize ?? (units === 'si' ? -12 : 5)}
+                    <select style={inp} value={seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)}
                       disabled={!seed.imposeSkinReinf}
                       onChange={e => setSeed(s => ({ ...s, skinBarSize: +e.target.value }))}>
-                      {barSizeOptions(units, seed.skinBarSize)
+                      {barSizeOptions(wizardUnits, seed.skinBarSize)
                         .filter(b => (b > 0 ? b <= 8 : -b <= 20))
                         .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
                     </select>
                   </label>
                 </div>
                 <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
-                  {code === 'EN1992-1-1'
+                  {wizardCode === 'EN1992-1-1'
                     ? 'EC2 §7.3.3: surface reinforcement on deep beams (h > 1000 mm), distributed over the tension half at ≤ 300 mm.'
                     : 'ACI 318 §9.7.2.3: skin reinforcement where h > 36 in, distributed over the lower h/2 at ≤ 12 in.'}
                   {' '}Shallower sections get no side bars. Edit per beam afterwards.
