@@ -310,7 +310,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
               <KV k="  DCR" v={(result.DCR_shear_wall ?? 0).toFixed(3)} dcr={result.DCR_shear_wall ?? 0} />
 
               <SectionLabel title="P-M §18.10.5" />
-              <KV k="φMn,wall" v={`${(result.phi_Mn_wall ?? 0).toFixed(1)} k-ft`} />
+              <KV k="φMn,wall" v={fmt(result.phi_Mn_wall ?? 0, 'moment')} />
               <KV k="  DCR" v={(result.DCR_flex_wall ?? 0).toFixed(3)} dcr={result.DCR_flex_wall ?? 0} />
 
               <SectionLabel title="Min. Reinf. §11.6" />
@@ -324,8 +324,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
               {result.sbzRequired && (
                 <>
                   <KV k="lbe" v={`${(result.sbzLength ?? 0).toFixed(1)}"`} />
-                  <KV k="Ash,req" v={`${(result.sbzAshRequired ?? 0).toFixed(3)} in²`} />
-                  <KV k="Ash,prov" v={`${(result.sbzAshProvided ?? 0).toFixed(3)} in²`} />
+                  <KV k="Ash,req" v={fmt(result.sbzAshRequired ?? 0, 'area', 3)} />
+                  <KV k="Ash,prov" v={fmt(result.sbzAshProvided ?? 0, 'area', 3)} />
                   <KV k="  DCR" v={(result.DCR_sbzAsh ?? 0).toFixed(3)} dcr={result.DCR_sbzAsh ?? 0} />
                 </>
               )}
@@ -371,8 +371,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
           {zoneResults.map(z => (
             <KV key={z.zone} k={`  z${z.zone + 1}@${z.spacing}"`} v={z.DCR.toFixed(3)} dcr={z.DCR} />
           ))}
-          {code !== 'EN1992-1-1' && <KV k="Av req" v={`${result.Av_req.toFixed(4)} in²/in`} />}
-          {code !== 'EN1992-1-1' && <KV k="Av min/s" v={`${result.Av_min_per_s.toFixed(4)} in²/in`} />}
+          {code !== 'EN1992-1-1' && <KV k="Av req" v={fmt(result.Av_req, 'areaPerLength')} />}
+          {code !== 'EN1992-1-1' && <KV k="Av min/s" v={fmt(result.Av_min_per_s, 'areaPerLength')} />}
 
           <SectionLabel title="Torsion" />
           <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')} />

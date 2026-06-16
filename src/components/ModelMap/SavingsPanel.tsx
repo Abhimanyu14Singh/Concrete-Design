@@ -5,6 +5,7 @@
 import { useState, useMemo, Fragment } from 'react';
 import type { Member, DesignResults, DesignGroup } from '../../types';
 import { computeSavings, familyKey, steelWeightPerFt } from '../../utils/autoGroup';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface SavingsPanelProps {
   members: Member[];
@@ -24,6 +25,7 @@ export default function SavingsPanel({
   targetDCR,
   onTargetDCRChange,
 }: SavingsPanelProps) {
+  const { fmtVal, label } = useUnits();
   const [expanded, setExpanded] = useState<string | null>(null);
 
   // Build memberId → groupId map
@@ -104,13 +106,13 @@ export default function SavingsPanel({
             keepId: heavy.group.id,
             removeId: light.group.id,
             extraLb,
-            label: `Merge "${light.group.label}" → "${heavy.group.label}": +${Math.round(extraLb)} lb, −1 callout`,
+            label: `Merge "${light.group.label}" → "${heavy.group.label}": +${fmtVal(extraLb, 'steelWeight')} ${label('steelWeight')}, −1 callout`,
           });
         }
       }
     }
     return tips.slice(0, 4);
-  }, [designGroups, groupSavings, savings.perMember, memberGroupId, members]);
+  }, [designGroups, groupSavings, savings.perMember, memberGroupId, members, fmtVal, label]);
 
   function exportCSV() {
     const header = 'Group,Member,Story,Family,DCR,AsProvTop(in²),AsProvBot(in²),LongLbPerFt,StirrupLbPerFt,TotalLbPerFt,SlackLb';
@@ -179,23 +181,23 @@ export default function SavingsPanel({
             <div>
               <div style={{ color: '#9ca3af' }}>Longitudinal</div>
               <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#374151' }}>
-                {weightTotals.longLb.toFixed(0)} lb
+                {fmtVal(weightTotals.longLb, 'steelWeight')} {label('steelWeight')}
               </div>
-              <div style={{ color: '#6b7280' }}>{(weightTotals.longLb / weightTotals.totalLenFt).toFixed(1)} lb/ft avg</div>
+              <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.longLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
             <div>
               <div style={{ color: '#9ca3af' }}>Stirrups</div>
               <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#374151' }}>
-                {weightTotals.stirrupLb.toFixed(0)} lb
+                {fmtVal(weightTotals.stirrupLb, 'steelWeight')} {label('steelWeight')}
               </div>
-              <div style={{ color: '#6b7280' }}>{(weightTotals.stirrupLb / weightTotals.totalLenFt).toFixed(1)} lb/ft avg</div>
+              <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.stirrupLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
             <div>
               <div style={{ color: '#9ca3af' }}>Total</div>
               <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#111827' }}>
                 {(weightTotals.totalLb / 2000).toFixed(2)} tons
               </div>
-              <div style={{ color: '#6b7280' }}>{(weightTotals.totalLb / weightTotals.totalLenFt).toFixed(1)} lb/ft avg</div>
+              <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.totalLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
           </div>
         </div>
@@ -256,7 +258,7 @@ export default function SavingsPanel({
                       {worstDCR.toFixed(2)}
                     </td>
                     <td style={{ padding: '3px 4px', textAlign: 'right', color: lb > 50 ? '#16a34a' : '#6b7280', fontWeight: lb > 50 ? 600 : 400 }}>
-                      {lb.toFixed(0)} lb
+                      {fmtVal(lb, 'steelWeight')} {label('steelWeight')}
                     </td>
                     <td style={{ padding: '3px 4px', textAlign: 'right', color: '#6b7280', fontSize: 9 }}>
                       {totalInPlaceLb > 0 ? (lb / totalInPlaceLb * 100).toFixed(1) + '%' : '—'}
@@ -284,7 +286,7 @@ export default function SavingsPanel({
                     </td>
                     <td />
                     <td style={{ padding: '3px 4px', textAlign: 'right', color: '#6b7280' }}>
-                      {savings.perMember.filter(m => !memberGroupId[m.memberId]).reduce((s, m) => s + m.totalSlackLb, 0).toFixed(0)} lb
+                      {fmtVal(savings.perMember.filter(m => !memberGroupId[m.memberId]).reduce((s, m) => s + m.totalSlackLb, 0), 'steelWeight')} {label('steelWeight')}
                     </td>
                   </tr>
                   {expanded === '_ungrouped' && savings.perMember
@@ -303,7 +305,7 @@ export default function SavingsPanel({
               <tr style={{ borderTop: '2px solid #e5e7eb', fontWeight: 700 }}>
                 <td colSpan={3} style={{ padding: '4px 4px', color: '#374151', fontSize: 11 }}>Total</td>
                 <td style={{ padding: '4px 4px', textAlign: 'right', color: '#16a34a', fontSize: 11 }}>
-                  {savings.totalLb.toFixed(0)} lb<br />
+                  {fmtVal(savings.totalLb, 'steelWeight')} {label('steelWeight')}<br />
                   <span style={{ fontSize: 9, color: '#6b7280' }}>{savings.totalTons.toFixed(3)} tons</span>
                 </td>
               </tr>

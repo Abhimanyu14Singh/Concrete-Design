@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import type { Member, DesignResults } from '../../types';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   member: Member;
@@ -61,6 +62,7 @@ const axisTick = { fill: '#9ca3af', fontSize: 10 };
 const tooltipStyle = { background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 };
 
 export default function ForceDiagram({ member, result, height = 150 }: Props) {
+  const { label } = useUnits();
   const data = buildEnvelope(member);
   if (data.length < 2) return null;
 
@@ -82,7 +84,7 @@ export default function ForceDiagram({ member, result, height = 150 }: Props) {
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>
-        Shear Diagram — envelope of imported combos (kips)
+        Shear Diagram — envelope of imported combos ({label('force')})
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
@@ -99,7 +101,7 @@ export default function ForceDiagram({ member, result, height = 150 }: Props) {
       </ResponsiveContainer>
 
       <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 }}>
-        Moment Diagram — envelope (kip-ft, sagging plotted down)
+        Moment Diagram — envelope ({label('moment')}, sagging plotted down)
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>

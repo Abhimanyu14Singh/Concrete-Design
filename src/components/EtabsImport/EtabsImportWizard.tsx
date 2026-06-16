@@ -36,7 +36,7 @@ function worstDCR(m: Member, code: DesignCode): number {
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
-  const { units } = useUnits();
+  const { units, fmt } = useUnits();
   const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -432,8 +432,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     {materials.map(m => (
                       <tr key={m.name}>
                         <td style={{ padding: '2px 16px 2px 0', fontFamily: 'monospace', color: '#2563eb' }}>{m.name}</td>
-                        <td style={{ padding: '2px 16px 2px 0', color: '#6b7280' }}>{m.fc ? `f'c = ${m.fc / 1000} ksi` : ''}</td>
-                        <td style={{ color: '#6b7280' }}>{m.fy ? `fy = ${m.fy / 1000} ksi` : ''}</td>
+                        <td style={{ padding: '2px 16px 2px 0', color: '#6b7280' }}>{m.fc ? `f'c = ${fmt(m.fc / 1000, 'stressKsi')}` : ''}</td>
+                        <td style={{ color: '#6b7280' }}>{m.fy ? `fy = ${fmt(m.fy / 1000, 'stressKsi')}` : ''}</td>
                       </tr>
                     ))}
                   </tbody>

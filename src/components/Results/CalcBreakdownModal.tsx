@@ -7,6 +7,7 @@ import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
 import { generateWallBreakdown } from '../../utils/calcBreakdownWall';
 import { zoneShearDemands } from '../../adapters/etabs';
 import type { CalcSection } from '../../utils/calcBreakdown';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   member: Member;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', onClose }: Props) {
+  const { fmt } = useUnits();
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
   const isWall = member.memberType === 'wall' && !!member.wallRebar;
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
@@ -115,24 +117,24 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
           }}>
             {isWall ? (
               <>
-                <LoadItem label="Pu" value={`${load.Pu} kips`} />
-                <LoadItem label="Mu" value={`${load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg} kip-ft`} />
-                <LoadItem label="Vu" value={`${load.Vu} kips`} />
+                <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
+                <LoadItem label="Mu" value={fmt(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg, 'moment')} />
+                <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
               </>
             ) : isColumn ? (
               <>
-                <LoadItem label="Pu" value={`${load.Pu} kips`} />
-                <LoadItem label="Mux" value={`${load.Mux ?? 0} kip-ft`} />
-                <LoadItem label="Muy" value={`${load.Muy ?? 0} kip-ft`} />
-                <LoadItem label="Vu" value={`${load.Vu} kips`} />
+                <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
+                <LoadItem label="Mux" value={fmt(load.Mux ?? 0, 'moment')} />
+                <LoadItem label="Muy" value={fmt(load.Muy ?? 0, 'moment')} />
+                <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
               </>
             ) : (
               <>
-                <LoadItem label="Mu⁺" value={`${load.Mu_pos} kip-ft`} />
-                <LoadItem label="Mu⁻" value={`${load.Mu_neg} kip-ft`} />
-                <LoadItem label="Vu" value={`${load.Vu} kips`} />
-                <LoadItem label="Tu" value={`${load.Tu} kip-ft`} />
-                {load.Pu !== 0 && <LoadItem label="Pu" value={`${load.Pu} kips`} />}
+                <LoadItem label="Mu⁺" value={fmt(load.Mu_pos, 'moment')} />
+                <LoadItem label="Mu⁻" value={fmt(load.Mu_neg, 'moment')} />
+                <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
+                <LoadItem label="Tu" value={fmt(load.Tu, 'moment')} />
+                {load.Pu !== 0 && <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />}
               </>
             )}
           </div>

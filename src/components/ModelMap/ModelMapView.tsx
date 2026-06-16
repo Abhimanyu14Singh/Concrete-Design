@@ -16,6 +16,7 @@ import AutoGroupPanel from './AutoGroupPanel';
 import SavingsPanel from './SavingsPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
+import { useUnits } from '../../contexts/UnitsContext';
 
 type RightTab = 'groups' | 'autogroup' | 'savings';
 type FlexFace = 'top' | 'bot';
@@ -35,14 +36,18 @@ function rebarStr(bars: { numBars: number; barSize: number }[]): string {
 }
 
 /** Build stirrup string: "#4 @ 6 in" or "#4 @ 6/12/6 in". */
-function stirrupStr(rebar: { ties?: { barSize: number; spacing: number; legs: number }; tieZones?: { spacing: number }[] }): string {
+function stirrupStr(
+  rebar: { ties?: { barSize: number; spacing: number; legs: number }; tieZones?: { spacing: number }[] },
+  fmtLen: (v: number) => string,
+  lenLabel: string,
+): string {
   const t = rebar.ties;
   if (!t) return '—';
   const bar = formatBarLabel(t.barSize);
   if (rebar.tieZones) {
-    return `${bar} @ ${rebar.tieZones.map(z => z.spacing).join('/')} in`;
+    return `${bar} @ ${rebar.tieZones.map(z => fmtLen(z.spacing)).join('/')} ${lenLabel}`;
   }
-  return `${bar} @ ${t.spacing} in`;
+  return `${bar} @ ${fmtLen(t.spacing)} ${lenLabel}`;
 }
 
 /** Per-station envelope: max |M| or |V| across all combos. */
@@ -60,6 +65,7 @@ function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V'): { x: nu
 // stationEnvelope is used inside BeamInspectCard too, exported there locally.
 
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
+  const { fmtVal, label } = useUnits();
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>('dcr');
@@ -144,8 +150,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           dcrShear,
           top: rebarStr(m.rebar.topBars),
           bot: rebarStr(m.rebar.botBars),
-          stirrups: stirrupStr(m.rebar),
-          weight: `${w.totalLbFt.toFixed(1)} lb/ft (L ${w.longLbFt.toFixed(1)} + S ${w.stirrupLbFt.toFixed(1)})`,
+          stirrups: stirrupStr(m.rebar, v => fmtVal(v, 'length'), label('length')),
+          weight: `${fmtVal(w.totalLbFt, 'steelWeightPerLength')} ${label('steelWeightPerLength')} (L ${fmtVal(w.longLbFt, 'steelWeightPerLength')} + S ${fmtVal(w.stirrupLbFt, 'steelWeightPerLength')})`,
           warnings: bestRes?.warnings,
           status: bestRes?.status,
         };
@@ -159,7 +165,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       }
     }
     return { infoById: info, designResultsById: results };
-  }, [members, project.code, project.slsCombo]);
+  }, [members, project.code, project.slsCombo, fmtVal, label]);
 
   const errorMemberIds = useMemo(() => {
     const out = new Set<string>();
@@ -208,10 +214,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       metricById: out,
       metricRange: { min, max },
       metricLabel: colorMode === 'flexSteel' ? `ρ${flexFace === 'bot' ? '⁺' : '⁻'} (%)`
-        : colorMode === 'stirrups' ? 'Av/s (in²/ft)'
-        : 'Steel (lb/ft)',
+        : colorMode === 'stirrups' ? `Av/s (${label('areaPerLength')})`
+        : `Steel (${label('steelWeightPerLength')})`,
     };
-  }, [members, colorMode, flexFace]);
+  }, [members, colorMode, flexFace, label]);
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange({ ...project, designGroups: newGroups });
@@ -419,14 +425,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             <button
               onClick={() => setColorMode(colorMode === 'stirrups' ? 'dcr' : 'stirrups')}
               style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'stirrups' ? '#0891b2' : 'white', color: colorMode === 'stirrups' ? 'white' : '#374151' }}
-              title="Stirrup area per unit length Av/s (in²/ft)">
+              title={`Stirrup area per unit length Av/s (${label('areaPerLength')})`}>
               Stirrups
             </button>
             <button
               onClick={() => setColorMode(colorMode === 'weight' ? 'dcr' : 'weight')}
               style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'weight' ? '#0891b2' : 'white', color: colorMode === 'weight' ? 'white' : '#374151' }}
-              title="Total steel weight intensity, longitudinal + stirrups (lb per ft of beam)">
-              lb/ft
+              title={`Total steel weight intensity, longitudinal + stirrups (${label('steelWeightPerLength')} of beam)`}>
+              {label('steelWeightPerLength')}
             </button>
             <button
               onClick={() => setColorMode(colorMode === 'autoGroup' ? 'dcr' : 'autoGroup')}

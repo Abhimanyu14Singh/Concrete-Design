@@ -47,7 +47,7 @@ const dcrBg = themeDcrBg;
 const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
 
 export default function Dashboard({ project, onSelectMember, onProjectUpdate }: Props) {
-  const { units, setUnits } = useUnits();
+  const { units, setUnits, fmtVal, label } = useUnits();
   const [editingMeta, setEditingMeta] = useState(false);
   const [skinNumBars, setSkinNumBars] = useState(2);
   const [skinBarSize, setSkinBarSize] = useState(units === 'si' ? -16 : 5);
@@ -117,7 +117,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
         }}
       >
         <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
-        <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', flexShrink: 0 }}>{`${m.section.b}″×${m.section.h}″`}</span>
+        <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', flexShrink: 0 }}>{`${fmtVal(m.section.b, 'length')}×${fmtVal(m.section.h, 'length')} ${label('length')}`}</span>
         <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
         <span style={{ fontSize: 9, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
       </div>

@@ -11,6 +11,7 @@ import { getBarDiam } from '../../utils/concreteDesign';
 import { formatBarLabel } from '../../utils/rebar';
 import { steelWeightPerFt } from '../../utils/autoGroup';
 import { runDesign } from '../../engines';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   member: Member;
@@ -46,14 +47,18 @@ function rebarStr(bars: { numBars: number; barSize: number }[] | undefined): str
 }
 
 /** Build stirrup string: "#4 @ 6 in" or "#4 @ 9/12/9 in". */
-function stirrupStr(rebar: Member['rebar']): string {
+function stirrupStr(
+  rebar: Member['rebar'],
+  fmtLen: (v: number) => string,
+  lenLabel: string,
+): string {
   const t = rebar.ties;
   if (!t) return '—';
   const bar = formatBarLabel(t.barSize);
   if (rebar.tieZones) {
-    return `${bar} @ ${rebar.tieZones.map(z => z.spacing).join('/')} in`;
+    return `${bar} @ ${rebar.tieZones.map(z => fmtLen(z.spacing)).join('/')} ${lenLabel}`;
   }
-  return `${bar} @ ${t.spacing} in`;
+  return `${bar} @ ${fmtLen(t.spacing)} ${lenLabel}`;
 }
 
 interface ZoneDCR {
@@ -64,6 +69,7 @@ interface ZoneDCR {
 }
 
 function SectionSketch({ member }: { member: Member }) {
+  const { fmtVal, label } = useUnits();
   const W = 150, H = 130;
   const sec = member.section;
   const b = (sec.type === 'T_beam' || sec.type === 'L_beam') ? (sec.bw ?? sec.b) : sec.b;
@@ -129,7 +135,7 @@ function SectionSketch({ member }: { member: Member }) {
       {barDots(totalTop, barDTop, oy + coverPx)}
       {barDots(totalBot, barDBot, oy + hPx - coverPx)}
       {sideDots()}
-      <text x={W / 2} y={H - 2} textAnchor="middle" fontSize={9} fill="#9ca3af">{b}″×{h}″</text>
+      <text x={W / 2} y={H - 2} textAnchor="middle" fontSize={9} fill="#9ca3af">{fmtVal(b, 'length')}×{fmtVal(h, 'length')} {label('length')}</text>
     </svg>
   );
 }
@@ -154,6 +160,7 @@ function DcrCell({ v }: { v?: number }) {
 }
 
 export default function BeamInspectCard({ member, designResults, code, clientX, clientY, containerWidth, containerHeight, onClose }: Props) {
+  const { fmtVal, label } = useUnits();
   const mData = useMemo(() => stationEnvelope(member.stationForces ?? [], 'M'), [member.stationForces]);
   const vData = useMemo(() => stationEnvelope(member.stationForces ?? [], 'V'), [member.stationForces]);
 
@@ -210,8 +217,8 @@ export default function BeamInspectCard({ member, designResults, code, clientX, 
     ['Top', rebarStr(member.rebar.topBars)],
     ['Bot', rebarStr(member.rebar.botBars)],
     ['Side', rebarStr(member.rebar.sideBars)],
-    ['Stirrups', stirrupStr(member.rebar)],
-    ['Steel', `${weight.totalLbFt.toFixed(1)} lb/ft (L ${weight.longLbFt.toFixed(1)} + S ${weight.stirrupLbFt.toFixed(1)})`],
+    ['Stirrups', stirrupStr(member.rebar, v => fmtVal(v, 'length'), label('length'))],
+    ['Steel', `${fmtVal(weight.totalLbFt, 'steelWeightPerLength')} ${label('steelWeightPerLength')} (L ${fmtVal(weight.longLbFt, 'steelWeightPerLength')} + S ${fmtVal(weight.stirrupLbFt, 'steelWeightPerLength')})`],
   ];
 
   return (
