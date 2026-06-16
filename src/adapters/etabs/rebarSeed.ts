@@ -3,7 +3,7 @@
  * (steel percentages + three stirrup spacings) into a concrete RebarLayout
  * for a given section size. Pure functions, unit-tested.
  */
-import type { RebarLayout, SectionDimensions, TieZone } from '../../types';
+import type { RebarLayout, SectionDimensions, TieZone, DesignCode, BarGroup } from '../../types';
 import { getBarArea, getBarDiam, effectiveDepth } from '../../utils/concreteDesign';
 
 export interface SeedOptions {
@@ -12,6 +12,36 @@ export interface SeedOptions {
   stirrupSpacings: [number, number, number]; // [end, middle, end] (in)
   stirrupBarSize?: number;       // default #4
   stirrupLegs?: number;          // default 2
+  /** Auto-impose minimum side/skin reinforcement on deep beams per the design code. */
+  imposeSkinReinf?: boolean;
+  /** Bar size to use for the skin/side bars (default #5 / Ø12). */
+  skinBarSize?: number;
+}
+
+const IN_TO_MM = 25.4;
+
+/**
+ * Code-based minimum side/skin reinforcement for a deep beam.
+ *  - ACI 318 §9.7.2.3: required when h > 36 in, distributed over the lower h/2
+ *    of the web at ≤ 12 in spacing.
+ *  - EC2 §7.3.3: surface/skin reinforcement when h > 1000 mm, at ≤ 300 mm.
+ * Returns the total side bars (both faces) and bar size, or undefined when the
+ * section is too shallow to require skin steel.
+ */
+export function minSkinReinforcement(
+  section: SectionDimensions,
+  code: DesignCode | string,
+  barSize: number,
+): BarGroup | undefined {
+  const isEC2 = code === 'EN1992-1-1';
+  const thresholdIn = isEC2 ? 1000 / IN_TO_MM : 36;
+  const h = section.h;
+  if (h <= thresholdIn) return undefined;
+  const sMaxIn = isEC2 ? 300 / IN_TO_MM : 12;
+  const cover = section.coverClear ?? 1.5;
+  const region = Math.max(0, h / 2 - cover); // lower (tension) half of the web
+  const perFace = Math.max(1, Math.ceil(region / sMaxIn));
+  return { numBars: 2 * perFace, barSize }; // both faces
 }
 
 const CANDIDATE_SIZES = [5, 6, 7, 8, 9, 10, 11];
@@ -54,7 +84,7 @@ export function pickBars(
 }
 
 /** Build a full RebarLayout (with three stirrup zones) from percentages. */
-export function seedRebar(section: SectionDimensions, opts: SeedOptions): RebarLayout {
+export function seedRebar(section: SectionDimensions, opts: SeedOptions, code?: DesignCode | string): RebarLayout {
   const bw = section.bw ?? section.b;
   const stirrupBarSize = opts.stirrupBarSize ?? 4;
   const d = effectiveDepth({ ...section, stirrupDia: stirrupBarSize }, 8);
@@ -68,6 +98,11 @@ export function seedRebar(section: SectionDimensions, opts: SeedOptions): RebarL
     { spacing: opts.stirrupSpacings[2] },
   ];
 
+  // Code-based minimum skin reinforcement for deep beams (opt-in via wizard)
+  const skin = opts.imposeSkinReinf && code
+    ? minSkinReinforcement(section, code, opts.skinBarSize ?? 5)
+    : undefined;
+
   return {
     topBars: [pickBars(AsTop, section, stirrupBarSize)],
     botBars: [pickBars(AsBot, section, stirrupBarSize)],
@@ -78,5 +113,6 @@ export function seedRebar(section: SectionDimensions, opts: SeedOptions): RebarL
       legs: opts.stirrupLegs ?? 2,
     },
     tieZones,
+    ...(skin ? { sideBars: [skin] } : {}),
   };
 }

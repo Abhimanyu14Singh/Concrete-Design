@@ -6,7 +6,7 @@
  *  - as a registered ModelAdapter for raw EtabsModel JSON files
  */
 import type {
-  Member, Project, LoadCase, ComboForces, DesignGroup, MaterialProps,
+  Member, Project, LoadCase, ComboForces, DesignGroup, MaterialProps, DesignCode,
 } from '../../types';
 import type { ModelAdapter } from '../types';
 import type { EtabsBeamGeom, EtabsSectionInfo, EtabsMaterialInfo } from './connection';
@@ -66,6 +66,7 @@ export function buildMembers(
   materials: EtabsMaterialInfo[],
   forcesByFrame: Record<string, ComboForces[]>,
   seed: SeedOptions,
+  code?: DesignCode | string,
 ): Member[] {
   return beams.map(beam => {
     const sec = sections.find(s => s.name === beam.section);
@@ -83,7 +84,7 @@ export function buildMembers(
       memberType: 'beam' as const,
       material: materialFor(beam.section, sections, materials),
       section: sectionDims,
-      rebar: seedRebar(sectionDims, seed),
+      rebar: seedRebar(sectionDims, seed, code),
       loads: [envelopeLoadCase(forces)],
       span: +beam.lengthFt.toFixed(2),
       etabs: {

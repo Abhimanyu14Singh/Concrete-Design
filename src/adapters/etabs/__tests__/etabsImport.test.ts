@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { MockConnection } from '../mock';
 import { envelopeLoadCase, zoneShearDemands, buildMembers, autoGroup } from '../index';
-import { seedRebar, pickBars } from '../rebarSeed';
+import { seedRebar, pickBars, minSkinReinforcement } from '../rebarSeed';
 import { zonedShearCheck, getBarArea, effectiveDepth } from '../../../utils/concreteDesign';
 import { runDesign } from '../../../engines';
 import type { ComboForces, SectionDimensions } from '../../../types';
@@ -117,6 +117,37 @@ describe('pickBars / seedRebar', () => {
     expect(rebar.tieZones![1].spacing).toBe(8);
     // engine single-spacing check uses the tightest spacing
     expect(rebar.ties!.spacing).toBe(4);
+  });
+
+  it('imposes no skin steel on a shallow section, even when requested', () => {
+    const rebar = seedRebar(SECTION, { // h = 28 in < 36 in ACI threshold
+      rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
+      imposeSkinReinf: true, skinBarSize: 5,
+    }, 'ACI318-19');
+    expect(rebar.sideBars).toBeUndefined();
+  });
+
+  it('imposes ACI skin steel when h > 36 in', () => {
+    const deep: SectionDimensions = { ...SECTION, h: 48 };
+    const rebar = seedRebar(deep, {
+      rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
+      imposeSkinReinf: true, skinBarSize: 5,
+    }, 'ACI318-19');
+    expect(rebar.sideBars?.[0].barSize).toBe(5);
+    expect(rebar.sideBars![0].numBars).toBeGreaterThan(0);
+    expect(rebar.sideBars![0].numBars % 2).toBe(0); // both faces
+  });
+
+  it('EC2 threshold (h > 1000 mm ≈ 39.4 in) differs from ACI', () => {
+    const h42: SectionDimensions = { ...SECTION, h: 42 }; // > both thresholds
+    const aci = minSkinReinforcement(h42, 'ACI318-19', 5);
+    const ec2 = minSkinReinforcement(h42, 'EN1992-1-1', 5);
+    expect(aci).toBeDefined();
+    expect(ec2).toBeDefined();
+    // A section between 36 in and 39.4 in triggers ACI but not EC2
+    const h38: SectionDimensions = { ...SECTION, h: 38 };
+    expect(minSkinReinforcement(h38, 'ACI318-19', 5)).toBeDefined();
+    expect(minSkinReinforcement(h38, 'EN1992-1-1', 5)).toBeUndefined();
   });
 });
 

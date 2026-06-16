@@ -67,6 +67,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [seed, setSeed] = useState<SeedOptions>(() => ({
     rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
     stirrupBarSize: units === 'si' ? -10 : 4, stirrupLegs: 2,
+    imposeSkinReinf: true, skinBarSize: units === 'si' ? -12 : 5,
   }));
 
   // step 4
@@ -142,7 +143,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const forceCombos = new Set(selCombos);
       if (slsComboId) forceCombos.add(slsComboId);
       const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
-      const built = buildMembers(beams, sections, materials, forces, seed);
+      const built = buildMembers(beams, sections, materials, forces, seed, code);
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
       // Build modelMap from all beams geometry
@@ -483,6 +484,32 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
                 <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
                   Bar sizes/counts are auto-selected per section to meet the target steel area; you can edit any beam afterwards.
+                </p>
+              </div>
+              <div style={card}>
+                <div style={lbl}>Minimum face / skin reinforcement</div>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <label style={{ fontSize: 12, color: '#374151', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!seed.imposeSkinReinf}
+                      onChange={e => setSeed(s => ({ ...s, imposeSkinReinf: e.target.checked }))} />
+                    Auto-impose per {code === 'EN1992-1-1' ? 'EC2' : 'ACI'}
+                  </label>
+                  <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3, opacity: seed.imposeSkinReinf ? 1 : 0.4 }}>
+                    Skin bar size
+                    <select style={inp} value={seed.skinBarSize ?? (units === 'si' ? -12 : 5)}
+                      disabled={!seed.imposeSkinReinf}
+                      onChange={e => setSeed(s => ({ ...s, skinBarSize: +e.target.value }))}>
+                      {barSizeOptions(units, seed.skinBarSize)
+                        .filter(b => (b > 0 ? b <= 8 : -b <= 20))
+                        .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
+                  {code === 'EN1992-1-1'
+                    ? 'EC2 §7.3.3: surface reinforcement on deep beams (h > 1000 mm), distributed over the tension half at ≤ 300 mm.'
+                    : 'ACI 318 §9.7.2.3: skin reinforcement where h > 36 in, distributed over the lower h/2 at ≤ 12 in.'}
+                  {' '}Shallower sections get no side bars. Edit per beam afterwards.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
