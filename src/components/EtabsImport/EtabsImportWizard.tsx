@@ -23,7 +23,15 @@ interface Props {
   code: DesignCode;
   onClose: () => void;
   /** Commit imported members + groups into the project; pickId opens that member. */
-  onImport: (members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap, slsCombo?: string) => void;
+  onImport: (
+    members: Member[],
+    groups: DesignGroup[],
+    pickId?: string,
+    modelMap?: ModelMap,
+    slsCombo?: string,
+    applyCode?: DesignCode,
+    applyUnits?: 'imperial' | 'si',
+  ) => void;
 }
 
 type SourceKind = 'com' | 'mock';
@@ -83,6 +91,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       skinBarSize: u === 'si' ? -12 : 5,
     }));
   }
+
+  const [applyToProject, setApplyToProject] = useState(true);
 
   // step 4
   const [members, setMembers] = useState<Member[]>([]);
@@ -234,7 +244,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       ...m,
       loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)],
     }));
-    onImport(labeled, designGroups, pickId, capturedModelMap ?? undefined, slsComboId || undefined);
+    onImport(
+      labeled, designGroups, pickId, capturedModelMap ?? undefined,
+      slsComboId || undefined,
+      applyToProject ? wizardCode : undefined,
+      applyToProject ? wizardUnits : undefined,
+    );
   }
 
   // ── styles ──────────────────────────────────────────────────────────────────
@@ -481,8 +496,18 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     </button>
                   </div>
                 </div>
-                <div style={{ fontSize: 11, color: '#9ca3af', maxWidth: 240 }}>
-                  These are wizard-local settings — they don't change the global project code or unit system.
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={applyToProject}
+                      onChange={e => setApplyToProject(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>Apply to project</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: '#9ca3af', maxWidth: 240 }}>
+                    Sets the project's design code and unit system to match these wizard selections on import.
+                  </div>
                 </div>
               </div>
               <div style={card}>

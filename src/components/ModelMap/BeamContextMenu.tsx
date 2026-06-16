@@ -11,16 +11,18 @@ interface Props {
   x: number;
   y: number;
   groups: DesignGroup[];
+  selectedCount: number;
   onNavigate: (memberId: string) => void;
   onMoveToGroup: (memberId: string, groupId: string) => void;
   onHide: (memberId: string) => void;
   onDelete: (memberId: string) => void;
+  onCreateGroupFromSelection: () => void;
   onClose: () => void;
 }
 
 export default function BeamContextMenu({
-  memberId, frameName, x, y, groups,
-  onNavigate, onMoveToGroup, onHide, onDelete, onClose,
+  memberId, frameName, x, y, groups, selectedCount,
+  onNavigate, onMoveToGroup, onHide, onDelete, onCreateGroupFromSelection, onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [groupsOpen, setGroupsOpen] = useState(false);
@@ -103,6 +105,20 @@ export default function BeamContextMenu({
           </div>
         )}
       </div>
+
+      {selectedCount >= 2 && (
+        <>
+          <div style={dividerStyle} />
+          <div
+            style={itemStyle()}
+            onClick={() => { onCreateGroupFromSelection(); onClose(); }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+          >
+            ＋ Create group from selected ({selectedCount} beams)
+          </div>
+        </>
+      )}
 
       <div style={dividerStyle} />
 

@@ -381,10 +381,31 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           x={contextMenu.x}
           y={contextMenu.y}
           groups={groups}
+          selectedCount={selectedFrames.size}
           onNavigate={mid => { onPickMember(mid); setContextMenu(null); }}
           onMoveToGroup={(mid, gid) => { handleMoveToGroup(mid, gid); setContextMenu(null); }}
           onHide={mid => { handleHideBeam(mid); setContextMenu(null); }}
           onDelete={mid => { handleDeleteBeam(mid); setContextMenu(null); }}
+          onCreateGroupFromSelection={() => {
+            const label = window.prompt('Group name:');
+            if (label === null) return;
+            const colors = ['#2563eb','#16a34a','#d97706','#9333ea','#0891b2','#dc2626'];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            const frame = frames.find(f => f.frameName === contextMenu.frameName);
+            const memberIds = [...selectedFrames]
+              .map(fname => frames.find(f => f.frameName === fname)?.memberId)
+              .filter((id): id is string => !!id);
+            const newGroup: DesignGroup = {
+              id: `dg-${Date.now()}`,
+              label: label.trim() || 'New Group',
+              memberIds,
+              color,
+              source: 'manual',
+            };
+            onProjectChange({ ...project, designGroups: [...groups, newGroup] });
+            setSelectedFrames(new Set());
+            void frame;
+          }}
           onClose={() => setContextMenu(null)}
         />
       )}

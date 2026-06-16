@@ -217,7 +217,16 @@ export default function App() {
   // ── ETABS import ───────────────────────────────────────────────────────────
   const [showEtabsImport, setShowEtabsImport] = useState(false);
 
-  function handleEtabsImport(members: Member[], groups: DesignGroup[], pickId?: string, modelMap?: ModelMap, slsCombo?: string) {
+  function handleEtabsImport(
+    members: Member[],
+    groups: DesignGroup[],
+    pickId?: string,
+    modelMap?: ModelMap,
+    slsCombo?: string,
+    applyCode?: import('./types').DesignCode,
+    applyUnits?: 'imperial' | 'si',
+  ) {
+    if (applyUnits) setUnits(applyUnits);
     setProject(p => {
       // Re-imports replace members with the same frame id
       const incoming = new Set(members.map(m => m.id));
@@ -227,6 +236,7 @@ export default function App() {
         designGroups: [...(p.designGroups ?? []).filter(g => !g.memberIds.some(id => incoming.has(id))), ...groups],
         ...(modelMap ? { modelMap } : {}),
         slsCombo: slsCombo || undefined,
+        ...(applyCode ? { code: applyCode } : {}),
       };
     });
     setShowEtabsImport(false);

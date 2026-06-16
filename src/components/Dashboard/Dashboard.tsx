@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Project, Member, DesignResults, DesignCode } from '../../types';
+import type { Project, Member, DesignResults, DesignCode, RebarLayout } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI } from '../../utils/wallDesign';
@@ -7,6 +7,8 @@ import { useUnits } from '../../contexts/UnitsContext';
 import { dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
+import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
+import type { SuggestResult } from '../../utils/suggestRebar';
 import MemberEditor from '../SectionInput/MemberEditor';
 import MemberResults from '../Results/MemberResults';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
@@ -22,6 +24,11 @@ interface MemberSummary {
   worstResult: DesignResults;
   maxDCR: number;
 }
+
+// Selection state: either a member id or a group id
+type Selection =
+  | { kind: 'member'; id: string }
+  | { kind: 'group'; id: string };
 
 function worstOf(r: DesignResults): number {
   return Math.max(
@@ -41,26 +48,83 @@ function summarize(m: Member, code: DesignCode, slsCombo?: string): MemberSummar
   return { member: m, worstResult, maxDCR };
 }
 
+function modeDCRs(s: MemberSummary, code: DesignCode) {
+  const r = s.worstResult;
+  return {
+    flexPos: r.DCR_flex_pos,
+    flexNeg: r.DCR_flex_neg,
+    shear: r.DCR_shear,
+    wk: code === 'EN1992-1-1'
+      ? Math.max(r.wk_bot ?? 0, r.wk_top ?? 0) / 0.3
+      : undefined,
+  };
+}
+
 const dcrColor = themeDcrColor;
 const dcrBg = themeDcrBg;
 
 const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
+
+const CHIP_GREEN  = '#16a34a';
+const CHIP_AMBER  = '#d97706';
+const CHIP_RED    = '#dc2626';
+
+function chipColor(dcr: number): string {
+  if (dcr > 1.0) return CHIP_RED;
+  if (dcr > 0.75) return CHIP_AMBER;
+  return CHIP_GREEN;
+}
+
+interface DCRChipProps {
+  label: string;
+  value: number | undefined;
+  isWk?: boolean;
+}
+
+function DCRChip({ label, value, isWk }: DCRChipProps) {
+  let display: string;
+  let bg: string;
+
+  if (value === undefined) {
+    display = '—';
+    bg = '#9ca3af';
+  } else if (isWk) {
+    if (value > 1.0) { display = '!'; bg = CHIP_RED; }
+    else if (value > 0.75) { display = '!'; bg = CHIP_AMBER; }
+    else { display = 'OK'; bg = CHIP_GREEN; }
+  } else {
+    display = value.toFixed(2);
+    bg = chipColor(value);
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+      <span style={{ fontSize: 8, color: '#9ca3af', fontWeight: 600, lineHeight: 1 }}>{label}</span>
+      <span style={{
+        padding: '2px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
+        background: bg, color: 'white', fontFamily: 'monospace', lineHeight: 1.3,
+      }}>{display}</span>
+    </span>
+  );
+}
 
 export default function Dashboard({ project, onSelectMember, onProjectUpdate }: Props) {
   const { units, setUnits, fmtVal, label } = useUnits();
   const [editingMeta, setEditingMeta] = useState(false);
   const [skinNumBars, setSkinNumBars] = useState(2);
   const [skinBarSize, setSkinBarSize] = useState(units === 'si' ? -16 : 5);
-  const [selectedId, setSelectedId] = useState<string>(project.members[0]?.id ?? '');
+  const [selection, setSelection] = useState<Selection>({ kind: 'member', id: project.members[0]?.id ?? '' });
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
+  const [groupSuggestion, setGroupSuggestion] = useState<SuggestResult | null>(null);
+  const [groupSuggestionError, setGroupSuggestionError] = useState<string | null>(null);
+  const [suggestingGroupId, setSuggestingGroupId] = useState<string | null>(null);
 
   const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;
 
-  // Members with issues (NG or Warning), sorted NG / highest DCR first.
   const issues = summaries
     .filter(s => s.worstResult.status !== 'OK')
     .sort((a, b) => {
@@ -70,7 +134,6 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
       return b.maxDCR - a.maxDCR;
     });
 
-  // Beams flagged with a skin/side-face reinforcement warning (EC2 only).
   const skinFlagged = summaries.filter(s => s.worstResult.warnings.some(isSkinWarning));
   const flaggedIdSet = new Set(skinFlagged.map(s => s.member.id));
   const showSkinControl = project.code === 'EN1992-1-1' && skinFlagged.length > 0;
@@ -82,17 +145,22 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     });
   }
 
-  // ── Split workspace: members grouped by design group ──
   const summaryById = new Map(summaries.map(s => [s.member.id, s]));
   const designGroups = project.designGroups ?? [];
   const groupSections = designGroups.map(g => ({
     id: g.id, label: g.label, color: g.color,
+    rebar: g.rebar,
     members: g.memberIds.map(id => project.members.find(m => m.id === id)).filter(Boolean) as Member[],
   })).filter(s => s.members.length > 0);
   const assignedIds = new Set(designGroups.flatMap(g => g.memberIds));
   const ungrouped = project.members.filter(m => !assignedIds.has(m.id));
 
-  const selectedMember = project.members.find(m => m.id === selectedId) ?? project.members[0];
+  const selectedMemberId = selection.kind === 'member' ? selection.id : null;
+  const selectedMember = selectedMemberId ? (project.members.find(m => m.id === selectedMemberId) ?? null) : null;
+  const selectedGroupId = selection.kind === 'group' ? selection.id : null;
+  const selectedGroupSection = selectedGroupId
+    ? groupSections.find(g => g.id === selectedGroupId) ?? null
+    : null;
 
   function handleMemberUpdate(updated: Member) {
     onProjectUpdate?.({ ...project, members: project.members.map(m => m.id === updated.id ? updated : m) });
@@ -102,30 +170,116 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     setCollapsedGroups(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
-  function MemberRow({ m }: { m: Member }) {
-    const s = summaryById.get(m.id);
-    const dcr = s?.maxDCR ?? 0;
-    const status = s?.worstResult.status ?? 'OK';
-    const active = m.id === selectedId;
-    return (
-      <div
-        onClick={() => setSelectedId(m.id)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 6px 24px', cursor: 'pointer',
-          background: active ? '#eff6ff' : 'white', borderLeft: `3px solid ${active ? '#2563eb' : 'transparent'}`,
-          borderBottom: '1px solid #f3f4f6',
-        }}
-      >
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
-        <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', flexShrink: 0 }}>{`${fmtVal(m.section.b, 'length')}×${fmtVal(m.section.h, 'length')} ${label('length')}`}</span>
-        <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
-        <span style={{ fontSize: 9, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
-      </div>
-    );
+  function handleGroupHeaderClick(groupId: string) {
+    // Select the group in the right pane
+    setSelection({ kind: 'group', id: groupId });
+    setGroupSuggestion(null);
+    setGroupSuggestionError(null);
+    // Also toggle expand/collapse
+    toggleGroup(groupId);
+  }
+
+  function handleMemberRowClick(memberId: string) {
+    setSelection({ kind: 'member', id: memberId });
+  }
+
+  function handleSuggestGroupRebar(groupMembers: Member[]) {
+    const sec = selectedGroupSection;
+    if (!sec) return;
+    setSuggestingGroupId(sec.id);
+    setGroupSuggestion(null);
+    setGroupSuggestionError(null);
+    const result = suggestGroupRebar(groupMembers, project.code, 0.9);
+    if (isSuggestError(result)) {
+      setGroupSuggestionError(result.error);
+    } else {
+      setGroupSuggestion(result);
+    }
+    setSuggestingGroupId(null);
+  }
+
+  function handleApplySuggestionToAll(groupMembers: Member[], rebar: RebarLayout) {
+    const groupMemberIds = new Set(groupMembers.map(m => m.id));
+    onProjectUpdate?.({
+      ...project,
+      members: project.members.map(m => groupMemberIds.has(m.id) ? { ...m, rebar } : m),
+    });
+  }
+
+  // Compute group-level failure mode worst DCRs
+  function groupModeDCRs(members: Member[]) {
+    let flexPos = 0, flexNeg = 0, shear = 0, wk = 0;
+    let hasWk = false;
+    for (const m of members) {
+      const s = summaryById.get(m.id);
+      if (!s) continue;
+      const modes = modeDCRs(s, project.code as DesignCode);
+      flexPos = Math.max(flexPos, modes.flexPos);
+      flexNeg = Math.max(flexNeg, modes.flexNeg);
+      shear = Math.max(shear, modes.shear);
+      if (modes.wk !== undefined) { wk = Math.max(wk, modes.wk); hasWk = true; }
+    }
+    return { flexPos, flexNeg, shear, wk: hasWk ? wk : undefined };
+  }
+
+  // Find the governing (worst DCR) member in a group
+  function governingMemberId(members: Member[]): string | null {
+    let worstId: string | null = null;
+    let worstDCR = -1;
+    for (const m of members) {
+      const dcr = summaryById.get(m.id)?.maxDCR ?? 0;
+      if (dcr > worstDCR) { worstDCR = dcr; worstId = m.id; }
+    }
+    return worstId;
+  }
+
+  // Count errors/warnings in a group
+  function groupIssueCounts(members: Member[]) {
+    let ng = 0, warn = 0;
+    for (const m of members) {
+      const s = summaryById.get(m.id);
+      if (!s) continue;
+      if (s.worstResult.status === 'NG') ng++;
+      else if (s.worstResult.status === 'Warning') warn++;
+    }
+    return { ng, warn };
   }
 
   function worstGroupDCR(ms: Member[]): number {
     return ms.reduce((mx, m) => Math.max(mx, summaryById.get(m.id)?.maxDCR ?? 0), 0);
+  }
+
+  function MemberRow({ m, govId }: { m: Member; govId: string | null }) {
+    const s = summaryById.get(m.id);
+    const dcr = s?.maxDCR ?? 0;
+    const status = s?.worstResult.status ?? 'OK';
+    const active = selection.kind === 'member' && m.id === selection.id;
+    const isGov = m.id === govId;
+    const modes = s ? modeDCRs(s, project.code as DesignCode) : null;
+    return (
+      <div
+        onClick={() => handleMemberRowClick(m.id)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px 6px 24px', cursor: 'pointer',
+          background: active ? '#eff6ff' : 'white', borderLeft: `3px solid ${active ? '#2563eb' : 'transparent'}`,
+          borderBottom: '1px solid #f3f4f6',
+        }}
+      >
+        <span style={{ fontSize: 10, color: '#d97706', flexShrink: 0, width: 12 }}>{isGov ? '▲' : ''}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+        <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', flexShrink: 0 }}>{`${fmtVal(m.section.b, 'length')}×${fmtVal(m.section.h, 'length')} ${label('length')}`}</span>
+        {modes && (
+          <span style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <DCRChip label="M⁺" value={modes.flexPos} />
+            <DCRChip label="M⁻" value={modes.flexNeg} />
+            <DCRChip label="V" value={modes.shear} />
+            <DCRChip label="wk" value={modes.wk} isWk />
+          </span>
+        )}
+        <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
+        <span style={{ fontSize: 9, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
+      </div>
+    );
   }
 
   const barData = summaries.map(s => {
@@ -146,7 +300,6 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   });
 
   function saveMeta() {
-    // Switching to Eurocode defaults the display units to SI (user can toggle back)
     if (meta.code === 'EN1992-1-1' && project.code !== 'EN1992-1-1') {
       setUnits('si');
     }
@@ -158,6 +311,11 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6,
     fontSize: 12, color: '#111827', background: 'white', outline: 'none', fontFamily: 'inherit',
   };
+
+  const allGroups = [
+    ...groupSections,
+    ...(ungrouped.length ? [{ id: '__ungrouped', label: 'Ungrouped', color: '#9ca3af', rebar: undefined, members: ungrouped }] : []),
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -219,10 +377,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
                 { label: 'PASS', count: okCount, color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
                 { label: 'WARN', count: warnCount, color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
                 { label: 'FAIL', count: ngCount, color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-              ].map(({ label, count, color, bg, border }) => (
-                <div key={label} style={{ textAlign: 'center', background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '6px 12px' }}>
+              ].map(({ label: lbl, count, color, bg, border }) => (
+                <div key={lbl} style={{ textAlign: 'center', background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '6px 12px' }}>
                   <div style={{ fontSize: 20, fontWeight: 700, color, lineHeight: 1 }}>{count}</div>
-                  <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>{label}</div>
+                  <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>{lbl}</div>
                 </div>
               ))}
             </div>
@@ -346,38 +504,83 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
         )}
       </div>
 
-      {/* Split workspace — groups navigator (left) + inline member editor (right) */}
+      {/* Split workspace */}
       <div style={{ display: 'flex', gap: 16, height: 'min(78vh, 900px)', minHeight: 460 }}>
-        {/* Left: members grouped by design group */}
-        <div style={{ width: 400, flexShrink: 0, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'auto' }}>
+        {/* Left: groups navigator */}
+        <div style={{ width: 420, flexShrink: 0, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'auto' }}>
           <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Members by Group</span>
             <span style={{ fontSize: 11, color: '#9ca3af' }}>{project.members.length} members</span>
           </div>
-          {[...groupSections, ...(ungrouped.length ? [{ id: '__ungrouped', label: 'Ungrouped', color: '#9ca3af', members: ungrouped }] : [])].map(sec => {
+          {allGroups.map(sec => {
             const open = !collapsedGroups.has(sec.id);
-            const gDCR = worstGroupDCR(sec.members);
+            const gModes = groupModeDCRs(sec.members);
+            const govId = governingMemberId(sec.members);
+            const { ng, warn } = groupIssueCounts(sec.members);
+            const isGroupSelected = selection.kind === 'group' && selection.id === sec.id;
             return (
               <div key={sec.id}>
+                {/* Group header row */}
                 <div
-                  onClick={() => toggleGroup(sec.id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', cursor: 'pointer', background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}
+                  onClick={() => handleGroupHeaderClick(sec.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', cursor: 'pointer',
+                    background: isGroupSelected ? '#eff6ff' : '#f9fafb',
+                    borderBottom: '1px solid #f3f4f6',
+                    borderLeft: `3px solid ${isGroupSelected ? '#2563eb' : 'transparent'}`,
+                  }}
                 >
-                  <span style={{ fontSize: 10, color: '#9ca3af', width: 10 }}>{open ? '▾' : '▸'}</span>
+                  <span style={{ fontSize: 10, color: '#9ca3af', width: 10, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
                   <span style={{ width: 10, height: 10, borderRadius: 3, background: sec.color ?? '#9ca3af', flexShrink: 0 }} />
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec.label}</span>
-                  <span style={{ fontSize: 10, color: '#6b7280' }}>{sec.members.length}</span>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(gDCR), background: dcrBg(gDCR), padding: '1px 5px', borderRadius: 4 }}>{gDCR.toFixed(2)}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sec.label}
+                  </span>
+                  <span style={{ fontSize: 10, color: '#6b7280', flexShrink: 0 }}>{sec.members.length}</span>
+                  {/* Failure mode bar */}
+                  <span style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                    <DCRChip label="M⁺" value={gModes.flexPos} />
+                    <DCRChip label="M⁻" value={gModes.flexNeg} />
+                    <DCRChip label="V" value={gModes.shear} />
+                    <DCRChip label="wk" value={gModes.wk} isWk />
+                  </span>
+                  {/* Issue badges */}
+                  {ng > 0 && (
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', flexShrink: 0 }}>
+                      {ng} NG
+                    </span>
+                  )}
+                  {warn > 0 && (
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', flexShrink: 0 }}>
+                      {warn} W
+                    </span>
+                  )}
                 </div>
-                {open && sec.members.map(m => <MemberRow key={m.id} m={m} />)}
+                {/* Member rows when expanded */}
+                {open && sec.members.map(m => <MemberRow key={m.id} m={m} govId={govId} />)}
               </div>
             );
           })}
         </div>
 
-        {/* Right: inline editor + results for the selected member */}
+        {/* Right pane */}
         <div style={{ flex: 1, minWidth: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {selectedMember ? (
+          {selection.kind === 'group' && selectedGroupSection ? (
+            /* Group reinforcement panel */
+            <GroupPanel
+              group={selectedGroupSection}
+              project={project}
+              summaryById={summaryById}
+              groupSuggestion={groupSuggestion}
+              groupSuggestionError={groupSuggestionError}
+              isSuggesting={suggestingGroupId === selectedGroupSection.id}
+              onSuggest={() => handleSuggestGroupRebar(selectedGroupSection.members)}
+              onApplySuggestion={(rebar) => handleApplySuggestionToAll(selectedGroupSection.members, rebar)}
+              onSelectMember={(id) => setSelection({ kind: 'member', id })}
+              onSelectMemberTab={onSelectMember}
+              inp={inp}
+            />
+          ) : selection.kind === 'member' && selectedMember ? (
+            /* Member editor + results */
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <div>
@@ -392,7 +595,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
               <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} onRebarChange={handleMemberUpdate} />
             </>
           ) : (
-            <div style={{ margin: 'auto', color: '#9ca3af', fontSize: 13 }}>Select a member to view its section summary and reinforcement.</div>
+            <div style={{ margin: 'auto', color: '#9ca3af', fontSize: 13 }}>Select a member or group to view details.</div>
           )}
         </div>
       </div>
@@ -421,4 +624,153 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
       </div>
     </div>
   );
+}
+
+// ─── Group Panel ─────────────────────────────────────────────────────────────
+
+interface GroupPanelProps {
+  group: { id: string; label: string; color?: string; rebar?: RebarLayout; members: Member[] };
+  project: Project;
+  summaryById: Map<string, MemberSummary>;
+  groupSuggestion: SuggestResult | null;
+  groupSuggestionError: string | null;
+  isSuggesting: boolean;
+  onSuggest: () => void;
+  onApplySuggestion: (rebar: RebarLayout) => void;
+  onSelectMember: (id: string) => void;
+  onSelectMemberTab: (id: string) => void;
+  inp: React.CSSProperties;
+}
+
+function GroupPanel({
+  group, project, summaryById,
+  groupSuggestion, groupSuggestionError, isSuggesting,
+  onSuggest, onApplySuggestion, onSelectMember, onSelectMemberTab, inp,
+}: GroupPanelProps) {
+  const code = project.code as DesignCode;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Group title */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ width: 14, height: 14, borderRadius: 4, background: group.color ?? '#9ca3af', flexShrink: 0 }} />
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>{group.label}</h3>
+        <span style={{ fontSize: 12, color: '#9ca3af' }}>{group.members.length} members</span>
+      </div>
+
+      {/* Group reinforcement card */}
+      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Group Reinforcement</div>
+        {group.rebar ? (
+          <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#1e3a5f', background: '#f0f9ff', padding: '8px 12px', borderRadius: 6, border: '1px solid #bae6fd' }}>
+            {rebarSummaryText(group.rebar)}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#9ca3af', fontStyle: 'italic' }}>No group rebar set.</div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={onSuggest}
+            disabled={isSuggesting}
+            style={{ ...inp, background: '#2563eb', color: 'white', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: isSuggesting ? 'not-allowed' : 'pointer', opacity: isSuggesting ? 0.6 : 1 }}
+          >
+            {isSuggesting ? 'Calculating…' : 'Suggest for group'}
+          </button>
+        </div>
+
+        {groupSuggestionError && (
+          <div style={{ marginTop: 10, fontSize: 12, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px' }}>
+            {groupSuggestionError}
+          </div>
+        )}
+
+        {groupSuggestion && (
+          <div style={{ marginTop: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '10px 12px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#16a34a', marginBottom: 6 }}>Suggested layout (target DCR 0.90)</div>
+            <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#14532d', marginBottom: 6 }}>
+              {rebarSummaryText(groupSuggestion.rebar)}
+            </div>
+            <div style={{ fontSize: 11, color: '#374151', display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+              <span>Flex DCR: <strong>{groupSuggestion.worstDCRFlex.toFixed(3)}</strong></span>
+              <span>Shear DCR: <strong>{groupSuggestion.worstDCRShear.toFixed(3)}</strong></span>
+              <span>Steel: <strong>{groupSuggestion.steelLb.toFixed(1)} lb</strong></span>
+            </div>
+            <button
+              onClick={() => onApplySuggestion(groupSuggestion.rebar)}
+              style={{ padding: '6px 14px', background: '#16a34a', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Apply to all {group.members.length} members
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Member results mini-table */}
+      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ padding: '8px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Member Results</span>
+        </div>
+        {/* Table header */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px 60px 60px 60px 60px', gap: 0, padding: '6px 14px', borderBottom: '1px solid #f3f4f6', background: '#f9fafb' }}>
+          {['Label', 'M⁺ DCR', 'M⁻ DCR', 'V DCR', 'wk', 'Status', ''].map(h => (
+            <span key={h} style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</span>
+          ))}
+        </div>
+        {group.members.map(m => {
+          const s = summaryById.get(m.id);
+          const modes = s ? modeDCRs(s, code) : null;
+          const status = s?.worstResult.status ?? 'OK';
+          return (
+            <div
+              key={m.id}
+              onClick={() => onSelectMember(m.id)}
+              style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px 60px 60px 60px 60px', gap: 0, padding: '7px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', alignItems: 'center' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f0f9ff')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+              {modes ? (
+                <>
+                  <DCRInlineCell value={modes.flexPos} />
+                  <DCRInlineCell value={modes.flexNeg} />
+                  <DCRInlineCell value={modes.shear} />
+                  <DCRInlineCell value={modes.wk} isWk />
+                </>
+              ) : (
+                <><span>—</span><span>—</span><span>—</span><span>—</span></>
+              )}
+              <span style={{ fontSize: 10, fontWeight: 700, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
+              <button
+                onClick={e => { e.stopPropagation(); onSelectMemberTab(m.id); }}
+                style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              >↗</button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DCRInlineCell({ value, isWk }: { value: number | undefined; isWk?: boolean }) {
+  if (value === undefined) return <span style={{ fontSize: 11, color: '#9ca3af' }}>—</span>;
+  if (isWk) {
+    const ok = value <= 0.75;
+    const warn = value > 0.75 && value <= 1.0;
+    const fail = value > 1.0;
+    const color = fail ? '#dc2626' : warn ? '#d97706' : '#16a34a';
+    const bg = fail ? '#fef2f2' : warn ? '#fffbeb' : '#f0fdf4';
+    return <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: bg, color }}>{fail ? '!' : ok ? 'OK' : '!'}</span>;
+  }
+  const color = value > 1.0 ? '#dc2626' : value > 0.75 ? '#d97706' : '#16a34a';
+  const bg = value > 1.0 ? '#fef2f2' : value > 0.75 ? '#fffbeb' : '#f0fdf4';
+  return <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'monospace', padding: '2px 5px', borderRadius: 3, background: bg, color }}>{value.toFixed(2)}</span>;
+}
+
+function rebarSummaryText(rebar: RebarLayout): string {
+  const top = rebar.topBars?.map(l => `${l.numBars}-#${l.barSize}`).join('+') ?? '—';
+  const bot = rebar.botBars?.map(l => `${l.numBars}-#${l.barSize}`).join('+') ?? '—';
+  const ties = rebar.ties ? `#${rebar.ties.barSize}@${rebar.ties.spacing}" (${rebar.ties.legs}-leg)` : '—';
+  return `Top: ${top} | Bot: ${bot} | Ties: ${ties}`;
 }
