@@ -352,9 +352,12 @@ export function suggestGroups(
     }
   }
 
-  // Global budget mode: per-family k comes from the allocation.
+  // Global budget mode: per-family k comes from the allocation. In all-beams
+  // pool mode the whole budget applies to the single '__all__' pseudo-family.
   const alloc = totalGroups && totalGroups > 0
-    ? allocateGroupBudget(members, totalGroups, metric)
+    ? (groupAllBeams
+        ? { [ALL_BEAMS_FAMILY_KEY]: totalGroups }
+        : allocateGroupBudget(members, totalGroups, metric))
     : null;
 
   const suggestions: AutoGroupSuggestion[] = [];
