@@ -200,8 +200,20 @@ export function crackWidth(
   const Ac_eff = b * hc_ef;
   const rho_p_eff = As / Ac_eff;
 
-  // Maximum crack spacing eq (7.11): k1=0.8 ribbed, k2=0.5 bending
-  const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
+  // Strain-distribution factor k2 §7.3.4: general k2 = (ε1+ε2)/(2·ε1), where
+  // ε1/ε2 are the strains at the outer/inner edges of the effective tension
+  // zone. Strain is linear in distance from the neutral axis, so with a1 =
+  // (h−x) at the tension face and a2 = a1 − hc_ef at the inner edge,
+  // k2 = (a1 + max(a2,0)) / (2·a1). Reduces to 0.5 for pure bending (ε2→0)
+  // and 1.0 for pure tension (uniform strain). EN 1992-1-1 cites 0.5 for
+  // bending as a simplification; the general form matches S-CONCRETE and is
+  // more conservative when hc_ef is a deep strip.
+  const a1 = h - x;                       // NA → tension face (mm)
+  const a2 = Math.max(0, a1 - hc_ef);     // NA → inner edge of effective zone
+  const k2 = a1 > 0 ? (a1 + a2) / (2 * a1) : 0.5;
+
+  // Maximum crack spacing eq (7.11): k1=0.8 ribbed, k3=3.4, k4=0.425
+  const k1 = 0.8, k3 = 3.4, k4 = 0.425;
   const sr_max = k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;
 
   // Mean strain difference eq (7.9), floor 0.6·σs/Es
