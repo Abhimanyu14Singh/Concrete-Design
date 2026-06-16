@@ -4,10 +4,11 @@ import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI } from '../../utils/wallDesign';
 import { useUnits } from '../../contexts/UnitsContext';
-import CodeBadge from '../common/CodeBadge';
-import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
+import { dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
+import MemberEditor from '../SectionInput/MemberEditor';
+import MemberResults from '../Results/MemberResults';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -50,6 +51,8 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const [editingMeta, setEditingMeta] = useState(false);
   const [skinNumBars, setSkinNumBars] = useState(2);
   const [skinBarSize, setSkinBarSize] = useState(units === 'si' ? -16 : 5);
+  const [selectedId, setSelectedId] = useState<string>(project.members[0]?.id ?? '');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
 
   const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo));
@@ -77,6 +80,52 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
       ...project,
       members: applyMinSkinReinforcement(project.members, flaggedIdSet, { numBars: skinNumBars, barSize: skinBarSize }),
     });
+  }
+
+  // ── Split workspace: members grouped by design group ──
+  const summaryById = new Map(summaries.map(s => [s.member.id, s]));
+  const designGroups = project.designGroups ?? [];
+  const groupSections = designGroups.map(g => ({
+    id: g.id, label: g.label, color: g.color,
+    members: g.memberIds.map(id => project.members.find(m => m.id === id)).filter(Boolean) as Member[],
+  })).filter(s => s.members.length > 0);
+  const assignedIds = new Set(designGroups.flatMap(g => g.memberIds));
+  const ungrouped = project.members.filter(m => !assignedIds.has(m.id));
+
+  const selectedMember = project.members.find(m => m.id === selectedId) ?? project.members[0];
+
+  function handleMemberUpdate(updated: Member) {
+    onProjectUpdate?.({ ...project, members: project.members.map(m => m.id === updated.id ? updated : m) });
+  }
+
+  function toggleGroup(id: string) {
+    setCollapsedGroups(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  function MemberRow({ m }: { m: Member }) {
+    const s = summaryById.get(m.id);
+    const dcr = s?.maxDCR ?? 0;
+    const status = s?.worstResult.status ?? 'OK';
+    const active = m.id === selectedId;
+    return (
+      <div
+        onClick={() => setSelectedId(m.id)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 6px 24px', cursor: 'pointer',
+          background: active ? '#eff6ff' : 'white', borderLeft: `3px solid ${active ? '#2563eb' : 'transparent'}`,
+          borderBottom: '1px solid #f3f4f6',
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+        <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', flexShrink: 0 }}>{`${m.section.b}″×${m.section.h}″`}</span>
+        <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
+        <span style={{ fontSize: 9, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
+      </div>
+    );
+  }
+
+  function worstGroupDCR(ms: Member[]): number {
+    return ms.reduce((mx, m) => Math.max(mx, summaryById.get(m.id)?.maxDCR ?? 0), 0);
   }
 
   const barData = summaries.map(s => {
@@ -297,93 +346,54 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 16 }}>
-        {/* Member table */}
-        <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Member Summary</span>
+      {/* Split workspace — groups navigator (left) + inline member editor (right) */}
+      <div style={{ display: 'flex', gap: 16, height: 'min(78vh, 900px)', minHeight: 460 }}>
+        {/* Left: members grouped by design group */}
+        <div style={{ width: 400, flexShrink: 0, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'auto' }}>
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Members by Group</span>
             <span style={{ fontSize: 11, color: '#9ca3af' }}>{project.members.length} members</span>
           </div>
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#f9fafb' }}>
-                {['ID', 'Label', 'Type', "f'c", 'Section', 'Max DCR', 'Status', ''].map(h => (
-                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, borderBottom: '1px solid #e5e7eb' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {summaries.map(({ member, worstResult, maxDCR }) => (
-                <tr
-                  key={member.id}
-                  onClick={() => onSelectMember(member.id)}
-                  style={{ cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'white')}
+          {[...groupSections, ...(ungrouped.length ? [{ id: '__ungrouped', label: 'Ungrouped', color: '#9ca3af', members: ungrouped }] : [])].map(sec => {
+            const open = !collapsedGroups.has(sec.id);
+            const gDCR = worstGroupDCR(sec.members);
+            return (
+              <div key={sec.id}>
+                <div
+                  onClick={() => toggleGroup(sec.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', cursor: 'pointer', background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}
                 >
-                  <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: '#2563eb', fontWeight: 700 }}>{member.id}</td>
-                  <td style={{ padding: '8px 12px', color: '#374151', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.label}</td>
-                  <td style={{ padding: '8px 12px', color: '#6b7280', textTransform: 'capitalize' }}>{member.memberType}</td>
-                  <td style={{ padding: '8px 12px', color: '#6b7280', fontFamily: 'monospace' }}>{member.material.fc / 1000}k</td>
-                  <td style={{ padding: '8px 12px', color: '#6b7280', fontFamily: 'monospace' }}>{`${member.section.b}"×${member.section.h}"`}</td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrColor(maxDCR), background: dcrBg(maxDCR), padding: '2px 6px', borderRadius: 4 }}>
-                      {maxDCR.toFixed(3)}
-                    </span>
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: worstResult.status === 'OK' ? '#16a34a' : worstResult.status === 'NG' ? '#dc2626' : '#d97706' }}>
-                      {worstResult.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <button style={{ fontSize: 11, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>View →</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  <span style={{ fontSize: 10, color: '#9ca3af', width: 10 }}>{open ? '▾' : '▸'}</span>
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: sec.color ?? '#9ca3af', flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec.label}</span>
+                  <span style={{ fontSize: 10, color: '#6b7280' }}>{sec.members.length}</span>
+                  <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(gDCR), background: dcrBg(gDCR), padding: '1px 5px', borderRadius: 4 }}>{gDCR.toFixed(2)}</span>
+                </div>
+                {open && sec.members.map(m => <MemberRow key={m.id} m={m} />)}
+              </div>
+            );
+          })}
         </div>
 
-        {/* Stats sidebar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Project Stats</div>
-            {[
-              ['Total Members', project.members.length],
-              ['Load Cases', project.members.reduce((s, m) => s + m.loads.length, 0)],
-              ['Avg Max DCR', summaries.length ? (summaries.reduce((s, m) => s + m.maxDCR, 0) / summaries.length).toFixed(3) : '—'],
-            ].map(([label, val]) => (
-              <div key={String(label)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid #f3f4f6' }}>
-                <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{val}</span>
+        {/* Right: inline editor + results for the selected member */}
+        <div style={{ flex: 1, minWidth: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {selectedMember ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>{selectedMember.label}</h3>
+                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{selectedMember.etabs?.story ?? ''} · {selectedMember.etabs?.sectionName ?? selectedMember.section.type}</div>
+                </div>
+                <button onClick={() => onSelectMember(selectedMember.id)} style={{ fontSize: 11, color: '#2563eb', background: 'none', border: '1px solid #bfdbfe', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 600 }}>
+                  Open in Member tab ↗
+                </button>
               </div>
-            ))}
-          </div>
-
-          <div style={{ background: 'white', border: '1px solid #e5e7eb', borderTop: `3px solid ${codeAccent(project.code)}`, borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Design Code</div>
-            <CodeBadge code={project.code} size="md" />
-            {project.code === 'EN1992-1-1' ? (
-              <>
-                <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 8 }}>Eurocode 2 — Partial Factor Method</div>
-                <div style={{ marginTop: 10, fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>
-                  <div>γ_c = 1.50, γ_s = 1.15</div>
-                  <div>α_cc = 0.85 (UK NA)</div>
-                  <div>cot θ = 2.5 (variable strut)</div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 8 }}>Strength Design Method</div>
-                <div style={{ marginTop: 10, fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>
-                  <div>φ_flex = 0.90</div>
-                  <div>φ_shear = 0.75</div>
-                  <div>φ_comp = 0.65 (tied) / 0.75 (spiral)</div>
-                </div>
-              </>
-            )}
-          </div>
+              <MemberEditor key={selectedMember.id} member={selectedMember} onUpdate={handleMemberUpdate} code={project.code} />
+              <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} onRebarChange={handleMemberUpdate} />
+            </>
+          ) : (
+            <div style={{ margin: 'auto', color: '#9ca3af', fontSize: 13 }}>Select a member to view its section summary and reinforcement.</div>
+          )}
         </div>
       </div>
 
