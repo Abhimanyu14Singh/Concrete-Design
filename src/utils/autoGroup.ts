@@ -249,11 +249,85 @@ export function familyLabel(fk: string): string {
   return dim.replace('x', '×');
 }
 
+/**
+ * Distribute a global group budget across section families. Each family gets
+ * ≥1 group and ≤ its member count; the remaining budget is allocated
+ * proportionally to each family's metric spread (max−min) using the
+ * largest-remainder method. Returns familyKey → group count.
+ */
+export function allocateGroupBudget(
+  members: Member[],
+  totalGroups: number,
+  metric: DemandMetric = 'governing',
+): Record<string, number> {
+  const demands = extractDemands(members);
+  const byFamily = new Map<string, MemberDemand[]>();
+  for (const d of demands) {
+    const list = byFamily.get(d.familyKey) ?? [];
+    list.push(d);
+    byFamily.set(d.familyKey, list);
+  }
+
+  const fams = [...byFamily.entries()].map(([fk, fd]) => {
+    const vals = fd.map(d => demandValueFor(d, metric));
+    const spread = vals.length ? Math.max(...vals) - Math.min(...vals) : 0;
+    return { fk, count: fd.length, spread };
+  });
+
+  const nFam = fams.length;
+  const totalMembers = fams.reduce((s, f) => s + f.count, 0);
+  if (nFam === 0) return {};
+
+  // Can't have fewer groups than families (independent clustering) nor more than members.
+  const K = Math.max(nFam, Math.min(Math.round(totalGroups), totalMembers));
+
+  // Base: 1 per family.
+  const alloc: Record<string, number> = {};
+  for (const f of fams) alloc[f.fk] = 1;
+  let remaining = K - nFam;
+
+  // Weight by spread (fall back to member count when all spreads are 0).
+  const totalSpread = fams.reduce((s, f) => s + f.spread, 0);
+  const weightOf = (f: { spread: number; count: number }) =>
+    totalSpread > 0 ? f.spread : f.count;
+  const totalWeight = fams.reduce((s, f) => s + weightOf(f), 0) || 1;
+
+  // Largest-remainder, respecting each family's member-count cap.
+  const ideal = fams.map(f => ({
+    fk: f.fk,
+    cap: f.count - 1, // already gave 1
+    want: (remaining * weightOf(f)) / totalWeight,
+  }));
+  // Floor pass
+  for (const it of ideal) {
+    const add = Math.min(it.cap, Math.floor(it.want));
+    alloc[it.fk] += add;
+    remaining -= add;
+  }
+  // Remainder pass: hand out 1 at a time to the largest fractional parts with headroom.
+  const byFrac = ideal
+    .map(it => ({ fk: it.fk, frac: it.want - Math.floor(it.want) }))
+    .sort((a, b) => b.frac - a.frac);
+  let guard = 0;
+  while (remaining > 0 && guard++ < totalMembers + nFam) {
+    let placed = false;
+    for (const it of byFrac) {
+      const cap = (byFamily.get(it.fk)?.length ?? 0);
+      if (remaining <= 0) break;
+      if (alloc[it.fk] < cap) { alloc[it.fk] += 1; remaining -= 1; placed = true; }
+    }
+    if (!placed) break; // every family at its cap
+  }
+
+  return alloc;
+}
+
 export function suggestGroups(
   members: Member[],
   kPerFamily: number | 'auto' = 'auto',
   algorithm: 'jenks' | 'quantile' = 'jenks',
   metric: DemandMetric = 'governing',
+  totalGroups?: number,
 ): AutoGroupSuggestion[] {
   const demands = extractDemands(members);
 
@@ -268,6 +342,11 @@ export function suggestGroups(
     byFamily.set(d.familyKey, list);
   }
 
+  // Global budget mode: per-family k comes from the allocation.
+  const alloc = totalGroups && totalGroups > 0
+    ? allocateGroupBudget(members, totalGroups, metric)
+    : null;
+
   const suggestions: AutoGroupSuggestion[] = [];
 
   for (const [fk, fdemands] of byFamily) {
@@ -276,7 +355,9 @@ export function suggestGroups(
     let breaks: number[];
     const breakFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
 
-    if (kPerFamily === 'auto') {
+    if (alloc) {
+      breaks = breakFn(vals, Math.min(alloc[fk] ?? 1, fdemands.length));
+    } else if (kPerFamily === 'auto') {
       let best = { k: 1, breaks: [] as number[], gvf: 0 };
       for (let k = 2; k <= Math.min(5, fdemands.length); k++) {
         const br = breakFn(vals, k);

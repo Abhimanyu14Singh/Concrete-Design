@@ -34,11 +34,13 @@ export default function AutoGroupPanel({
   const [algorithm, setAlgorithm] = useState<'jenks' | 'quantile'>('jenks');
   const [kPerFamily, setKPerFamily] = useState<number | 'auto'>('auto');
   const [metric, setMetric] = useState<import('../../utils/autoGroup').DemandMetric>('governing');
+  // Global budget: total groups across the whole model (null = use per-family k)
+  const [totalGroups, setTotalGroups] = useState<number | null>(null);
 
-  // Live suggestions (recomputed on algorithm / k change)
+  // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
-    () => suggestGroups(members, kPerFamily, algorithm, metric),
-    [members, algorithm, kPerFamily, metric]
+    () => suggestGroups(members, kPerFamily, algorithm, metric, totalGroups ?? undefined),
+    [members, algorithm, kPerFamily, metric, totalGroups]
   );
 
   // Per-family user-tweaked breaks (initially from suggestion)
@@ -196,22 +198,49 @@ export default function AutoGroupPanel({
             ))}
           </div>
         </div>
-        <div>
+        <div style={{ opacity: totalGroups !== null ? 0.4 : 1 }}>
           <div style={lbl}>Groups / family</div>
           <div style={{ display: 'flex', gap: 4 }}>
             <button
-              onClick={() => { setKPerFamily('auto'); setTweakedBreaks({}); }}
-              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: kPerFamily === 'auto' ? '#2563eb' : 'white', color: kPerFamily === 'auto' ? 'white' : '#374151', cursor: 'pointer' }}>
+              onClick={() => { setKPerFamily('auto'); setTotalGroups(null); setTweakedBreaks({}); }}
+              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: totalGroups === null && kPerFamily === 'auto' ? '#2563eb' : 'white', color: totalGroups === null && kPerFamily === 'auto' ? 'white' : '#374151', cursor: 'pointer' }}>
               Auto
             </button>
             {[2, 3, 4, 5].map(k => (
               <button key={k}
-                onClick={() => { setKPerFamily(k); setTweakedBreaks({}); }}
-                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: kPerFamily === k ? '#2563eb' : 'white', color: kPerFamily === k ? 'white' : '#374151', cursor: 'pointer' }}>
+                onClick={() => { setKPerFamily(k); setTotalGroups(null); setTweakedBreaks({}); }}
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: totalGroups === null && kPerFamily === k ? '#2563eb' : 'white', color: totalGroups === null && kPerFamily === k ? 'white' : '#374151', cursor: 'pointer' }}>
                 {k}
               </button>
             ))}
           </div>
+        </div>
+        <div>
+          <div style={lbl}>Total groups (model)</div>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <input
+              type="number" min={1} max={Math.max(1, demands.length)}
+              placeholder="—"
+              value={totalGroups ?? ''}
+              onChange={e => {
+                const v = e.target.value === '' ? null : Math.max(1, Math.round(+e.target.value));
+                setTotalGroups(v);
+                setTweakedBreaks({});
+              }}
+              style={{ width: 56, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${totalGroups !== null ? '#2563eb' : '#d1d5db'}`, background: totalGroups !== null ? '#eff6ff' : 'white', fontFamily: 'monospace' }}
+              title="Total design groups across the whole model, distributed across families by demand spread" />
+            {totalGroups !== null && (
+              <button onClick={() => { setTotalGroups(null); setTweakedBreaks({}); }}
+                style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', background: 'white', color: '#6b7280', cursor: 'pointer' }}>
+                clear
+              </button>
+            )}
+          </div>
+          {totalGroups !== null && (
+            <div style={{ fontSize: 9, color: '#6b7280', marginTop: 2 }}>
+              ≈ {baseSuggestions.reduce((s, sg) => s + sg.bins.length, 0)} across {baseSuggestions.length} famil{baseSuggestions.length === 1 ? 'y' : 'ies'}
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   jenksBreaks, quantileBreaks, assignByBreaks,
-  familyKey, extractDemands, suggestGroups,
+  familyKey, extractDemands, suggestGroups, allocateGroupBudget,
   memberSteelWeightLb, computeSavings,
   flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt,
 } from '../autoGroup';
@@ -151,6 +151,44 @@ describe('suggestGroups', () => {
     const sug = suggestGroups(members, 'auto');
     expect(sug).toHaveLength(1);
     expect(sug[0].bins.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('total-groups budget caps the committed group count', () => {
+    // Two families (h=24 and h=36), 4 members each, spread demands
+    const members = [
+      ...Array.from({ length: 4 }, (_, i) => makeMember({ id: `s${i}`, h: 24, loads: [{ id: 'l', label: 'E', Mu_pos: (i + 1) * 50, Mu_neg: 10, Vu: 10, Tu: 0, Pu: 0 }] })),
+      ...Array.from({ length: 4 }, (_, i) => makeMember({ id: `d${i}`, h: 36, loads: [{ id: 'l', label: 'E', Mu_pos: (i + 1) * 90, Mu_neg: 10, Vu: 10, Tu: 0, Pu: 0 }] })),
+    ];
+    const sug = suggestGroups(members, 'auto', 'jenks', 'Mu_pos', 4);
+    const totalBins = sug.reduce((s, x) => s + x.bins.length, 0);
+    expect(totalBins).toBeLessThanOrEqual(4);
+    expect(totalBins).toBeGreaterThanOrEqual(2); // ≥1 per family
+  });
+});
+
+describe('allocateGroupBudget', () => {
+  function fam(prefix: string, h: number, n: number): Member[] {
+    return Array.from({ length: n }, (_, i) =>
+      makeMember({ id: `${prefix}${i}`, h, loads: [{ id: 'l', label: 'E', Mu_pos: (i + 1) * 50, Mu_neg: 10, Vu: 10, Tu: 0, Pu: 0 }] }));
+  }
+  const members = [...fam('a', 24, 5), ...fam('b', 36, 3)]; // 2 families, 8 members
+
+  it('sums to clamped K and gives each family ≥1 and ≤ its count', () => {
+    const alloc = allocateGroupBudget(members, 5, 'Mu_pos');
+    const vals = Object.values(alloc);
+    expect(vals.reduce((s, v) => s + v, 0)).toBe(5);
+    for (const v of vals) expect(v).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(alloc)).toHaveLength(2);
+  });
+
+  it('clamps below #families up to #families', () => {
+    const alloc = allocateGroupBudget(members, 1, 'Mu_pos');
+    expect(Object.values(alloc).reduce((s, v) => s + v, 0)).toBe(2); // 2 families
+  });
+
+  it('clamps above #members down to #members', () => {
+    const alloc = allocateGroupBudget(members, 99, 'Mu_pos');
+    expect(Object.values(alloc).reduce((s, v) => s + v, 0)).toBe(8); // 8 members
   });
 });
 
