@@ -14,6 +14,8 @@ import { ComConnection } from '../../adapters/etabs/comClient';
 import { buildMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
+import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { useUnits } from '../../contexts/UnitsContext';
 import PlanMap from './PlanMap';
 import { dcrToColor } from './dcrColors';
 
@@ -34,6 +36,8 @@ function worstDCR(m: Member, code: DesignCode): number {
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
+  const { units } = useUnits();
+  const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,11 +62,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [slsComboId, setSlsComboId] = useState<string>('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
 
-  // step 3
-  const [seed, setSeed] = useState<SeedOptions>({
+  // step 3 — stirrup size defaults to Ø10 in SI, #4 in imperial (display only;
+  // spacings are stored in inches and converted for display when SI)
+  const [seed, setSeed] = useState<SeedOptions>(() => ({
     rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
-    stirrupBarSize: 4, stirrupLegs: 2,
-  });
+    stirrupBarSize: units === 'si' ? -10 : 4, stirrupLegs: 2,
+  }));
 
   // step 4
   const [members, setMembers] = useState<Member[]>([]);
@@ -448,16 +453,19 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
               </div>
               <div style={card}>
-                <div style={lbl}>Stirrup spacing by zone — thirds of span (in)</div>
+                <div style={lbl}>Stirrup spacing by zone — thirds of span ({units === 'si' ? 'mm' : 'in'})</div>
                 <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                   {['End (0–L/3)', 'Middle (L/3–2L/3)', 'End (2L/3–L)'].map((zl, i) => (
                     <label key={zl} style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {zl}
-                      <input type="number" step={0.5} min={2} style={{ ...inp, width: 80 }}
-                        value={seed.stirrupSpacings[i]}
+                      <input type="number"
+                        step={units === 'si' ? 10 : 0.5} min={units === 'si' ? 50 : 2}
+                        style={{ ...inp, width: 80 }}
+                        value={units === 'si' ? Math.round(seed.stirrupSpacings[i] * IN_TO_MM) : seed.stirrupSpacings[i]}
                         onChange={e => setSeed(s => {
                           const sp = [...s.stirrupSpacings] as [number, number, number];
-                          sp[i] = +e.target.value;
+                          const v = +e.target.value;
+                          sp[i] = units === 'si' ? v / IN_TO_MM : v; // store inches internally
                           return { ...s, stirrupSpacings: sp };
                         })} />
                     </label>
@@ -466,7 +474,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     Stirrup size
                     <select style={inp} value={seed.stirrupBarSize}
                       onChange={e => setSeed(s => ({ ...s, stirrupBarSize: +e.target.value }))}>
-                      {[3, 4, 5].map(b => <option key={b} value={b}>#{b}</option>)}
+                      {/* stirrup-gauge bars only: US #3–#6 or metric Ø8–Ø12 */}
+                      {barSizeOptions(units, seed.stirrupBarSize)
+                        .filter(b => (b > 0 ? b <= 6 : -b <= 12))
+                        .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
                     </select>
                   </label>
                 </div>
