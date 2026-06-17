@@ -302,8 +302,8 @@ export function designMemberEC2(
   // EC2: with stirrups V_Rd = min(V_Rd,s, V_Rd,max); without, V_Rd,c
   const VRd = rebar.ties ? Math.min(VRds, VRdmax) : VRdc;
 
-  if (rebar.ties && VRds > VRdmax)
-    warnings.push({ code: 'EC2 §6.2.3', message: `Strut crushing governs: V_Rd,max = ${VRdmax.toFixed(1)} kN < V_Rd,s = ${VRds.toFixed(1)} kN`, severity: 'warning' });
+  if (rebar.ties && VRds > VRdmax && VEd > VRdc)
+    warnings.push({ code: 'EC2 §6.2.3', message: `Strut crushing governs: V_Rd,max = ${VRdmax.toFixed(1)} kN < V_Rd,s = ${VRds.toFixed(1)} kN — adding more links won't increase capacity; increase section width or f_ck`, severity: 'warning' });
 
   // ── Torsion ──
   let TRd = 0, TRdc_val = 0, TRdMax_val = 0;
