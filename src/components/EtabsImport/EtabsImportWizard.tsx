@@ -391,7 +391,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </div>
                 </div>
                 <div style={card}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     <div style={lbl}>Load combinations to import</div>
                     <span style={{ fontSize: 10, color: '#9ca3af' }}>
                       {selCombos.size} of {combos.length} selected
@@ -406,12 +406,27 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       None
                     </button>
                   </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {combos.map(c => (
-                      <span key={c} style={chip(selCombos.has(c))}
-                        onClick={() => setSelCombos(prev => { const n = new Set(prev); if (n.has(c)) n.delete(c); else n.add(c); return n; })}>
-                        {c}
-                      </span>
+                  {/* Scrollable checkbox list */}
+                  <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 6, background: 'white' }}>
+                    {combos.map((c, i) => (
+                      <label key={c} style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '5px 10px', cursor: 'pointer', fontSize: 12,
+                        background: selCombos.has(c) ? '#eff6ff' : 'transparent',
+                        borderBottom: i < combos.length - 1 ? '1px solid #f3f4f6' : 'none',
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={selCombos.has(c)}
+                          onChange={() => setSelCombos(prev => {
+                            const n = new Set(prev);
+                            if (n.has(c)) n.delete(c); else n.add(c);
+                            return n;
+                          })}
+                          style={{ accentColor: '#2563eb' }}
+                        />
+                        <span style={{ color: selCombos.has(c) ? '#1d4ed8' : '#374151', fontFamily: 'monospace' }}>{c}</span>
+                      </label>
                     ))}
                   </div>
                   {selCombos.size === 0 && (

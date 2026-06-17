@@ -156,13 +156,14 @@ export default function App() {
         }
         return;
       }
-      // In Electron the native File-menu accelerators already fire trigger-save/
-      // trigger-open/new-project over IPC; handling them here too would open a
-      // second native dialog. Only run these shortcuts in the browser build.
+      // In Electron, Ctrl+S and Ctrl+O are handled by the native File-menu
+      // accelerators (which fire IPC events). Running them here too would open
+      // a second dialog. Ctrl+N uses confirm() not a dialog, so it's safe to
+      // keep in both environments.
       const inElectron = !!window.electronAPI;
       if (e.key === 's' && !inElectron) { e.preventDefault(); handleSave(); }
       if (e.key === 'o' && !inElectron) { e.preventDefault(); handleOpen(); }
-      if (e.key === 'n' && !inElectron) { e.preventDefault(); handleNewProject(); }
+      if (e.key === 'n') { e.preventDefault(); handleNewProject(); }
       if (e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       if (e.key === 'y') { e.preventDefault(); redo(); }
     }
