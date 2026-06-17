@@ -119,6 +119,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const [groupSuggestion, setGroupSuggestion] = useState<SuggestResult | null>(null);
   const [groupSuggestionError, setGroupSuggestionError] = useState<string | null>(null);
   const [suggestingGroupId, setSuggestingGroupId] = useState<string | null>(null);
+  const [issuesOpen, setIssuesOpen] = useState(true);
+  // DCR overview filters
+  const [dcrGroupFilter, setDcrGroupFilter] = useState<string>('__all__');
+  const [dcrSeriesFilter, setDcrSeriesFilter] = useState<string>('__all__');
 
   const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
@@ -285,7 +289,26 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     );
   }
 
-  const barData = summaries.map(s => {
+  // DCR overview: filter members by the selected group (or ungrouped / all).
+  const dcrSummaries = dcrGroupFilter === '__all__'
+    ? summaries
+    : dcrGroupFilter === '__ungrouped__'
+      ? summaries.filter(s => !assignedIds.has(s.member.id))
+      : summaries.filter(s => designGroups.find(g => g.id === dcrGroupFilter)?.memberIds.includes(s.member.id));
+
+  const DCR_SERIES = [
+    { key: 'Flex+',   fill: '#3b82f6' },
+    { key: 'Flex-',   fill: '#8b5cf6' },
+    { key: 'Shear',   fill: '#f59e0b' },
+    { key: 'Torsion', fill: '#10b981' },
+    { key: 'P-M',     fill: '#ec4899' },
+    { key: 'SBZ Ash', fill: '#ef4444' },
+  ] as const;
+  const shownSeries = dcrSeriesFilter === '__all__'
+    ? DCR_SERIES
+    : DCR_SERIES.filter(s => s.key === dcrSeriesFilter);
+
+  const barData = dcrSummaries.map(s => {
     const r = s.worstResult;
     const isWall   = s.member.memberType === 'wall';
     const isColumn = s.member.memberType === 'column';
@@ -389,122 +412,6 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Issues panel */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Issues</span>
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>
-            {ngCount} exceeding DCR · {warnCount} warning{warnCount !== 1 ? 's' : ''}
-          </span>
-        </div>
-
-        {issues.length === 0 ? (
-          <div style={{ padding: '14px 16px', fontSize: 12, color: '#9ca3af' }}>No issues — all members pass.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {issues.map(({ member, worstResult, maxDCR }) => {
-              const isNG = worstResult.status === 'NG';
-              const msgs = Array.from(new Set(worstResult.warnings.map(w => w.message)));
-              const sevOf = (msg: string) =>
-                worstResult.warnings.find(w => w.message === msg)?.severity ?? 'warning';
-              const shown = msgs.slice(0, 3);
-              const extra = msgs.length - shown.length;
-              return (
-                <div
-                  key={member.id}
-                  style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 16px',
-                    borderBottom: '1px solid #f3f4f6',
-                    background: isNG ? '#fef2f2' : 'white',
-                    borderLeft: `3px solid ${isNG ? '#dc2626' : '#d97706'}`,
-                  }}
-                >
-                  <button
-                    onClick={() => onSelectMember(member.id)}
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                      fontSize: 13, fontWeight: 700, color: '#2563eb', textAlign: 'left', minWidth: 110,
-                    }}
-                  >
-                    {member.label}
-                  </button>
-                  <span style={{
-                    fontFamily: 'monospace', fontWeight: 700, fontSize: 12,
-                    color: dcrColor(maxDCR), background: dcrBg(maxDCR), padding: '2px 6px', borderRadius: 4, flexShrink: 0,
-                  }}>
-                    {maxDCR.toFixed(3)}
-                  </span>
-                  <span style={{
-                    fontSize: 10, fontWeight: 700, flexShrink: 0, padding: '2px 8px', borderRadius: 10,
-                    color: isNG ? '#dc2626' : '#d97706',
-                    background: isNG ? '#fee2e2' : '#fef3c7',
-                  }}>
-                    {isNG ? 'NG' : 'WARN'}
-                  </span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 0 }}>
-                    {shown.map(msg => (
-                      <div key={msg} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#4b5563' }}>
-                        <span style={{
-                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                          background: sevOf(msg) === 'error' ? '#dc2626' : '#d97706',
-                        }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg}</span>
-                      </div>
-                    ))}
-                    {extra > 0 && (
-                      <div style={{ fontSize: 10, color: '#9ca3af', paddingLeft: 12 }}>+{extra} more</div>
-                    )}
-                    {shown.length === 0 && (
-                      <div style={{ fontSize: 11, color: '#9ca3af' }}>DCR exceeds capacity.</div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {showSkinControl && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-            padding: '10px 16px', borderTop: '1px solid #e5e7eb', background: '#fffbeb',
-          }}>
-            <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>
-              {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''} need skin/side-face reinforcement.
-            </span>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
-              Bars/face
-              <input
-                type="number" min={1} value={skinNumBars}
-                onChange={e => setSkinNumBars(Math.max(1, +e.target.value || 1))}
-                style={{ ...inp, width: 56, fontFamily: 'monospace' }}
-              />
-            </label>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
-              Bar size
-              <select
-                value={skinBarSize}
-                onChange={e => setSkinBarSize(+e.target.value)}
-                style={inp}
-              >
-                {barSizeOptions(units, skinBarSize).map(s => (
-                  <option key={s} value={s}>{formatBarLabel(s)}</option>
-                ))}
-              </select>
-            </label>
-            <button
-              onClick={applySkinReinforcement}
-              style={{
-                padding: '6px 14px', background: '#d97706', color: 'white', border: 'none',
-                borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              Apply min skin reinforcement to {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Split workspace */}
@@ -615,9 +522,146 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
         </div>
       </div>
 
+      {/* Issues panel — collapsible, below the Members-by-Group workspace */}
+      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
+        <div
+          onClick={() => setIssuesOpen(o => !o)}
+          style={{ padding: '10px 16px', borderBottom: issuesOpen ? '1px solid #e5e7eb' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: issuesOpen ? 'rotate(90deg)' : 'rotate(0deg)', color: '#9ca3af' }}>▶</span>
+            Issues
+          </span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>
+            {ngCount} exceeding DCR · {warnCount} warning{warnCount !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {issuesOpen && (issues.length === 0 ? (
+          <div style={{ padding: '14px 16px', fontSize: 12, color: '#9ca3af' }}>No issues — all members pass.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {issues.map(({ member, worstResult, maxDCR }) => {
+              const isNG = worstResult.status === 'NG';
+              const msgs = Array.from(new Set(worstResult.warnings.map(w => w.message)));
+              const sevOf = (msg: string) =>
+                worstResult.warnings.find(w => w.message === msg)?.severity ?? 'warning';
+              const shown = msgs.slice(0, 3);
+              const extra = msgs.length - shown.length;
+              return (
+                <div
+                  key={member.id}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 16px',
+                    borderBottom: '1px solid #f3f4f6',
+                    background: isNG ? '#fef2f2' : 'white',
+                    borderLeft: `3px solid ${isNG ? '#dc2626' : '#d97706'}`,
+                  }}
+                >
+                  <button
+                    onClick={() => onSelectMember(member.id)}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                      fontSize: 13, fontWeight: 700, color: '#2563eb', textAlign: 'left', minWidth: 110,
+                    }}
+                  >
+                    {member.label}
+                  </button>
+                  <span style={{
+                    fontFamily: 'monospace', fontWeight: 700, fontSize: 12,
+                    color: dcrColor(maxDCR), background: dcrBg(maxDCR), padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+                  }}>
+                    {maxDCR.toFixed(3)}
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, flexShrink: 0, padding: '2px 8px', borderRadius: 10,
+                    color: isNG ? '#dc2626' : '#d97706',
+                    background: isNG ? '#fee2e2' : '#fef3c7',
+                  }}>
+                    {isNG ? 'NG' : 'WARN'}
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 0 }}>
+                    {shown.map(msg => (
+                      <div key={msg} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#4b5563' }}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                          background: sevOf(msg) === 'error' ? '#dc2626' : '#d97706',
+                        }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg}</span>
+                      </div>
+                    ))}
+                    {extra > 0 && (
+                      <div style={{ fontSize: 10, color: '#9ca3af', paddingLeft: 12 }}>+{extra} more</div>
+                    )}
+                    {shown.length === 0 && (
+                      <div style={{ fontSize: 11, color: '#9ca3af' }}>DCR exceeds capacity.</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+
+        {issuesOpen && showSkinControl && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '10px 16px', borderTop: '1px solid #e5e7eb', background: '#fffbeb',
+          }}>
+            <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>
+              {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''} need skin/side-face reinforcement.
+            </span>
+            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+              Bars/face
+              <input
+                type="number" min={1} value={skinNumBars}
+                onChange={e => setSkinNumBars(Math.max(1, +e.target.value || 1))}
+                style={{ ...inp, width: 56, fontFamily: 'monospace' }}
+              />
+            </label>
+            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+              Bar size
+              <select
+                value={skinBarSize}
+                onChange={e => setSkinBarSize(+e.target.value)}
+                style={inp}
+              >
+                {barSizeOptions(units, skinBarSize).map(s => (
+                  <option key={s} value={s}>{formatBarLabel(s)}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={applySkinReinforcement}
+              style={{
+                padding: '6px 14px', background: '#d97706', color: 'white', border: 'none',
+                borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              Apply min skin reinforcement to {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* DCR Overview Chart */}
       <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>DCR Overview — All Members</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>
+            DCR Overview <span style={{ color: '#9ca3af' }}>· {barData.length} members</span>
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <select value={dcrGroupFilter} onChange={e => setDcrGroupFilter(e.target.value)} style={{ ...inp, width: 'auto', fontSize: 11 }}>
+              <option value="__all__">All groups</option>
+              {groupSections.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+              {ungrouped.length > 0 && <option value="__ungrouped__">Ungrouped</option>}
+            </select>
+            <select value={dcrSeriesFilter} onChange={e => setDcrSeriesFilter(e.target.value)} style={{ ...inp, width: 'auto', fontSize: 11 }}>
+              <option value="__all__">All DCRs</option>
+              {DCR_SERIES.map(s => <option key={s.key} value={s.key}>{s.key}</option>)}
+            </select>
+          </div>
+        </div>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={barData} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
             <CartesianGrid stroke="#f3f4f6" strokeDasharray="3 3" />
@@ -628,12 +672,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
               labelStyle={{ color: '#374151', fontWeight: 600 }}
             />
             <Legend wrapperStyle={{ fontSize: 11, color: '#6b7280' }} />
-            <Bar dataKey="Flex+"   fill="#3b82f6" />
-            <Bar dataKey="Flex-"   fill="#8b5cf6" />
-            <Bar dataKey="Shear"   fill="#f59e0b" />
-            <Bar dataKey="Torsion" fill="#10b981" />
-            <Bar dataKey="P-M"     fill="#ec4899" />
-            <Bar dataKey="SBZ Ash" fill="#ef4444" />
+            {shownSeries.map(s => <Bar key={s.key} dataKey={s.key} fill={s.fill} />)}
           </BarChart>
         </ResponsiveContainer>
       </div>

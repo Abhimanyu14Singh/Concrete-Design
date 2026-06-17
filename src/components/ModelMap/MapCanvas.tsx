@@ -7,6 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { valueToRampColor, rampStops } from './colorRamp';
+import { groupColor } from './groupColors';
 
 export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight' | 'autoGroup';
 export type DiagramMode = 'off' | 'moment' | 'shear';
@@ -25,11 +26,6 @@ export interface FrameInfo {
   warnings?: { code: string; message: string; severity: 'error' | 'warning' }[];
   status?: 'OK' | 'NG' | 'Warning';
 }
-
-const GROUP_PALETTE = [
-  '#2563eb','#16a34a','#d97706','#9333ea','#0891b2',
-  '#dc2626','#65a30d','#7c3aed','#0284c7','#be185d',
-];
 
 const DIAGRAM_MAX_PX = 18; // max perpendicular offset for diagram in SVG user-space pixels
 
@@ -122,7 +118,7 @@ export default function MapCanvas({
   // Group color lookup (by memberId)
   const groupColorMap = new Map<string, string>();
   designGroups.forEach((g, i) => {
-    const color = g.color ?? GROUP_PALETTE[i % GROUP_PALETTE.length];
+    const color = groupColor(g.color, i);
     g.memberIds.forEach(mid => groupColorMap.set(mid, color));
   });
 
@@ -514,6 +510,19 @@ export default function MapCanvas({
               <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
               {l}
             </span>
+          ))}
+        </div>
+      )}
+
+      {/* Auto-group overlay legend — family + group # with matching colors */}
+      {colorMode === 'autoGroup' && autoGroupOverlay.length > 0 && (
+        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#374151', maxHeight: 180, overflow: 'auto', maxWidth: 260 }}>
+          <div style={{ fontWeight: 700, color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Auto-group preview</div>
+          {autoGroupOverlay.map(bin => (
+            <div key={bin.binKey} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
+              <span style={{ display: 'inline-block', width: 12, height: 4, background: bin.color, borderRadius: 2, flexShrink: 0 }} />
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{bin.label} · {bin.memberIds.length}</span>
+            </div>
           ))}
         </div>
       )}

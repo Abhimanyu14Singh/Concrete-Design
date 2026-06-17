@@ -3,7 +3,7 @@
  * "Apply" fans the layout out to every member in the group.
  */
 import { useState, useEffect } from 'react';
-import type { DesignGroup, RebarLayout, BarGroup, Member, Project } from '../../types';
+import type { DesignGroup, RebarLayout, BarGroup, Member, Project, TieZone } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -69,11 +69,14 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? DEFAULT_REBAR);
   const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  // Sync if group changes
+  // Re-seed only when the SELECTED group changes — keying on group.rebar too
+  // would clobber an in-progress edit every time the parent re-renders (which
+  // is why bar-size changes appeared to "not stick").
   useEffect(() => {
     setRebar(group.rebar ?? DEFAULT_REBAR);
     setSuggestNote(null);
-  }, [group.id, group.rebar]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group.id]);
 
   function handleSuggest() {
     const r = suggestGroupRebar(members, code, targetDCR);
@@ -160,21 +163,55 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       <div style={{ marginBottom: 10 }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Stirrups</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <select value={ties.barSize} onChange={e => setRebar(r => ({ ...r, ties: { ...ties, barSize: parseInt(e.target.value) } }))}
+          <select value={ties.barSize} onChange={e => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(e.target.value) } }))}
             style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
             {/* stirrup-size bars only: US #3–#6 or metric Ø8–Ø12 */}
             {barSizeOptions(units, ties.barSize).filter(s => (s > 0 ? s <= 6 : -s <= 12)).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
           </select>
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>
-          <NumberField value={ties.spacing} min={1} max={24}
-            onChange={v => setRebar(r => ({ ...r, ties: { ...ties, spacing: v } }))}
-            style={{ width: 50, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>in,</span>
+          {!rebar.tieZones && (
+            <>
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>
+              <NumberField value={ties.spacing} min={1} max={24}
+                onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), spacing: v } }))}
+                style={{ width: 50, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>in,</span>
+            </>
+          )}
           <NumberField value={ties.legs} min={2} max={8}
-            onChange={v => setRebar(r => ({ ...r, ties: { ...ties, legs: Math.round(v) } }))}
+            onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), legs: Math.round(v) } }))}
             style={{ width: 40, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
           <span style={{ fontSize: 11, color: '#9ca3af' }}>legs</span>
         </div>
+
+        {/* Zoned stirrups — three spacings over thirds of span, as in the member screen */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#6b7280', padding: '6px 0 0', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!rebar.tieZones}
+            onChange={e => {
+              if (e.target.checked) {
+                const s = ties.spacing;
+                setRebar(r => ({ ...r, tieZones: [{ spacing: s }, { spacing: s * 2 }, { spacing: s }] }));
+              } else {
+                setRebar(r => { const { tieZones, ...rest } = r; return rest; });
+              }
+            }} />
+          Zoned stirrups — 3 spacings over thirds of span
+        </label>
+        {rebar.tieZones && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+            {(['End (0–L/3)', 'Middle', 'End (2L/3–L)'] as const).map((zl, i) => (
+              <div key={zl} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 9, color: '#9ca3af' }}>{zl}</span>
+                <NumberField value={rebar.tieZones![i].spacing} min={1} max={24}
+                  onChange={v => setRebar(r => {
+                    const zones = r.tieZones!.map((z, zi) => zi === i ? { spacing: v } : z) as [TieZone, TieZone, TieZone];
+                    // keep the single-spacing path governed by the tightest zone
+                    return { ...r, tieZones: zones, ties: { ...(r.ties ?? ties), spacing: Math.min(...zones.map(z => z.spacing)) } };
+                  })}
+                  style={{ width: 56, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <button

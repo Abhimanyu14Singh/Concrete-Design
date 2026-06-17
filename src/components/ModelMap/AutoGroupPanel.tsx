@@ -14,10 +14,21 @@ import {
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
 import HistogramPanel from './HistogramPanel';
+import { GROUP_PALETTE } from './groupColors';
+import { useUnits } from '../../contexts/UnitsContext';
 
-const GROUP_PALETTE = [
-  '#2563eb','#16a34a','#d97706','#9333ea','#0891b2','#dc2626',
-];
+/**
+ * Reformat a section-family label for the active unit system. Family labels
+ * are baked as inch dimensions ("19.685×39.37"); when SI is active we convert
+ * to mm so they read like the ETABS sections the user picked.
+ */
+function displayFamilyLabel(label: string, units: 'imperial' | 'si'): string {
+  if (units !== 'si') return label;
+  const m = label.match(/^([\d.]+)×([\d.]+)$/);
+  if (!m) return label;
+  const mm = (inch: string) => Math.round(parseFloat(inch) * 25.4);
+  return `${mm(m[1])}×${mm(m[2])} mm`;
+}
 
 interface AutoGroupPanelProps {
   members: Member[];
@@ -32,6 +43,7 @@ export default function AutoGroupPanel({
   onApplySuggestion,
   onOverlayChange,
 }: AutoGroupPanelProps) {
+  const { units } = useUnits();
   const [algorithm, setAlgorithm] = useState<'jenks' | 'quantile'>('jenks');
   const [kPerFamily, setKPerFamily] = useState<number | 'auto'>('auto');
   const [metric, setMetric] = useState<import('../../utils/autoGroup').DemandMetric>('governing');
@@ -65,7 +77,11 @@ export default function AutoGroupPanel({
   const activeSuggestion = baseSuggestions.find(s => s.familyKey === activeFamily);
   const demands = useMemo(() => extractDemands(members), [members]);
   const familyDemands = useMemo(
-    () => demands.filter(d => d.familyKey === activeFamily),
+    // In all-beams mode the active pool is the synthetic family, which no
+    // demand carries as its own familyKey — use every demand instead.
+    () => activeFamily === ALL_BEAMS_FAMILY_KEY
+      ? demands
+      : demands.filter(d => d.familyKey === activeFamily),
     [demands, activeFamily]
   );
 
@@ -84,6 +100,8 @@ export default function AutoGroupPanel({
   // Compute full overlay (all families) and fire onOverlayChange
   const allOverlayBins = useMemo<AutoGroupBin[]>(() => {
     const bins: AutoGroupBin[] = [];
+    // Global running index so no two groups across families share a color.
+    let colorIdx = 0;
     for (const sug of baseSuggestions) {
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
@@ -99,14 +117,14 @@ export default function AutoGroupPanel({
         bins.push({
           binKey: `${sug.familyKey}-${bi}`,
           memberIds: mIds,
-          color: GROUP_PALETTE[bi % GROUP_PALETTE.length],
-          label: `${sug.familyLabel} G${bi + 1}`,
+          color: GROUP_PALETTE[colorIdx++ % GROUP_PALETTE.length],
+          label: `${displayFamilyLabel(sug.familyLabel, units)} G${bi + 1}`,
         });
       });
     }
     return bins;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseSuggestions, tweakedBreaks, demands, metric]);
+  }, [baseSuggestions, tweakedBreaks, demands, metric, units]);
 
   useEffect(() => {
     onOverlayChange?.(allOverlayBins);
@@ -153,15 +171,17 @@ export default function AutoGroupPanel({
       bins.forEach((mIds, bi) => {
         if (!mIds.length) return;
         const worstMuPos = Math.max(...famDemands.filter(d => mIds.includes(d.memberId)).map(d => d.MuPos));
-        const label = `${sug.familyLabel} — G${bi + 1} (Mu≤${Math.round(worstMuPos)} k-ft)`;
+        const label = `${displayFamilyLabel(sug.familyLabel, units)} — G${bi + 1} (Mu≤${Math.round(worstMuPos)} k-ft)`;
         newGroups.push({
-          id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount++}`,
+          id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount}`,
           label,
           memberIds: mIds,
-          // bin index keys the color so applied groups match the preview swatches
-          color: GROUP_PALETTE[bi % GROUP_PALETTE.length],
+          // global running index keeps every committed group a distinct color,
+          // matching the preview swatches and the map plan
+          color: GROUP_PALETTE[groupCount % GROUP_PALETTE.length],
           source: 'auto',
         });
+        groupCount++;
       });
     }
     onApplySuggestion(newGroups);
@@ -176,6 +196,12 @@ export default function AutoGroupPanel({
   }
 
   const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 3 };
+
+  // Color of each preview bin, looked up from the overlay so swatches match
+  // exactly what the map plan and the committed groups will show.
+  const overlayColorByKey = new Map(allOverlayBins.map(b => [b.binKey, b.color]));
+  const previewColor = (bi: number) =>
+    overlayColorByKey.get(`${activeFamily}-${bi}`) ?? GROUP_PALETTE[bi % GROUP_PALETTE.length];
 
   return (
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -282,7 +308,7 @@ export default function AutoGroupPanel({
                 : demands.filter(d => d.familyKey === s.familyKey).length;
               return (
                 <option key={s.familyKey} value={s.familyKey}>
-                  {s.familyLabel} ({count} beams)
+                  {displayFamilyLabel(s.familyLabel, units)} ({count} beams)
                 </option>
               );
             })}
@@ -294,7 +320,7 @@ export default function AutoGroupPanel({
       {activeSuggestion && (
         <div>
           <div style={{ ...lbl, marginBottom: 6 }}>
-            Demand distribution — {activeSuggestion.familyLabel}
+            Demand distribution — {displayFamilyLabel(activeSuggestion.familyLabel, units)}
             <span style={{ marginLeft: 6, color: '#2563eb' }}>GVF {(activeSuggestion.gvf * 100).toFixed(0)}%</span>
           </div>
           <HistogramPanel
@@ -318,7 +344,7 @@ export default function AutoGroupPanel({
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer' }}
               onMouseEnter={() => highlightBin(bi)}
               onMouseLeave={clearHighlight}>
-              <span style={{ width: 10, height: 10, borderRadius: 2, background: GROUP_PALETTE[bi % GROUP_PALETTE.length], flexShrink: 0 }} />
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: previewColor(bi), flexShrink: 0 }} />
               <span style={{ fontSize: 11, flex: 1 }}>Group {bi + 1}</span>
               <span style={{ fontSize: 10, color: '#6b7280' }}>{mIds.length} beams</span>
               <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>{metric === 'governing' ? `${(worstDemand * 100).toFixed(0)}%` : `${Math.round(worstDemand)} ${metricUnitFor(metric)}`}</span>

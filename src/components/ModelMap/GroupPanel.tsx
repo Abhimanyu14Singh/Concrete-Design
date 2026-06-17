@@ -5,11 +5,7 @@
 import { useState } from 'react';
 import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
-
-const PALETTE = [
-  '#2563eb','#16a34a','#d97706','#9333ea','#0891b2',
-  '#dc2626','#65a30d','#7c3aed','#0284c7','#be185d',
-];
+import { GROUP_PALETTE as PALETTE, groupColor } from './groupColors';
 
 interface Props {
   groups: DesignGroup[];
@@ -231,11 +227,13 @@ export default function GroupPanel({
             No groups yet. Select members on the map and click "+ Group selection".
           </div>
         )}
-        {groups.map(g => {
+        {groups.map((g, gIdx) => {
           const dcr = worstDCR(g);
           const isActive = activeGroupId === g.id;
           const stats = groupStats(g);
           const statsOpen = expandedStats === g.id;
+          // Dot color matches the map: explicit color, else palette by position.
+          const dotColor = groupColor(g.color, gIdx);
           return (
             <div key={g.id}>
             <div
@@ -249,8 +247,8 @@ export default function GroupPanel({
             >
               {/* Color chip — click to cycle color */}
               <div
-                onClick={e => { e.stopPropagation(); setGroupColor(g.id, PALETTE[(PALETTE.indexOf(g.color ?? PALETTE[0]) + 1) % PALETTE.length]); }}
-                style={{ width: 12, height: 12, borderRadius: '50%', background: g.color ?? PALETTE[0], flexShrink: 0, cursor: 'pointer', border: '1px solid rgba(0,0,0,0.12)' }}
+                onClick={e => { e.stopPropagation(); setGroupColor(g.id, PALETTE[(PALETTE.indexOf(dotColor) + 1) % PALETTE.length]); }}
+                style={{ width: 12, height: 12, borderRadius: '50%', background: dotColor, flexShrink: 0, cursor: 'pointer', border: '1px solid rgba(0,0,0,0.12)' }}
                 title="Click to change color"
               />
 
