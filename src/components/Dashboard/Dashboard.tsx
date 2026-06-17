@@ -566,39 +566,51 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
         </div>
 
         {/* Right pane */}
-        <div style={{ flex: 1, minWidth: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {selection.kind === 'group' && selectedGroupSection ? (
             /* Group reinforcement panel */
-            <GroupPanel
-              group={selectedGroupSection}
-              project={project}
-              summaryById={summaryById}
-              groupSuggestion={groupSuggestion}
-              groupSuggestionError={groupSuggestionError}
-              isSuggesting={suggestingGroupId === selectedGroupSection.id}
-              onSuggest={() => handleSuggestGroupRebar(selectedGroupSection.members)}
-              onApplySuggestion={(rebar) => handleApplySuggestionToAll(selectedGroupSection.members, rebar)}
-              onSelectMember={(id) => setSelection({ kind: 'member', id })}
-              onSelectMemberTab={onSelectMember}
-              inp={inp}
-            />
+            <div style={{ flex: 1, overflow: 'auto', padding: 2 }}>
+              <GroupPanel
+                group={selectedGroupSection}
+                project={project}
+                summaryById={summaryById}
+                groupSuggestion={groupSuggestion}
+                groupSuggestionError={groupSuggestionError}
+                isSuggesting={suggestingGroupId === selectedGroupSection.id}
+                onSuggest={() => handleSuggestGroupRebar(selectedGroupSection.members)}
+                onApplySuggestion={(rebar) => handleApplySuggestionToAll(selectedGroupSection.members, rebar)}
+                onSelectMember={(id) => setSelection({ kind: 'member', id })}
+                onSelectMemberTab={onSelectMember}
+                inp={inp}
+              />
+            </div>
           ) : selection.kind === 'member' && selectedMember ? (
-            /* Member editor + results */
+            /* Two-column member detail: inputs left, live results right */
             <>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              {/* Sticky header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', background: 'white', borderBottom: '1px solid #e5e7eb', borderRadius: '12px 12px 0 0', flexShrink: 0 }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>{selectedMember.label}</h3>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{selectedMember.etabs?.story ?? ''} · {selectedMember.etabs?.sectionName ?? selectedMember.section.type}</div>
+                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{selectedMember.etabs?.story ?? ''}{selectedMember.etabs?.story ? ' · ' : ''}{selectedMember.etabs?.sectionName ?? selectedMember.section.type}</div>
                 </div>
-                <button onClick={() => onSelectMember(selectedMember.id)} style={{ fontSize: 11, color: '#2563eb', background: 'none', border: '1px solid #bfdbfe', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 600 }}>
+                <button onClick={() => onSelectMember(selectedMember.id)} style={{ fontSize: 11, color: '#2563eb', background: 'none', border: '1px solid #bfdbfe', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
                   Open in Member tab ↗
                 </button>
               </div>
-              <MemberEditor key={selectedMember.id} member={selectedMember} onUpdate={handleMemberUpdate} code={project.code} />
-              <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} onRebarChange={handleMemberUpdate} />
+              {/* Side-by-side columns */}
+              <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: 'white', border: '1px solid #e5e7eb', borderTop: 'none', borderRadius: '0 0 12px 12px' }}>
+                {/* Left: section inputs / properties */}
+                <div style={{ width: 340, flexShrink: 0, borderRight: '1px solid #e5e7eb', overflow: 'auto', padding: '12px 14px' }}>
+                  <MemberEditor key={selectedMember.id} member={selectedMember} onUpdate={handleMemberUpdate} code={project.code} />
+                </div>
+                {/* Right: live DCR / diagrams */}
+                <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '12px 14px' }}>
+                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} onRebarChange={handleMemberUpdate} />
+                </div>
+              </div>
             </>
           ) : (
-            <div style={{ margin: 'auto', color: '#9ca3af', fontSize: 13 }}>Select a member or group to view details.</div>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 13 }}>Select a member or group to view details.</div>
           )}
         </div>
       </div>
