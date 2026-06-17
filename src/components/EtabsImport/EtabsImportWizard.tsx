@@ -134,7 +134,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       setStories(st); setGroups(gr); setSections(sec); setMaterials(mat); setCombos(cmb);
       setSelSections(new Set(sec.map(s => s.name)));
       setSelCombos(new Set(cmb));
-      setSelStory(st[0] ?? '');
+      setSelStory('');
       return true;
     });
     if (ok) setStep(1);
