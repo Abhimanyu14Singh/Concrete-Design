@@ -10,9 +10,9 @@ declare global {
       onTriggerSave:  (cb: () => void) => void;
       onTriggerOpen:  (cb: () => void) => void;
       onNewProject:   (cb: () => void) => void;
-      offTriggerSave: (cb: () => void) => void;
-      offTriggerOpen: (cb: () => void) => void;
-      offNewProject:  (cb: () => void) => void;
+      offTriggerSave: () => void;
+      offTriggerOpen: () => void;
+      offNewProject:  () => void;
     };
   }
 }

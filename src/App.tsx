@@ -156,9 +156,13 @@ export default function App() {
         }
         return;
       }
-      if (e.key === 's') { e.preventDefault(); handleSave(); }
-      if (e.key === 'o') { e.preventDefault(); handleOpen(); }
-      if (e.key === 'n') { e.preventDefault(); handleNewProject(); }
+      // In Electron the native File-menu accelerators already fire trigger-save/
+      // trigger-open/new-project over IPC; handling them here too would open a
+      // second native dialog. Only run these shortcuts in the browser build.
+      const inElectron = !!window.electronAPI;
+      if (e.key === 's' && !inElectron) { e.preventDefault(); handleSave(); }
+      if (e.key === 'o' && !inElectron) { e.preventDefault(); handleOpen(); }
+      if (e.key === 'n' && !inElectron) { e.preventDefault(); handleNewProject(); }
       if (e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       if (e.key === 'y') { e.preventDefault(); redo(); }
     }
@@ -174,9 +178,9 @@ export default function App() {
     api.onTriggerOpen(handleOpen);
     api.onNewProject(handleNewProject);
     return () => {
-      api.offTriggerSave(handleSave);
-      api.offTriggerOpen(handleOpen);
-      api.offNewProject(handleNewProject);
+      api.offTriggerSave();
+      api.offTriggerOpen();
+      api.offNewProject();
     };
   }, [handleSave, handleOpen]);
 
