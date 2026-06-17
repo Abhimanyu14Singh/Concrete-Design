@@ -347,7 +347,9 @@ export function designMemberEC2(
     const asReqTorsionPerLeg = TEd > t.TRdc ? (TEd * 1e6) / (2 * t.Ak * fywd * cotTheta) : 0;
     Asw_s_req_VT = asReqShearPerLeg + asReqTorsionPerLeg;
     Asw_s_prov_leg = AtLeg_mm2 / s_mm;
-    if (Asw_s_req_VT > Asw_s_prov_leg && (VEd > VRdc || TEd > t.TRdc))
+    // Only relevant when torsion is engaged; pure shear is covered by the V_Rd,s
+    // check above. Per project preference no combined warning when T_Ed ≤ T_Rd,c.
+    if (TEd > t.TRdc && Asw_s_req_VT > Asw_s_prov_leg)
       warnings.push({ code: 'EC2 §6.3.2', message: `Combined shear+torsion links NG: required Asw/s = ${Asw_s_req_VT.toFixed(3)} mm²/mm/leg > provided ${Asw_s_prov_leg.toFixed(3)} mm²/mm/leg — shear and torsion link demands add`, severity: 'error' });
   } else {
     const t = tRd(b_mm, h_mm, 0, 1, fywd, fck, fcd, cotTheta, coverToCentre);
@@ -368,15 +370,22 @@ export function designMemberEC2(
   // Shear tension shift, eq (6.18): ΔF_td = 0.5·V_Ed·cotθ added to the flexural
   // tension chord. Torsion longitudinal steel (ΣAsl) is distributed around the
   // perimeter; the two horizontal chords share ~half (¼ each).
-  const dFtd_kN = VEd > VRdc ? 0.5 * VEd * cotTheta : 0;
+  //
+  // Per project preference, this combined shear+torsion longitudinal check is
+  // only evaluated when torsion is actually engaged (T_Ed > T_Rd,c). With no
+  // torsion the design follows pure flexure + shear, and no shear-shift /
+  // torsion-longitudinal warning is raised. The formulas below are retained
+  // unchanged for the torsion-engaged case.
+  const torsionEngaged = TEd > TRdc_val;
+  const dFtd_kN = torsionEngaged && VEd > VRdc ? 0.5 * VEd * cotTheta : 0;
   const z_long = 0.9 * d_bot;
   const AslTorChord = Asl_tor_mm2 / 4;
   // Tension-chord steel demand = flexure + shift + torsion share.
   const AsLongReqBot = (MEd_pos > 0 ? (MEd_pos * 1e6 / z_long + dFtd_kN * 1000) / fyd : 0) + AslTorChord;
   const AsLongReqTop = (MEd_neg > 0 ? (MEd_neg * 1e6 / (0.9 * d_top) + dFtd_kN * 1000) / fyd : 0) + AslTorChord;
-  if (As_bot_mm2 < AsLongReqBot)
+  if (torsionEngaged && As_bot_mm2 < AsLongReqBot)
     warnings.push({ code: 'EC2 §6.2.3(7)', message: `Bottom longitudinal steel ${As_bot_mm2.toFixed(0)} mm² < ${AsLongReqBot.toFixed(0)} mm² required for flexure + shear shift (ΔF_td = ${dFtd_kN.toFixed(0)} kN)${Asl_tor_mm2 > 0 ? ' + torsion' : ''}`, severity: 'error' });
-  if (As_top_mm2 < AsLongReqTop && MEd_neg > 0)
+  if (torsionEngaged && As_top_mm2 < AsLongReqTop && MEd_neg > 0)
     warnings.push({ code: 'EC2 §6.2.3(7)', message: `Top longitudinal steel ${As_top_mm2.toFixed(0)} mm² < ${AsLongReqTop.toFixed(0)} mm² required for flexure + shear shift (ΔF_td = ${dFtd_kN.toFixed(0)} kN)${Asl_tor_mm2 > 0 ? ' + torsion' : ''}`, severity: 'error' });
 
   // ── Detailing checks ──
