@@ -314,8 +314,8 @@ export function designMemberEC2(
     TRd = Math.min(t.TRds, t.TRdMax);
     TRdc_val = t.TRdc;
     TRdMax_val = t.TRdMax;
-    if (TEd > 0 && t.TRds > t.TRdMax)
-      warnings.push({ code: 'EC2 §6.3.2', message: `Torsion strut crushing governs: T_Rd,max = ${t.TRdMax.toFixed(1)} kN·m`, severity: 'warning' });
+    if (TEd > t.TRdc && t.TRds > t.TRdMax)
+      warnings.push({ code: 'EC2 §6.3.2', message: `Torsion strut crushing governs: T_Rd,max = ${t.TRdMax.toFixed(1)} kN·m < T_Rd,s = ${t.TRds.toFixed(1)} kN·m — increasing links won't help; increase section or f_ck`, severity: 'warning' });
   } else {
     const t = tRd(b_mm, h_mm, 0, 1, fywd, fck, fcd, cotTheta);
     TRdc_val = t.TRdc;
