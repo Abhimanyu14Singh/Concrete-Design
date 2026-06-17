@@ -107,6 +107,39 @@ describe('tRd §6.3 — 300×500', () => {
   });
 });
 
+// ── S-CONCRETE 2026 EC2 benchmark calibration ────────────────────────────────
+// Altair S-CONCRETE report: b=300, h=600, C40, B500, 3H25 top & bottom,
+// H12@250 2-leg closed links, 50mm clear cover. Reference values from the PDF.
+describe('S-CONCRETE benchmark — 300×600 C40, 3H25, H12@250', () => {
+  const fck40 = 40, fcd40 = 0.85 * 40 / 1.5, fyd40 = 500 / 1.15;
+  // cover-to-centre = 50 (clear) + 12 (link) + 25/2 = 74.5 → tef = 149 mm
+  const c2c = 50 + 12 + 25 / 2;
+  const AswLeg = Math.PI * 6 * 6; // H12 one leg = 113.1 mm²
+
+  it('V_Rd,c = 102.3 kN', () => {
+    // b=300, d=526, Asl=1473 (3H25)
+    expect(vRdc(300, 526, 1473, fck40)).toBeCloseTo(102.3, 0);
+  });
+  it('V_Rd,s = 465.2 kN (z=0.9d, cotθ=2.5)', () => {
+    expect(vRds(2 * AswLeg, 250, 0.9 * 526, fyd40, 2.5)).toBeCloseTo(465.2, 0);
+  });
+  it('V_Rd,max ≈ 558.9 kN (within 1%)', () => {
+    expect(vRdMax(300, 0.9 * 526, fck40, fcd40, 2.5)).toBeCloseTo(558.9, -1);
+  });
+  it('M_Rd ≈ 305.8 kNm (3H25, d=526, within 1%)', () => {
+    expect(mRd(1473, 526, 300, fck40, fcd40, fyd40).MRd).toBeCloseTo(305.8, -1);
+  });
+  it('torsion: Ak=68101, uk=1204, T_Rd,c=32.7, T_Rd,s=67.0, T_Rd,max=79.9', () => {
+    const t = tRd(300, 600, AswLeg, 250, fyd40, fck40, fcd40, 2.5, c2c);
+    expect(t.tef).toBeCloseTo(149, 0);
+    expect(t.Ak).toBeCloseTo(68101, -1);
+    expect(t.uk).toBeCloseTo(1204, 0);
+    expect(t.TRdc).toBeCloseTo(32.7, 0);
+    expect(t.TRds).toBeCloseTo(67.0, 0);
+    expect(t.TRdMax).toBeCloseTo(79.9, 0);
+  });
+});
+
 // ── Imperial boundary round-trip via designMemberEC2 ─────────────────────────
 const section: SectionDimensions = {
   type: 'rectangular_beam', b: 11.81, h: 19.69, // ≈ 300×500 mm

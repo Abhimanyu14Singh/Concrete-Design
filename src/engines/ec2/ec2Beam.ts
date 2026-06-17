@@ -122,33 +122,42 @@ export function vRdMax(
  */
 export function tRd(
   b: number, h: number, AswPerLeg: number, s: number, fywd: number,
-  fck: number, fcd: number, cotTheta = 2.5,
-): { TRds: number; TRdMax: number; TRdc: number; Ak: number; tef: number } {
+  fck: number, fcd: number, cotTheta = 2.5, coverToCentre = 0,
+): { TRds: number; TRdMax: number; TRdc: number; Ak: number; uk: number; tef: number } {
   const A = b * h;             // gross area (mm²)
   const u = 2 * (b + h);       // outer perimeter (mm)
-  const tef = Math.max(A / u, 2 * 40); // effective wall thickness, ≥ 2×cover ≈ 80mm floor relaxed below
-  const tefUse = Math.min(tef, Math.min(b, h) / 2);
-  const bk = b - tefUse;
-  const hk = h - tefUse;
-  const Ak = bk * hk;          // area enclosed by centerlines (mm²)
-  const uk = 2 * (bk + hk);
+
+  // §6.3.2(1): tef,i = A/u, but ≥ 2× the distance from the surface to the
+  // centroid of the longitudinal reinforcement. S-CONCRETE (and EC2) apply the
+  // 2×cover floor for the TRUSS resistances (T_Rd,s, T_Rd,max) but use the bare
+  // A/u thin-wall for the CRACKING torsion T_Rd,c.
+  const tefc = Math.min(A / u, Math.min(b, h) / 2);          // cracking
+  const tef  = Math.min(Math.max(A / u, 2 * coverToCentre), Math.min(b, h) / 2); // truss
+
+  // Cracking-torsion properties (thin wall = A/u)
+  const Akc = (b - tefc) * (h - tefc);
+  // Truss properties (effective wall ≥ 2×cover-to-centre)
+  const Ak = (b - tef) * (h - tef);
+  const uk = 2 * ((b - tef) + (h - tef));
 
   // T_Rd,s from closed stirrups (one leg effective for torsion)
   const TRds = AswPerLeg > 0 && s > 0
     ? 2 * Ak * (AswPerLeg / s) * fywd * cotTheta / 1e6  // kN·m
     : 0;
 
-  // T_Rd,max — strut crushing, eq (6.30)
+  // T_Rd,max — strut crushing, eq (6.30): 2·ν·α_cw·f_cd·A_k·t_ef·sinθ·cosθ.
+  // α_cw = 1.0 for non-prestressed members (same coefficient as shear eq 6.9).
+  // f_cd already carries α_cc, so do NOT multiply by ALPHA_CC here.
   const nu = 0.6 * (1 - fck / 250);
+  const alpha_cw = 1.0;
   const theta = Math.atan(1 / cotTheta);
-  const TRdMax = 2 * nu * ALPHA_CC * fcd * Ak * tefUse * Math.sin(theta) * Math.cos(theta) / 1e6;
+  const TRdMax = 2 * nu * alpha_cw * fcd * Ak * tef * Math.sin(theta) * Math.cos(theta) / 1e6;
 
-  // Cracking-torsion equivalent (torsion negligible if TEd ≤ T_Rd,c), §6.3.2(5)
+  // Cracking torsion T_Rd,c, §6.3.2(5): uses the bare A/u thin wall.
   const fctd = fctm(fck) * 0.7 / GAMMA_C; // fctd = αct·fctk,0.05/γc ≈ 0.7·fctm/1.5
-  const TRdc = 2 * Ak * tefUse * fctd / 1e6; // kN·m
+  const TRdc = 2 * Akc * tefc * fctd / 1e6; // kN·m
 
-  void uk;
-  return { TRds, TRdMax, TRdc, Ak, tef: tefUse };
+  return { TRds, TRdMax, TRdc, Ak, uk, tef };
 }
 
 // ── Crack width §7.3.4 ───────────────────────────────────────────────────────
@@ -307,18 +316,44 @@ export function designMemberEC2(
 
   // ── Torsion ──
   let TRd = 0, TRdc_val = 0, TRdMax_val = 0;
+  // Longitudinal torsion steel demand §6.3.2(3) eq (6.28): ΣAsl = TEd·cotθ·uk/(2·Ak·fyd)
+  let Asl_tor_mm2 = 0;
+  // Combined transverse (shear + torsion) reinforcement demand, per outer leg.
+  let Asw_s_req_VT = 0;       // mm²/mm per leg required for V+T together
+  let Asw_s_prov_leg = 0;     // mm²/mm provided per leg
+  // Distance from concrete surface to centroid of the longitudinal bar
+  // (clear cover + link Ø + ½ main bar Ø) — sets the §6.3.2(1) tef floor.
+  const coverToCentre = cover_mm + stirrupD_mm + botBarD_mm / 2;
   if (rebar.ties) {
     const AtLeg_mm2 = getBarArea(rebar.ties.barSize) * IN2_TO_MM2; // one leg
     const s_mm = rebar.ties.spacing * IN_TO_MM;
-    const t = tRd(b_mm, h_mm, AtLeg_mm2, s_mm, fywd, fck, fcd, cotTheta);
+    const t = tRd(b_mm, h_mm, AtLeg_mm2, s_mm, fywd, fck, fcd, cotTheta, coverToCentre);
     TRd = Math.min(t.TRds, t.TRdMax);
     TRdc_val = t.TRdc;
     TRdMax_val = t.TRdMax;
     if (TEd > t.TRdc && t.TRds > t.TRdMax)
       warnings.push({ code: 'EC2 §6.3.2', message: `Torsion strut crushing governs: T_Rd,max = ${t.TRdMax.toFixed(1)} kN·m < T_Rd,s = ${t.TRds.toFixed(1)} kN·m — increasing links won't help; increase section or f_ck`, severity: 'warning' });
+
+    // §6.3.2(3): additional longitudinal steel for torsion (only above cracking).
+    if (TEd > t.TRdc && t.Ak > 0) {
+      Asl_tor_mm2 = TEd * 1e6 * cotTheta * t.uk / (2 * t.Ak * fyd);
+    }
+
+    // Combined V+T transverse reinforcement §6.3.1(2)/§6.3.2: torsion links
+    // act on the outer perimeter (per leg) and ADD to the shear link demand
+    // (shear shared across all legs). Compare to the area provided per leg.
+    const nLegs = rebar.ties.legs || 2;
+    const asReqShearPerLeg = VEd > VRdc ? (VEd * 1000) / (nLegs * z * fywd * cotTheta) : 0;
+    const asReqTorsionPerLeg = TEd > t.TRdc ? (TEd * 1e6) / (2 * t.Ak * fywd * cotTheta) : 0;
+    Asw_s_req_VT = asReqShearPerLeg + asReqTorsionPerLeg;
+    Asw_s_prov_leg = AtLeg_mm2 / s_mm;
+    if (Asw_s_req_VT > Asw_s_prov_leg && (VEd > VRdc || TEd > t.TRdc))
+      warnings.push({ code: 'EC2 §6.3.2', message: `Combined shear+torsion links NG: required Asw/s = ${Asw_s_req_VT.toFixed(3)} mm²/mm/leg > provided ${Asw_s_prov_leg.toFixed(3)} mm²/mm/leg — shear and torsion link demands add`, severity: 'error' });
   } else {
-    const t = tRd(b_mm, h_mm, 0, 1, fywd, fck, fcd, cotTheta);
+    const t = tRd(b_mm, h_mm, 0, 1, fywd, fck, fcd, cotTheta, coverToCentre);
     TRdc_val = t.TRdc;
+    if (TEd > t.TRdc)
+      warnings.push({ code: 'EC2 §6.3.1', message: `T_Ed = ${TEd.toFixed(1)} kN·m > T_Rd,c = ${t.TRdc.toFixed(1)} kN·m — torsion reinforcement (closed links + longitudinal bars) required`, severity: 'error' });
   }
 
   // Combined shear+torsion interaction §6.3.2(4) Eq 6.29
@@ -328,6 +363,21 @@ export function designMemberEC2(
       warnings.push({ code: 'EC2 §6.3.2(4)', message: `Combined V+T interaction: T_Ed/T_Rd,max + V_Ed/V_Rd,max = ${combined.toFixed(2)} > 1.0 — strut crushing governs`, severity: 'error' });
     }
   }
+
+  // ── Longitudinal steel for shear + torsion §6.2.3(7) / §6.3.2(3) ──
+  // Shear tension shift, eq (6.18): ΔF_td = 0.5·V_Ed·cotθ added to the flexural
+  // tension chord. Torsion longitudinal steel (ΣAsl) is distributed around the
+  // perimeter; the two horizontal chords share ~half (¼ each).
+  const dFtd_kN = VEd > VRdc ? 0.5 * VEd * cotTheta : 0;
+  const z_long = 0.9 * d_bot;
+  const AslTorChord = Asl_tor_mm2 / 4;
+  // Tension-chord steel demand = flexure + shift + torsion share.
+  const AsLongReqBot = (MEd_pos > 0 ? (MEd_pos * 1e6 / z_long + dFtd_kN * 1000) / fyd : 0) + AslTorChord;
+  const AsLongReqTop = (MEd_neg > 0 ? (MEd_neg * 1e6 / (0.9 * d_top) + dFtd_kN * 1000) / fyd : 0) + AslTorChord;
+  if (As_bot_mm2 < AsLongReqBot)
+    warnings.push({ code: 'EC2 §6.2.3(7)', message: `Bottom longitudinal steel ${As_bot_mm2.toFixed(0)} mm² < ${AsLongReqBot.toFixed(0)} mm² required for flexure + shear shift (ΔF_td = ${dFtd_kN.toFixed(0)} kN)${Asl_tor_mm2 > 0 ? ' + torsion' : ''}`, severity: 'error' });
+  if (As_top_mm2 < AsLongReqTop && MEd_neg > 0)
+    warnings.push({ code: 'EC2 §6.2.3(7)', message: `Top longitudinal steel ${As_top_mm2.toFixed(0)} mm² < ${AsLongReqTop.toFixed(0)} mm² required for flexure + shear shift (ΔF_td = ${dFtd_kN.toFixed(0)} kN)${Asl_tor_mm2 > 0 ? ' + torsion' : ''}`, severity: 'error' });
 
   // ── Detailing checks ──
   // As_min §9.2.1.1: max(0.26·fctm/fyk, 0.0013)·bt·d
@@ -340,6 +390,12 @@ export function designMemberEC2(
     warnings.push({ code: 'EC2 §9.2.1.1', message: `Top steel ${As_top_mm2.toFixed(0)} mm² < As,min = ${AsMin_mm2.toFixed(0)} mm²`, severity: 'error' });
   if (As_bot_mm2 > AsMax_mm2 || As_top_mm2 > AsMax_mm2)
     warnings.push({ code: 'EC2 §9.2.1.1', message: `Steel exceeds As,max = 0.04·Ac = ${AsMax_mm2.toFixed(0)} mm²`, severity: 'error' });
+
+  // §6.3.2(3): longitudinal torsion steel is distributed around the perimeter.
+  // The two horizontal faces (top/bot chords) carry ~half between them; report
+  // the total demand and the per-chord share that adds to flexural steel.
+  if (Asl_tor_mm2 > 0)
+    warnings.push({ code: 'EC2 §6.3.2(3)', message: `Torsion needs ΣAsl = ${Asl_tor_mm2.toFixed(0)} mm² longitudinal steel distributed around the perimeter, in addition to flexural reinforcement`, severity: 'warning' });
 
   // ρw,min §9.2.2(5) and s_max §9.2.2(6)
   if (rebar.ties) {
@@ -434,10 +490,15 @@ export function designMemberEC2(
     DCR_flex_pos, DCR_flex_neg,
     Vc: toKip(VRdc), Vs: toKip(VRds), phi_Vn: toKip(VRd), DCR_shear,
     Tcr: toKipFt(TRdc_val), Tu_threshold: toKipFt(TRdc_val), phi_Tn: toKipFt(TRd), DCR_torsion,
-    As_req_pos: toIn2(Math.max(MEd_pos > 0 ? MEd_pos * 1e6 / (fyd * 0.9 * d_bot) : 0, AsMin_mm2)),
-    As_req_neg: toIn2(Math.max(MEd_neg > 0 ? MEd_neg * 1e6 / (fyd * 0.9 * d_top) : 0, AsMin_mm2)),
+    // Flexure + shear tension shift (eq 6.18) + torsion longitudinal share,
+    // floored at As,min. AsLongReqBot/Top already include all three terms.
+    As_req_pos: toIn2(Math.max(AsLongReqBot, AsMin_mm2)),
+    As_req_neg: toIn2(Math.max(AsLongReqTop, MEd_neg > 0 ? AsMin_mm2 : 0)),
     As_min: toIn2(AsMin_mm2), As_max: toIn2(AsMax_mm2),
-    Av_req: Math.max(0, VEd - VRdc) > 0 ? (Math.max(0, VEd - VRdc) * 1000) / (z * fywd * cotTheta) * IN_TO_MM / IN2_TO_MM2 : 0,
+    // EC2 variable strut-inclination: when shear reinf is required the full
+    // V_Ed is carried by the truss (no concrete contribution added, unlike ACI).
+    // Asw/s = V_Ed/(z·f_ywd·cotθ). Only nonzero once V_Ed exceeds V_Rd,c.
+    Av_req: VEd > VRdc ? (VEd * 1000) / (z * fywd * cotTheta) * IN_TO_MM / IN2_TO_MM2 : 0,
     Av_min_per_s: (0.08 * Math.sqrt(fck) / fywk) * b_mm / IN_TO_MM, // in²/in equivalent
     wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face,
     warnings, status,
