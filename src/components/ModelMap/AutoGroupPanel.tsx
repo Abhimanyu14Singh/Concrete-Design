@@ -51,6 +51,7 @@ export default function AutoGroupPanel({
   const [totalGroups, setTotalGroups] = useState<number | null>(null);
   // Cross-family: ignore section boundaries and cluster all beams as one pool
   const [groupAllBeams, setGroupAllBeams] = useState(false);
+  const [totalGroupsDraft, setTotalGroupsDraft] = useState('');
 
   // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
@@ -156,7 +157,9 @@ export default function AutoGroupPanel({
   function handleApply() {
     const newGroups: DesignGroup[] = [];
     let groupCount = 0;
-    for (const sug of baseSuggestions) {
+    const sortedSuggestions = [...baseSuggestions].sort((a, b) => a.familyLabel.localeCompare(b.familyLabel));
+    const familyLetters = new Map(sortedSuggestions.map((s, i) => [s.familyKey, String.fromCharCode(65 + i)]));
+    for (const sug of sortedSuggestions) {
       // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
@@ -170,8 +173,9 @@ export default function AutoGroupPanel({
 
       bins.forEach((mIds, bi) => {
         if (!mIds.length) return;
-        const worstMuPos = Math.max(...famDemands.filter(d => mIds.includes(d.memberId)).map(d => d.MuPos));
-        const label = `${displayFamilyLabel(sug.familyLabel, units)} — G${bi + 1} (Mu≤${Math.round(worstMuPos)} k-ft)`;
+        const dimStr = displayFamilyLabel(sug.familyLabel, units).replace('×', 'x').replace(' mm', '');
+        const letter = familyLetters.get(sug.familyKey) ?? '?';
+        const label = `${letter}_${dimStr}_${bi + 1}`;
         newGroups.push({
           id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount}`,
           label,
@@ -269,18 +273,35 @@ export default function AutoGroupPanel({
           <div style={lbl}>Total groups (model)</div>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <input
-              type="number" min={1} max={Math.max(1, demands.length)}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               placeholder="—"
-              value={totalGroups ?? ''}
+              value={totalGroupsDraft}
               onChange={e => {
-                const v = e.target.value === '' ? null : Math.max(1, Math.round(+e.target.value));
-                setTotalGroups(v);
+                setTotalGroupsDraft(e.target.value);
+                const v = e.target.value === '' ? null : parseInt(e.target.value, 10);
+                if (e.target.value === '' || (Number.isFinite(v) && v! >= 1)) {
+                  setTotalGroups(e.target.value === '' ? null : v!);
+                  setTweakedBreaks({});
+                }
+              }}
+              onBlur={e => {
+                const v = parseInt(e.target.value, 10);
+                if (!Number.isFinite(v) || v < 1) {
+                  setTotalGroups(null);
+                  setTotalGroupsDraft('');
+                } else {
+                  setTotalGroups(v);
+                  setTotalGroupsDraft(String(v));
+                }
                 setTweakedBreaks({});
               }}
               style={{ width: 56, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${totalGroups !== null ? '#2563eb' : '#d1d5db'}`, background: totalGroups !== null ? '#eff6ff' : 'white', fontFamily: 'monospace' }}
-              title="Total design groups across the whole model, distributed across families by demand spread" />
+              title="Total design groups across the whole model, distributed across families by demand spread"
+            />
             {totalGroups !== null && (
-              <button onClick={() => { setTotalGroups(null); setTweakedBreaks({}); }}
+              <button onClick={() => { setTotalGroups(null); setTotalGroupsDraft(''); setTweakedBreaks({}); }}
                 style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', background: 'white', color: '#6b7280', cursor: 'pointer' }}>
                 clear
               </button>

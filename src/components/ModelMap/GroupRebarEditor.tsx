@@ -16,11 +16,11 @@ interface Props {
   targetDCR: number;
 }
 
-const DEFAULT_REBAR: RebarLayout = {
-  topBars: [{ numBars: 2, barSize: 5 }],
-  botBars: [{ numBars: 2, barSize: 5 }],
-  ties: { barSize: 3, spacing: 6, legs: 2 },
-};
+function defaultRebar(units: 'imperial' | 'si'): RebarLayout {
+  return units === 'si'
+    ? { topBars: [{ numBars: 2, barSize: -16 }], botBars: [{ numBars: 2, barSize: -16 }], ties: { barSize: -8, spacing: 150, legs: 2 } }
+    : { topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }], ties: { barSize: 3, spacing: 6, legs: 2 } };
+}
 
 /**
  * Numeric input with a local string draft so the user can type freely.
@@ -66,14 +66,14 @@ function BarGroupRow({ bg, onChange, label, units }: {
 
 export default function GroupRebarEditor({ group, members, onApply, code, targetDCR }: Props) {
   const { units } = useUnits();
-  const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? DEFAULT_REBAR);
+  const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(units));
   const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // Re-seed only when the SELECTED group changes — keying on group.rebar too
   // would clobber an in-progress edit every time the parent re-renders (which
   // is why bar-size changes appeared to "not stick").
   useEffect(() => {
-    setRebar(group.rebar ?? DEFAULT_REBAR);
+    setRebar(group.rebar ?? defaultRebar(units));
     setSuggestNote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group.id]);
@@ -98,9 +98,10 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
     setRebar(r => ({ ...r, botBars: r.botBars.map((b, j) => j === i ? bg : b) }));
   }
   function addLayer(face: 'top' | 'bot') {
+    const defBar = units === 'si' ? -16 : 5;
     setRebar(r => face === 'top'
-      ? { ...r, topBars: [...r.topBars, { numBars: 2, barSize: 5 }] }
-      : { ...r, botBars: [...r.botBars, { numBars: 2, barSize: 5 }] });
+      ? { ...r, topBars: [...r.topBars, { numBars: 2, barSize: defBar }] }
+      : { ...r, botBars: [...r.botBars, { numBars: 2, barSize: defBar }] });
   }
   function removeLayer(face: 'top' | 'bot', i: number) {
     setRebar(r => face === 'top'
@@ -174,7 +175,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
               <NumberField value={ties.spacing} min={1} max={24}
                 onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), spacing: v } }))}
                 style={{ width: 50, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>in,</span>
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>{units === 'si' ? 'mm,' : 'in,'}</span>
             </>
           )}
           <NumberField value={ties.legs} min={2} max={8}

@@ -32,6 +32,11 @@ export default function GroupPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [expandedStats, setExpandedStats] = useState<string | null>(null);
+  const [checkedGroups, setCheckedGroups] = useState<Set<string>>(new Set());
+  function toggleCheck(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setCheckedGroups(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   const framesByMember = new Map<string, MapFrame>();
   for (const f of frames) if (f.memberId) framesByMember.set(f.memberId, f);
@@ -186,6 +191,19 @@ export default function GroupPanel({
         {suggestAllNote && (
           <div style={{ flexBasis: '100%', fontSize: 10, color: '#6d28d9' }}>{suggestAllNote}</div>
         )}
+        {checkedGroups.size > 0 && (
+          <button
+            onClick={() => {
+              if (!confirm(`Delete ${checkedGroups.size} selected group(s)? Members are kept.`)) return;
+              onGroupsChange(groups.filter(g => !checkedGroups.has(g.id)));
+              if (checkedGroups.has(activeGroupId ?? '')) onActiveGroupChange(null);
+              setCheckedGroups(new Set());
+            }}
+            style={{ flexShrink: 0, padding: '6px 8px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 11 }}
+          >
+            🗑 Delete {checkedGroups.size}
+          </button>
+        )}
       </div>
 
       {/* Selection chips — per-frame add/remove buttons */}
@@ -245,6 +263,13 @@ export default function GroupPanel({
                 borderBottom: statsOpen ? 'none' : '1px solid #f3f4f6',
               }}
             >
+              <input
+                type="checkbox"
+                checked={checkedGroups.has(g.id)}
+                onChange={() => {}}
+                onClick={e => toggleCheck(g.id, e)}
+                style={{ marginRight: 2, cursor: 'pointer', flexShrink: 0 }}
+              />
               {/* Color chip — click to cycle color */}
               <div
                 onClick={e => { e.stopPropagation(); setGroupColor(g.id, PALETTE[(PALETTE.indexOf(dotColor) + 1) % PALETTE.length]); }}

@@ -9,7 +9,7 @@ import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import type { Member, DesignResults, ComboForces, LoadCase, DesignCode } from '../../types';
 import { getBarDiam } from '../../utils/concreteDesign';
 import { formatBarLabel } from '../../utils/rebar';
-import { steelWeightPerFt } from '../../utils/autoGroup';
+import { steelWeightPerFt, flexSteelRatioPct } from '../../utils/autoGroup';
 import { runDesign } from '../../engines';
 import { useUnits } from '../../contexts/UnitsContext';
 
@@ -302,6 +302,11 @@ export default function BeamInspectCard({ member, designResults, code, clientX, 
       ) : (
         <div style={{ color: '#9ca3af', fontSize: 10 }}>No design results — run design first</div>
       )}
+      {/* ρ% row */}
+      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+        ρ top: <strong style={{ color: '#374151' }}>{flexSteelRatioPct(member, 'top').toFixed(2)}%</strong>
+        {'  '}ρ bot: <strong style={{ color: '#374151' }}>{flexSteelRatioPct(member, 'bot').toFixed(2)}%</strong>
+      </div>
     </div>
   );
 }

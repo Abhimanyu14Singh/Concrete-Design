@@ -120,6 +120,9 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const [groupSuggestionError, setGroupSuggestionError] = useState<string | null>(null);
   const [suggestingGroupId, setSuggestingGroupId] = useState<string | null>(null);
   const [issuesOpen, setIssuesOpen] = useState(true);
+  // Resizable panels
+  const [leftWidth, setLeftWidth] = useState(420);
+  const [dragging, setDragging] = useState(false);
   // DCR overview filters
   const [dcrGroupFilter, setDcrGroupFilter] = useState<string>('__all__');
   const [dcrSeriesFilter, setDcrSeriesFilter] = useState<string>('__all__');
@@ -256,6 +259,23 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     return ms.reduce((mx, m) => Math.max(mx, summaryById.get(m.id)?.maxDCR ?? 0), 0);
   }
 
+  function onDividerMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    setDragging(true);
+    const startX = e.clientX;
+    const startW = leftWidth;
+    function onMove(ev: MouseEvent) {
+      setLeftWidth(Math.max(240, Math.min(700, startW + ev.clientX - startX)));
+    }
+    function onUp() {
+      setDragging(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
   function MemberRow({ m, govId }: { m: Member; govId: string | null }) {
     const s = summaryById.get(m.id);
     const dcr = s?.maxDCR ?? 0;
@@ -343,6 +363,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     ...(ungroupedEntry ? [ungroupedEntry] : []),
   ];
 
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Project header */}
@@ -415,9 +436,9 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
       </div>
 
       {/* Split workspace */}
-      <div style={{ display: 'flex', gap: 16, height: 'min(78vh, 900px)', minHeight: 460 }}>
-        {/* Left: groups navigator */}
-        <div style={{ width: 420, flexShrink: 0, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'auto' }}>
+      <div style={{ display: 'flex', height: 'min(78vh, 900px)', minHeight: 460, cursor: dragging ? 'col-resize' : 'auto' }}>
+        {/* Left panel — resizable */}
+        <div style={{ width: leftWidth, flexShrink: 0, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'auto' }}>
           <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Members by Group</span>
             <span style={{ fontSize: 11, color: '#9ca3af' }}>{project.members.length} members</span>
@@ -472,6 +493,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
           })}
         </div>
 
+        {/* Drag divider */}
+        <div
+          onMouseDown={onDividerMouseDown}
+          style={{ width: 6, cursor: 'col-resize', flexShrink: 0, background: dragging ? '#bfdbfe' : 'transparent', transition: 'background 0.1s' }}
+        />
+
         {/* Right pane */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {selection.kind === 'group' && selectedGroupSection ? (
@@ -489,6 +516,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
                 onSelectMember={(id) => setSelection({ kind: 'member', id })}
                 onSelectMemberTab={onSelectMember}
                 inp={inp}
+                onProjectUpdate={onProjectUpdate}
               />
             </div>
           ) : selection.kind === 'member' && selectedMember ? (
@@ -680,6 +708,61 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   );
 }
 
+// ─── Group Material Editor ────────────────────────────────────────────────────
+
+interface GroupMaterialEditorProps {
+  group: { id: string; label: string; members: Member[] };
+  project: Project;
+  onProjectUpdate?: (p: Project) => void;
+}
+
+function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialEditorProps) {
+  const code = project.code;
+  const first = group.members[0];
+  const [fck, setFck] = useState(first?.material.fc ?? (code === 'EN1992-1-1' ? 30 : 4));
+  const [fyLong, setFyLong] = useState(first?.material.fy ?? (code === 'EN1992-1-1' ? 500 : 60));
+  const [fyTie, setFyTie] = useState(first?.material.fyt ?? first?.material.fy ?? (code === 'EN1992-1-1' ? 500 : 60));
+
+  function applyToGroup() {
+    const ids = new Set(group.members.map(m => m.id));
+    onProjectUpdate?.({
+      ...project,
+      members: project.members.map(m => ids.has(m.id)
+        ? { ...m, material: { ...m.material, fc: fck, fy: fyLong, fyt: fyTie } }
+        : m),
+    });
+  }
+
+  const isEC2 = code === 'EN1992-1-1';
+  const inp: React.CSSProperties = { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, width: 80, fontFamily: 'monospace' };
+
+  return (
+    <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Group Material Properties</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>{isEC2 ? 'f_ck (MPa)' : "f'c (ksi)"}</div>
+          <input type="number" style={inp} value={fck} onChange={e => setFck(+e.target.value)} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>{isEC2 ? 'f_yk long (MPa)' : 'f_y long (ksi)'}</div>
+          <input type="number" style={inp} value={fyLong} onChange={e => setFyLong(+e.target.value)} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>{isEC2 ? 'f_yk tie (MPa)' : 'f_yt tie (ksi)'}</div>
+          <input type="number" style={inp} value={fyTie} onChange={e => setFyTie(+e.target.value)} />
+        </div>
+      </div>
+      <button
+        onClick={applyToGroup}
+        style={{ padding: '6px 14px', background: '#7c3aed', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+      >
+        Apply to all {group.members.length} members
+      </button>
+    </div>
+  );
+}
+
 // ─── Group Panel ─────────────────────────────────────────────────────────────
 
 interface GroupPanelProps {
@@ -694,14 +777,16 @@ interface GroupPanelProps {
   onSelectMember: (id: string) => void;
   onSelectMemberTab: (id: string) => void;
   inp: React.CSSProperties;
+  onProjectUpdate?: (p: Project) => void;
 }
 
 function GroupPanel({
   group, project, summaryById,
   groupSuggestion, groupSuggestionError, isSuggesting,
-  onSuggest, onApplySuggestion, onSelectMember, onSelectMemberTab, inp,
+  onSuggest, onApplySuggestion, onSelectMember, onSelectMemberTab, inp, onProjectUpdate,
 }: GroupPanelProps) {
   const code = project.code as DesignCode;
+  const unitsSys: 'imperial' | 'si' = project.code === 'EN1992-1-1' ? 'si' : 'imperial';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -717,7 +802,7 @@ function GroupPanel({
         <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Group Reinforcement</div>
         {group.rebar ? (
           <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#1e3a5f', background: '#f0f9ff', padding: '8px 12px', borderRadius: 6, border: '1px solid #bae6fd' }}>
-            {rebarSummaryText(group.rebar)}
+            {rebarSummaryText(group.rebar, unitsSys)}
           </div>
         ) : (
           <div style={{ fontSize: 12, color: '#9ca3af', fontStyle: 'italic' }}>No group rebar set.</div>
@@ -743,7 +828,7 @@ function GroupPanel({
           <div style={{ marginTop: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '10px 12px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#16a34a', marginBottom: 6 }}>Suggested layout (target DCR 0.90)</div>
             <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#14532d', marginBottom: 6 }}>
-              {rebarSummaryText(groupSuggestion.rebar)}
+              {rebarSummaryText(groupSuggestion.rebar, unitsSys)}
             </div>
             <div style={{ fontSize: 11, color: '#374151', display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
               <span>Flex DCR: <strong>{groupSuggestion.worstDCRFlex.toFixed(3)}</strong></span>
@@ -759,6 +844,9 @@ function GroupPanel({
           </div>
         )}
       </div>
+
+      {/* Group Material Properties */}
+      <GroupMaterialEditor group={group} project={project} onProjectUpdate={onProjectUpdate} />
 
       {/* Member results mini-table */}
       <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
@@ -822,9 +910,11 @@ function DCRInlineCell({ value, isWk }: { value: number | undefined; isWk?: bool
   return <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'monospace', padding: '2px 5px', borderRadius: 3, background: bg, color }}>{value.toFixed(2)}</span>;
 }
 
-function rebarSummaryText(rebar: RebarLayout): string {
-  const top = rebar.topBars?.map(l => `${l.numBars}-#${l.barSize}`).join('+') ?? '—';
-  const bot = rebar.botBars?.map(l => `${l.numBars}-#${l.barSize}`).join('+') ?? '—';
-  const ties = rebar.ties ? `#${rebar.ties.barSize}@${rebar.ties.spacing}" (${rebar.ties.legs}-leg)` : '—';
+function rebarSummaryText(rebar: RebarLayout, units: 'imperial' | 'si' = 'imperial'): string {
+  const fmt = (l: { numBars: number; barSize: number }) => `${l.numBars}-${formatBarLabel(l.barSize)}`;
+  const top = rebar.topBars?.map(fmt).join('+') ?? '—';
+  const bot = rebar.botBars?.map(fmt).join('+') ?? '—';
+  const su = units === 'si' ? 'mm' : '"';
+  const ties = rebar.ties ? `${formatBarLabel(rebar.ties.barSize)}@${rebar.ties.spacing}${su} (${rebar.ties.legs}-leg)` : '—';
   return `Top: ${top} | Bot: ${bot} | Ties: ${ties}`;
 }
