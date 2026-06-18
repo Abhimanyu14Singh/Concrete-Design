@@ -210,6 +210,7 @@ export interface DesignResults {
   wk_bot?: number;      // crack width at bottom face (mm)
   wk_top?: number;      // crack width at top face (mm)
   wk_face?: number;     // crack width at side face (mm)
+  DCR_crack?: number;   // governing crack-width DCR = wk / w_limit (SLS)
   // Wall-specific results (ACI 318-25)
   phi_Vn_wall?: number;
   phi_Mn_wall?: number;

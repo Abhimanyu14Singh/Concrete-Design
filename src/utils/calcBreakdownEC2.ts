@@ -163,12 +163,19 @@ export function generateBreakdownEC2(
   ) {
     if (Mqp <= 0 || As_f <= 0) return;
     const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt);
+    // Show whichever max-crack-spacing equation actually governed (§7.3.4(3)):
+    // eq (7.11) for closely-spaced bonded bars, else the upper bound eq (7.14).
+    const srStep = cw.srEq === '7.14'
+      ? { ref: 'eq (7.14)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = 1.3·(h − x)', substitution: `bars spaced > 5(c+Ø/2) ⇒ upper bound governs; h−x = ${f(h - cw.x, 0)} mm`, result: `sr,max = ${f(cw.sr_max, 0)} mm` }
+      : { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = ${f(cw.k2, 2)}, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
+    const dcr = wLimit > 0 ? cw.wk / wLimit : 0;
     crackSteps.push(
       { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(Mqp / crack.qpFactor)}`, result: `M_qp = ${f(Mqp)} kN·m` },
       { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'σs via elastic cracked section', substitution: `x = ${f(cw.x, 0)} mm, z = d−x/3 = ${f(d_f - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
       { ref: '§7.3.2(3)', label: `${faceLabel}: effective reinforcement ratio`, equation: 'ρp,eff = As/Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
-      { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = 3.4c + 0.425·k1·k2·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = 0.5`, result: `sr,max = ${f(cw.sr_max, 0)} mm` },
-      { ref: 'eq (7.8)', label: `${faceLabel}: crack width`, equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)} (${crack.kt === 0.4 ? 'long-term' : 'short-term'})`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(wLimit, 2)} mm ${cw.wk <= wLimit ? '✓' : '✗'}` },
+      srStep,
+      { ref: 'eq (7.8)', label: `${faceLabel}: crack width`, equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)} (${crack.kt === 0.4 ? 'long-term' : 'short-term'})`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(wLimit, 2)} mm` },
+      { ref: '§7.3.1', label: `${faceLabel}: crack DCR`, equation: 'DCR = wk / w_max', substitution: `${f(cw.wk, 3)} / ${f(wLimit, 2)}`, result: `DCR = ${f(dcr, 3)} ${dcr <= 1 ? '✓ OK' : '✗ NG'}` },
     );
   }
 

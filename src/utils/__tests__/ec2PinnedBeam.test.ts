@@ -210,6 +210,18 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     expect(errors[0].code).toBe('EC2 §7.3.4');
   });
 
+  it('DCR_crack is exposed and equals wk_bot / w_limit (0.30 mm)', () => {
+    expect(r.DCR_crack).toBeDefined();
+    expect(r.DCR_crack!).toBeCloseTo((r.wk_bot ?? 0) / 0.30, 3);
+  });
+
+  it('no §6.2.3 strut-crushing warning when shear DCR < 1', () => {
+    // DCR_shear ≈ 0.36 here, so strut crushing must NOT be flagged even if the
+    // chosen links over-provide V_Rd,s beyond V_Rd,max.
+    expect(r.DCR_shear).toBeLessThan(1);
+    expect(r.warnings.find(w => w.code === 'EC2 §6.2.3')).toBeUndefined();
+  });
+
   // ── Steel limits §9.2.1.1 ────────────────────────────────────────────────────
 
   it('As,min (§9.2.1.1) < 4H25 provided (not under-reinforced)', () => {

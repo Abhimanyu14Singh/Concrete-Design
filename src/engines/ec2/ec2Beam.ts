@@ -173,6 +173,8 @@ export interface CrackWidthResult {
   sr_max: number;   // maximum crack spacing (mm)
   x: number;        // cracked-section neutral axis depth (mm)
   rho_p_eff: number;
+  k2: number;       // strain-distribution factor actually used
+  srEq: '7.11' | '7.14' | null;  // which sr,max equation governed
 }
 
 /**
@@ -193,7 +195,7 @@ export function crackWidth(
   kt: number,      // 0.4 long-term / 0.6 short-term
 ): CrackWidthResult {
   if (Mqp <= 0 || As <= 0 || d <= 0) {
-    return { wk: 0, sigma_s: 0, sr_max: 0, x: 0, rho_p_eff: 0 };
+    return { wk: 0, sigma_s: 0, sr_max: 0, x: 0, rho_p_eff: 0, k2: 0.5, srEq: null };
   }
 
   const alpha_e = Es / ecm(fck);
@@ -228,7 +230,9 @@ export function crackWidth(
   const nBars = As / (Math.PI / 4 * barD * barD);
   const spacing = nBars > 1 ? (b - 2 * cover - barD) / (nBars - 1) : Infinity;
   const threshold = 5 * (cover + barD / 2);
-  const sr_max = spacing > threshold
+  const useEq714 = spacing > threshold;
+  const srEq: '7.11' | '7.14' = useEq714 ? '7.14' : '7.11';
+  const sr_max = useEq714
     ? 1.3 * (h - x)                                  // eq (7.14)
     : k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;  // eq (7.11)
 
@@ -239,7 +243,7 @@ export function crackWidth(
     0.6 * sigma_s / Es,
   );
 
-  return { wk: sr_max * eps, sigma_s, sr_max, x, rho_p_eff };
+  return { wk: sr_max * eps, sigma_s, sr_max, x, rho_p_eff, k2, srEq };
 }
 
 // ── Full member check ────────────────────────────────────────────────────────
@@ -318,8 +322,12 @@ export function designMemberEC2(
   // EC2: with stirrups V_Rd = min(V_Rd,s, V_Rd,max); without, V_Rd,c
   const VRd = rebar.ties ? Math.min(VRds, VRdmax) : VRdc;
 
-  if (rebar.ties && VRds > VRdmax && VEd > VRdc)
-    warnings.push({ code: 'EC2 §6.2.3', message: `Strut crushing governs: V_Rd,max = ${VRdmax.toFixed(1)} kN < V_Rd,s = ${VRds.toFixed(1)} kN — adding more links won't increase capacity; increase section width or f_ck`, severity: 'warning' });
+  // Only flag strut crushing when it is a genuine failure — i.e. the demand
+  // exceeds the crushing limit (V_Ed > V_Rd,max ⇔ DCR_shear > 1). When stirrups
+  // are merely over-provided (V_Rd,s > V_Rd,max but V_Rd = V_Rd,max ≥ V_Ed) the
+  // design is still adequate, so no warning is raised.
+  if (rebar.ties && VEd > VRdmax)
+    warnings.push({ code: 'EC2 §6.2.3', message: `Strut crushing: V_Ed = ${VEd.toFixed(1)} kN > V_Rd,max = ${VRdmax.toFixed(1)} kN — adding more links won't help; increase section width or f_ck`, severity: 'error' });
 
   // ── Torsion ──
   let TRd = 0, TRdc_val = 0, TRdMax_val = 0;
@@ -499,7 +507,14 @@ export function designMemberEC2(
   if (DCR_torsion > 1)
     warnings.push({ code: 'EC2 §6.3', message: `Torsion NG: T_Ed = ${TEd.toFixed(1)} kN·m > T_Rd = ${TRd.toFixed(1)} kN·m`, severity: 'error' });
 
-  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion);
+  // Crack-width DCR = wk / w_limit, governing face (SLS §7.3.4).
+  const DCR_crack = Math.max(
+    crack.wLimitBot > 0 ? cw_bot.wk / crack.wLimitBot : 0,
+    crack.wLimitTop > 0 ? cw_top.wk / crack.wLimitTop : 0,
+    wk_face !== undefined && crack.wLimitFace > 0 ? wk_face / crack.wLimitFace : 0,
+  );
+
+  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_crack);
   const hasError = warnings.some(w => w.severity === 'error');
   const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : (maxDCR > 0.9 || hasError) ? 'Warning' : 'OK';
 
@@ -526,7 +541,7 @@ export function designMemberEC2(
     // Asw/s = V_Ed/(z·f_ywd·cotθ). Only nonzero once V_Ed exceeds V_Rd,c.
     Av_req: VEd > VRdc ? (VEd * 1000) / (z * fywd * cotTheta) * IN_TO_MM / IN2_TO_MM2 : 0,
     Av_min_per_s: (0.08 * Math.sqrt(fck) / fywk) * b_mm / IN_TO_MM, // in²/in equivalent
-    wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face,
+    wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face, DCR_crack,
     warnings, status,
   };
 }

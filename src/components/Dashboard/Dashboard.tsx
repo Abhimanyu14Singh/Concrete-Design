@@ -54,9 +54,9 @@ function modeDCRs(s: MemberSummary, code: DesignCode) {
     flexPos: r.DCR_flex_pos,
     flexNeg: r.DCR_flex_neg,
     shear: r.DCR_shear,
-    wk: code === 'EN1992-1-1'
-      ? Math.max(r.wk_bot ?? 0, r.wk_top ?? 0) / 0.3
-      : undefined,
+    // Crack DCR straight from the engine (wk / actual w_limit per face),
+    // not a hard-coded 0.3 mm assumption.
+    wk: code === 'EN1992-1-1' ? (r.DCR_crack ?? 0) : undefined,
   };
 }
 
