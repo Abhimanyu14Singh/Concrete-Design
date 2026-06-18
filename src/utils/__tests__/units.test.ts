@@ -81,4 +81,37 @@ describe('metric rebar helpers', () => {
     const opts = barSizeOptions('si', -16);
     expect(opts.filter(o => o === -16)).toHaveLength(1);
   });
+  it('SI offers ONLY metric (negative) sizes when no cross-system current', () => {
+    const opts = barSizeOptions('si');
+    expect(opts.every(o => o < 0)).toBe(true);
+    expect(opts.some(o => o > 0)).toBe(false);
+    expect(opts).toEqual(METRIC_BAR_SIZES);
+  });
+  it('the only positive entry SI may show is a self-heal current value', () => {
+    const opts = barSizeOptions('si', 8);
+    expect(opts.filter(o => o > 0)).toEqual([8]); // preserved current only
+    expect(opts.slice(1).every(o => o < 0)).toBe(true);
+  });
+  it('stirrup-filter (editor logic) yields metric-only in SI', () => {
+    const current = -8;
+    const filtered = barSizeOptions('si', current)
+      .filter(s => s === current || (s > 0 ? s <= 6 : -s <= 12));
+    expect(filtered.every(s => s < 0)).toBe(true);
+    expect(filtered).toContain(-8);
+  });
+});
+
+describe('spacing round-trip through the display layer (the double-conversion bug)', () => {
+  it('SI: 150 mm typed → ~5.91 in stored → 150 mm displayed', () => {
+    const storedInches = fromDisplay(150, 'length', 'si');
+    expect(storedInches).toBeCloseTo(150 / 25.4, 6);
+    expect(toDisplay(storedInches, 'length', 'si')).toBeCloseTo(150, 6);
+  });
+  it('imperial: spacing is identity (6 in stays 6)', () => {
+    expect(fromDisplay(6, 'length', 'imperial')).toBe(6);
+    expect(toDisplay(6, 'length', 'imperial')).toBe(6);
+  });
+  it('a display mm value mis-stored as raw inches over-reads ~25.4x (regression guard)', () => {
+    expect(toDisplay(150, 'length', 'si')).toBeCloseTo(3810, 0);
+  });
 });

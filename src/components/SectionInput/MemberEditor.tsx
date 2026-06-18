@@ -119,6 +119,15 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   const dStir = units === 'si' ? -10 : 4;   // stirrups / ties
   const dSbz  = units === 'si' ? -25 : 8;   // SBZ vertical
 
+  // Unit-aware wall-rebar defaults so SI projects never seed imperial bar sizes.
+  function defaultWallRebar(): WallRebarLayout {
+    return {
+      vertBarSize: dWeb, vertSpacing: 12, horizBarSize: dWeb, horizSpacing: 12,
+      numCurtains: 2, sbzBarSize: dSbz, sbzNumBars: 8,
+      sbzTieBarSize: dStir, sbzTieSpacing: 4, sbzTieLegs: 4, driftRatio: 0.015,
+    };
+  }
+
   function update(patch: Partial<Member>) {
     const updated = { ...m, ...patch };
     setM(updated);
@@ -130,7 +139,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   const setFaceLayer = (face: 'topBars' | 'botBars', i: number, p: Partial<BarGroup>) =>
     update({ rebar: { ...m.rebar, [face]: m.rebar[face].map((g, gi) => gi === i ? { ...g, ...p } : g) } });
   const addLayer = (face: 'topBars' | 'botBars') => {
-    const last = m.rebar[face][m.rebar[face].length - 1] ?? { numBars: 2, barSize: 8 };
+    const last = m.rebar[face][m.rebar[face].length - 1] ?? { numBars: 2, barSize: dLong };
     update({ rebar: { ...m.rebar, [face]: [...m.rebar[face], { numBars: 2, barSize: last.barSize }] } });
   };
   const removeLayer = (face: 'topBars' | 'botBars', i: number) => {
@@ -140,7 +149,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   const topBar = (p: Partial<Member['rebar']['topBars'][0]>) => setFaceLayer('topBars', 0, p);
   const botBar = (p: Partial<Member['rebar']['botBars'][0]>) => setFaceLayer('botBars', 0, p);
   const ties = (p: Partial<NonNullable<Member['rebar']['ties']>>) =>
-    update({ rebar: { ...m.rebar, ties: { ...(m.rebar.ties ?? { barSize: 4, spacing: 6, legs: 2 }), ...p } } });
+    update({ rebar: { ...m.rebar, ties: { ...(m.rebar.ties ?? { barSize: dStir, spacing: 6, legs: 2 }), ...p } } });
   const crackP = m.crackParams ?? DEFAULT_CRACK_PARAMS;
   const crack = (p: Partial<NonNullable<Member['crackParams']>>) =>
     update({ crackParams: { ...crackP, ...p } });
@@ -148,15 +157,10 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
   const isWall = m.section.type === 'shear_wall';
   const sideBar = (p: Partial<Member['rebar']['topBars'][0]>) =>
-    update({ rebar: { ...m.rebar, sideBars: [{ ...(m.rebar.sideBars?.[0] ?? { numBars: 0, barSize: 8 }), ...p }] } });
+    update({ rebar: { ...m.rebar, sideBars: [{ ...(m.rebar.sideBars?.[0] ?? { numBars: 0, barSize: dLong }), ...p }] } });
 
   function updateWallRebar(patch: Partial<WallRebarLayout>) {
-    const defaultWR: WallRebarLayout = {
-      vertBarSize: 5, vertSpacing: 12, horizBarSize: 5, horizSpacing: 12,
-      numCurtains: 2, sbzBarSize: 8, sbzNumBars: 8,
-      sbzTieBarSize: 4, sbzTieSpacing: 4, sbzTieLegs: 4, driftRatio: 0.015,
-    };
-    update({ wallRebar: { ...(m.wallRebar ?? defaultWR), ...patch } });
+    update({ wallRebar: { ...(m.wallRebar ?? defaultWallRebar()), ...patch } });
   }
 
   /** Switching section type to/from a column syncs memberType and seeds sensible defaults. */
@@ -172,19 +176,15 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       patch.memberType = 'wall';
       patch.section = { ...patch.section!, b: 120, h: 12, lw: 120, tw: 12, hw: 180 };
       if (!m.wallRebar) {
-        patch.wallRebar = {
-          vertBarSize: 5, vertSpacing: 12, horizBarSize: 5, horizSpacing: 12,
-          numCurtains: 2, sbzBarSize: 8, sbzNumBars: 8,
-          sbzTieBarSize: 4, sbzTieSpacing: 4, sbzTieLegs: 4, driftRatio: 0.015,
-        };
+        patch.wallRebar = defaultWallRebar();
       }
     } else if (toColumn && !wasColumn) {
       patch.memberType = 'column';
       patch.rebar = {
-        topBars: [{ numBars: 3, barSize: 8 }],
-        botBars: [{ numBars: 3, barSize: 8 }],
-        sideBars: [{ numBars: 2, barSize: 8 }],
-        ties: { barSize: 4, spacing: 12, legs: 2 },
+        topBars: [{ numBars: 3, barSize: dLong }],
+        botBars: [{ numBars: 3, barSize: dLong }],
+        sideBars: [{ numBars: 2, barSize: dLong }],
+        ties: { barSize: dStir, spacing: 12, legs: 2 },
         tieType: 'tied',
       };
     } else if (!toColumn && !toWall && wasColumn) {
@@ -493,7 +493,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
                     const zones = m.rebar.tieZones!.map((z, zi) => zi === i ? { spacing: v } : z) as
                       [{ spacing: number }, { spacing: number }, { spacing: number }];
                     // Engine single-spacing path stays governed by the tightest zone
-                    update({ rebar: { ...m.rebar, tieZones: zones, ties: { ...(m.rebar.ties ?? { barSize: 4, legs: 2, spacing: v }), spacing: Math.min(...zones.map(z => z.spacing)) } } });
+                    update({ rebar: { ...m.rebar, tieZones: zones, ties: { ...(m.rebar.ties ?? { barSize: dStir, legs: 2, spacing: v }), spacing: Math.min(...zones.map(z => z.spacing)) } } });
                   }} />
               </div>
             ))}

@@ -119,7 +119,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       : { ...r, botBars: r.botBars.filter((_, j) => j !== i) });
   }
 
-  const ties = rebar.ties ?? { barSize: 3, spacing: 6, legs: 2 };
+  const ties = rebar.ties ?? { barSize: units === 'si' ? -8 : 3, spacing: 6, legs: 2 };
 
   return (
     <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
