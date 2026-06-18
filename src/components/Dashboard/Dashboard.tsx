@@ -846,12 +846,3 @@ function DCRInlineCell({ value, isWk }: { value: number | undefined; isWk?: bool
   const bg = value > 1.0 ? '#fef2f2' : value > 0.75 ? '#fffbeb' : '#f0fdf4';
   return <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'monospace', padding: '2px 5px', borderRadius: 3, background: bg, color }}>{value.toFixed(2)}</span>;
 }
-
-function rebarSummaryText(rebar: RebarLayout, units: 'imperial' | 'si' = 'imperial'): string {
-  const fmt = (l: { numBars: number; barSize: number }) => `${l.numBars}-${formatBarLabel(l.barSize)}`;
-  const top = rebar.topBars?.map(fmt).join('+') ?? '—';
-  const bot = rebar.botBars?.map(fmt).join('+') ?? '—';
-  const su = units === 'si' ? 'mm' : '"';
-  const ties = rebar.ties ? `${formatBarLabel(rebar.ties.barSize)}@${rebar.ties.spacing}${su} (${rebar.ties.legs}-leg)` : '—';
-  return `Top: ${top} | Bot: ${bot} | Ties: ${ties}`;
-}
