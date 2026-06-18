@@ -27,29 +27,41 @@ const SECTION_LABEL: React.CSSProperties = {
 };
 const inp: React.CSSProperties = {
   padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, width: '100%',
+  boxSizing: 'border-box',
 };
 
 export default function ReportModal({ project, onClose }: Props) {
   const groups = project.designGroups ?? [];
+
+  // Scope controls
   const [scope, setScope] = useState<ScopeKind>('all');
   const [groupIds, setGroupIds] = useState<Set<string>>(new Set(groups.map(g => g.id)));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(project.members.map(m => m.id)));
+
+  // Content toggles
   const [governingOnly, setGoverningOnly] = useState(DEFAULT_REPORT_OPTIONS.governingOnly);
   const [includeDiagrams, setIncludeDiagrams] = useState(DEFAULT_REPORT_OPTIONS.includeDiagrams);
   const [includeCalcs, setIncludeCalcs] = useState(DEFAULT_REPORT_OPTIONS.includeCalcs);
   const [includeCrack, setIncludeCrack] = useState(DEFAULT_REPORT_OPTIONS.includeCrack);
+
+  // Title block
   const [jobNumber, setJobNumber] = useState('');
   const [revision, setRevision] = useState('');
+
+  // Editable project details (pre-filled from project, not mutating project state)
+  const [reportName, setReportName] = useState(project.name);
+  const [reportEngineer, setReportEngineer] = useState(project.engineer ?? '');
+  const [reportDate, setReportDate] = useState(project.date ?? '');
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastBytes = useRef<Uint8Array | null>(null);
   const lastUrl = useRef<string | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isEC2 = project.code === 'EN1992-1-1';
 
-  /** Resolve the member-id subset implied by the current scope (undefined = all). */
   const resolveMemberIds = useCallback((): string[] | undefined => {
     if (scope === 'all') return undefined;
     if (scope === 'group') {
@@ -65,7 +77,11 @@ export default function ReportModal({ project, onClose }: Props) {
     governingOnly, includeDiagrams, includeCalcs, includeCrack,
     jobNumber: jobNumber.trim() || undefined,
     revision: revision.trim() || undefined,
-  }), [resolveMemberIds, governingOnly, includeDiagrams, includeCalcs, includeCrack, jobNumber, revision]);
+    reportName: reportName.trim() || undefined,
+    reportEngineer: reportEngineer.trim() || undefined,
+    reportDate: reportDate.trim() || undefined,
+  }), [resolveMemberIds, governingOnly, includeDiagrams, includeCalcs, includeCrack,
+      jobNumber, revision, reportName, reportEngineer, reportDate]);
 
   const generate = useCallback(async () => {
     setBusy(true);
@@ -79,7 +95,6 @@ export default function ReportModal({ project, onClose }: Props) {
       }
       const bytes = await buildReportBytes(project, opts);
       lastBytes.current = bytes;
-      // Revoke the previous blob URL before replacing it.
       if (lastUrl.current) URL.revokeObjectURL(lastUrl.current);
       const url = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' }));
       lastUrl.current = url;
@@ -91,11 +106,18 @@ export default function ReportModal({ project, onClose }: Props) {
     }
   }, [project, buildOptions]);
 
-  // Build an initial preview on open; clean up the blob URL on unmount.
+  // Auto-regenerate preview on any option change, debounced 600 ms so fast toggles don't thrash.
   useEffect(() => {
-    generate();
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => { void generate(); }, 600);
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, groupIds, selectedIds, governingOnly, includeDiagrams, includeCalcs, includeCrack,
+      jobNumber, revision, reportName, reportEngineer, reportDate]);
+
+  // Clean up blob URL on unmount
+  useEffect(() => {
     return () => { if (lastUrl.current) URL.revokeObjectURL(lastUrl.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function download() {
@@ -104,7 +126,7 @@ export default function ReportModal({ project, onClose }: Props) {
     const url = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' }));
     const a = document.createElement('a');
     a.href = url;
-    const tag = [project.name.replace(/\s+/g, '_'), jobNumber.trim(), revision.trim()].filter(Boolean).join('_');
+    const tag = [reportName.trim() || project.name, jobNumber.trim(), revision.trim()].filter(Boolean).join('_').replace(/\s+/g, '_');
     a.download = `${tag}_Report.pdf`;
     a.click();
     URL.revokeObjectURL(url);
@@ -118,11 +140,45 @@ export default function ReportModal({ project, onClose }: Props) {
         {/* Controls sidebar */}
         <div style={SIDEBAR}>
           <div style={{ padding: '14px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white' }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>📄 Report Builder</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Report Builder</span>
             <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>×</button>
           </div>
 
           <div style={{ padding: '0 16px 16px' }}>
+
+            {/* Project details */}
+            <div style={SECTION_LABEL}>Project Details</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div>
+                <label style={{ fontSize: 10, color: '#9ca3af' }}>Project name</label>
+                <input style={inp} value={reportName} onChange={e => setReportName(e.target.value)} placeholder="Project name" />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 10, color: '#9ca3af' }}>Engineer</label>
+                  <input style={inp} value={reportEngineer} onChange={e => setReportEngineer(e.target.value)} placeholder="Engineer name" />
+                </div>
+                <div style={{ width: 100 }}>
+                  <label style={{ fontSize: 10, color: '#9ca3af' }}>Date</label>
+                  <input style={inp} value={reportDate} onChange={e => setReportDate(e.target.value)} placeholder="YYYY-MM-DD" />
+                </div>
+              </div>
+            </div>
+
+            {/* Title block */}
+            <div style={SECTION_LABEL}>Title block</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 10, color: '#9ca3af' }}>Job number</label>
+                <input style={inp} value={jobNumber} onChange={e => setJobNumber(e.target.value)} placeholder="e.g. 2024-118" />
+              </div>
+              <div style={{ width: 80 }}>
+                <label style={{ fontSize: 10, color: '#9ca3af' }}>Revision</label>
+                <input style={inp} value={revision} onChange={e => setRevision(e.target.value)} placeholder="A" />
+              </div>
+            </div>
+
+            {/* Scope */}
             <div style={SECTION_LABEL}>Scope</div>
             {([['all', 'Whole project'], ['group', 'By design group'], ['selected', 'Selected members']] as const).map(([k, lbl]) => (
               <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', padding: '3px 0', cursor: 'pointer' }}>
@@ -158,6 +214,7 @@ export default function ReportModal({ project, onClose }: Props) {
               </div>
             )}
 
+            {/* Content */}
             <div style={SECTION_LABEL}>Content</div>
             {[
               ['Governing load case only', governingOnly, setGoverningOnly],
@@ -176,24 +233,12 @@ export default function ReportModal({ project, onClose }: Props) {
               </label>
             )}
 
-            <div style={SECTION_LABEL}>Title block</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 10, color: '#9ca3af' }}>Job number</label>
-                <input style={inp} value={jobNumber} onChange={e => setJobNumber(e.target.value)} placeholder="e.g. 2024-118" />
-              </div>
-              <div style={{ width: 80 }}>
-                <label style={{ fontSize: 10, color: '#9ca3af' }}>Revision</label>
-                <input style={inp} value={revision} onChange={e => setRevision(e.target.value)} placeholder="A" />
-              </div>
-            </div>
-
             <button
-              onClick={generate}
+              onClick={() => { void generate(); }}
               disabled={busy}
               style={{ marginTop: 16, width: '100%', padding: '10px', background: busy ? '#93c5fd' : '#2563eb', color: 'white', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? 'default' : 'pointer' }}
             >
-              {busy ? 'Generating…' : '↻ Update Preview'}
+              {busy ? 'Generating…' : '↻ Refresh Preview'}
             </button>
             <button
               onClick={download}
@@ -204,6 +249,7 @@ export default function ReportModal({ project, onClose }: Props) {
             </button>
             <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 8, textAlign: 'center' }}>
               {memberCount} member{memberCount !== 1 ? 's' : ''} in report
+              {busy && ' · updating…'}
             </div>
             {error && (
               <div style={{ marginTop: 10, fontSize: 11, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '6px 10px' }}>
@@ -214,11 +260,16 @@ export default function ReportModal({ project, onClose }: Props) {
         </div>
 
         {/* Preview pane */}
-        <div style={{ flex: 1, minWidth: 0, background: '#525659', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ flex: 1, minWidth: 0, background: '#525659', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
           {previewUrl ? (
-            <iframe title="Report preview" src={previewUrl} style={{ width: '100%', height: '100%', border: 'none' }} />
+            <iframe title="Report preview" src={previewUrl} style={{ width: '100%', height: '100%', border: 'none', opacity: busy ? 0.5 : 1, transition: 'opacity 0.2s' }} />
           ) : (
             <div style={{ color: '#cbd5e1', fontSize: 13 }}>{busy ? 'Rendering report…' : 'Preview will appear here.'}</div>
+          )}
+          {busy && previewUrl && (
+            <div style={{ position: 'absolute', top: 12, right: 16, background: 'rgba(0,0,0,0.6)', color: 'white', borderRadius: 6, padding: '4px 10px', fontSize: 11 }}>
+              Updating…
+            </div>
           )}
         </div>
       </div>

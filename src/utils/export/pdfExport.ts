@@ -26,6 +26,12 @@ export interface ReportOptions {
   jobNumber?: string;
   /** Title-block revision tag (e.g. "A", "P1"). */
   revision?: string;
+  /** Override project name on cover page. */
+  reportName?: string;
+  /** Override engineer name on cover page. */
+  reportEngineer?: string;
+  /** Override date on cover page. */
+  reportDate?: string;
 }
 
 export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
@@ -34,6 +40,33 @@ export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
   includeCalcs: true,
   includeCrack: true,
 };
+
+/** Dimension/force/moment labels and value formatters keyed on unit system. */
+interface UCtx {
+  dimSfx: string;           // length suffix for section dims, e.g. '"' or ' mm'
+  spanSfx: string;          // span suffix, e.g. 'ft' or 'm'
+  force: string;            // force unit label
+  moment: string;           // moment unit label
+  stressVal: (psi: number) => string;  // e.g. "4000psi" or "27.6MPa"
+  stressBarVal: (psi: number) => string; // e.g. "60ksi" or "414MPa"
+}
+function makeU(isEC2: boolean): UCtx {
+  return isEC2 ? {
+    dimSfx: ' mm',
+    spanSfx: 'm',
+    force: 'kN',
+    moment: 'kN·m',
+    stressVal:    (v) => `${v} MPa`,
+    stressBarVal: (v) => `${v} MPa`,
+  } : {
+    dimSfx: '"',
+    spanSfx: 'ft',
+    force: 'kips',
+    moment: 'kip-ft',
+    stressVal:    (v) => `${v}psi`,
+    stressBarVal: (v) => `${(v / 1000).toFixed(0)}ksi`,
+  };
+}
 
 function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] {
   const isWall = m.memberType === 'wall' && !!m.wallRebar;
@@ -159,7 +192,7 @@ function circle(ctx: DrawCtx, x: number, y: number, r: number, fill = C.dark) {
  * circles per layer; circular columns pool bars on a ring; walls draw a
  * plan view with SBZ end zones.
  */
-function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: number, boxH: number): void {
+function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: number, boxH: number, u: UCtx = makeU(false)): void {
   const s = m.section;
   const pad = 14;
   const innerW = boxW - 2 * pad, innerH = boxH - 2 * pad - 10; // 10pt for caption
@@ -184,7 +217,7 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
         circle(ctx, cx + ringR * Math.cos(ang), cy + ringR * Math.sin(ang), rb);
       }
     }
-    text(ctx, `dia ${D}"`, cx - 14, y + 4, 7, C.mid);
+    text(ctx, `dia ${D}${u.dimSfx}`, cx - 14, y + 4, 7, C.mid);
     return;
   }
 
@@ -214,7 +247,7 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
         for (let i = 0; i <= nWeb; i++)
           circle(ctx, webX0 + (webX1 - webX0) * (i / nWeb), cyW, 1, C.mid);
     }
-    text(ctx, `lw=${lw}"  tw=${tw}"  (plan, SBZ ends shaded)`, px, y + 4, 7, C.mid);
+    text(ctx, `lw=${lw}${u.dimSfx}  tw=${tw}${u.dimSfx}  (plan, SBZ ends shaded)`, px, y + 4, 7, C.mid);
     return;
   }
 
@@ -248,7 +281,7 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
       inset += getBarDiam(g.barSize) * scale + sClear;
     }
   }
-  text(ctx, `b=${secW}"  h=${secH}"`, rx, y + 4, 7, C.mid);
+  text(ctx, `b=${secW}${u.dimSfx}  h=${secH}${u.dimSfx}`, rx, y + 4, 7, C.mid);
 }
 
 /** Horizontal DCR bar with a marker at 1.0; track spans dcr 0–1.5. */
@@ -372,17 +405,15 @@ function drawEnvelopeChart(
 }
 
 /** Draws shear + moment envelope diagrams; returns the height consumed. */
-function drawForceDiagrams(ctx: DrawCtx, m: Member, result: DesignResults, x: number, y: number, fullW: number): number {
+function drawForceDiagrams(ctx: DrawCtx, m: Member, result: DesignResults, x: number, y: number, fullW: number, u: UCtx = makeU(false)): number {
   const pts = buildEnvelope(m);
   if (pts.length < 2) return 0;
   const plotW = fullW - 30;
   const plotH = 56;
-  // Shear (top)
-  drawEnvelopeChart(ctx, 'Shear envelope V (kips)', pts, p => p.Vmax, p => p.Vmin,
+  drawEnvelopeChart(ctx, `Shear envelope V (${u.force})`, pts, p => p.Vmax, p => p.Vmin,
     result.phi_Vn, -result.phi_Vn, 'phiVn', x + 24, y - plotH, plotW, plotH,
     rgb(0.99, 0.90, 0.55), C.amber);
-  // Moment (bottom)
-  drawEnvelopeChart(ctx, 'Moment envelope M (kip-ft)', pts, p => p.Mmax, p => p.Mmin,
+  drawEnvelopeChart(ctx, `Moment envelope M (${u.moment})`, pts, p => p.Mmax, p => p.Mmin,
     result.phi_Mn_pos, -result.phi_Mn_neg, 'phiMn', x + 24, y - plotH * 2 - 28, plotW, plotH,
     rgb(0.75, 0.85, 0.99), C.blue);
   return plotH * 2 + 40;
@@ -457,6 +488,10 @@ export async function buildReportBytes(
     : project.members;
   const code = project.code as DesignCode;
   const isEC2 = project.code === 'EN1992-1-1';
+  const u = makeU(isEC2);
+  const reportName     = opts.reportName     ?? project.name;
+  const reportEngineer = opts.reportEngineer ?? project.engineer;
+  const reportDate     = opts.reportDate     ?? project.date;
 
   const doc   = await PDFDocument.create();
   const font  = await doc.embedFont(StandardFonts.Helvetica);
@@ -471,11 +506,11 @@ export async function buildReportBytes(
   text(ctx, `${project.code}  Reinforced Concrete Design Report`, margin, h - 66, 11, C.mid);
 
   text(ctx, 'Project', margin, h - 130, 9, C.mid);
-  text(ctx, project.name, margin, h - 145, 14, C.dark, bold);
+  text(ctx, reportName, margin, h - 145, 14, C.dark, bold);
   text(ctx, 'Engineer', margin + 300, h - 130, 9, C.mid);
-  text(ctx, project.engineer, margin + 300, h - 145, 12, C.dark);
+  text(ctx, reportEngineer, margin + 300, h - 145, 12, C.dark);
   text(ctx, 'Date', margin, h - 168, 9, C.mid);
-  text(ctx, project.date, margin, h - 181, 10, C.dark);
+  text(ctx, reportDate, margin, h - 181, 10, C.dark);
   text(ctx, 'Design Code', margin + 300, h - 168, 9, C.mid);
   text(ctx, project.code, margin + 300, h - 181, 10, C.dark);
   // Title-block job number / revision
@@ -499,11 +534,12 @@ export async function buildReportBytes(
     const bg = members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
     const sec = m.section.type === 'circular_column'
-      ? `Ø${m.section.diameter ?? m.section.b}"`
-      : `${m.section.b}"×${m.section.h}"`;
+      ? `dia${m.section.diameter ?? m.section.b}${u.dimSfx}`
+      : `${m.section.b}${u.dimSfx}x${m.section.h}${u.dimSfx}`;
     const wall = m.memberType === 'wall' && !!m.wallRebar;
+    const fcLabel = isEC2 ? `${m.material.fc}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
     const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
-      `${m.material.fc / 1000}k`,
+      fcLabel,
       (wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos).toFixed(2),
       wall ? '-' : r.DCR_flex_neg.toFixed(2),
       (wall ? (r.DCR_shear_wall ?? 0) : r.DCR_shear).toFixed(2),
@@ -527,8 +563,10 @@ export async function buildReportBytes(
     // Member header
     rect(ctx, margin, y - 34, w - 2 * margin, 38, C.navy);
     text(ctx, `${m.id} — ${m.label}`, margin + 8, y - 14, 13, C.white, bold);
-    const secStr = `${m.section.b}"×${m.section.h}"`;
-    text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${m.material.fc}psi  fy=${m.material.fy / 1000}ksi  span=${m.span}ft`,
+    const secStr = m.section.type === 'circular_column'
+      ? `dia${m.section.diameter ?? m.section.b}${u.dimSfx}`
+      : `${m.section.b}${u.dimSfx}x${m.section.h}${u.dimSfx}`;
+    text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${u.stressVal(m.material.fc)}  fy=${u.stressBarVal(m.material.fy)}  span=${m.span}${u.spanSfx}`,
       margin + 8, y - 28, 8, C.mid);
     y -= 50;
 
@@ -537,22 +575,23 @@ export async function buildReportBytes(
     rect(ctx, margin, y - 50, halfW, 52, C.light);
     text(ctx, 'Section & Material', margin + 6, y - 12, 8, C.dark, bold);
     const props = [
-      [`b=${m.section.b}"`, `h=${m.section.h}"`, `cc=${m.section.coverClear}"`],
-      [`f'c=${m.material.fc}psi`, `fy=${m.material.fy / 1000}ksi`, `fyt=${m.material.fyt / 1000}ksi`],
-      [`λ=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${m.span}ft`],
+      [`b=${m.section.b}${u.dimSfx}`, `h=${m.section.h}${u.dimSfx}`, `cc=${m.section.coverClear}${u.dimSfx}`],
+      [`f'c=${u.stressVal(m.material.fc)}`, `fy=${u.stressBarVal(m.material.fy)}`, `fyt=${u.stressBarVal(m.material.fyt)}`],
+      [`lambda=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${m.span}${u.spanSfx}`],
     ];
     props.forEach((row2, ri) =>
       row2.forEach((v, ci) => text(ctx, v, margin + 8 + ci * 70, y - 24 - ri * 12, 8)));
-    drawSectionSketch(ctx, m, margin + halfW + 10, y - 118, halfW, 120);
+    drawSectionSketch(ctx, m, margin + halfW + 10, y - 118, halfW, 120, u);
     y -= 126;
 
     // Load case results table
     text(ctx, 'Design Results by Load Case', margin, y - 8, 10, C.dark, bold);
     y -= 20;
     const isWall = m.memberType === 'wall' && !!m.wallRebar;
+    const M = u.moment, F = u.force;
     const lcHdrs = isWall
-      ? ['Load Case', 'Mu (k-ft)', 'Vu (k)', 'Pu (k)', 'φMn (k-ft)', 'φVn (k)', 'DCR P-M', 'DCR V', 'DCR Ash', 'SBZ', 'Status']
-      : ['Load Case', 'Mu+ (k-ft)', 'Mu- (k-ft)', 'Vu (k)', 'φMn+ (k-ft)', 'φMn- (k-ft)', 'φVn (k)', 'DCR Fl+', 'DCR Fl-', 'DCR V', 'Status'];
+      ? ['Load Case', `Mu (${M})`, `Vu (${F})`, `Pu (${F})`, `phiMn (${M})`, `phiVn (${F})`, 'DCR P-M', 'DCR V', 'DCR Ash', 'SBZ', 'Status']
+      : ['Load Case', `Mu+ (${M})`, `Mu- (${M})`, `Vu (${F})`, `phiMn+ (${M})`, `phiMn- (${M})`, `phiVn (${F})`, 'DCR Fl+', 'DCR Fl-', 'DCR V', 'Status'];
     const lcCols = [0, 72, 118, 164, 200, 252, 304, 352, 384, 416, 445];
     rect(ctx, margin, y - 4, w - 2 * margin, 14, C.navy);
     lcHdrs.forEach((hdr, i) => text(ctx, hdr, margin + lcCols[i], y - 1, 7, C.white, bold));
@@ -599,7 +638,7 @@ export async function buildReportBytes(
         y -= 14;
       }
       if (isWall) {
-        text(ctx, `rho_l=${(worst.rhoL ?? 0).toFixed(4)}  rho_t=${(worst.rhoT ?? 0).toFixed(4)}  SBZ ${worst.sbzRequired ? `required, lbe=${(worst.sbzLength ?? 0).toFixed(1)}"` : 'not required'}`,
+        text(ctx, `rho_l=${(worst.rhoL ?? 0).toFixed(4)}  rho_t=${(worst.rhoT ?? 0).toFixed(4)}  SBZ ${worst.sbzRequired ? `required, lbe=${(worst.sbzLength ?? 0).toFixed(1)}${u.dimSfx}` : 'not required'}`,
           margin, y - 2, 8, C.mid);
         y -= 14;
       }
@@ -620,7 +659,7 @@ export async function buildReportBytes(
       if (y < margin + 170) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
       text(ctx, 'Force Envelopes (imported combos)', margin, y - 8, 10, C.dark, bold);
       y -= 22;
-      const consumed = drawForceDiagrams(ctx, m, worst, margin, y, w - 2 * margin);
+      const consumed = drawForceDiagrams(ctx, m, worst, margin, y, w - 2 * margin, u);
       y -= consumed + 6;
     }
 
