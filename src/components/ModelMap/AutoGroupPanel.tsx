@@ -9,10 +9,11 @@ import { useState, useMemo, useEffect } from 'react';
 import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
-  demandValueFor, metricUnitFor, metricLabelFor,
+  demandValueFor,
   ALL_BEAMS_FAMILY_KEY,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
+import type { Quantity } from '../../utils/units';
 import HistogramPanel from './HistogramPanel';
 import { GROUP_PALETTE } from './groupColors';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -43,7 +44,7 @@ export default function AutoGroupPanel({
   onApplySuggestion,
   onOverlayChange,
 }: AutoGroupPanelProps) {
-  const { units } = useUnits();
+  const { units, toDisplay, fromDisplay, label: unitLabel } = useUnits();
   const [algorithm, setAlgorithm] = useState<'jenks' | 'quantile'>('jenks');
   const [kPerFamily, setKPerFamily] = useState<number | 'auto'>('auto');
   const [metric, setMetric] = useState<import('../../utils/autoGroup').DemandMetric>('governing');
@@ -338,21 +339,33 @@ export default function AutoGroupPanel({
       )}
 
       {/* Histogram */}
-      {activeSuggestion && (
-        <div>
-          <div style={{ ...lbl, marginBottom: 6 }}>
-            Demand distribution — {displayFamilyLabel(activeSuggestion.familyLabel, units)}
-            <span style={{ marginLeft: 6, color: '#2563eb' }}>GVF {(activeSuggestion.gvf * 100).toFixed(0)}%</span>
+      {activeSuggestion && (() => {
+        const q: Quantity | null = metric === 'Vu' ? 'force' : metric === 'governing' ? null : 'moment';
+        const dispVals = q ? vals.map(v => toDisplay(v, q)) : vals;
+        const dispBreaks = q ? currentBreaks.map(b => toDisplay(b, q)) : currentBreaks;
+        const xLabelDisp = metric === 'governing' ? 'Governing demand →'
+          : metric === 'Vu' ? `Shear (${unitLabel('force')}) →`
+          : metric === 'Mu_pos' ? `M⁺ (${unitLabel('moment')}) →`
+          : `M⁻ (${unitLabel('moment')}) →`;
+        return (
+          <div>
+            <div style={{ ...lbl, marginBottom: 6 }}>
+              Demand distribution — {displayFamilyLabel(activeSuggestion.familyLabel, units)}
+              <span style={{ marginLeft: 6, color: '#2563eb' }}>GVF {(activeSuggestion.gvf * 100).toFixed(0)}%</span>
+            </div>
+            <HistogramPanel
+              values={dispVals}
+              binAssignment={binAssignment}
+              breaks={dispBreaks}
+              onBreaksChange={dispBrs => {
+                const rawBrs = q ? dispBrs.map(b => fromDisplay(b, q)) : dispBrs;
+                handleBreaksChange(activeFamily, rawBrs);
+              }}
+              xLabel={xLabelDisp}
+            />
           </div>
-          <HistogramPanel
-            values={vals}
-            binAssignment={binAssignment}
-            breaks={currentBreaks}
-            onBreaksChange={br => handleBreaksChange(activeFamily, br)}
-            xLabel={`${metricLabelFor(metric)} →`}
-          />
-        </div>
-      )}
+        );
+      })()}
 
       {/* Bin preview list */}
       <div>
@@ -360,6 +373,10 @@ export default function AutoGroupPanel({
         {binMemberIds.map((mIds, bi) => {
           if (!mIds.length) return null;
           const worstDemand = Math.max(...familyDemands.filter(d => mIds.includes(d.memberId)).map(d => demandValueFor(d, metric)));
+          const q: Quantity | null = metric === 'Vu' ? 'force' : metric === 'governing' ? null : 'moment';
+          const demandStr = metric === 'governing'
+            ? `${(worstDemand * 100).toFixed(0)}%`
+            : `${Math.round(toDisplay(worstDemand, q!))} ${unitLabel(q!)}`;
           return (
             <div key={bi}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer' }}
@@ -368,7 +385,7 @@ export default function AutoGroupPanel({
               <span style={{ width: 10, height: 10, borderRadius: 2, background: previewColor(bi), flexShrink: 0 }} />
               <span style={{ fontSize: 11, flex: 1 }}>Group {bi + 1}</span>
               <span style={{ fontSize: 10, color: '#6b7280' }}>{mIds.length} beams</span>
-              <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>{metric === 'governing' ? `${(worstDemand * 100).toFixed(0)}%` : `${Math.round(worstDemand)} ${metricUnitFor(metric)}`}</span>
+              <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>{demandStr}</span>
             </div>
           );
         })}

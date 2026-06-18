@@ -44,7 +44,7 @@ function worstDCR(m: Member, code: DesignCode): number {
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
-  const { units, fmt } = useUnits();
+  const { units, fmt, fmtVal, label } = useUnits();
   const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -358,7 +358,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     {sections.map(s => (
                       <span key={s.name} style={chip(selSections.has(s.name))}
                         onClick={() => { setSelSections(prev => { const n = new Set(prev); if (n.has(s.name)) n.delete(s.name); else n.add(s.name); return n; }); setMatchCount(null); }}>
-                        {s.name} <span style={{ opacity: 0.7 }}>({s.width}"×{s.depth}")</span>
+                        {s.name} <span style={{ opacity: 0.7 }}>({fmtVal(s.width, 'length')}×{fmtVal(s.depth, 'length')} {label('length')})</span>
                       </span>
                     ))}
                   </div>

@@ -25,7 +25,12 @@ export default function SavingsPanel({
   targetDCR,
   onTargetDCRChange,
 }: SavingsPanelProps) {
-  const { fmtVal, label } = useUnits();
+  const { units, fmtVal, label, toDisplay } = useUnits();
+  function fmtTons(lb: number): string {
+    return units === 'si'
+      ? `${(toDisplay(lb, 'steelWeight') / 1000).toFixed(2)} t`
+      : `${(lb / 2000).toFixed(2)} tons`;
+  }
   const [expanded, setExpanded] = useState<string | null>(null);
 
   // Build memberId → groupId map
@@ -146,7 +151,7 @@ export default function SavingsPanel({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
-            {hasResults ? `~${savings.totalTons.toFixed(2)} tons` : '—'} potential savings
+            {hasResults ? `~${fmtTons(savings.totalLb)}` : '—'} potential savings
             {hasResults && totalInPlaceLb > 0 && (
               <span style={{ marginLeft: 6, fontSize: 11, color: '#16a34a' }}>({savingsPct.toFixed(0)}%)</span>
             )}
@@ -195,7 +200,7 @@ export default function SavingsPanel({
             <div>
               <div style={{ color: '#9ca3af' }}>Total</div>
               <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#111827' }}>
-                {(weightTotals.totalLb / 2000).toFixed(2)} tons
+                {fmtTons(weightTotals.totalLb)}
               </div>
               <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.totalLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
@@ -270,7 +275,7 @@ export default function SavingsPanel({
                       <tr key={m.memberId} style={{ background: '#f9fafb' }}>
                         <td colSpan={2} style={{ padding: '2px 12px', color: '#6b7280' }}>{m.label} <span style={{ color: '#9ca3af' }}>{m.story}</span></td>
                         <td style={{ padding: '2px 4px', textAlign: 'right', fontFamily: 'monospace', fontSize: 9, color: '#374151' }}>{m.dcrGov.toFixed(2)}</td>
-                        <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 9, color: '#374151' }}>{m.totalSlackLb.toFixed(0)}</td>
+                        <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 9, color: '#374151' }}>{fmtVal(m.totalSlackLb, 'steelWeight')} {label('steelWeight')}</td>
                       </tr>
                     ))}
                 </Fragment>
@@ -306,7 +311,7 @@ export default function SavingsPanel({
                 <td colSpan={3} style={{ padding: '4px 4px', color: '#374151', fontSize: 11 }}>Total</td>
                 <td style={{ padding: '4px 4px', textAlign: 'right', color: '#16a34a', fontSize: 11 }}>
                   {fmtVal(savings.totalLb, 'steelWeight')} {label('steelWeight')}<br />
-                  <span style={{ fontSize: 9, color: '#6b7280' }}>{savings.totalTons.toFixed(3)} tons</span>
+                  <span style={{ fontSize: 9, color: '#6b7280' }}>{fmtTons(savings.totalLb)}</span>
                 </td>
               </tr>
             </tfoot>
