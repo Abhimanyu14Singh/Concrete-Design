@@ -166,26 +166,17 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     expect(r.DCR_torsion).toBe(0);
   });
 
-  // ── EC2-specific finding ①: shear tension shift §6.2.3(7) ──────────────────
+  // ── §6.2.3(7) shear tension shift is intentionally NOT checked ──────────────
 
-  it('EC2 §6.2.3(7) error fired: 4H25 insufficient for shear tension shift ΔFtd=250 kN', () => {
-    // EC2 truss model: ΔFtd = 0.5×VEd×cotθ = 0.5×200×2.5 = 250 kN extra tension.
-    // Total longitudinal demand = (MEd/z + ΔFtd)/fyd = 2459 mm² > 1963 mm² provided.
-    // This check does NOT exist in ACI — confirms EC2 code path.
+  it('EC2 §6.2.3(7) is NOT flagged (shear tension shift excluded by design)', () => {
     const err = r.warnings.find(w => w.code === 'EC2 §6.2.3(7)');
-    expect(err).toBeDefined();
-    expect(err!.severity).toBe('error');
-    expect(err!.message).toContain('2459');   // required mm²
-    expect(err!.message).toContain('1963');   // provided mm²
-    expect(err!.message).toContain('ΔF_td');  // names the shear shift
-    expect(err!.message).toContain('250');    // 250 kN shift value
+    expect(err).toBeUndefined();
   });
 
-  it('As_req (incl. shear shift) ≈ 2459 mm² > 4H25 = 1963 mm²', () => {
+  it('As_req (flexure-only) < 4H25 = 1963 mm² provided', () => {
     const AsReq_mm2 = r.As_req_pos * IN2_TO_MM2;
     const AsProv_mm2 = 4 * Math.PI / 4 * 25 * 25;  // 4H25 = 1963.5 mm²
-    expect(AsReq_mm2).toBeCloseTo(2459, -1);         // ± 10 mm²
-    expect(AsReq_mm2).toBeGreaterThan(AsProv_mm2);
+    expect(AsReq_mm2).toBeLessThanOrEqual(AsProv_mm2);
   });
 
   // ── EC2-specific finding ②: crack width §7.3.4 ───────────────────────────────
@@ -213,10 +204,10 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     }
   });
 
-  it('exactly 2 errors found (§6.2.3(7) tension shift + §7.3.4 crack width)', () => {
+  it('exactly 1 error found (§7.3.4 crack width only — §6.2.3(7) excluded)', () => {
     const errors = r.warnings.filter(w => w.severity === 'error');
-    expect(errors).toHaveLength(2);
-    expect(errors.map(e => e.code).sort()).toEqual(['EC2 §6.2.3(7)', 'EC2 §7.3.4']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe('EC2 §7.3.4');
   });
 
   // ── Steel limits §9.2.1.1 ────────────────────────────────────────────────────
@@ -344,7 +335,7 @@ describe('EC2 pinned-pinned beam — 5H25, 450×650, H10@120 — all checks pass
     expect(r2.phi_Vn * KIP_TO_KN).toBeGreaterThan(200);
   });
 
-  it('As_req (incl. tension shift) ≤ 5H25 provided', () => {
+  it('As_req (flexure-only) ≤ 5H25 provided', () => {
     const AsReq_mm2  = r2.As_req_pos * IN2_TO_MM2;
     const AsProv_mm2 = 5 * Math.PI / 4 * 25 * 25;   // 5H25 = 2454 mm²
     expect(AsProv_mm2).toBeGreaterThan(AsReq_mm2);

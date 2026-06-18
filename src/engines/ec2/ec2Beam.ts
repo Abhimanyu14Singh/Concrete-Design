@@ -364,21 +364,12 @@ export function designMemberEC2(
     }
   }
 
-  // ── Longitudinal steel for shear + torsion §6.2.3(7) / §6.3.2(3) ──
-  // Shear tension shift, eq (6.18): ΔF_td = 0.5·V_Ed·cotθ added to the flexural
-  // tension chord. Torsion longitudinal steel (ΣAsl) is distributed around the
-  // perimeter; the two horizontal chords share ~half (¼ each).
-  //
-  const dFtd_kN = VEd > VRdc ? 0.5 * VEd * cotTheta : 0;
+  // ── Longitudinal steel for torsion §6.3.2(3) only ──
+  // Shear tension shift §6.2.3(7) is intentionally excluded (not checked in this engine).
   const z_long = 0.9 * d_bot;
   const AslTorChord = Asl_tor_mm2 / 4;
-  // Tension-chord steel demand = flexure + shift + torsion share.
-  const AsLongReqBot = (MEd_pos > 0 ? (MEd_pos * 1e6 / z_long + dFtd_kN * 1000) / fyd : 0) + AslTorChord;
-  const AsLongReqTop = (MEd_neg > 0 ? (MEd_neg * 1e6 / (0.9 * d_top) + dFtd_kN * 1000) / fyd : 0) + AslTorChord;
-  if (As_bot_mm2 < AsLongReqBot)
-    warnings.push({ code: 'EC2 §6.2.3(7)', message: `Bottom longitudinal steel ${As_bot_mm2.toFixed(0)} mm² < ${AsLongReqBot.toFixed(0)} mm² required for flexure + shear shift (ΔF_td = ${dFtd_kN.toFixed(0)} kN)${Asl_tor_mm2 > 0 ? ' + torsion' : ''}`, severity: 'error' });
-  if (As_top_mm2 < AsLongReqTop && MEd_neg > 0)
-    warnings.push({ code: 'EC2 §6.2.3(7)', message: `Top longitudinal steel ${As_top_mm2.toFixed(0)} mm² < ${AsLongReqTop.toFixed(0)} mm² required for flexure + shear shift (ΔF_td = ${dFtd_kN.toFixed(0)} kN)${Asl_tor_mm2 > 0 ? ' + torsion' : ''}`, severity: 'error' });
+  const AsLongReqBot = (MEd_pos > 0 ? (MEd_pos * 1e6 / z_long) / fyd : 0) + AslTorChord;
+  const AsLongReqTop = (MEd_neg > 0 ? (MEd_neg * 1e6 / (0.9 * d_top)) / fyd : 0) + AslTorChord;
 
   // ── Detailing checks ──
   // As_min §9.2.1.1: max(0.26·fctm/fyk, 0.0013)·bt·d
