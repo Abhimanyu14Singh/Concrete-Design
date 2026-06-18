@@ -18,8 +18,9 @@ interface Props {
 }
 
 function defaultRebar(units: 'imperial' | 'si'): RebarLayout {
+  // spacing stored internally in INCHES (engine convention). 150 mm ≈ 5.91 in.
   return units === 'si'
-    ? { topBars: [{ numBars: 2, barSize: -16 }], botBars: [{ numBars: 2, barSize: -16 }], ties: { barSize: -8, spacing: 150, legs: 2 } }
+    ? { topBars: [{ numBars: 2, barSize: -16 }], botBars: [{ numBars: 2, barSize: -16 }], ties: { barSize: -8, spacing: 150 / 25.4, legs: 2 } }
     : { topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }], ties: { barSize: 3, spacing: 6, legs: 2 } };
 }
 
@@ -66,7 +67,9 @@ function BarGroupRow({ bg, onChange, label, units }: {
 }
 
 export default function GroupRebarEditor({ group, members, onApply, code, targetDCR }: Props) {
-  const { units } = useUnits();
+  const { units, toDisplay, fromDisplay } = useUnits();
+  // Spacing is stored in inches; the editor shows it in the active unit system.
+  const spacingMax = units === 'si' ? 600 : 24;  // 600 mm ≈ 24 in
   const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(units));
   const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -220,14 +223,14 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <select value={ties.barSize} onChange={e => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(e.target.value) } }))}
             style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
-            {/* stirrup-size bars only: US #3–#6 or metric Ø8–Ø12 */}
-            {barSizeOptions(units, ties.barSize).filter(s => (s > 0 ? s <= 6 : -s <= 12)).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
+            {/* stirrup-size bars only: US #3–#6 or metric Ø8–Ø12 (always keep the current value) */}
+            {barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 6 : -s <= 12)).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
           </select>
           {!rebar.tieZones && (
             <>
               <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>
-              <NumberField value={ties.spacing} min={1} max={24}
-                onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), spacing: v } }))}
+              <NumberField value={+toDisplay(ties.spacing, 'length').toFixed(units === 'si' ? 0 : 2)} min={1} max={spacingMax}
+                onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), spacing: fromDisplay(v, 'length') } }))}
                 style={{ width: 50, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
               <span style={{ fontSize: 11, color: '#9ca3af' }}>{units === 'si' ? 'mm,' : 'in,'}</span>
             </>
@@ -256,9 +259,10 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
             {(['End (0–L/3)', 'Middle', 'End (2L/3–L)'] as const).map((zl, i) => (
               <div key={zl} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span style={{ fontSize: 9, color: '#9ca3af' }}>{zl}</span>
-                <NumberField value={rebar.tieZones![i].spacing} min={1} max={24}
+                <NumberField value={+toDisplay(rebar.tieZones![i].spacing, 'length').toFixed(units === 'si' ? 0 : 2)} min={1} max={spacingMax}
                   onChange={v => setRebar(r => {
-                    const zones = r.tieZones!.map((z, zi) => zi === i ? { spacing: v } : z) as [TieZone, TieZone, TieZone];
+                    const inches = fromDisplay(v, 'length');
+                    const zones = r.tieZones!.map((z, zi) => zi === i ? { spacing: inches } : z) as [TieZone, TieZone, TieZone];
                     // keep the single-spacing path governed by the tightest zone
                     return { ...r, tieZones: zones, ties: { ...(r.ties ?? ties), spacing: Math.min(...zones.map(z => z.spacing)) } };
                   })}

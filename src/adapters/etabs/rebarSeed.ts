@@ -44,9 +44,17 @@ export function minSkinReinforcement(
   return { numBars: 2 * perFace, barSize }; // both faces
 }
 
-const CANDIDATE_SIZES = [5, 6, 7, 8, 9, 10, 11];
+// US bars (#5–#11) and metric bars (Ø16–Ø32, stored negative). pickBars
+// chooses the candidate set from the design code so EC2 sections get metric
+// bars (Ø) and ACI sections get US (#) bars.
+const CANDIDATE_SIZES_US = [5, 6, 7, 8, 9, 10, 11];
+const CANDIDATE_SIZES_METRIC = [-16, -20, -25, -32];
 const MIN_BARS = 2;
 const MAX_BARS = 8;
+
+function candidateSizes(code?: DesignCode | string): number[] {
+  return code === 'EN1992-1-1' ? CANDIDATE_SIZES_METRIC : CANDIDATE_SIZES_US;
+}
 
 /**
  * Pick the bar size/count whose total area best meets `AsTarget` while
@@ -57,12 +65,14 @@ export function pickBars(
   AsTarget: number,
   section: SectionDimensions,
   stirrupBarSize = 4,
+  code?: DesignCode | string,
 ): { numBars: number; barSize: number } {
   const bw = section.bw ?? section.b;
   const clearWidth = bw - 2 * (section.coverClear + getBarDiam(stirrupBarSize));
+  const sizes = candidateSizes(code);
 
   let best: { numBars: number; barSize: number; over: number } | null = null;
-  for (const size of CANDIDATE_SIZES) {
+  for (const size of sizes) {
     const db = getBarDiam(size);
     const area = getBarArea(size);
     const minClear = Math.max(1, db);
@@ -77,7 +87,7 @@ export function pickBars(
   }
   // Nothing meets the target within limits — return the biggest workable set
   if (!best) {
-    const size = CANDIDATE_SIZES[CANDIDATE_SIZES.length - 1];
+    const size = sizes[sizes.length - 1];
     return { numBars: MAX_BARS, barSize: size };
   }
   return { numBars: best.numBars, barSize: best.barSize };
@@ -85,8 +95,9 @@ export function pickBars(
 
 /** Build a full RebarLayout (with three stirrup zones) from percentages. */
 export function seedRebar(section: SectionDimensions, opts: SeedOptions, code?: DesignCode | string): RebarLayout {
+  const isEC2 = code === 'EN1992-1-1';
   const bw = section.bw ?? section.b;
-  const stirrupBarSize = opts.stirrupBarSize ?? 4;
+  const stirrupBarSize = opts.stirrupBarSize ?? (isEC2 ? -10 : 4);
   const d = effectiveDepth({ ...section, stirrupDia: stirrupBarSize }, 8);
 
   const AsTop = (opts.rhoTopPct / 100) * bw * d;
@@ -100,12 +111,12 @@ export function seedRebar(section: SectionDimensions, opts: SeedOptions, code?: 
 
   // Code-based minimum skin reinforcement for deep beams (opt-in via wizard)
   const skin = opts.imposeSkinReinf && code
-    ? minSkinReinforcement(section, code, opts.skinBarSize ?? 5)
+    ? minSkinReinforcement(section, code, opts.skinBarSize ?? (isEC2 ? -12 : 5))
     : undefined;
 
   return {
-    topBars: [pickBars(AsTop, section, stirrupBarSize)],
-    botBars: [pickBars(AsBot, section, stirrupBarSize)],
+    topBars: [pickBars(AsTop, section, stirrupBarSize, code)],
+    botBars: [pickBars(AsBot, section, stirrupBarSize, code)],
     ties: {
       barSize: stirrupBarSize,
       // Engine single-spacing checks use the tightest (end) spacing

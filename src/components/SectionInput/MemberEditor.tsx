@@ -74,6 +74,12 @@ interface SelectRowProps {
   onChange: (v: string) => void;
 }
 function SelectRow({ label, value, options, onChange }: SelectRowProps) {
+  // Self-heal: a controlled <select> whose `value` matches none of its
+  // <option> values silently desyncs the browser from React (the dropdown
+  // appears frozen — onChange fires with a stale baseline). Guarantee the
+  // current value is always selectable by synthesizing an option for it.
+  const hasValue = options.some(o => String(o.value) === String(value));
+  const opts = hasValue ? options : [{ value, label: String(value) }, ...options];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
       <label style={{ fontSize: 12, color: '#6b7280', minWidth: 80, flexShrink: 0 }}>{label}</label>
@@ -81,7 +87,7 @@ function SelectRow({ label, value, options, onChange }: SelectRowProps) {
         value={value} onChange={e => onChange(e.target.value)}
         style={{ flex: 1, minWidth: 80, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', outline: 'none' }}
       >
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
   );
@@ -106,6 +112,12 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   const { units, fmt } = useUnits();
   const [m, setM] = useState<Member>(member);
   const [showLoads, setShowLoads] = useState(false);
+
+  // Unit-aware default bar sizes (negative = metric Ø mm, positive = US #).
+  const dLong = units === 'si' ? -16 : 8;   // longitudinal
+  const dWeb  = units === 'si' ? -12 : 5;   // distributed wall steel
+  const dStir = units === 'si' ? -10 : 4;   // stirrups / ties
+  const dSbz  = units === 'si' ? -25 : 8;   // SBZ vertical
 
   function update(patch: Partial<Member>) {
     const updated = { ...m, ...patch };
@@ -267,8 +279,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         )}
         <UnitInputRow label="Clear cover" value={m.section.coverClear} quantity="length" onChange={v => sec({ coverClear: v })} />
         {!isWall && (
-          <SelectRow label="Stirrup size" value={m.section.stirrupDia}
-            options={barSizeOptions(units, m.section.stirrupDia).map(s => ({ value: s, label: formatBarLabel(s) }))}
+          <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
+            options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
             onChange={v => sec({ stirrupDia: +v })} />
         )}
       </div>
@@ -282,8 +294,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               <p style={{ fontSize: 11, color: '#2563eb', fontWeight: 600, margin: '0 0 6px' }}>Vertical (Longitudinal) Bars §11.6</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
-                  <SelectRow label="Bar size" value={m.wallRebar?.vertBarSize ?? 5}
-                    options={barSizeOptions(units, m.wallRebar?.vertBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                  <SelectRow label="Bar size" value={m.wallRebar?.vertBarSize ?? dWeb}
+                    options={barSizeOptions(units, m.wallRebar?.vertBarSize ?? dWeb).map(s => ({ value: s, label: formatBarLabel(s) }))}
                     onChange={v => updateWallRebar({ vertBarSize: +v })} />
                 </div>
                 <div style={{ flex: 1 }}>
@@ -296,8 +308,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               <p style={{ fontSize: 11, color: '#16a34a', fontWeight: 600, margin: '0 0 6px' }}>Horizontal (Transverse) Bars §11.6</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
-                  <SelectRow label="Bar size" value={m.wallRebar?.horizBarSize ?? 5}
-                    options={barSizeOptions(units, m.wallRebar?.horizBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                  <SelectRow label="Bar size" value={m.wallRebar?.horizBarSize ?? dWeb}
+                    options={barSizeOptions(units, m.wallRebar?.horizBarSize ?? dWeb).map(s => ({ value: s, label: formatBarLabel(s) }))}
                     onChange={v => updateWallRebar({ horizBarSize: +v })} />
                 </div>
                 <div style={{ flex: 1 }}>
@@ -315,8 +327,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             <div style={{ ...headingStyle, color: '#d97706' }}>Special Boundary Zone (SBZ) §18.10.6</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
               <div style={{ flex: 1 }}>
-                <SelectRow label="SBZ bar size" value={m.wallRebar?.sbzBarSize ?? 8}
-                  options={barSizeOptions(units, m.wallRebar?.sbzBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                <SelectRow label="SBZ bar size" value={m.wallRebar?.sbzBarSize ?? dSbz}
+                  options={barSizeOptions(units, m.wallRebar?.sbzBarSize ?? dSbz).map(s => ({ value: s, label: formatBarLabel(s) }))}
                   onChange={v => updateWallRebar({ sbzBarSize: +v })} />
               </div>
               <div style={{ flex: 1 }}>
@@ -327,8 +339,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             <p style={{ fontSize: 11, color: '#9ca3af', margin: '4px 0 6px' }}>SBZ Confinement Ties §18.10.6.4</p>
             <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
               <div style={{ flex: 1 }}>
-                <SelectRow label="Tie size" value={m.wallRebar?.sbzTieBarSize ?? 4}
-                  options={barSizeOptions(units, m.wallRebar?.sbzTieBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                <SelectRow label="Tie size" value={m.wallRebar?.sbzTieBarSize ?? dStir}
+                  options={barSizeOptions(units, m.wallRebar?.sbzTieBarSize ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
                   onChange={v => updateWallRebar({ sbzTieBarSize: +v })} />
               </div>
               <div style={{ flex: 1 }}>
@@ -387,8 +399,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               onChange={v => topBar({ numBars: +v })} />
           </div>
           <div style={{ flex: 1 }}>
-            <SelectRow label="Size" value={m.rebar.topBars[0]?.barSize ?? 8}
-              options={barSizeOptions(units, m.rebar.topBars[0]?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            <SelectRow label="Size" value={m.rebar.topBars[0]?.barSize ?? dLong}
+              options={barSizeOptions(units, m.rebar.topBars[0]?.barSize ?? dLong).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => topBar({ barSize: +v })} />
           </div>
         </div>
@@ -399,8 +411,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               onChange={v => botBar({ numBars: +v })} />
           </div>
           <div style={{ flex: 1 }}>
-            <SelectRow label="Size" value={m.rebar.botBars[0]?.barSize ?? 8}
-              options={barSizeOptions(units, m.rebar.botBars[0]?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            <SelectRow label="Size" value={m.rebar.botBars[0]?.barSize ?? dLong}
+              options={barSizeOptions(units, m.rebar.botBars[0]?.barSize ?? dLong).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => botBar({ barSize: +v })} />
           </div>
         </div>
@@ -418,8 +430,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
                   onChange={v => sideBar({ numBars: +v })} />
               </div>
               <div style={{ flex: 1 }}>
-                <SelectRow label="Size" value={m.rebar.sideBars?.[0]?.barSize ?? 8}
-                  options={barSizeOptions(units, m.rebar.sideBars?.[0]?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                <SelectRow label="Size" value={m.rebar.sideBars?.[0]?.barSize ?? dLong}
+                  options={barSizeOptions(units, m.rebar.sideBars?.[0]?.barSize ?? dLong).map(s => ({ value: s, label: formatBarLabel(s) }))}
                   onChange={v => sideBar({ barSize: +v })} />
               </div>
             </div>
@@ -436,8 +448,8 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 140px', minWidth: 140 }}>
-            <SelectRow label="Size" value={m.rebar.ties?.barSize ?? 4}
-              options={barSizeOptions(units, m.rebar.ties?.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            <SelectRow label="Size" value={m.rebar.ties?.barSize ?? dStir}
+              options={barSizeOptions(units, m.rebar.ties?.barSize ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => ties({ barSize: +v })} />
           </div>
           {!m.rebar.tieZones && (

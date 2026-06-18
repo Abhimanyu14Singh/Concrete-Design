@@ -560,9 +560,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     Stirrup size
                     <select style={inp} value={seed.stirrupBarSize}
                       onChange={e => setSeed(s => ({ ...s, stirrupBarSize: +e.target.value }))}>
-                      {/* stirrup-gauge bars only: US #3–#6 or metric Ø8–Ø12 */}
+                      {/* stirrup-gauge bars only: US #3–#6 or metric Ø8–Ø12 (always keep current) */}
                       {barSizeOptions(wizardUnits, seed.stirrupBarSize)
-                        .filter(b => (b > 0 ? b <= 6 : -b <= 12))
+                        .filter(b => b === seed.stirrupBarSize || (b > 0 ? b <= 6 : -b <= 12))
                         .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
                     </select>
                   </label>
@@ -584,8 +584,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     <select style={inp} value={seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)}
                       disabled={!seed.imposeSkinReinf}
                       onChange={e => setSeed(s => ({ ...s, skinBarSize: +e.target.value }))}>
-                      {barSizeOptions(wizardUnits, seed.skinBarSize)
-                        .filter(b => (b > 0 ? b <= 8 : -b <= 20))
+                      {barSizeOptions(wizardUnits, seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5))
+                        .filter(b => b === (seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)) || (b > 0 ? b <= 8 : -b <= 20))
                         .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
                     </select>
                   </label>

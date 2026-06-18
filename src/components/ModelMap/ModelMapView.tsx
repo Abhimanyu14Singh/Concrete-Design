@@ -2,7 +2,7 @@
  * ModelMapView — top-level Map tab: canvas (left) + tabbed right panel
  * (Groups | Auto-Group | Savings).
  */
-import { useState, useMemo, useRef, useLayoutEffect, useCallback, useEffect } from 'react';
+import { useState, useMemo, useRef, useLayoutEffect, useCallback, useEffect, useDeferredValue } from 'react';
 import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
@@ -13,6 +13,7 @@ import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './M
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
 import AutoGroupPanel from './AutoGroupPanel';
+import TopProgressBar from '../common/TopProgressBar';
 import HistogramPanel from './HistogramPanel';
 import { rampStops } from './colorRamp';
 import SavingsPanel from './SavingsPanel';
@@ -117,6 +118,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const map = project.modelMap;
   const groups = project.designGroups ?? [];
   const members = project.members;
+  // Defer the heavy design recompute so changing a dropdown / applying rebar
+  // keeps the UI responsive instead of blocking the thread. `recomputing` is
+  // true while the deferred value lags behind — used to show a progress bar.
+  const deferredMembers = useDeferredValue(members);
+  const recomputing = deferredMembers !== members;
   const hiddenMemberIds = useMemo(() => new Set(project.hiddenMemberIds ?? []), [project.hiddenMemberIds]);
   const hiddenStories = useMemo(() => new Set(project.hiddenStories ?? []), [project.hiddenStories]);
 
@@ -136,7 +142,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const { infoById, designResultsById } = useMemo(() => {
     const info: Record<string, FrameInfo> = {};
     const results: Record<string, DesignResults> = {};
-    for (const m of members) {
+    for (const m of deferredMembers) {
       if (m.memberType !== 'beam' || !m.loads.length) continue;
       try {
         let dcrFlex = 0, dcrShear = 0;
@@ -171,7 +177,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       }
     }
     return { infoById: info, designResultsById: results };
-  }, [members, project.code, project.slsCombo, fmtVal, label]);
+  }, [deferredMembers, project.code, project.slsCombo, fmtVal, label]);
 
   const errorMemberIds = useMemo(() => {
     const out = new Set<string>();
@@ -392,7 +398,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }
 
   return (
-    <div style={{ display: 'flex', flex: 1, height: '100%', minWidth: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flex: 1, height: '100%', minWidth: 0, overflow: 'hidden', position: 'relative' }}>
+      <TopProgressBar active={recomputing} />
       {/* Context menu portal */}
       {contextMenu && (
         <BeamContextMenu

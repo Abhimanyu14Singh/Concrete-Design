@@ -9,6 +9,7 @@ import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
 import ModelMapView from './components/ModelMap/ModelMapView';
+import ErrorBoundary from './components/common/ErrorBoundary';
 import { useUnits } from './contexts/UnitsContext';
 import { MEMBER_COLOR } from './theme';
 
@@ -787,14 +788,16 @@ export default function App() {
             )}
             {tab === 'map' && (
               <div style={{ height: '100%', display: 'flex' }}>
-                <ModelMapView
-                  project={project}
-                  onProjectChange={p => setProject(p)}
-                  onOpenEtabsImport={() => setShowEtabsImport(true)}
-                  onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
-                  onDeleteMember={id => deleteMember(id)}
-                  onDeleteMembers={ids => deleteMembers(ids)}
-                />
+                <ErrorBoundary area="the model map">
+                  <ModelMapView
+                    project={project}
+                    onProjectChange={p => setProject(p)}
+                    onOpenEtabsImport={() => setShowEtabsImport(true)}
+                    onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
+                    onDeleteMember={id => deleteMember(id)}
+                    onDeleteMembers={ids => deleteMembers(ids)}
+                  />
+                </ErrorBoundary>
               </div>
             )}
             {tab === 'member' && (
@@ -834,12 +837,14 @@ export default function App() {
                       f'c = {fmt(activeMember.material.fc, 'stress')} &bull; fy = {fmt(activeMember.material.fy / 1000, 'stressKsi')}
                     </p>
                   </div>
-                  <MemberResults
-                    member={activeMember}
-                    code={project.code}
-                    slsCombo={project.slsCombo}
-                    onRebarChange={handleUpdateMember}
-                  />
+                  <ErrorBoundary key={activeMember.id} area="the results view">
+                    <MemberResults
+                      member={activeMember}
+                      code={project.code}
+                      slsCombo={project.slsCombo}
+                      onRebarChange={handleUpdateMember}
+                    />
+                  </ErrorBoundary>
                 </div>
               </div>
             )}
