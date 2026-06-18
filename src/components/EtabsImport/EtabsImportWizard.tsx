@@ -94,6 +94,14 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
   const [applyToProject, setApplyToProject] = useState(true);
 
+  // Material overrides — stored in display units (MPa for SI, psi for imperial).
+  // null = no override (use per-section material from ETABS).
+  const [matOverride, setMatOverride] = useState<{
+    fck: string; fyLong: string; fyTie: string;
+    enabled: boolean;
+    collapsed: boolean;
+  }>({ fck: '', fyLong: '', fyTie: '', enabled: false, collapsed: true });
+
   // step 4
   const [members, setMembers] = useState<Member[]>([]);
   const [designGroups, setDesignGroups] = useState<DesignGroup[]>([]);
@@ -167,7 +175,30 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const forceCombos = new Set(selCombos);
       if (slsComboId) forceCombos.add(slsComboId);
       const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
-      const built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
+      let built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
+      // Apply global material overrides if the user enabled them.
+      if (matOverride.enabled) {
+        const PSI_PER_MPA = 145.038;
+        const toInternal = (v: string) => {
+          const n = parseFloat(v);
+          if (!Number.isFinite(n) || n <= 0) return null;
+          return wizardUnits === 'si' ? n * PSI_PER_MPA : n;
+        };
+        const fcPsi = toInternal(matOverride.fck);
+        const fyLongPsi = toInternal(matOverride.fyLong);
+        const fyTiePsi = toInternal(matOverride.fyTie);
+        if (fcPsi != null || fyLongPsi != null || fyTiePsi != null) {
+          built = built.map(m => ({
+            ...m,
+            material: {
+              ...m.material,
+              ...(fcPsi != null ? { fc: fcPsi } : {}),
+              ...(fyLongPsi != null ? { fy: fyLongPsi } : {}),
+              ...(fyTiePsi != null ? { fyt: fyTiePsi } : {}),
+            },
+          }));
+        }
+      }
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
       // Build modelMap from all beams geometry
@@ -597,6 +628,51 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   {' '}Shallower sections get no side bars. Edit per beam afterwards.
                 </p>
               </div>
+              {/* Material overrides */}
+              <div style={card}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                  onClick={() => setMatOverride(s => ({ ...s, collapsed: !s.collapsed }))}>
+                  <input
+                    type="checkbox"
+                    checked={matOverride.enabled}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => setMatOverride(s => ({ ...s, enabled: e.target.checked, collapsed: !e.target.checked ? s.collapsed : false }))}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#374151', flex: 1 }}>
+                    Override material properties (global)
+                  </span>
+                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{matOverride.collapsed ? '▾' : '▴'}</span>
+                </div>
+                {!matOverride.collapsed && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8 }}>
+                      Overrides apply to all imported beams. Leave blank to keep per-section values from ETABS.
+                      Values in {wizardUnits === 'si' ? 'MPa' : 'psi'}.
+                    </div>
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {([
+                        ['fck', wizardUnits === 'si' ? "f'ck (MPa)" : "f'c (psi)", 'Concrete compressive strength'],
+                        ['fyLong', wizardUnits === 'si' ? 'fy long (MPa)' : 'fy long (psi)', 'Longitudinal steel yield strength'],
+                        ['fyTie', wizardUnits === 'si' ? 'fy tie (MPa)' : 'fyt (psi)', 'Transverse steel yield strength'],
+                      ] as const).map(([key, labelText, title]) => (
+                        <label key={key} title={title} style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {labelText}
+                          <input
+                            type="number"
+                            min={1}
+                            style={{ ...inp, width: 100, opacity: matOverride.enabled ? 1 : 0.5 }}
+                            disabled={!matOverride.enabled}
+                            value={matOverride[key]}
+                            placeholder="—"
+                            onChange={e => setMatOverride(s => ({ ...s, [key]: e.target.value }))}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: 10 }}>
                 <button style={btn()} onClick={() => setStep(1)}>← Back</button>
                 <div style={{ flex: 1 }} />

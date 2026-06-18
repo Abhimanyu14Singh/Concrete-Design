@@ -2,7 +2,7 @@
  * ModelMapView — top-level Map tab: canvas (left) + tabbed right panel
  * (Groups | Auto-Group | Savings).
  */
-import { useState, useMemo, useRef, useLayoutEffect, useCallback, useEffect, useDeferredValue } from 'react';
+import { useState, useMemo, useRef, useLayoutEffect, useCallback, useEffect, useDeferredValue, startTransition } from 'react';
 import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
@@ -121,7 +121,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // Defer the heavy design recompute so changing a dropdown / applying rebar
   // keeps the UI responsive instead of blocking the thread. `recomputing` is
   // true while the deferred value lags behind — used to show a progress bar.
-  const deferredMembers = useDeferredValue(members);
+  //
+  // To avoid a ~5-minute freeze on first render with many members, we use a
+  // transitional state that starts empty and is populated via startTransition
+  // after mount. This ensures the initial paint is fast (empty canvas) and
+  // the heavy design computation runs in a low-priority transition.
+  const [committedMembers, setCommittedMembers] = useState(() => [] as typeof members);
+  useEffect(() => {
+    startTransition(() => setCommittedMembers(members));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members]);
+  const deferredMembers = useDeferredValue(committedMembers);
   const recomputing = deferredMembers !== members;
   const hiddenMemberIds = useMemo(() => new Set(project.hiddenMemberIds ?? []), [project.hiddenMemberIds]);
   const hiddenStories = useMemo(() => new Set(project.hiddenStories ?? []), [project.hiddenStories]);

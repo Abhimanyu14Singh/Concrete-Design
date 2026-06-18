@@ -16,7 +16,8 @@ import { runDesign } from '../engines';
 import { getBarArea, getBarDiam } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
 
-const LONG_BAR_SIZES = [5, 6, 7, 8, 9];
+const LONG_BAR_SIZES_US = [5, 6, 7, 8, 9];
+const LONG_BAR_SIZES_EC2 = [-10, -12, -16, -20, -25, -32];
 const STIRRUP_SIZES = [4, 5];
 const STIRRUP_SPACINGS = [4, 6, 8, 10, 12]; // in
 const MAX_VERIFY_RETRIES = 5;
@@ -138,6 +139,8 @@ export function suggestGroupRebar(
 
   // Pick the smallest COMMON bar size where both faces have a feasible layout.
   // Top and bottom must share one bar size (bar count / layers may still differ).
+  const isEC2 = code === 'EN1992-1-1';
+  const LONG_BAR_SIZES = isEC2 ? LONG_BAR_SIZES_EC2 : LONG_BAR_SIZES_US;
   let sizeIdx = -1;
   let topCands: FaceCandidate[] = [];
   let botCands: FaceCandidate[] = [];
