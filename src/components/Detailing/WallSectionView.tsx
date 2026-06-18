@@ -11,6 +11,7 @@ import {
   sbzDesign,
   wallReinfRatios,
 } from '../../utils/wallDesign';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   section: SectionDimensions;
@@ -35,6 +36,7 @@ export default function WallSectionView({
   width = 680,
   height = 220,
 }: Props) {
+  const { fmt } = useUnits();
   const lw = section.lw ?? section.b;
   const tw = section.tw ?? section.h;
   const hw = section.hw ?? (lw * 2);
@@ -252,7 +254,7 @@ export default function WallSectionView({
         markerStart="url(#arrowWR)" markerEnd="url(#arrowW)" />
       <text x={ox + wallW / 2} y={oy + wallH + 30}
         textAnchor="middle" fontSize="11" fill="#94a3b8" fontFamily="monospace">
-        lw = {lw}"
+        lw = {fmt(lw, 'length')}
       </text>
 
       {/* tw dimension at right */}
@@ -262,7 +264,7 @@ export default function WallSectionView({
       <text x={ox + wallW + 24} y={oy + wallH / 2}
         textAnchor="start" fontSize="11" fill="#94a3b8" fontFamily="monospace"
         dominantBaseline="middle">
-        tw={tw}"
+        tw={fmt(tw, 'length')}
       </text>
 
       {/* SBZ length dimension */}
@@ -273,14 +275,14 @@ export default function WallSectionView({
             markerStart="url(#arrowWR)" markerEnd="url(#arrowW)" />
           <text x={ox + sbzPxL / 2} y={oy - 22}
             textAnchor="middle" fontSize="9" fill="#f59e0b" fontFamily="monospace">
-            lbe={lbe.toFixed(1)}"
+            lbe={fmt(lbe, 'length')}
           </text>
           <line x1={ox + wallW - sbzPxR} y1={oy - 16} x2={ox + wallW} y2={oy - 16}
             stroke="#f59e0b" strokeWidth="1"
             markerStart="url(#arrowWR)" markerEnd="url(#arrowW)" />
           <text x={ox + wallW - sbzPxR / 2} y={oy - 22}
             textAnchor="middle" fontSize="9" fill="#f59e0b" fontFamily="monospace">
-            lbe={lbe.toFixed(1)}"
+            lbe={fmt(lbe, 'length')}
           </text>
         </>
       )}
@@ -288,12 +290,12 @@ export default function WallSectionView({
       {/* Bar labels */}
       <text x={ox} y={oy - 6}
         fontSize="10" fill="#4a90d9" fontFamily="monospace">
-        V: #{wallRebar.vertBarSize}@{wallRebar.vertSpacing}" ({wallRebar.numCurtains}C)
+        V: #{wallRebar.vertBarSize}@{fmt(wallRebar.vertSpacing, 'length')} ({wallRebar.numCurtains}C)
       </text>
 
       <text x={ox + wallW * 0.5} y={oy - 6}
         textAnchor="middle" fontSize="10" fill="#22c55e" fontFamily="monospace">
-        H: #{wallRebar.horizBarSize}@{wallRebar.horizSpacing}"
+        H: #{wallRebar.horizBarSize}@{fmt(wallRebar.horizSpacing, 'length')}
       </text>
 
       {hasSBZ && (

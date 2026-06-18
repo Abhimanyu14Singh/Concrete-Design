@@ -305,8 +305,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             <>
               <SectionLabel title="In-Plane Shear §18.10.4" />
               <KV k="αc" v={(result.alphaC ?? 0).toFixed(2)} />
-              <KV k="φVn" v={`${(result.phi_Vn_wall ?? 0).toFixed(1)} k`} />
-              <KV k="Vn,max" v={`${(result.wallVnMax ?? 0).toFixed(1)} k`} />
+              <KV k="φVn" v={fmt(result.phi_Vn_wall ?? 0, 'force')} />
+              <KV k="Vn,max" v={fmt(result.wallVnMax ?? 0, 'force')} />
               <KV k="  DCR" v={(result.DCR_shear_wall ?? 0).toFixed(3)} dcr={result.DCR_shear_wall ?? 0} />
 
               <SectionLabel title="P-M §18.10.5" />
@@ -323,7 +323,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
               <KV k="Required" v={result.sbzRequired ? '⚠ YES' : '✓ No'} />
               {result.sbzRequired && (
                 <>
-                  <KV k="lbe" v={`${(result.sbzLength ?? 0).toFixed(1)}"`} />
+                  <KV k="lbe" v={fmt(result.sbzLength ?? 0, 'length')} />
                   <KV k="Ash,req" v={fmt(result.sbzAshRequired ?? 0, 'area', 3)} />
                   <KV k="Ash,prov" v={fmt(result.sbzAshProvided ?? 0, 'area', 3)} />
                   <KV k="  DCR" v={(result.DCR_sbzAsh ?? 0).toFixed(3)} dcr={result.DCR_sbzAsh ?? 0} />
@@ -369,7 +369,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
           <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
           <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
           {zoneResults.map(z => (
-            <KV key={z.zone} k={`  z${z.zone + 1}@${z.spacing}"`} v={z.DCR.toFixed(3)} dcr={z.DCR} />
+            <KV key={z.zone} k={`  z${z.zone + 1}@${fmt(z.spacing, 'length')}`} v={z.DCR.toFixed(3)} dcr={z.DCR} />
           ))}
           {code !== 'EN1992-1-1' && <KV k="Av req" v={fmt(result.Av_req, 'areaPerLength')} />}
           {code !== 'EN1992-1-1' && <KV k="Av min/s" v={fmt(result.Av_min_per_s, 'areaPerLength')} />}

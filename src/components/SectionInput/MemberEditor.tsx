@@ -103,7 +103,7 @@ interface Props {
 }
 
 export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: Props) {
-  const { units } = useUnits();
+  const { units, fmt } = useUnits();
   const [m, setM] = useState<Member>(member);
   const [showLoads, setShowLoads] = useState(false);
 
@@ -496,7 +496,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           const rho = Ag > 0 ? As / Ag : 0;
           return (
             <div style={{ fontSize: 10, color: '#6b7280', fontFamily: 'monospace', marginTop: 8, paddingTop: 6, borderTop: '1px dashed #e5e7eb', lineHeight: 1.7 }}>
-              Ag = {Ag.toFixed(0)} in² &nbsp; As = {As.toFixed(2)} in² &nbsp; ρ = {(rho * 100).toFixed(2)}%
+              Ag = {fmt(Ag, 'area')} &nbsp; As = {fmt(As, 'area')} &nbsp; ρ = {(rho * 100).toFixed(2)}%
               {isColumn && (rho < 0.01 || rho > 0.08) && (
                 <span style={{ color: '#dc2626', fontWeight: 700 }}> ⚠ outside 1–8%</span>
               )}

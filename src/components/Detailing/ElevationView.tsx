@@ -74,7 +74,7 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
             <text key={`zl-${i}`}
               x={ox + ((i + 0.5) / 3) * drawW} y={oy + drawH + 14}
               textAnchor="middle" fontSize="9" fill="#d97706" fontFamily="monospace">
-              {formatBarLabel(ties.barSize)}@{z.spacing}"
+              {formatBarLabel(ties.barSize)}@{fmt(z.spacing, 'length')}
             </text>
           ))}
         </>
