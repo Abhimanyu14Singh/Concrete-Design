@@ -2,7 +2,7 @@
  * GroupPanel — list of DesignGroups with create/rename/assign/dissolve actions.
  * Also highlights group members on the map when a group is selected.
  */
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { GROUP_PALETTE as PALETTE, groupColor } from './groupColors';
@@ -146,26 +146,30 @@ export default function GroupPanel({
     ));
   }
 
-  function groupStats(g: DesignGroup) {
-    const gMembers = members.filter(m => g.memberIds.includes(m.id));
-    if (!gMembers.length) return null;
-    const dcrs = gMembers.map(m => {
-      const r = designResultsById[m.id];
-      return r ? { pos: r.DCR_flex_pos, neg: r.DCR_flex_neg, shear: r.DCR_shear } : null;
-    }).filter(Boolean) as { pos: number; neg: number; shear: number }[];
-    if (!dcrs.length) return null;
+  const memberById = useMemo(() => new Map(members.map(m => [m.id, m])), [members]);
+
+  const allGroupStats = useMemo(() => {
     const mean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
     const std = (arr: number[]) => { const m = mean(arr); return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length); };
-    const posArr = dcrs.map(d => d.pos), negArr = dcrs.map(d => d.neg), shArr = dcrs.map(d => d.shear);
-    const rhoTopArr = gMembers.map(m => flexSteelRatioPct(m, 'top'));
-    const rhoBotArr = gMembers.map(m => flexSteelRatioPct(m, 'bot'));
-    return {
-      posM: mean(posArr), posS: std(posArr),
-      negM: mean(negArr), negS: std(negArr),
-      shM: mean(shArr), shS: std(shArr),
-      rhoTop: mean(rhoTopArr), rhoBot: mean(rhoBotArr),
-    };
-  }
+    return new Map(groups.map(g => {
+      const gMembers = g.memberIds.map(id => memberById.get(id)).filter(Boolean) as import('../../types').Member[];
+      if (!gMembers.length) return [g.id, null] as const;
+      const dcrs = gMembers.map(m => {
+        const r = designResultsById[m.id];
+        return r ? { pos: r.DCR_flex_pos, neg: r.DCR_flex_neg, shear: r.DCR_shear } : null;
+      }).filter(Boolean) as { pos: number; neg: number; shear: number }[];
+      if (!dcrs.length) return [g.id, null] as const;
+      const posArr = dcrs.map(d => d.pos), negArr = dcrs.map(d => d.neg), shArr = dcrs.map(d => d.shear);
+      const rhoTopArr = gMembers.map(m => flexSteelRatioPct(m, 'top'));
+      const rhoBotArr = gMembers.map(m => flexSteelRatioPct(m, 'bot'));
+      return [g.id, {
+        posM: mean(posArr), posS: std(posArr),
+        negM: mean(negArr), negS: std(negArr),
+        shM: mean(shArr), shS: std(shArr),
+        rhoTop: mean(rhoTopArr), rhoBot: mean(rhoBotArr),
+      }] as const;
+    }));
+  }, [groups, memberById, designResultsById]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 12 }}>
@@ -248,7 +252,7 @@ export default function GroupPanel({
         {groups.map((g, gIdx) => {
           const dcr = worstDCR(g);
           const isActive = activeGroupId === g.id;
-          const stats = groupStats(g);
+          const stats = allGroupStats.get(g.id) ?? null;
           const statsOpen = expandedStats === g.id;
           // Dot color matches the map: explicit color, else palette by position.
           const dotColor = groupColor(g.color, gIdx);
