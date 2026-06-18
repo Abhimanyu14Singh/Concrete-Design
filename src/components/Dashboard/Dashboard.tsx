@@ -10,6 +10,7 @@ import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinfo
 import MemberEditor from '../SectionInput/MemberEditor';
 import MemberResults from '../Results/MemberResults';
 import GroupRebarEditor from '../ModelMap/GroupRebarEditor';
+import InfoTooltip from '../common/InfoTooltip';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -721,15 +722,24 @@ function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialE
       <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Group Material Properties</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>{isEC2 ? 'f_ck (MPa)' : "f'c (ksi)"}</div>
+          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center' }}>
+            {isEC2 ? 'f_ck (MPa)' : "f'c (ksi)"}
+            <InfoTooltip text={isEC2 ? 'Characteristic cylinder compressive strength. The engine derives fcd = 0.85·fck/1.5 (αcc=0.85, γc=1.5).' : "Specified 28-day cylinder compressive strength in ksi."} />
+          </div>
           <input type="number" style={inp} value={fck} onChange={e => setFck(+e.target.value)} />
         </div>
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>{isEC2 ? 'f_yk long (MPa)' : 'f_y long (ksi)'}</div>
+          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center' }}>
+            {isEC2 ? 'f_yk long (MPa)' : 'f_y long (ksi)'}
+            <InfoTooltip text={isEC2 ? 'Characteristic yield strength of longitudinal bars. Design value fyd = fyk/γs = fyk/1.15.' : 'Yield strength of longitudinal bars in ksi.'} />
+          </div>
           <input type="number" style={inp} value={fyLong} onChange={e => setFyLong(+e.target.value)} />
         </div>
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>{isEC2 ? 'f_yk tie (MPa)' : 'f_yt tie (ksi)'}</div>
+          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center' }}>
+            {isEC2 ? 'f_yk tie (MPa)' : 'f_yt tie (ksi)'}
+            <InfoTooltip text={isEC2 ? 'Characteristic yield strength of transverse bars (links/stirrups). Used for V_Rd,s and min shear reinforcement ratio.' : 'Yield strength of transverse reinforcement (stirrups) in ksi.'} />
+          </div>
           <input type="number" style={inp} value={fyTie} onChange={e => setFyTie(+e.target.value)} />
         </div>
       </div>

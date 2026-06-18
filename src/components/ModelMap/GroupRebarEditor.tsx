@@ -7,6 +7,7 @@ import type { DesignGroup, RebarLayout, BarGroup, Member, Project, TieZone } fro
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
+import InfoTooltip from '../common/InfoTooltip';
 
 interface Props {
   group: DesignGroup;
@@ -142,7 +143,10 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       )}
 
       <div style={{ marginBottom: 6 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Top bars</div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
+          Top bars
+          <InfoTooltip text="Hogging (negative moment) reinforcement placed near the top face. Used to compute φMn− capacity. Also contributes to compression in sagging regions." />
+        </div>
         {rebar.topBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} units={units} />
@@ -155,7 +159,10 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       </div>
 
       <div style={{ marginBottom: 6 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Bottom bars</div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
+          Bottom bars
+          <InfoTooltip text="Sagging (positive moment) reinforcement placed near the bottom face. Primary tension steel. As_req+ must be ≤ As_prov for status OK." />
+        </div>
         {rebar.botBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} units={units} />
@@ -206,7 +213,10 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       </div>
 
       <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Stirrups</div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
+          Stirrups
+          <InfoTooltip text="Transverse reinforcement (links) resisting shear and torsion. Vs = Av·fy·d/s (ACI) or V_Rd,s = Asw/s·z·fywd·cotθ (EC2). Spacing must also satisfy maximum spacing limits." />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <select value={ties.barSize} onChange={e => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(e.target.value) } }))}
             style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
