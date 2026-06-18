@@ -28,6 +28,9 @@ interface HistogramPanelProps {
   xLabel?: string;
   /** Show as continuous ramp (for metric overlays, no assignment coloring). */
   rampMode?: boolean;
+  /** Explicit ramp bounds (overrides data min/max) so bar colors match the map legend. */
+  rampMin?: number;
+  rampMax?: number;
 }
 
 export default function HistogramPanel({
@@ -37,6 +40,8 @@ export default function HistogramPanel({
   onBreaksChange,
   xLabel = 'Demand',
   rampMode = false,
+  rampMin,
+  rampMax,
 }: HistogramPanelProps) {
   const { bins, minVal, maxVal } = useMemo(() => {
     if (!values.length) return { bins: [], minVal: 0, maxVal: 0 };
@@ -114,7 +119,7 @@ export default function HistogramPanel({
             ? (
               <Bar dataKey="count" isAnimationActive={false}>
                 {bins.map((b, i) => (
-                  <Cell key={i} fill={valueToRampColor(b.label, minVal, maxVal)} />
+                  <Cell key={i} fill={valueToRampColor(b.label, rampMin ?? minVal, rampMax ?? maxVal)} />
                 ))}
               </Bar>
             )

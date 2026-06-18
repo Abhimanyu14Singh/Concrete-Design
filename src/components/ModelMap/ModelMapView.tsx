@@ -2,7 +2,7 @@
  * ModelMapView — top-level Map tab: canvas (left) + tabbed right panel
  * (Groups | Auto-Group | Savings).
  */
-import { useState, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useLayoutEffect, useCallback, useEffect } from 'react';
 import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
@@ -13,6 +13,8 @@ import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './M
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
 import AutoGroupPanel from './AutoGroupPanel';
+import HistogramPanel from './HistogramPanel';
+import { rampStops } from './colorRamp';
 import SavingsPanel from './SavingsPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
@@ -83,6 +85,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [autoGroupOverlay, setAutoGroupOverlay] = useState<AutoGroupBin[]>([]);
   const [contextMenu, setContextMenu] = useState<{ memberId: string; frameName: string; x: number; y: number } | null>(null);
   const [suggestAllNote, setSuggestAllNote] = useState<string | null>(null);
+  // User override for the metric color-ramp bounds (Steel% / Stirrups / Weight).
+  // null = auto (data min/max). Lets the user refine the legend to highlight a band.
+  const [metricOverride, setMetricOverride] = useState<{ min: number; max: number } | null>(null);
+  const [showMetricHistogram, setShowMetricHistogram] = useState(true);
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
@@ -193,12 +199,15 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return out;
   }, [members, diagramMode]);
 
+  const isMetricMode = colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight';
+
   // Hotspot metric memos
-  const { metricById, metricRange, metricLabel } = useMemo(() => {
+  const { metricById, metricRange, metricLabel, metricValues } = useMemo(() => {
     if (colorMode !== 'flexSteel' && colorMode !== 'stirrups' && colorMode !== 'weight') {
-      return { metricById: undefined, metricRange: undefined, metricLabel: undefined };
+      return { metricById: undefined, metricRange: undefined, metricLabel: undefined, metricValues: [] as number[] };
     }
     const out: Record<string, number> = {};
+    const vals: number[] = [];
     let min = Infinity, max = -Infinity;
     for (const m of members) {
       if (m.memberType !== 'beam') continue;
@@ -206,18 +215,29 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         : colorMode === 'stirrups' ? stirrupAvPerFt(m)
         : steelWeightPerFt(m).totalLbFt;
       out[m.id] = v;
+      vals.push(v);
       if (v < min) min = v;
       if (v > max) max = v;
     }
-    if (min === Infinity) return { metricById: undefined, metricRange: undefined, metricLabel: undefined };
+    if (min === Infinity) return { metricById: undefined, metricRange: undefined, metricLabel: undefined, metricValues: [] as number[] };
     return {
       metricById: out,
       metricRange: { min, max },
+      metricValues: vals,
       metricLabel: colorMode === 'flexSteel' ? `ρ${flexFace === 'bot' ? '⁺' : '⁻'} (%)`
         : colorMode === 'stirrups' ? `Av/s (${label('areaPerLength')})`
         : `Steel (${label('steelWeightPerLength')})`,
     };
   }, [members, colorMode, flexFace, label]);
+
+  // Reset any manual legend bounds when the active metric changes — a range tuned
+  // for ρ% would be meaningless for Av/s or weight.
+  useEffect(() => { setMetricOverride(null); }, [colorMode, flexFace]);
+
+  // Effective ramp bounds handed to the canvas: user override if set, else auto.
+  const effectiveMetricRange = metricRange
+    ? (metricOverride ?? metricRange)
+    : undefined;
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange({ ...project, designGroups: newGroups });
@@ -559,7 +579,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             diagramMode={diagramMode}
             diagramDataById={diagramMode !== 'off' ? diagramDataById : undefined}
             metricById={metricById}
-            metricRange={metricRange}
+            metricRange={effectiveMetricRange}
             metricLabel={metricLabel}
             autoGroupOverlay={autoGroupOverlay}
             hiddenMemberIds={hiddenMemberIds}
@@ -581,6 +601,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               containerWidth={canvasSize.w}
               containerHeight={canvasSize.h}
               onClose={() => setInspectedMemberId(null)}
+            />
+          )}
+
+          {/* Metric legend + histogram panel — refine the color ramp and see the
+              distribution of Steel% / Stirrups / Weight right on the map. */}
+          {isMetricMode && metricRange && metricValues.length > 0 && (
+            <MetricLegendPanel
+              label={metricLabel ?? ''}
+              values={metricValues}
+              autoRange={metricRange}
+              override={metricOverride}
+              onOverrideChange={setMetricOverride}
+              showHistogram={showMetricHistogram}
+              onToggleHistogram={() => setShowMetricHistogram(s => !s)}
             />
           )}
         </div>
@@ -649,3 +683,120 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     </div>
   );
 }
+
+// ── Metric legend + histogram (floating on the map) ───────────────────────────
+
+/** Numeric input with a local string draft so the user can type freely. */
+function RangeInput({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  function commit() {
+    const n = parseFloat(draft);
+    if (Number.isFinite(n)) onCommit(n);
+    else setDraft(String(value));
+  }
+  return (
+    <input
+      type="number"
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); } }}
+      style={{ width: 60, padding: '2px 5px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, fontFamily: 'monospace' }}
+    />
+  );
+}
+
+interface MetricLegendPanelProps {
+  label: string;
+  values: number[];
+  autoRange: { min: number; max: number };
+  override: { min: number; max: number } | null;
+  onOverrideChange: (r: { min: number; max: number } | null) => void;
+  showHistogram: boolean;
+  onToggleHistogram: () => void;
+}
+
+function MetricLegendPanel({
+  label, values, autoRange, override, onOverrideChange, showHistogram, onToggleHistogram,
+}: MetricLegendPanelProps) {
+  const range = override ?? autoRange;
+  // Percentile presets help the user clip outliers so the ramp spreads over the
+  // bulk of the data (where the interesting variation lives).
+  function percentile(p: number): number {
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = Math.max(0, Math.min(sorted.length - 1, Math.round((p / 100) * (sorted.length - 1))));
+    return sorted[idx];
+  }
+  function setMin(v: number) { onOverrideChange({ min: v, max: Math.max(v + 1e-6, range.max) }); }
+  function setMax(v: number) { onOverrideChange({ min: Math.min(range.min, v - 1e-6), max: v }); }
+  function applyPercentiles(lo: number, hi: number) {
+    onOverrideChange({ min: percentile(lo), max: percentile(hi) });
+  }
+
+  return (
+    <div style={{
+      position: 'absolute', top: 8, right: 8, width: 250, background: 'white',
+      borderRadius: 8, padding: '8px 10px', border: '1px solid #e5e7eb',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: '#374151', zIndex: 20,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontWeight: 700, color: '#111827' }}>{label}</span>
+        <button onClick={onToggleHistogram}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: 10, padding: 0 }}>
+          {showHistogram ? 'Hide ▴' : 'Histogram ▾'}
+        </button>
+      </div>
+
+      {showHistogram && (
+        <HistogramPanel
+          values={values}
+          rampMode
+          rampMin={range.min}
+          rampMax={range.max}
+          breaks={override ? [range.min, range.max] : []}
+          xLabel={label}
+        />
+      )}
+
+      {/* Ramp gradient bar */}
+      <div style={{
+        height: 10, borderRadius: 4, marginTop: 6, overflow: 'hidden',
+        background: `linear-gradient(to right, ${rampStops(range.min, range.max).map(s => s.color).join(',')})`,
+      }} />
+
+      {/* Min / Max range controls */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 6 }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 9, color: '#9ca3af' }}>
+          MIN
+          <RangeInput value={range.min} onCommit={setMin} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 9, color: '#9ca3af', alignItems: 'flex-end' }}>
+          MAX
+          <RangeInput value={range.max} onCommit={setMax} />
+        </label>
+      </div>
+
+      {/* Quick presets */}
+      <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+        <button onClick={() => applyPercentiles(5, 95)}
+          style={presetBtn} title="Clip to the 5th–95th percentile to suppress outliers">5–95%</button>
+        <button onClick={() => applyPercentiles(10, 90)}
+          style={presetBtn} title="Clip to the 10th–90th percentile">10–90%</button>
+        <button onClick={() => onOverrideChange(null)}
+          style={{ ...presetBtn, marginLeft: 'auto', color: override ? '#dc2626' : '#9ca3af', borderColor: override ? '#fca5a5' : '#e5e7eb' }}
+          disabled={!override}>
+          Auto
+        </button>
+      </div>
+      <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 4 }}>
+        Full data: {autoRange.min.toFixed(2)} – {autoRange.max.toFixed(2)} · {values.length} beams
+      </div>
+    </div>
+  );
+}
+
+const presetBtn: React.CSSProperties = {
+  padding: '2px 7px', border: '1px solid #d1d5db', borderRadius: 5,
+  background: 'white', color: '#374151', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+};
