@@ -695,22 +695,25 @@ interface GroupMaterialEditorProps {
 
 function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialEditorProps) {
   const code = project.code;
+  const isEC2 = code === 'EN1992-1-1';
+  const { toDisplay, fromDisplay } = useUnits();
   const first = group.members[0];
-  const [fck, setFck] = useState(first?.material.fc ?? (code === 'EN1992-1-1' ? 30 : 4));
-  const [fyLong, setFyLong] = useState(first?.material.fy ?? (code === 'EN1992-1-1' ? 500 : 60));
-  const [fyTie, setFyTie] = useState(first?.material.fyt ?? first?.material.fy ?? (code === 'EN1992-1-1' ? 500 : 60));
+  // Display values in the active unit system (MPa for EC2, ksi for ACI).
+  // material.fc / fy / fyt are stored in psi internally.
+  const [fck, setFck] = useState(+(toDisplay(first?.material.fc ?? (isEC2 ? 30 / 0.00689476 : 4000), 'stress').toFixed(1)));
+  const [fyLong, setFyLong] = useState(+(toDisplay(first?.material.fy ?? (isEC2 ? 500 / 0.00689476 : 60000), 'stress').toFixed(1)));
+  const [fyTie, setFyTie] = useState(+(toDisplay((first?.material.fyt ?? first?.material.fy) ?? (isEC2 ? 500 / 0.00689476 : 60000), 'stress').toFixed(1)));
 
   function applyToGroup() {
     const ids = new Set(group.members.map(m => m.id));
     onProjectUpdate?.({
       ...project,
       members: project.members.map(m => ids.has(m.id)
-        ? { ...m, material: { ...m.material, fc: fck, fy: fyLong, fyt: fyTie } }
+        ? { ...m, material: { ...m.material, fc: fromDisplay(fck, 'stress'), fy: fromDisplay(fyLong, 'stress'), fyt: fromDisplay(fyTie, 'stress') } }
         : m),
     });
   }
 
-  const isEC2 = code === 'EN1992-1-1';
   const inp: React.CSSProperties = { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, width: 80, fontFamily: 'monospace' };
 
   return (

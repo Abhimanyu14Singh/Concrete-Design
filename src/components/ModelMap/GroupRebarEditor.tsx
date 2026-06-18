@@ -73,7 +73,13 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   // would clobber an in-progress edit every time the parent re-renders (which
   // is why bar-size changes appeared to "not stick").
   useEffect(() => {
-    setRebar(group.rebar ?? defaultRebar(units));
+    const r = group.rebar ?? defaultRebar(units);
+    // If the stored rebar was created in the other unit system (e.g. imperial #5
+    // bars showing in an SI project), reset to the correct-system default.
+    const hasMismatch = units === 'si'
+      ? r.topBars.some(b => b.barSize > 0) || r.botBars.some(b => b.barSize > 0) || !!(r.ties && r.ties.barSize > 0)
+      : r.topBars.some(b => b.barSize < 0) || r.botBars.some(b => b.barSize < 0) || !!(r.ties && r.ties.barSize < 0);
+    setRebar(hasMismatch ? defaultRebar(units) : r);
     setSuggestNote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group.id]);
