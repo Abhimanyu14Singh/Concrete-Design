@@ -74,7 +74,21 @@ export default function AutoGroupPanel({
   // Family selector
   const families = baseSuggestions.map(s => s.familyKey);
   const [selectedFamily, setSelectedFamily] = useState<string>('');
-  const activeFamily = selectedFamily || families[0] || '';
+  // When baseSuggestions recomputes (algorithm/metric/k/totalGroups change),
+  // the stored selectedFamily may no longer be in the new list. Guard the
+  // activeFamily derivation so the <select> value is ALWAYS one of its
+  // <option> values — a mismatch causes the browser to show the first option
+  // visually while React thinks a different value is selected, making
+  // subsequent onChange events fire with the "wrong" starting value.
+  useEffect(() => {
+    if (selectedFamily && !families.includes(selectedFamily)) {
+      setSelectedFamily('');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseSuggestions]);
+  const activeFamily = (selectedFamily && families.includes(selectedFamily))
+    ? selectedFamily
+    : (families[0] || '');
 
   const activeSuggestion = baseSuggestions.find(s => s.familyKey === activeFamily);
   const demands = useMemo(() => extractDemands(members), [members]);
