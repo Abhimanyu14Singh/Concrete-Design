@@ -221,9 +221,16 @@ export function crackWidth(
   const a2 = Math.max(0, a1 - hc_ef);     // NA → inner edge of effective zone
   const k2 = a1 > 0 ? (a1 + a2) / (2 * a1) : 0.5;
 
-  // Maximum crack spacing eq (7.11): k1=0.8 ribbed, k3=3.4, k4=0.425
+  // Maximum crack spacing §7.3.4(3): use eq (7.11) when bonded bars are spaced
+  // closely (≤ 5(c+φ/2)); otherwise the upper-bound eq (7.14) sr,max = 1.3(h−x)
+  // governs (bars too far apart to control cracking individually).
   const k1 = 0.8, k3 = 3.4, k4 = 0.425;
-  const sr_max = k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;
+  const nBars = As / (Math.PI / 4 * barD * barD);
+  const spacing = nBars > 1 ? (b - 2 * cover - barD) / (nBars - 1) : Infinity;
+  const threshold = 5 * (cover + barD / 2);
+  const sr_max = spacing > threshold
+    ? 1.3 * (h - x)                                  // eq (7.14)
+    : k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;  // eq (7.11)
 
   // Mean strain difference eq (7.9), floor 0.6·σs/Es
   const fct_eff = fctm(fck);
