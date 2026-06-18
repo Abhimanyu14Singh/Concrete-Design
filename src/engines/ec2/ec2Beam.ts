@@ -390,6 +390,33 @@ export function designMemberEC2(
   if (As_bot_mm2 > AsMax_mm2 || As_top_mm2 > AsMax_mm2)
     warnings.push({ code: 'EC2 §9.2.1.1', message: `Steel exceeds As,max = 0.04·Ac = ${AsMax_mm2.toFixed(0)} mm²`, severity: 'error' });
 
+  // ── Minimum clear bar spacing §8.2 ──
+  // Clear horizontal distance between parallel bars ≥ max(k1·db, dg + k2, 20 mm).
+  // Recommended values: k1 = 1, k2 = 5 mm. dg = max aggregate size (default 20 mm
+  // — typical when unspecified). Checked on the outer (first) layer of each face,
+  // which is where bars are most congested.
+  const DG_MM = 20;              // assumed max aggregate size when not given
+  const k1 = 1, k2 = 5;
+  const checkClearSpacing = (
+    grp: { numBars: number; barSize: number } | undefined,
+    face: 'Bottom' | 'Top',
+    active: boolean,
+  ) => {
+    if (!grp || grp.numBars < 2 || !active) return;
+    const db = getBarDiam(grp.barSize) * IN_TO_MM;
+    const sMin = Math.max(k1 * db, DG_MM + k2, 20);
+    // Clear gap = (width − 2·cover − 2·stirrupØ − Σbar Ø) / (n − 1)
+    const clear = (b_mm - 2 * cover_mm - 2 * stirrupD_mm - grp.numBars * db) / (grp.numBars - 1);
+    if (clear < sMin)
+      warnings.push({
+        code: 'EC2 §8.2',
+        message: `${face} bars: clear spacing ${clear.toFixed(0)} mm < s_min = ${sMin.toFixed(0)} mm (max of db=${db.toFixed(0)}, dg+5=${DG_MM + k2}, 20 mm) — reduce bar count, use a larger size, or add a layer`,
+        severity: 'error',
+      });
+  };
+  checkClearSpacing(rebar.botBars[0], 'Bottom', load.Mu_pos > 0 || As_bot_mm2 > 0);
+  checkClearSpacing(rebar.topBars[0], 'Top', load.Mu_neg > 0 || As_top_mm2 > 0);
+
   // §6.3.2(3): longitudinal torsion steel is distributed around the perimeter.
   // The two horizontal faces (top/bot chords) carry ~half between them; report
   // the total demand and the per-chord share that adds to flexural steel.

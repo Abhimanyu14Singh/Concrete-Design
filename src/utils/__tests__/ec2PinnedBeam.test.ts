@@ -357,3 +357,46 @@ describe('EC2 pinned-pinned beam — 5H25, 450×650, H10@120 — all checks pass
     expect(r2.DCR_flex_pos).toBeLessThan(r1.DCR_flex_pos);
   });
 });
+
+// ── Part 3 — minimum clear bar spacing §8.2 ─────────────────────────────────
+describe('EC2 minimum clear bar spacing §8.2', () => {
+  // 250 mm wide web, cover 30, Ø8 stirrups. Pack 6×Ø25 in one bottom layer:
+  // clear = (250 − 60 − 16 − 6·25)/5 = (250−60−16−150)/5 = 4.8 mm ≪ s_min(25).
+  const narrow: SectionDimensions = {
+    type: 'rectangular_beam',
+    b: 250 / IN_TO_MM, h: 500 / IN_TO_MM,
+    coverClear: 30 / IN_TO_MM, stirrupDia: -8,
+  };
+  const mat: MaterialProps = {
+    fc: 30 / PSI_TO_MPA, fy: 500 / PSI_TO_MPA, fyt: 500 / PSI_TO_MPA,
+    Es: 200_000 / PSI_TO_MPA, lambdaConcrete: 1.0,
+  };
+  const load: LoadCase = {
+    id: 'l', label: 'l', Mu_pos: 100 / KIPFT_TO_KNM, Mu_neg: 0,
+    Vu: 50 / KIP_TO_KN, Tu: 0, Pu: 0,
+  };
+
+  it('flags §8.2 when 6×Ø25 are crammed into a 250 mm web', () => {
+    const rebar: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -25 }],
+      botBars: [{ numBars: 6, barSize: -25 }],
+      ties: { barSize: -8, spacing: 150 / IN_TO_MM, legs: 2 },
+    };
+    const r = runDesign(narrow, mat, rebar, load, 20, 'EN1992-1-1');
+    const w = r.warnings.find(x => x.code === 'EC2 §8.2');
+    expect(w).toBeDefined();
+    expect(w!.severity).toBe('error');
+    expect(w!.message).toContain('Bottom');
+  });
+
+  it('does NOT flag §8.2 for a well-spaced 3×Ø20 layer', () => {
+    // clear = (250 − 60 − 16 − 3·20)/2 = 57 mm > s_min(25) ✓
+    const rebar: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 3, barSize: -20 }],
+      ties: { barSize: -8, spacing: 150 / IN_TO_MM, legs: 2 },
+    };
+    const r = runDesign(narrow, mat, rebar, load, 20, 'EN1992-1-1');
+    expect(r.warnings.find(x => x.code === 'EC2 §8.2')).toBeUndefined();
+  });
+});
