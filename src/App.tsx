@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Project, Member, ModelMap, DesignGroup } from './types';
 import { defaultProject } from './utils/sampleData';
 import { saveProject, openProject } from './utils/electronBridge';
-import { exportPDF } from './utils/export/pdfExport';
 import { exportExcel } from './utils/export/excelExport';
+import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
@@ -35,6 +35,7 @@ export default function App() {
   });
   const [showPrefs, setShowPrefs] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const { units, setUnits, fmt } = useUnits();
 
   // B5: dirty indicator
@@ -417,6 +418,9 @@ export default function App() {
           onImport={handleEtabsImport}
         />
       )}
+      {showReport && (
+        <ReportModal project={project} onClose={() => setShowReport(false)} />
+      )}
       {/* Sidebar */}
       <aside id="app-sidebar" style={{ width: sidebarOpen ? sidebarW : 48, flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
         {/* Logo */}
@@ -658,12 +662,12 @@ export default function App() {
                 boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '6px', minWidth: 160,
               }}>
                 <button
-                  onClick={() => { exportPDF(project); setShowExport(false); }}
+                  onClick={() => { setShowReport(true); setShowExport(false); }}
                   style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
-                  PDF Calc Sheet
+                  PDF Report…
                 </button>
                 <button
                   onClick={() => { exportExcel(project); setShowExport(false); }}

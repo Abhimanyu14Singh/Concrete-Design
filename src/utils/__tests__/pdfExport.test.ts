@@ -4,7 +4,7 @@
  * that standard Helvetica cannot encode).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { winAnsiSafe, exportPDF } from '../export/pdfExport';
+import { winAnsiSafe, exportPDF, buildReportBytes } from '../export/pdfExport';
 import type { Project, Member } from '../../types';
 
 describe('winAnsiSafe', () => {
@@ -97,5 +97,33 @@ describe('exportPDF smoke test', () => {
     // %PDF header
     const head = String.fromCharCode(...(bytes as unknown as Uint8Array).slice(0, 4));
     expect(head).toBe('%PDF');
+  });
+});
+
+describe('buildReportBytes options', () => {
+  it('returns a valid PDF for a single-member, governing-only, calc-included report', async () => {
+    const project = makeProject();
+    const bytes = await buildReportBytes(project, {
+      memberIds: ['B1'],
+      governingOnly: true,
+      includeDiagrams: true,
+      includeCalcs: true,
+      includeCrack: true,
+      jobNumber: '2024-118',
+      revision: 'A',
+    });
+    expect(bytes.length).toBeGreaterThan(1000);
+    expect(String.fromCharCode(...bytes.slice(0, 4))).toBe('%PDF');
+  });
+
+  it('produces a smaller document when content sections are disabled', async () => {
+    const project = makeProject();
+    const full = await buildReportBytes(project, {
+      governingOnly: false, includeDiagrams: true, includeCalcs: true, includeCrack: true,
+    });
+    const lean = await buildReportBytes(project, {
+      governingOnly: true, includeDiagrams: false, includeCalcs: false, includeCrack: false,
+    });
+    expect(lean.length).toBeLessThan(full.length);
   });
 });

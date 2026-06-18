@@ -1,9 +1,59 @@
 import { formatBarLabel } from '../rebar';
 import { PDFDocument, rgb, StandardFonts, type PDFPage, type PDFFont } from 'pdf-lib';
-import type { Project, Member, DesignResults, LoadCase } from '../../types';
+import type { Project, Member, DesignResults, LoadCase, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
 import { designWallACI } from '../wallDesign';
-import { getBarDiam } from '../concreteDesign';
+import { getBarDiam, zoneShearDemands } from '../concreteDesign';
+import { generateBreakdown, type CalcSection } from '../calcBreakdown';
+import { generateBreakdownEC2 } from '../calcBreakdownEC2';
+import { generateColumnBreakdown } from '../calcBreakdownColumn';
+import { generateColumnBreakdownEC2 } from '../calcBreakdownColumnEC2';
+import { generateWallBreakdown } from '../calcBreakdownWall';
+
+/** What goes into the report and how it is scoped. */
+export interface ReportOptions {
+  /** Restrict to these member ids (in project order). Undefined = all members. */
+  memberIds?: string[];
+  /** Show only each member's governing load case (table + calcs) rather than all. */
+  governingOnly: boolean;
+  /** Include per-member shear & moment envelope diagrams (needs stationForces). */
+  includeDiagrams: boolean;
+  /** Include the step-by-step calculation breakdown with code clause references. */
+  includeCalcs: boolean;
+  /** Include the EC2 SLS crack-width line (only meaningful for EN1992-1-1). */
+  includeCrack: boolean;
+  /** Title-block job number, printed on the cover and page footers. */
+  jobNumber?: string;
+  /** Title-block revision tag (e.g. "A", "P1"). */
+  revision?: string;
+}
+
+export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
+  governingOnly: false,
+  includeDiagrams: true,
+  includeCalcs: true,
+  includeCrack: true,
+};
+
+function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] {
+  const isWall = m.memberType === 'wall' && !!m.wallRebar;
+  const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
+  const isEC2 = code === 'EN1992-1-1';
+  if (isWall) return generateWallBreakdown(m.section, m.material, m.wallRebar!, lc);
+  if (isColumn) {
+    return isEC2
+      ? generateColumnBreakdownEC2(m.section, m.material, m.rebar, lc)
+      : generateColumnBreakdown(m.section, m.material, m.rebar, lc);
+  }
+  return isEC2
+    ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, m.crackParams)
+    : generateBreakdown(
+        m.section, m.material, m.rebar, lc, m.span,
+        m.rebar.tieZones && m.stationForces?.length
+          ? zoneShearDemands(m.stationForces, m.span ?? 20)
+          : undefined,
+      );
+}
 
 /**
  * Standard Helvetica is WinAnsi-encoded; Greek letters and several math
@@ -218,8 +268,196 @@ async function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont): Promise<
   return { page, font, bold, w: 612, h: 792, margin: 48 };
 }
 
-export async function exportPDF(project: Project): Promise<void> {
+/** Identify the governing (worst DCR) load case for a member. */
+function governingLoad(m: Member, code?: string): LoadCase | null {
+  let worst: { lc: LoadCase; dcr: number } | null = null;
+  for (const lc of m.loads) {
+    const dcr = worstDCROf(memberResult(m, lc, code));
+    if (!worst || dcr > worst.dcr) worst = { lc, dcr };
+  }
+  return worst?.lc ?? null;
+}
+
+/** Greedy word-wrap to a pixel width for a given font/size. */
+function wrapText(font: PDFFont, size: number, str: string, maxW: number): string[] {
+  const safe = winAnsiSafe(String(str));
+  if (!safe) return [''];
+  const words = safe.split(/\s+/);
+  const lines: string[] = [];
+  let cur = '';
+  for (const word of words) {
+    const test = cur ? `${cur} ${word}` : word;
+    if (font.widthOfTextAtSize(test, size) <= maxW || !cur) cur = test;
+    else { lines.push(cur); cur = word; }
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [''];
+}
+
+interface EnvPoint { x: number; Vmax: number; Vmin: number; Mmax: number; Mmin: number }
+
+/** Envelope of imported combos at each station (ported from ForceDiagram). */
+function buildEnvelope(m: Member): EnvPoint[] {
+  const forces = m.stationForces ?? [];
+  const xs = new Set<number>();
+  for (const cf of forces) for (const st of cf.stations) xs.add(st.x);
+  const sorted = [...xs].sort((a, b) => a - b);
+  return sorted.map(x => {
+    let Vmax = -Infinity, Vmin = Infinity, Mmax = -Infinity, Mmin = Infinity;
+    for (const cf of forces) {
+      const sta = cf.stations;
+      let v: number | null = null, mm: number | null = null;
+      for (let i = 0; i < sta.length; i++) {
+        if (sta[i].x === x) { v = sta[i].V; mm = sta[i].M; break; }
+        if (i > 0 && sta[i - 1].x < x && x < sta[i].x) {
+          const t = (x - sta[i - 1].x) / (sta[i].x - sta[i - 1].x);
+          v = sta[i - 1].V + t * (sta[i].V - sta[i - 1].V);
+          mm = sta[i - 1].M + t * (sta[i].M - sta[i - 1].M);
+          break;
+        }
+      }
+      if (v == null || mm == null) continue;
+      Vmax = Math.max(Vmax, v); Vmin = Math.min(Vmin, v);
+      Mmax = Math.max(Mmax, mm); Mmin = Math.min(Mmin, mm);
+    }
+    return { x: +x.toFixed(2), Vmax, Vmin, Mmax, Mmin };
+  });
+}
+
+/** One labelled XY plot: filled envelope band + dashed capacity limits. */
+function drawEnvelopeChart(
+  ctx: DrawCtx, title: string, pts: EnvPoint[], getMax: (p: EnvPoint) => number,
+  getMin: (p: EnvPoint) => number, capPos: number | null, capNeg: number | null,
+  capLabel: string, x: number, y: number, plotW: number, plotH: number,
+  band: ReturnType<typeof rgb>, stroke: ReturnType<typeof rgb>,
+): void {
+  text(ctx, title, x, y + plotH + 4, 8, C.dark, ctx.bold);
+  const span = pts[pts.length - 1].x - pts[0].x || 1;
+  const lo = Math.min(0, ...pts.map(getMin), capNeg ?? 0);
+  const hi = Math.max(0, ...pts.map(getMax), capPos ?? 0);
+  const range = hi - lo || 1;
+  const px = (v: number) => x + ((v - pts[0].x) / span) * plotW;
+  const py = (v: number) => y + ((v - lo) / range) * plotH;
+  rect(ctx, x, y, plotW, plotH, C.light);
+  // zero axis
+  const y0 = py(0);
+  line(ctx, x, y0, x + plotW, y0, 0.6, C.mid);
+  // envelope band as stacked vertical fills + max/min polylines
+  for (let i = 1; i < pts.length; i++) {
+    const ax = px(pts[i - 1].x), bx = px(pts[i].x);
+    // max polyline
+    line(ctx, ax, py(getMax(pts[i - 1])), bx, py(getMax(pts[i])), 1, stroke);
+    line(ctx, ax, py(getMin(pts[i - 1])), bx, py(getMin(pts[i])), 1, stroke);
+    // light fill columns between min and max
+    const colTop = py(Math.max(getMax(pts[i - 1]), getMax(pts[i])));
+    const colBot = py(Math.min(getMin(pts[i - 1]), getMin(pts[i])));
+    if (colTop - colBot > 0) rect(ctx, ax, colBot, bx - ax, colTop - colBot, band);
+  }
+  // redraw polylines on top of fill
+  for (let i = 1; i < pts.length; i++) {
+    const ax = px(pts[i - 1].x), bx = px(pts[i].x);
+    line(ctx, ax, py(getMax(pts[i - 1])), bx, py(getMax(pts[i])), 1, stroke);
+    line(ctx, ax, py(getMin(pts[i - 1])), bx, py(getMin(pts[i])), 1, stroke);
+  }
+  if (capPos != null) {
+    line(ctx, x, py(capPos), x + plotW, py(capPos), 0.8, C.green);
+    text(ctx, `${capLabel}+`, x + plotW - 34, py(capPos) + 2, 6, C.green);
+  }
+  if (capNeg != null) {
+    line(ctx, x, py(capNeg), x + plotW, py(capNeg), 0.8, C.red);
+    text(ctx, `${capLabel}-`, x + plotW - 34, py(capNeg) - 7, 6, C.red);
+  }
+  text(ctx, hi.toFixed(0), x - 2, y + plotH - 4, 6, C.mid);
+  text(ctx, lo.toFixed(0), x - 2, y, 6, C.mid);
+}
+
+/** Draws shear + moment envelope diagrams; returns the height consumed. */
+function drawForceDiagrams(ctx: DrawCtx, m: Member, result: DesignResults, x: number, y: number, fullW: number): number {
+  const pts = buildEnvelope(m);
+  if (pts.length < 2) return 0;
+  const plotW = fullW - 30;
+  const plotH = 56;
+  // Shear (top)
+  drawEnvelopeChart(ctx, 'Shear envelope V (kips)', pts, p => p.Vmax, p => p.Vmin,
+    result.phi_Vn, -result.phi_Vn, 'phiVn', x + 24, y - plotH, plotW, plotH,
+    rgb(0.99, 0.90, 0.55), C.amber);
+  // Moment (bottom)
+  drawEnvelopeChart(ctx, 'Moment envelope M (kip-ft)', pts, p => p.Mmax, p => p.Mmin,
+    result.phi_Mn_pos, -result.phi_Mn_neg, 'phiMn', x + 24, y - plotH * 2 - 28, plotW, plotH,
+    rgb(0.75, 0.85, 0.99), C.blue);
+  return plotH * 2 + 40;
+}
+
+/**
+ * Renders calc-breakdown sections as paginated tables.
+ * Columns: Ref | Description | Equation | Substitution | Result.
+ * Returns the ctx/y after drawing (may have added pages).
+ */
+async function drawCalcSections(
+  doc: PDFDocument, font: PDFFont, bold: PDFFont, ctx: DrawCtx,
+  sections: CalcSection[], yStart: number,
+): Promise<{ ctx: DrawCtx; y: number }> {
+  const { w, margin } = ctx;
+  const usable = w - 2 * margin;
+  // column x-offsets and widths
+  const cw = { ref: 46, label: 140, eq: 132, sub: 110, res: usable - 46 - 140 - 132 - 110 };
+  const cx = {
+    ref: 0, label: cw.ref, eq: cw.ref + cw.label,
+    sub: cw.ref + cw.label + cw.eq, res: cw.ref + cw.label + cw.eq + cw.sub,
+  };
+  let y = yStart;
+
+  for (const sec of sections) {
+    if (y - 28 < margin + 16) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+    // section title bar
+    rect(ctx, margin, y - 14, usable, 16, C.dark);
+    text(ctx, sec.title, margin + 6, y - 11, 9, C.white, bold);
+    y -= 18;
+    // header row
+    rect(ctx, margin, y - 12, usable, 13, C.light);
+    (['Ref', 'Description', 'Equation', 'Substitution', 'Result'] as const).forEach((hd, i) => {
+      const ox = [cx.ref, cx.label, cx.eq, cx.sub, cx.res][i];
+      text(ctx, hd, margin + ox + 2, y - 9, 7, C.mid, bold);
+    });
+    y -= 15;
+    for (const step of sec.steps) {
+      const labelLines = wrapText(font, 7, `${step.label}${step.note ? '  (' + step.note + ')' : ''}`, cw.label - 4);
+      const eqLines = wrapText(font, 7, step.equation, cw.eq - 4);
+      const subLines = wrapText(font, 7, step.substitution, cw.sub - 4);
+      const rowLines = Math.max(1, labelLines.length, eqLines.length, subLines.length);
+      const rowH = rowLines * 9 + 4;
+      if (y - rowH < margin + 16) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+      const ng = step.result.includes('✗');
+      const ok = step.result.includes('✓') && step.result.includes('DCR');
+      rect(ctx, margin, y - rowH + 4, usable, rowH, ng ? rgb(0.99, 0.95, 0.95) : ok ? rgb(0.95, 0.99, 0.96) : C.white);
+      text(ctx, step.ref, margin + cx.ref + 2, y - 5, 7, C.blue);
+      labelLines.forEach((ln, i) => text(ctx, ln, margin + cx.label + 2, y - 5 - i * 9, 7, C.dark));
+      eqLines.forEach((ln, i) => text(ctx, ln, margin + cx.eq + 2, y - 5 - i * 9, 7, rgb(0.49, 0.23, 0.93)));
+      subLines.forEach((ln, i) => text(ctx, ln, margin + cx.sub + 2, y - 5 - i * 9, 7, C.mid));
+      text(ctx, winAnsiSafe(step.result), margin + cx.res + 2, y - 5, 7,
+        ng ? C.red : ok ? C.green : C.dark, bold);
+      y -= rowH;
+    }
+    y -= 8;
+  }
+  return { ctx, y };
+}
+
+/**
+ * Build the report PDF and return its bytes (used by both the preview pane and
+ * the download path). Honors ReportOptions for scope and content.
+ */
+export async function buildReportBytes(
+  project: Project, options: ReportOptions = DEFAULT_REPORT_OPTIONS,
+): Promise<Uint8Array> {
   _resultCache.clear();
+  const opts = { ...DEFAULT_REPORT_OPTIONS, ...options };
+  const members = opts.memberIds
+    ? project.members.filter(m => opts.memberIds!.includes(m.id))
+    : project.members;
+  const code = project.code as DesignCode;
+  const isEC2 = project.code === 'EN1992-1-1';
+
   const doc   = await PDFDocument.create();
   const font  = await doc.embedFont(StandardFonts.Helvetica);
   const bold  = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -230,7 +468,7 @@ export async function exportPDF(project: Project): Promise<void> {
 
   rect(ctx, 0, h - 100, w, 100, C.navy);
   text(ctx, 'S-Concrete Design', margin, h - 44, 24, C.white, bold);
-  text(ctx, 'ACI 318-19  Reinforced Concrete Design Report', margin, h - 66, 11, C.mid);
+  text(ctx, `${project.code}  Reinforced Concrete Design Report`, margin, h - 66, 11, C.mid);
 
   text(ctx, 'Project', margin, h - 130, 9, C.mid);
   text(ctx, project.name, margin, h - 145, 14, C.dark, bold);
@@ -240,22 +478,25 @@ export async function exportPDF(project: Project): Promise<void> {
   text(ctx, project.date, margin, h - 181, 10, C.dark);
   text(ctx, 'Design Code', margin + 300, h - 168, 9, C.mid);
   text(ctx, project.code, margin + 300, h - 181, 10, C.dark);
+  // Title-block job number / revision
+  if (opts.jobNumber) { text(ctx, 'Job No.', margin, h - 192, 9, C.mid); text(ctx, opts.jobNumber, margin + 60, h - 192, 9, C.dark, bold); }
+  if (opts.revision)  { text(ctx, 'Revision', margin + 300, h - 192, 9, C.mid); text(ctx, opts.revision, margin + 360, h - 192, 9, C.dark, bold); }
 
-  line(ctx, margin, h - 200, w - margin, h - 200);
+  line(ctx, margin, h - 208, w - margin, h - 208);
 
   // Member summary table
-  text(ctx, 'Member Summary', margin, h - 220, 11, C.dark, bold);
+  text(ctx, 'Member Summary', margin, h - 228, 11, C.dark, bold);
   const cols = [0, 28, 120, 170, 240, 290, 340, 390, 440, 490];
   const hdrs = ['ID', 'Label', 'Type', 'Section', "f'c", 'Flex+', 'Flex-', 'Shear', 'Tors.', 'Status'];
-  rect(ctx, margin, h - 246, w - 2 * margin, 16, C.navy);
-  hdrs.forEach((hdr, i) => text(ctx, hdr, margin + cols[i], h - 243, 8, C.white, bold));
+  rect(ctx, margin, h - 254, w - 2 * margin, 16, C.navy);
+  hdrs.forEach((hdr, i) => text(ctx, hdr, margin + cols[i], h - 251, 8, C.white, bold));
 
-  let row = h - 260;
-  for (const m of project.members) {
+  let row = h - 268;
+  for (const m of members) {
     const r = worstResult(m, project.code);
     if (!r) continue;
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
-    const bg = project.members.indexOf(m) % 2 === 0 ? C.light : C.white;
+    const bg = members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
     const sec = m.section.type === 'circular_column'
       ? `Ø${m.section.diameter ?? m.section.b}"`
@@ -277,9 +518,11 @@ export async function exportPDF(project: Project): Promise<void> {
   }
 
   // ── Per-member pages ─────────────────────────────────────────────────────
-  for (const m of project.members) {
+  for (const m of members) {
     ctx = await addPage(doc, font, bold);
     let y = ctx.h - margin;
+    const govLc = governingLoad(m, code);
+    const lcsToShow = opts.governingOnly && govLc ? [govLc] : m.loads;
 
     // Member header
     rect(ctx, margin, y - 34, w - 2 * margin, 38, C.navy);
@@ -315,9 +558,9 @@ export async function exportPDF(project: Project): Promise<void> {
     lcHdrs.forEach((hdr, i) => text(ctx, hdr, margin + lcCols[i], y - 1, 7, C.white, bold));
     y -= 16;
 
-    for (const lc of m.loads) {
+    for (const lc of lcsToShow) {
       const r = memberResult(m, lc, project.code);
-      const bg = m.loads.indexOf(lc) % 2 === 0 ? C.light : C.white;
+      const bg = lcsToShow.indexOf(lc) % 2 === 0 ? C.light : C.white;
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
       const lcVals = isWall
         ? [lc.label.slice(0, 12),
@@ -360,7 +603,25 @@ export async function exportPDF(project: Project): Promise<void> {
           margin, y - 2, 8, C.mid);
         y -= 14;
       }
+      // EC2 SLS crack-width check (wk vs limit)
+      if (opts.includeCrack && isEC2 && (worst.wk_bot != null || worst.wk_top != null)) {
+        const wLim = m.crackParams?.wLimitBot ?? 0.3;
+        const wk = Math.max(worst.wk_bot ?? 0, worst.wk_top ?? 0);
+        const okCrack = wk <= wLim;
+        text(ctx, `Crack width wk = ${wk.toFixed(3)} mm  /  limit ${wLim.toFixed(2)} mm  ${okCrack ? '(OK)' : '(EXCEEDS)'}  [EC2 §7.3.4]`,
+          margin, y - 2, 8, okCrack ? C.green : C.red, bold);
+        y -= 14;
+      }
       y -= 6;
+    }
+
+    // Shear & moment envelope diagrams (beams with imported station forces)
+    if (opts.includeDiagrams && worst && m.memberType === 'beam' && (m.stationForces?.length ?? 0) > 1) {
+      if (y < margin + 170) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+      text(ctx, 'Force Envelopes (imported combos)', margin, y - 8, 10, C.dark, bold);
+      y -= 22;
+      const consumed = drawForceDiagrams(ctx, m, worst, margin, y, w - 2 * margin);
+      y -= consumed + 6;
     }
 
     // Warnings
@@ -373,6 +634,7 @@ export async function exportPDF(project: Project): Promise<void> {
     }
 
     if (allWarnings.length > 0) {
+      if (y < margin + 40) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
       text(ctx, 'Code Warnings', margin, y - 8, 10, C.dark, bold);
       y -= 20;
       for (const w of allWarnings) {
@@ -383,17 +645,33 @@ export async function exportPDF(project: Project): Promise<void> {
         y -= 13;
       }
     }
+
+    // Step-by-step calculation breakdown (governing load case)
+    if (opts.includeCalcs && govLc) {
+      if (y < margin + 60) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+      text(ctx, `Calculation Breakdown — governing case: ${govLc.label}`, margin, y - 8, 10, C.dark, bold);
+      y -= 22;
+      const calcSections = breakdownFor(m, govLc, code);
+      const res = await drawCalcSections(doc, font, bold, ctx, calcSections, y);
+      ctx = res.ctx; y = res.y;
+    }
   }
 
-  // Footer on all pages
+  // Footer on all pages — title block with job no. / revision
   const pages = doc.getPages();
+  const jobRev = [opts.jobNumber && `Job ${opts.jobNumber}`, opts.revision && `Rev ${opts.revision}`]
+    .filter(Boolean).join('  |  ');
   pages.forEach((pg: PDFPage, i: number) => {
-    pg.drawText(`S-Concrete Design  |  ${project.code}  |  Page ${i + 1} of ${pages.length}`, {
-      x: 48, y: 24, size: 7, color: C.mid, font,
-    });
+    const footer = `S-Concrete Design  |  ${project.code}${jobRev ? '  |  ' + jobRev : ''}  |  Sheet ${i + 1} of ${pages.length}`;
+    pg.drawText(winAnsiSafe(footer), { x: 48, y: 24, size: 7, color: C.mid, font });
   });
 
-  const pdfBytes = await doc.save();
+  return await doc.save();
+}
+
+/** Build the report and trigger a browser download (back-compatible entry point). */
+export async function exportPDF(project: Project, options?: ReportOptions): Promise<void> {
+  const pdfBytes = await buildReportBytes(project, options);
   const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
