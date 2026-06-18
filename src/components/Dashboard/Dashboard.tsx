@@ -7,10 +7,9 @@ import { useUnits } from '../../contexts/UnitsContext';
 import { dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
-import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
-import type { SuggestResult } from '../../utils/suggestRebar';
 import MemberEditor from '../SectionInput/MemberEditor';
 import MemberResults from '../Results/MemberResults';
+import GroupRebarEditor from '../ModelMap/GroupRebarEditor';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -116,9 +115,6 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   const [selection, setSelection] = useState<Selection>({ kind: 'member', id: project.members[0]?.id ?? '' });
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
-  const [groupSuggestion, setGroupSuggestion] = useState<SuggestResult | null>(null);
-  const [groupSuggestionError, setGroupSuggestionError] = useState<string | null>(null);
-  const [suggestingGroupId, setSuggestingGroupId] = useState<string | null>(null);
   const [issuesOpen, setIssuesOpen] = useState(true);
   // Resizable panels
   const [leftWidth, setLeftWidth] = useState(420);
@@ -183,8 +179,6 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
   function handleGroupHeaderClick(groupId: string) {
     // Select the group in the right pane
     setSelection({ kind: 'group', id: groupId });
-    setGroupSuggestion(null);
-    setGroupSuggestionError(null);
     // Also toggle expand/collapse
     toggleGroup(groupId);
   }
@@ -193,26 +187,13 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
     setSelection({ kind: 'member', id: memberId });
   }
 
-  function handleSuggestGroupRebar(groupMembers: Member[]) {
-    const sec = selectedGroupSection;
-    if (!sec) return;
-    setSuggestingGroupId(sec.id);
-    setGroupSuggestion(null);
-    setGroupSuggestionError(null);
-    const result = suggestGroupRebar(groupMembers, project.code, 0.9);
-    if (isSuggestError(result)) {
-      setGroupSuggestionError(result.error);
-    } else {
-      setGroupSuggestion(result);
-    }
-    setSuggestingGroupId(null);
-  }
 
-  function handleApplySuggestionToAll(groupMembers: Member[], rebar: RebarLayout) {
-    const groupMemberIds = new Set(groupMembers.map(m => m.id));
+  function handleApplyGroupRebar(groupId: string, rebar: RebarLayout, memberIds: string[]) {
+    const memberIdSet = new Set(memberIds);
     onProjectUpdate?.({
       ...project,
-      members: project.members.map(m => groupMemberIds.has(m.id) ? { ...m, rebar } : m),
+      designGroups: (project.designGroups ?? []).map(g => g.id === groupId ? { ...g, rebar } : g),
+      members: project.members.map(m => memberIdSet.has(m.id) ? { ...m, rebar } : m),
     });
   }
 
@@ -508,11 +489,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate }: 
                 group={selectedGroupSection}
                 project={project}
                 summaryById={summaryById}
-                groupSuggestion={groupSuggestion}
-                groupSuggestionError={groupSuggestionError}
-                isSuggesting={suggestingGroupId === selectedGroupSection.id}
-                onSuggest={() => handleSuggestGroupRebar(selectedGroupSection.members)}
-                onApplySuggestion={(rebar) => handleApplySuggestionToAll(selectedGroupSection.members, rebar)}
+                onApplyRebar={handleApplyGroupRebar}
                 onSelectMember={(id) => setSelection({ kind: 'member', id })}
                 onSelectMemberTab={onSelectMember}
                 inp={inp}
@@ -769,11 +746,7 @@ interface GroupPanelProps {
   group: { id: string; label: string; color?: string; rebar?: RebarLayout; members: Member[] };
   project: Project;
   summaryById: Map<string, MemberSummary>;
-  groupSuggestion: SuggestResult | null;
-  groupSuggestionError: string | null;
-  isSuggesting: boolean;
-  onSuggest: () => void;
-  onApplySuggestion: (rebar: RebarLayout) => void;
+  onApplyRebar: (groupId: string, rebar: RebarLayout, memberIds: string[]) => void;
   onSelectMember: (id: string) => void;
   onSelectMemberTab: (id: string) => void;
   inp: React.CSSProperties;
@@ -782,11 +755,9 @@ interface GroupPanelProps {
 
 function GroupPanel({
   group, project, summaryById,
-  groupSuggestion, groupSuggestionError, isSuggesting,
-  onSuggest, onApplySuggestion, onSelectMember, onSelectMemberTab, inp, onProjectUpdate,
+  onApplyRebar, onSelectMember, onSelectMemberTab, inp, onProjectUpdate,
 }: GroupPanelProps) {
   const code = project.code as DesignCode;
-  const unitsSys: 'imperial' | 'si' = project.code === 'EN1992-1-1' ? 'si' : 'imperial';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -797,52 +768,18 @@ function GroupPanel({
         <span style={{ fontSize: 12, color: '#9ca3af' }}>{group.members.length} members</span>
       </div>
 
-      {/* Group reinforcement card */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Group Reinforcement</div>
-        {group.rebar ? (
-          <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#1e3a5f', background: '#f0f9ff', padding: '8px 12px', borderRadius: 6, border: '1px solid #bae6fd' }}>
-            {rebarSummaryText(group.rebar, unitsSys)}
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, color: '#9ca3af', fontStyle: 'italic' }}>No group rebar set.</div>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={onSuggest}
-            disabled={isSuggesting}
-            style={{ ...inp, background: '#2563eb', color: 'white', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: isSuggesting ? 'not-allowed' : 'pointer', opacity: isSuggesting ? 0.6 : 1 }}
-          >
-            {isSuggesting ? 'Calculating…' : 'Suggest for group'}
-          </button>
+      {/* Group reinforcement — full interactive editor */}
+      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Group Reinforcement</span>
         </div>
-
-        {groupSuggestionError && (
-          <div style={{ marginTop: 10, fontSize: 12, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px' }}>
-            {groupSuggestionError}
-          </div>
-        )}
-
-        {groupSuggestion && (
-          <div style={{ marginTop: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '10px 12px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#16a34a', marginBottom: 6 }}>Suggested layout (target DCR 0.90)</div>
-            <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#14532d', marginBottom: 6 }}>
-              {rebarSummaryText(groupSuggestion.rebar, unitsSys)}
-            </div>
-            <div style={{ fontSize: 11, color: '#374151', display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-              <span>Flex DCR: <strong>{groupSuggestion.worstDCRFlex.toFixed(3)}</strong></span>
-              <span>Shear DCR: <strong>{groupSuggestion.worstDCRShear.toFixed(3)}</strong></span>
-              <span>Steel: <strong>{groupSuggestion.steelLb.toFixed(1)} lb</strong></span>
-            </div>
-            <button
-              onClick={() => onApplySuggestion(groupSuggestion.rebar)}
-              style={{ padding: '6px 14px', background: '#16a34a', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-            >
-              Apply to all {group.members.length} members
-            </button>
-          </div>
-        )}
+        <GroupRebarEditor
+          group={{ id: group.id, label: group.label, color: group.color, rebar: group.rebar, memberIds: group.members.map(m => m.id) }}
+          members={group.members}
+          onApply={onApplyRebar}
+          code={project.code}
+          targetDCR={project.targetDCR ?? 0.9}
+        />
       </div>
 
       {/* Group Material Properties */}

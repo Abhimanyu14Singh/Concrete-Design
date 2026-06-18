@@ -161,6 +161,44 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <button onClick={() => addLayer('bot')} style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>+ layer</button>
       </div>
 
+      {/* Skin / side-face reinforcement */}
+      <div style={{ marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', flex: 1 }}>Skin bars (each face)</div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#6b7280', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!(rebar.sideBars && rebar.sideBars.length > 0)}
+              onChange={e => {
+                if (e.target.checked) {
+                  const defBar = units === 'si' ? -12 : 4;
+                  setRebar(r => ({ ...r, sideBars: [{ numBars: 2, barSize: defBar }] }));
+                } else {
+                  setRebar(r => { const { sideBars, ...rest } = r; return rest; });
+                }
+              }}
+            />
+            Enable
+          </label>
+        </div>
+        {rebar.sideBars && rebar.sideBars.length > 0 && (
+          <div>
+            {rebar.sideBars.map((bg, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <BarGroupRow bg={bg} onChange={bg => setRebar(r => ({ ...r, sideBars: r.sideBars!.map((b, j) => j === i ? bg : b) }))} label={`Row ${i + 1}`} units={units} />
+                {rebar.sideBars!.length > 1 && (
+                  <button onClick={() => setRebar(r => ({ ...r, sideBars: r.sideBars!.filter((_, j) => j !== i) }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14 }}>×</button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => { const defBar = units === 'si' ? -12 : 4; setRebar(r => ({ ...r, sideBars: [...(r.sideBars ?? []), { numBars: 2, barSize: defBar }] })); }}
+              style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+            >+ row</button>
+          </div>
+        )}
+      </div>
+
       <div style={{ marginBottom: 10 }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase' }}>Stirrups</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
