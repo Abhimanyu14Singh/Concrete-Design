@@ -325,6 +325,20 @@ function governingLoad(m: Member, code?: string): LoadCase | null {
   return worst?.lc ?? null;
 }
 
+/** Truncate a string to fit maxW points, appending "..." if clipped. */
+function clipText(font: PDFFont, str: string, size: number, maxW: number): string {
+  const safe = winAnsiSafe(str);
+  if (font.widthOfTextAtSize(safe, size) <= maxW) return safe;
+  const ell = '...';
+  const ellW = font.widthOfTextAtSize(ell, size);
+  let out = '';
+  for (const ch of safe) {
+    if (font.widthOfTextAtSize(out + ch, size) + ellW > maxW) break;
+    out += ch;
+  }
+  return out + ell;
+}
+
 /** Greedy word-wrap to a pixel width for a given font/size. */
 function wrapText(font: PDFFont, size: number, str: string, maxW: number): string[] {
   const safe = winAnsiSafe(String(str));
@@ -543,9 +557,10 @@ export async function buildReportBytes(
   line(ctx, margin, h - 208, w - margin, h - 208);
 
   // Member summary table
+  // cols: Label(0) Type(120) Section(178) f'c(258) Flex+(302) Flex-(344) Shear(386) Tors(428) Status(470)
   text(ctx, 'Member Summary', margin, h - 228, 11, C.dark, bold);
-  const cols = [0, 28, 120, 170, 240, 290, 340, 390, 440, 490];
-  const hdrs = ['ID', 'Label', 'Type', 'Section', "f'c", 'Flex+', 'Flex-', 'Shear', 'Tors.', 'Status'];
+  const cols = [0, 120, 178, 258, 302, 344, 386, 428, 470];
+  const hdrs = ['Label', 'Type', 'Section', "f'c", 'Flex+', 'Flex-', 'Shear', 'Tors.', 'Status'];
   rect(ctx, margin, h - 254, w - 2 * margin, 16, C.navy);
   hdrs.forEach((hdr, i) => text(ctx, hdr, margin + cols[i], h - 251, 8, C.white, bold));
 
@@ -558,11 +573,11 @@ export async function buildReportBytes(
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
     const sec = m.section.type === 'circular_column'
       ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
-      : `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
+      : `${u.dim(m.section.b)}${u.dimSfx}x${u.dim(m.section.h)}${u.dimSfx}`;
     const wall = m.memberType === 'wall' && !!m.wallRebar;
     const fcLabel = isEC2 ? `${(m.material.fc * 0.00689476).toFixed(0)}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
     const dp2 = (n: number) => n.toFixed(2);
-    const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
+    const vals = [clipText(font, m.label, 8, 116), m.memberType, clipText(font, sec, 8, 76),
       fcLabel,
       dp2(wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos),
       wall ? '-' : dp2(r.DCR_flex_neg),
@@ -570,8 +585,8 @@ export async function buildReportBytes(
       wall ? '-' : dp2(r.DCR_torsion), r.status];
     vals.forEach((v, i) => {
       let clr = C.dark;
-      if (i === 9) clr = statusColor(r.status);
-      else if (i >= 5 && i <= 8) clr = dcrColor(parseFloat(v));
+      if (i === 8) clr = statusColor(r.status);
+      else if (i >= 4 && i <= 7) clr = dcrColor(parseFloat(v));
       text(ctx, v, margin + cols[i], row, 8, clr);
     });
     row -= 14;
@@ -590,7 +605,7 @@ export async function buildReportBytes(
     const secStr = m.section.type === 'circular_column'
       ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
       : `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
-    text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${u.stressVal(m.material.fc)}  fy=${u.stressBarVal(m.material.fy)}  span=${u.span(m.span ?? 0)}${u.spanSfx}`,
+    text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${u.stressVal(m.material.fc)}  fy=${u.stressBarVal(m.material.fy)}  span=${m.span != null ? u.span(m.span) + u.spanSfx : '-'}`,
       margin + 8, y - 28, 8, C.mid);
     y -= 50;
 
@@ -601,7 +616,7 @@ export async function buildReportBytes(
     const props = [
       [`b=${u.dim(m.section.b)}${u.dimSfx}`, `h=${u.dim(m.section.h)}${u.dimSfx}`, `cc=${u.dim(m.section.coverClear)}${u.dimSfx}`],
       [`f'c=${u.stressVal(m.material.fc)}`, `fy=${u.stressBarVal(m.material.fy)}`, `fyt=${u.stressBarVal(m.material.fyt)}`],
-      [`lambda=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${u.span(m.span ?? 0)}${u.spanSfx}`],
+      [`lambda=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${m.span != null ? u.span(m.span) + u.spanSfx : '-'}`],
     ];
     props.forEach((row2, ri) =>
       row2.forEach((v, ci) => text(ctx, v, margin + 8 + ci * 70, y - 24 - ri * 12, 8)));
@@ -612,11 +627,19 @@ export async function buildReportBytes(
     text(ctx, 'Design Results by Load Case', margin, y - 8, 10, C.dark, bold);
     y -= 20;
     const isWall = m.memberType === 'wall' && !!m.wallRebar;
+    const isBeam = m.memberType === 'beam';
     const M = u.moment, F = u.force;
+    // Beam gets an extra DCR Torsion column; wall and column share a simpler layout.
     const lcHdrs = isWall
       ? ['Load Case', `Mu (${M})`, `Vu (${F})`, `Pu (${F})`, `phiMn (${M})`, `phiVn (${F})`, 'DCR P-M', 'DCR V', 'DCR Ash', 'SBZ', 'Status']
+      : isBeam
+      ? ['Load Case', `Mu+ (${M})`, `Mu- (${M})`, `Vu (${F})`, `phiMn+ (${M})`, `phiMn- (${M})`, `phiVn (${F})`, 'DCR Fl+', 'DCR Fl-', 'DCR V', 'DCR Tor.', 'Status']
       : ['Load Case', `Mu+ (${M})`, `Mu- (${M})`, `Vu (${F})`, `phiMn+ (${M})`, `phiMn- (${M})`, `phiVn (${F})`, 'DCR Fl+', 'DCR Fl-', 'DCR V', 'Status'];
-    const lcCols = [0, 72, 118, 164, 200, 252, 304, 352, 384, 416, 445];
+    const lcCols = isWall
+      ? [0, 72, 118, 164, 200, 252, 304, 352, 384, 416, 445]
+      : isBeam
+      ? [0, 68, 112, 156, 196, 243, 290, 334, 366, 398, 428, 458]
+      : [0, 72, 118, 164, 200, 252, 304, 352, 384, 416, 445];
     rect(ctx, margin, y - 4, w - 2 * margin, 14, C.navy);
     lcHdrs.forEach((hdr, i) => text(ctx, hdr, margin + lcCols[i], y - 1, 7, C.white, bold));
     y -= 16;
@@ -625,20 +648,30 @@ export async function buildReportBytes(
       const r = memberResult(m, lc, project.code);
       const bg = lcsToShow.indexOf(lc) % 2 === 0 ? C.light : C.white;
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
+      const lcLabel = clipText(font, lc.label, 7, lcCols[1] - 4);
       const lcVals = isWall
-        ? [lc.label.slice(0, 12),
+        ? [lcLabel,
             u.moment_(Math.max(lc.Mu_pos, lc.Mu_neg)), u.force_(lc.Vu), u.force_(lc.Pu),
             u.moment_(r.phi_Mn_wall ?? 0), u.force_(r.phi_Vn_wall ?? 0),
             (r.DCR_flex_wall ?? 0).toFixed(2), (r.DCR_shear_wall ?? 0).toFixed(2),
             (r.DCR_sbzAsh ?? 0).toFixed(2), r.sbzRequired ? 'Yes' : 'No', r.status]
-        : [lc.label.slice(0, 12),
+        : isBeam
+        ? [lcLabel,
+            u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
+            u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
+            r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2),
+            r.DCR_torsion.toFixed(2), r.status]
+        : [lcLabel,
             u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
             u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
             r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2), r.status];
+      const statusIdx = lcVals.length - 1;
+      const dcrStart = isWall ? 6 : 7;
+      const dcrEnd   = isWall ? 8 : isBeam ? 10 : 9;
       lcVals.forEach((v, i) => {
         let clr = C.dark;
-        if (i === 10) clr = statusColor(r.status);
-        else if (i >= (isWall ? 6 : 7) && i <= (isWall ? 8 : 9)) clr = dcrColor(parseFloat(v));
+        if (i === statusIdx) clr = statusColor(r.status);
+        else if (i >= dcrStart && i <= dcrEnd) clr = dcrColor(parseFloat(v));
         text(ctx, v, margin + lcCols[i], y, 7, clr);
       });
       y -= 13;
