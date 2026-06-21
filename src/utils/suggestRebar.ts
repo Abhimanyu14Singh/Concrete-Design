@@ -243,7 +243,11 @@ export function suggestGroupRebar(
       }
     } else if (!shearOk) {
       // tighten end-zone spacing one increment, or add legs via next stirrupCandidate demand bump
-      const idx = STIRRUP_SPACINGS.indexOf(stirrups.spacing);
+      // Use nearest-index rather than indexOf to avoid floating-point equality failures
+      // with EC2 spacings derived from mm/25.4 (e.g. 100/25.4 ≈ 3.9370…).
+      const idx = STIRRUP_SPACINGS.reduce(
+        (best, s, i) => Math.abs(s - stirrups.spacing) < Math.abs(STIRRUP_SPACINGS[best] - stirrups.spacing) ? i : best, 0,
+      );
       if (idx > 0) {
         stirrups.spacing = STIRRUP_SPACINGS[idx - 1];
         stirrups.tieZones = [{ spacing: stirrups.spacing }, { spacing: STIRRUP_SPACINGS[idx] }, { spacing: stirrups.spacing }];
