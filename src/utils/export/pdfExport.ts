@@ -107,12 +107,29 @@ function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] 
  * "cannot encode" in pdf-lib. Every drawn string passes through here.
  */
 const WINANSI_MAP: [RegExp, string][] = [
+  // Greek lower-case
   [/φ/g, 'phi'], [/λ/g, 'lambda'], [/β/g, 'beta'], [/ρ/g, 'rho'],
   [/δ/g, 'delta'], [/θ/g, 'theta'], [/ε/g, 'eps'], [/α/g, 'alpha'],
+  [/γ/g, 'gam'], [/σ/g, 'sig'], [/η/g, 'eta'], [/ν/g, 'nu'],
+  [/ψ/g, 'psi'], [/ω/g, 'omega'], [/μ/g, 'mu'], [/κ/g, 'kap'],
+  [/ζ/g, 'zeta'], [/χ/g, 'chi'], [/ξ/g, 'xi'], [/π/g, 'pi'],
+  // Greek upper-case
+  [/Φ/g, 'Phi'], [/Λ/g, 'Lambda'], [/Σ/g, 'Sum'], [/Δ/g, 'Delta'],
+  // Math / operators
   [/√/g, 'sqrt'], [/≤/g, '<='], [/≥/g, '>='], [/≈/g, '~'],
-  [/−/g, '-'], [/[–—]/g, '-'], [/[′’]/g, "'"], [/[″“”]/g, '"'],
-  [/₁/g, '1'], [/₂/g, '2'], [/ȳ/g, 'y'], [/✓/g, 'OK'], [/[⚠✗]/g, '!'],
-  [/⁺/g, '+'], [/⁻/g, '-'], [/Σ/g, 'Sum'], [/Ø/g, 'dia '],
+  [/−/g, '-'], [/[–—]/g, '-'], [/×/g, 'x'], [/÷/g, '/'],
+  [/[′']/g, "'"], [/[″""]/g, '"'],
+  // Superscripts / subscripts
+  [/⁰/g, '0'], [/¹/g, '1'], [/²/g, '2'], [/³/g, '3'],
+  [/⁴/g, '4'], [/⁵/g, '5'], [/⁶/g, '6'], [/⁷/g, '7'],
+  [/⁸/g, '8'], [/⁹/g, '9'], [/⁺/g, '+'], [/⁻/g, '-'],
+  [/₀/g, '0'], [/₁/g, '1'], [/₂/g, '2'], [/₃/g, '3'],
+  // Fractions / misc
+  [/‰/g, '%o'], [/‱/g, '%%'], [/⅓/g, '1/3'], [/⅔/g, '2/3'],
+  [/½/g, '1/2'], [/¼/g, '1/4'], [/¾/g, '3/4'],
+  [/→/g, '->'], [/←/g, '<-'], [/↑/g, '^'], [/↓/g, 'v'],
+  [/ȳ/g, 'y'], [/ᵃ/g, 'a'], [/ᵇ/g, 'b'], [/ᶜ/g, 'c'], [/ᵈ/g, 'd'],
+  [/✓/g, 'OK'], [/[⚠✗]/g, '!'], [/Ø/g, 'dia '],
 ];
 export function winAnsiSafe(s: string): string {
   let out = s;
