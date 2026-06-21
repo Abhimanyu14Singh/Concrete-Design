@@ -1,5 +1,6 @@
 import { formatBarLabel } from '../rebar';
-import { PDFDocument, rgb, StandardFonts, type PDFPage, type PDFFont } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, DesignResults, LoadCase, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
 import { designWallACI } from '../wallDesign';
@@ -102,41 +103,43 @@ function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] 
 }
 
 /**
- * Standard Helvetica is WinAnsi-encoded; Greek letters and several math
- * symbols used in engine warnings/headers (φ, ≤, √, β, −, …) throw
- * "cannot encode" in pdf-lib. Every drawn string passes through here.
+ * DejaVu Sans is embedded as a Unicode TTF, so Greek letters, math symbols,
+ * subscripts, and superscripts all render natively. This function only strips
+ * C0/C1 control characters that are meaningless in a PDF text stream.
  */
-const WINANSI_MAP: [RegExp, string][] = [
-  // Greek lower-case
-  [/φ/g, 'phi'], [/λ/g, 'lambda'], [/β/g, 'beta'], [/ρ/g, 'rho'],
-  [/δ/g, 'delta'], [/θ/g, 'theta'], [/ε/g, 'eps'], [/α/g, 'alpha'],
-  [/γ/g, 'gam'], [/σ/g, 'sig'], [/η/g, 'eta'], [/ν/g, 'nu'],
-  [/ψ/g, 'psi'], [/ω/g, 'omega'], [/μ/g, 'mu'], [/κ/g, 'kap'],
-  [/ζ/g, 'zeta'], [/χ/g, 'chi'], [/ξ/g, 'xi'], [/π/g, 'pi'],
-  // Greek upper-case
-  [/Φ/g, 'Phi'], [/Λ/g, 'Lambda'], [/Σ/g, 'Sum'], [/Δ/g, 'Delta'],
-  // Math / operators
-  [/√/g, 'sqrt'], [/≤/g, '<='], [/≥/g, '>='], [/≈/g, '~'],
-  [/−/g, '-'], [/[–—]/g, '-'], [/×/g, 'x'], [/÷/g, '/'],
-  [/[′']/g, "'"], [/[″""]/g, '"'],
-  // Superscripts / subscripts
-  [/⁰/g, '0'], [/¹/g, '1'], [/²/g, '2'], [/³/g, '3'],
-  [/⁴/g, '4'], [/⁵/g, '5'], [/⁶/g, '6'], [/⁷/g, '7'],
-  [/⁸/g, '8'], [/⁹/g, '9'], [/⁺/g, '+'], [/⁻/g, '-'],
-  [/₀/g, '0'], [/₁/g, '1'], [/₂/g, '2'], [/₃/g, '3'],
-  // Fractions / misc
-  [/‰/g, '%o'], [/‱/g, '%%'], [/⅓/g, '1/3'], [/⅔/g, '2/3'],
-  [/½/g, '1/2'], [/¼/g, '1/4'], [/¾/g, '3/4'],
-  [/→/g, '->'], [/←/g, '<-'], [/↑/g, '^'], [/↓/g, 'v'],
-  [/ȳ/g, 'y'], [/ᵃ/g, 'a'], [/ᵇ/g, 'b'], [/ᶜ/g, 'c'], [/ᵈ/g, 'd'],
-  [/✓/g, 'OK'], [/[⚠✗]/g, '!'], [/Ø/g, 'dia '],
-];
 export function winAnsiSafe(s: string): string {
-  let out = s;
-  for (const [re, rep] of WINANSI_MAP) out = out.replace(re, rep);
-  // Backstop: anything outside Latin-1 becomes '?'
   // eslint-disable-next-line no-control-regex
-  return out.replace(/[^\x00-\xFF]/g, '?');
+  return String(s).replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, '');
+}
+
+/**
+ * Lazy-loaded DejaVu font bytes. The default loader fetches from /fonts/ (Vite
+ * public dir — works in dev, Electron prod, and any HTTP host). Tests or Node
+ * scripts can override this by calling setFontLoader() before generating PDFs.
+ */
+let _regularBytes: ArrayBuffer | null = null;
+let _boldBytes: ArrayBuffer | null = null;
+let _fontLoader: (() => Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }>) | null = null;
+
+export function setFontLoader(fn: () => Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }>): void {
+  _fontLoader = fn;
+  _regularBytes = null;
+  _boldBytes = null;
+}
+
+async function getFontBytes(): Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }> {
+  if (_fontLoader) return _fontLoader();
+  if (!_regularBytes || !_boldBytes) {
+    // Use BASE_URL from Vite (defaults to './' in Electron builds); fall back to '/fonts/'
+    const base = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) ?? './';
+    const [r, b] = await Promise.all([
+      fetch(`${base}fonts/DejaVuSans.ttf`).then(res => res.arrayBuffer()),
+      fetch(`${base}fonts/DejaVuSans-Bold.ttf`).then(res => res.arrayBuffer()),
+    ]);
+    _regularBytes = r;
+    _boldBytes = b;
+  }
+  return { regular: _regularBytes!, bold: _boldBytes! };
 }
 
 // Colour palette
@@ -548,8 +551,10 @@ export async function buildReportBytes(
   const reportDate     = opts.reportDate     ?? project.date;
 
   const doc   = await PDFDocument.create();
-  const font  = await doc.embedFont(StandardFonts.Helvetica);
-  const bold  = await doc.embedFont(StandardFonts.HelveticaBold);
+  doc.registerFontkit(fontkit);
+  const { regular: rb, bold: bb } = await getFontBytes();
+  const font  = await doc.embedFont(rb);
+  const bold  = await doc.embedFont(bb);
 
   // ── Cover page ────────────────────────────────────────────────────────────
   let ctx = await addPage(doc, font, bold);

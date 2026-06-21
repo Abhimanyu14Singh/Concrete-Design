@@ -10,9 +10,18 @@
  * Also serves as a regression guard for the kt/wLimitFace partial-object
  * crash (calcBreakdownEC2 must merge with DEFAULT_CRACK_PARAMS).
  */
-import { describe, it, expect } from 'vitest';
-import { buildReportBytes } from '../export/pdfExport';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { buildReportBytes, setFontLoader } from '../export/pdfExport';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
+
+beforeAll(() => {
+  setFontLoader(async () => ({
+    regular: readFileSync(path.resolve('public/fonts/DejaVuSans.ttf')).buffer as ArrayBuffer,
+    bold:    readFileSync(path.resolve('public/fonts/DejaVuSans-Bold.ttf')).buffer as ArrayBuffer,
+  }));
+});
 import type { Project, Member, SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../types';
 
 // ── Conversion constants ──────────────────────────────────────────────────────

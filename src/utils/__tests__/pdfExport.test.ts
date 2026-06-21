@@ -1,22 +1,35 @@
 /**
- * PDF export: WinAnsi sanitizer + full-project smoke test (beam, circular
- * column, and wall — including labels/warnings with Greek/math characters
- * that standard Helvetica cannot encode).
+ * PDF export: Unicode font rendering + full-project smoke test (beam, circular
+ * column, and wall — including labels/warnings with Greek/math characters).
+ * DejaVu Sans is embedded so Greek/subscript/superscript render natively;
+ * winAnsiSafe now only strips C0/C1 control chars.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { winAnsiSafe, exportPDF, buildReportBytes } from '../export/pdfExport';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { winAnsiSafe, exportPDF, buildReportBytes, setFontLoader } from '../export/pdfExport';
 import type { Project, Member } from '../../types';
 
+// Register a Node.js font loader so tests don't need a live HTTP server.
+beforeAll(() => {
+  setFontLoader(async () => ({
+    regular: readFileSync(path.resolve('public/fonts/DejaVuSans.ttf')).buffer as ArrayBuffer,
+    bold:    readFileSync(path.resolve('public/fonts/DejaVuSans-Bold.ttf')).buffer as ArrayBuffer,
+  }));
+});
+
 describe('winAnsiSafe', () => {
-  it('maps Greek letters and math symbols to ASCII', () => {
-    expect(winAnsiSafe('φMn+ (k-ft)')).toBe('phiMn+ (k-ft)');
-    expect(winAnsiSafe('s ≤ d/2 and √f\'c with β₁')).toBe("s <= d/2 and sqrtf'c with beta1");
-    expect(winAnsiSafe('Mu = 12 − 4')).toBe('Mu = 12 - 4'); // U+2212 minus
-    expect(winAnsiSafe('ρw and λs and εt')).toBe('rhow and lambdas and epst');
+  it('passes Greek letters through unchanged (rendered natively by DejaVu)', () => {
+    expect(winAnsiSafe('φMn+ (k-ft)')).toBe('φMn+ (k-ft)');
+    expect(winAnsiSafe('ρw and λs and εt')).toBe('ρw and λs and εt');
   });
 
-  it('replaces non-Latin-1 leftovers with ?', () => {
-    expect(winAnsiSafe('好')).toBe('?');
+  it('passes non-ASCII through unchanged', () => {
+    expect(winAnsiSafe('好')).toBe('好');
+  });
+
+  it('strips C0/C1 control characters', () => {
+    expect(winAnsiSafe('ab\x01\x1Fcd')).toBe('abcd');
   });
 
   it('leaves plain ASCII untouched', () => {
