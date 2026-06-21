@@ -110,7 +110,7 @@ export function generateBreakdown(
 
   if (isT) {
     sectionSteps.push({
-      ref: 'ACI 318-19 §406.3.2.1',
+      ref: 'ACI 318-19 Table 6.3.2.1',
       label: 'Effective flange width',
       equation: 'beff = min(bw + 16hf, L/4, b)',
       substitution: `min(${bw} + 16×${section.hf ?? 5}, ${span * 12}/4, ${b}) = min(${bw + 16 * (section.hf ?? 5)}, ${span * 3}, ${b})`,
@@ -142,7 +142,7 @@ export function generateBreakdown(
       result: lambdaConcrete === 1.0 ? '1.0 (normal-weight)' : `${lambdaConcrete} (lightweight)`,
     },
     {
-      ref: 'ACI 318-19 §21.2.1',
+      ref: 'ACI 318-19 §20.2.2.2',
       label: 'Modulus of elasticity — steel',
       equation: 'Es = 29,000,000 psi',
       substitution: 'Per ACI 318-19',
@@ -327,6 +327,13 @@ export function generateBreakdown(
       result: `Mn⁻ = ${fmt(Mn_neg)} kip-ft`,
     },
     {
+      ref: 'ACI 318-19 §21.2',
+      label: 'Design moment capacity (negative)',
+      equation: 'φMn⁻ = φ × Mn⁻  (φ same procedure as positive)',
+      substitution: `φMn⁻ = ${fmt(phi_Mn_neg > 0 && Mn_neg > 0 ? phi_Mn_neg / Mn_neg : 0.9, 3)} × ${fmt(Mn_neg)}`,
+      result: `φMn⁻ = ${fmt(phi_Mn_neg)} kip-ft`,
+    },
+    {
       ref: 'Design check',
       label: 'DCR — Negative flexure',
       equation: 'DCR = Mu⁻ / φMn⁻',
@@ -453,6 +460,12 @@ export function generateBreakdown(
   const phi_Tn = torsion.phi_Tn;
   const DCR_torsion = phi_Tn > 0 ? load.Tu / phi_Tn : 0;
 
+  // Closed-stirrup centerline geometry (matches engine)
+  const cc_tor = section.coverClear + getBarDiam(section.stirrupDia) / 2;
+  const x0_tor = b - 2 * cc_tor, y0_tor = h - 2 * cc_tor;
+  const Aoh_tor = x0_tor * y0_tor;
+  const Ao_tor  = 0.85 * Aoh_tor;
+
   const torsionSteps: CalcStep[] = [
     {
       ref: 'ACI 318-19 §22.7.4.1',
@@ -467,6 +480,13 @@ export function generateBreakdown(
       equation: 'Pcp = 2(b + h)',
       substitution: `Pcp = 2(${b} + ${h})`,
       result: `Pcp = ${Pcp} in`,
+    },
+    {
+      ref: 'ACI 318-19 §22.7.6.1',
+      label: 'Stirrup centerline dimensions',
+      equation: 'x₀ = b − 2cc*, y₀ = h − 2cc*  (cc* = cover + d_st/2)',
+      substitution: `cc* = ${fmt(cc_tor)}", x₀ = ${fmt(x0_tor)}", y₀ = ${fmt(y0_tor)}"`,
+      result: `Aoh = ${fmt(Aoh_tor)} in², Ao = 0.85·Aoh = ${fmt(Ao_tor)} in²`,
     },
     {
       ref: 'ACI 318-19 §22.7.4.1',
@@ -488,9 +508,9 @@ export function generateBreakdown(
     {
       ref: 'ACI 318-19 §22.7.6.1',
       label: 'Design torsion capacity (closed stirrups)',
-      equation: 'φTn = φ · 2·Ao · (At/s) · fyt',
+      equation: 'φTn = φ · 2·Ao · (At/s) · fyt · cotθ  (θ = 45°)',
       substitution: rebar.ties
-        ? `φTn = 0.75 × 2 × Ao × (${getBarArea(rebar.ties.barSize)}/${sv}) × ${fyt} / 12000`
+        ? `φTn = 0.75 × 2 × ${fmt(Ao_tor)} × (${fmt(getBarArea(rebar.ties.barSize), 4)}/${sv}) × ${fyt} / 12000`
         : 'No closed stirrups provided',
       result: `φTn = ${fmt(phi_Tn)} kip-ft`,
     },
