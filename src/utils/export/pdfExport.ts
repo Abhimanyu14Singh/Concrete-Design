@@ -43,12 +43,17 @@ export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
 
 /** Dimension/force/moment labels and value formatters keyed on unit system. */
 interface UCtx {
-  dimSfx: string;           // length suffix for section dims, e.g. '"' or ' mm'
-  spanSfx: string;          // span suffix, e.g. 'ft' or 'm'
+  dimSfx: string;           // length suffix for section dims
+  spanSfx: string;          // span suffix
   force: string;            // force unit label
   moment: string;           // moment unit label
-  stressVal: (psi: number) => string;  // e.g. "4000psi" or "27.6MPa"
-  stressBarVal: (psi: number) => string; // e.g. "60ksi" or "414MPa"
+  stressVal:    (psi: number) => string;
+  stressBarVal: (psi: number) => string;
+  // Converters from internal imperial storage to display value (number only)
+  dim:    (inches: number)  => string;   // section length in" → "600" or "24.0"
+  span:   (ft: number)      => string;   // span ft → "6.10" or "20.0"
+  force_: (kips: number)    => string;   // force kips → "445.0" or "100.0"
+  moment_:(kipft: number)   => string;   // moment kip-ft → "601.0" or "100.0"
 }
 function makeU(isEC2: boolean): UCtx {
   return isEC2 ? {
@@ -56,9 +61,12 @@ function makeU(isEC2: boolean): UCtx {
     spanSfx: 'm',
     force: 'kN',
     moment: 'kN·m',
-    // Values are stored in psi internally; convert to MPa for EC2 display.
     stressVal:    (v) => `${(v * 0.00689476).toFixed(1)} MPa`,
     stressBarVal: (v) => `${(v * 0.00689476).toFixed(0)} MPa`,
+    dim:    (v) => (v * 25.4).toFixed(0),
+    span:   (v) => (v * 0.3048).toFixed(2),
+    force_: (v) => (v * 4.44822).toFixed(1),
+    moment_:(v) => (v * 1.35582).toFixed(1),
   } : {
     dimSfx: '"',
     spanSfx: 'ft',
@@ -66,6 +74,10 @@ function makeU(isEC2: boolean): UCtx {
     moment: 'kip-ft',
     stressVal:    (v) => `${v}psi`,
     stressBarVal: (v) => `${(v / 1000).toFixed(0)}ksi`,
+    dim:    (v) => v.toFixed(2),
+    span:   (v) => v.toFixed(1),
+    force_: (v) => v.toFixed(1),
+    moment_:(v) => v.toFixed(1),
   };
 }
 
@@ -407,15 +419,24 @@ function drawEnvelopeChart(
 
 /** Draws shear + moment envelope diagrams; returns the height consumed. */
 function drawForceDiagrams(ctx: DrawCtx, m: Member, result: DesignResults, x: number, y: number, fullW: number, u: UCtx = makeU(false)): number {
-  const pts = buildEnvelope(m);
-  if (pts.length < 2) return 0;
+  const rawPts = buildEnvelope(m);
+  if (rawPts.length < 2) return 0;
   const plotW = fullW - 30;
   const plotH = 56;
+  // buildEnvelope returns imperial (kips, kip-ft, ft); convert to display units for plots.
+  const isEC2 = u.force === 'kN';
+  const vFac  = isEC2 ? 4.44822  : 1;  // kips → kN
+  const mFac  = isEC2 ? 1.35582  : 1;  // kip-ft → kN·m
+  const xFac  = isEC2 ? 0.3048   : 1;  // ft → m
+  const pts = rawPts.map(p => ({
+    x: p.x * xFac, Vmax: p.Vmax * vFac, Vmin: p.Vmin * vFac,
+    Mmax: p.Mmax * mFac, Mmin: p.Mmin * mFac,
+  }));
   drawEnvelopeChart(ctx, `Shear envelope V (${u.force})`, pts, p => p.Vmax, p => p.Vmin,
-    result.phi_Vn, -result.phi_Vn, 'phiVn', x + 24, y - plotH, plotW, plotH,
+    result.phi_Vn * vFac, -result.phi_Vn * vFac, 'phiVn', x + 24, y - plotH, plotW, plotH,
     rgb(0.99, 0.90, 0.55), C.amber);
   drawEnvelopeChart(ctx, `Moment envelope M (${u.moment})`, pts, p => p.Mmax, p => p.Mmin,
-    result.phi_Mn_pos, -result.phi_Mn_neg, 'phiMn', x + 24, y - plotH * 2 - 28, plotW, plotH,
+    result.phi_Mn_pos * mFac, -result.phi_Mn_neg * mFac, 'phiMn', x + 24, y - plotH * 2 - 28, plotW, plotH,
     rgb(0.75, 0.85, 0.99), C.blue);
   return plotH * 2 + 40;
 }
@@ -535,8 +556,8 @@ export async function buildReportBytes(
     const bg = members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
     const sec = m.section.type === 'circular_column'
-      ? `dia${m.section.diameter ?? m.section.b}${u.dimSfx}`
-      : `${m.section.b}${u.dimSfx}x${m.section.h}${u.dimSfx}`;
+      ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
+      : `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
     const wall = m.memberType === 'wall' && !!m.wallRebar;
     const fcLabel = isEC2 ? `${(m.material.fc * 0.00689476).toFixed(0)}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
     const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
@@ -565,9 +586,9 @@ export async function buildReportBytes(
     rect(ctx, margin, y - 34, w - 2 * margin, 38, C.navy);
     text(ctx, `${m.id} — ${m.label}`, margin + 8, y - 14, 13, C.white, bold);
     const secStr = m.section.type === 'circular_column'
-      ? `dia${m.section.diameter ?? m.section.b}${u.dimSfx}`
-      : `${m.section.b}${u.dimSfx}x${m.section.h}${u.dimSfx}`;
-    text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${u.stressVal(m.material.fc)}  fy=${u.stressBarVal(m.material.fy)}  span=${m.span}${u.spanSfx}`,
+      ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
+      : `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
+    text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${u.stressVal(m.material.fc)}  fy=${u.stressBarVal(m.material.fy)}  span=${u.span(m.span ?? 0)}${u.spanSfx}`,
       margin + 8, y - 28, 8, C.mid);
     y -= 50;
 
@@ -576,9 +597,9 @@ export async function buildReportBytes(
     rect(ctx, margin, y - 50, halfW, 52, C.light);
     text(ctx, 'Section & Material', margin + 6, y - 12, 8, C.dark, bold);
     const props = [
-      [`b=${m.section.b}${u.dimSfx}`, `h=${m.section.h}${u.dimSfx}`, `cc=${m.section.coverClear}${u.dimSfx}`],
+      [`b=${u.dim(m.section.b)}${u.dimSfx}`, `h=${u.dim(m.section.h)}${u.dimSfx}`, `cc=${u.dim(m.section.coverClear)}${u.dimSfx}`],
       [`f'c=${u.stressVal(m.material.fc)}`, `fy=${u.stressBarVal(m.material.fy)}`, `fyt=${u.stressBarVal(m.material.fyt)}`],
-      [`lambda=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${m.span}${u.spanSfx}`],
+      [`lambda=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${u.span(m.span ?? 0)}${u.spanSfx}`],
     ];
     props.forEach((row2, ri) =>
       row2.forEach((v, ci) => text(ctx, v, margin + 8 + ci * 70, y - 24 - ri * 12, 8)));
@@ -604,13 +625,13 @@ export async function buildReportBytes(
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
       const lcVals = isWall
         ? [lc.label.slice(0, 12),
-            Math.max(lc.Mu_pos, lc.Mu_neg).toFixed(1), lc.Vu.toFixed(1), lc.Pu.toFixed(1),
-            (r.phi_Mn_wall ?? 0).toFixed(1), (r.phi_Vn_wall ?? 0).toFixed(1),
+            u.moment_(Math.max(lc.Mu_pos, lc.Mu_neg)), u.force_(lc.Vu), u.force_(lc.Pu),
+            u.moment_(r.phi_Mn_wall ?? 0), u.force_(r.phi_Vn_wall ?? 0),
             (r.DCR_flex_wall ?? 0).toFixed(3), (r.DCR_shear_wall ?? 0).toFixed(3),
             (r.DCR_sbzAsh ?? 0).toFixed(3), r.sbzRequired ? 'Yes' : 'No', r.status]
         : [lc.label.slice(0, 12),
-            lc.Mu_pos.toFixed(1), lc.Mu_neg.toFixed(1), lc.Vu.toFixed(1),
-            r.phi_Mn_pos.toFixed(1), r.phi_Mn_neg.toFixed(1), r.phi_Vn.toFixed(1),
+            u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
+            u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
             r.DCR_flex_pos.toFixed(3), r.DCR_flex_neg.toFixed(3), r.DCR_shear.toFixed(3), r.status];
       lcVals.forEach((v, i) => {
         let clr = C.dark;
