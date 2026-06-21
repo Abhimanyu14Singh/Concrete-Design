@@ -132,7 +132,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members]);
   const deferredMembers = useDeferredValue(committedMembers);
-  const recomputing = deferredMembers !== members;
+  const recomputing = deferredMembers !== committedMembers;
   const hiddenMemberIds = useMemo(() => new Set(project.hiddenMemberIds ?? []), [project.hiddenMemberIds]);
   const hiddenStories = useMemo(() => new Set(project.hiddenStories ?? []), [project.hiddenStories]);
 

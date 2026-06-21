@@ -16,10 +16,17 @@ import { runDesign } from '../engines';
 import { getBarArea, getBarDiam } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
 
-const LONG_BAR_SIZES_US = [5, 6, 7, 8, 9];
+const LONG_BAR_SIZES_US  = [5, 6, 7, 8, 9];
 const LONG_BAR_SIZES_EC2 = [-10, -12, -16, -20, -25, -32];
-const STIRRUP_SIZES = [4, 5];
-const STIRRUP_SPACINGS = [4, 6, 8, 10, 12]; // in
+
+// US stirrup candidates
+const STIRRUP_SIZES_US       = [4, 5];
+const STIRRUP_SPACINGS_US    = [4, 6, 8, 10, 12]; // in
+
+// EC2 stirrup candidates — Ø8, Ø10, Ø12 links; spacings 100/125/150/175/200/250 mm → in
+const STIRRUP_SIZES_EC2      = [-8, -10, -12];
+const STIRRUP_SPACINGS_EC2   = [100, 125, 150, 175, 200, 250].map(mm => mm / 25.4); // in
+
 const MAX_VERIFY_RETRIES = 5;
 
 export interface SuggestResult {
@@ -81,7 +88,13 @@ function faceCandidatesAtSize(member: Member, AsRequired: number, size: number):
 }
 
 /** Cheapest practical stirrup layout meeting Av/s demand at target. */
-function stirrupCandidate(AvReqPerIn: number, targetDCR: number): RebarLayout['ties'] & { tieZones: [{ spacing: number }, { spacing: number }, { spacing: number }] } | null {
+function stirrupCandidate(
+  AvReqPerIn: number,
+  targetDCR: number,
+  isEC2: boolean,
+): RebarLayout['ties'] & { tieZones: [{ spacing: number }, { spacing: number }, { spacing: number }] } | null {
+  const STIRRUP_SIZES    = isEC2 ? STIRRUP_SIZES_EC2    : STIRRUP_SIZES_US;
+  const STIRRUP_SPACINGS = isEC2 ? STIRRUP_SPACINGS_EC2 : STIRRUP_SPACINGS_US;
   const demand = AvReqPerIn / targetDCR;
   for (const legs of [2, 4]) {
     for (const size of STIRRUP_SIZES) {
@@ -140,7 +153,8 @@ export function suggestGroupRebar(
   // Pick the smallest COMMON bar size where both faces have a feasible layout.
   // Top and bottom must share one bar size (bar count / layers may still differ).
   const isEC2 = code === 'EN1992-1-1';
-  const LONG_BAR_SIZES = isEC2 ? LONG_BAR_SIZES_EC2 : LONG_BAR_SIZES_US;
+  const LONG_BAR_SIZES    = isEC2 ? LONG_BAR_SIZES_EC2    : LONG_BAR_SIZES_US;
+  const STIRRUP_SPACINGS  = isEC2 ? STIRRUP_SPACINGS_EC2  : STIRRUP_SPACINGS_US;
   let sizeIdx = -1;
   let topCands: FaceCandidate[] = [];
   let botCands: FaceCandidate[] = [];
@@ -152,7 +166,7 @@ export function suggestGroupRebar(
   if (sizeIdx < 0) {
     return { error: 'No practical bar layout fits this section — consider a larger section.' };
   }
-  const stirrups = stirrupCandidate(worstAv, targetDCR);
+  const stirrups = stirrupCandidate(worstAv, targetDCR, isEC2);
   if (!stirrups) {
     return { error: 'No practical stirrup layout meets the shear demand — consider a wider section.' };
   }
