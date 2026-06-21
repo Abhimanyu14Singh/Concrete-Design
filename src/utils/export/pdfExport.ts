@@ -170,7 +170,8 @@ function line(ctx: DrawCtx, x1: number, y1: number, x2: number, y2: number, thic
 function worstDCROf(r: DesignResults): number {
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
     r.DCR_PM ?? 0, r.DCR_axial ?? 0,
-    r.DCR_shear_wall ?? 0, r.DCR_flex_wall ?? 0, r.DCR_sbzAsh ?? 0);
+    r.DCR_shear_wall ?? 0, r.DCR_flex_wall ?? 0, r.DCR_sbzAsh ?? 0,
+    r.DCR_crack ?? 0);
 }
 
 /** Routes walls to the wall engine (same branch as the results screen). */
@@ -230,7 +231,7 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
         circle(ctx, cx + ringR * Math.cos(ang), cy + ringR * Math.sin(ang), rb);
       }
     }
-    text(ctx, `dia ${D}${u.dimSfx}`, cx - 14, y + 4, 7, C.mid);
+    text(ctx, `dia ${u.dim(D)}${u.dimSfx}`, cx - 14, y + 4, 7, C.mid);
     return;
   }
 
@@ -260,7 +261,7 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
         for (let i = 0; i <= nWeb; i++)
           circle(ctx, webX0 + (webX1 - webX0) * (i / nWeb), cyW, 1, C.mid);
     }
-    text(ctx, `lw=${lw}${u.dimSfx}  tw=${tw}${u.dimSfx}  (plan, SBZ ends shaded)`, px, y + 4, 7, C.mid);
+    text(ctx, `lw=${u.dim(lw)}${u.dimSfx}  tw=${u.dim(tw)}${u.dimSfx}  (plan, SBZ ends shaded)`, px, y + 4, 7, C.mid);
     return;
   }
 
@@ -294,7 +295,7 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
       inset += getBarDiam(g.barSize) * scale + sClear;
     }
   }
-  text(ctx, `b=${secW}${u.dimSfx}  h=${secH}${u.dimSfx}`, rx, y + 4, 7, C.mid);
+  text(ctx, `b=${u.dim(secW)}${u.dimSfx}  h=${u.dim(secH)}${u.dimSfx}`, rx, y + 4, 7, C.mid);
 }
 
 /** Horizontal DCR bar with a marker at 1.0; track spans dcr 0–1.5. */
@@ -560,12 +561,13 @@ export async function buildReportBytes(
       : `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
     const wall = m.memberType === 'wall' && !!m.wallRebar;
     const fcLabel = isEC2 ? `${(m.material.fc * 0.00689476).toFixed(0)}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
+    const dp2 = (n: number) => n.toFixed(2);
     const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
       fcLabel,
-      (wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos).toFixed(2),
-      wall ? '-' : r.DCR_flex_neg.toFixed(2),
-      (wall ? (r.DCR_shear_wall ?? 0) : r.DCR_shear).toFixed(2),
-      wall ? '-' : r.DCR_torsion.toFixed(2), r.status];
+      dp2(wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos),
+      wall ? '-' : dp2(r.DCR_flex_neg),
+      dp2(wall ? (r.DCR_shear_wall ?? 0) : r.DCR_shear),
+      wall ? '-' : dp2(r.DCR_torsion), r.status];
     vals.forEach((v, i) => {
       let clr = C.dark;
       if (i === 9) clr = statusColor(r.status);
@@ -627,12 +629,12 @@ export async function buildReportBytes(
         ? [lc.label.slice(0, 12),
             u.moment_(Math.max(lc.Mu_pos, lc.Mu_neg)), u.force_(lc.Vu), u.force_(lc.Pu),
             u.moment_(r.phi_Mn_wall ?? 0), u.force_(r.phi_Vn_wall ?? 0),
-            (r.DCR_flex_wall ?? 0).toFixed(3), (r.DCR_shear_wall ?? 0).toFixed(3),
-            (r.DCR_sbzAsh ?? 0).toFixed(3), r.sbzRequired ? 'Yes' : 'No', r.status]
+            (r.DCR_flex_wall ?? 0).toFixed(2), (r.DCR_shear_wall ?? 0).toFixed(2),
+            (r.DCR_sbzAsh ?? 0).toFixed(2), r.sbzRequired ? 'Yes' : 'No', r.status]
         : [lc.label.slice(0, 12),
             u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
             u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
-            r.DCR_flex_pos.toFixed(3), r.DCR_flex_neg.toFixed(3), r.DCR_shear.toFixed(3), r.status];
+            r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2), r.status];
       lcVals.forEach((v, i) => {
         let clr = C.dark;
         if (i === 10) clr = statusColor(r.status);
@@ -652,15 +654,20 @@ export async function buildReportBytes(
       const dcrRows: [string, number][] = isWall
         ? [['P-M', worst.DCR_flex_wall ?? 0], ['Shear', worst.DCR_shear_wall ?? 0], ['SBZ Ash', worst.DCR_sbzAsh ?? 0]]
         : m.memberType === 'column'
-        ? [['P-M', worst.DCR_PM ?? 0], ['Shear', worst.DCR_shear]]
+        ? [['P-M', worst.DCR_PM ?? 0], ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion]]
         : [['Flexure +', worst.DCR_flex_pos], ['Flexure -', worst.DCR_flex_neg],
-           ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion]];
+           ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion],
+           ...(worst.DCR_crack != null && worst.DCR_crack > 0
+             ? [['Crack (SLS)', worst.DCR_crack] as [string, number]] : [])];
       for (const [lbl, dcr] of dcrRows) {
         drawDCRBar(ctx, lbl, dcr, margin, y, barW);
         y -= 14;
       }
       if (isWall) {
-        text(ctx, `rho_l=${(worst.rhoL ?? 0).toFixed(4)}  rho_t=${(worst.rhoT ?? 0).toFixed(4)}  SBZ ${worst.sbzRequired ? `required, lbe=${(worst.sbzLength ?? 0).toFixed(1)}${u.dimSfx}` : 'not required'}`,
+        // sbzLength is stored in inches internally; convert to display units
+        const sbzLenStr = worst.sbzLength != null
+          ? `lbe=${u.dim(worst.sbzLength)}${u.dimSfx}` : '';
+        text(ctx, `rho_l=${((worst.rhoL ?? 0) * 100).toFixed(2)}%  rho_t=${((worst.rhoT ?? 0) * 100).toFixed(2)}%  SBZ ${worst.sbzRequired ? `required, ${sbzLenStr}` : 'not required'}`,
           margin, y - 2, 8, C.mid);
         y -= 14;
       }
