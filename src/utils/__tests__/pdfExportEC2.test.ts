@@ -10,6 +10,7 @@
  * Also serves as a regression guard for the kt/wLimitFace partial-object
  * crash (calcBreakdownEC2 must merge with DEFAULT_CRACK_PARAMS).
  */
+/// <reference types="node" />
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, it, expect, beforeAll } from 'vitest';

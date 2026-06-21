@@ -518,7 +518,7 @@ async function drawCalcSections(
       const ng = step.result.includes('✗');
       const ok = step.result.includes('✓') && step.result.includes('DCR');
       rect(ctx, margin, y - rowH + 4, usable, rowH, ng ? rgb(0.99, 0.95, 0.95) : ok ? rgb(0.95, 0.99, 0.96) : C.white);
-      text(ctx, step.ref, margin + cx.ref + 2, y - 5, 7, C.blue);
+      text(ctx, step.ref.replace(/^ACI\s+318-\d+\s*/i, ''), margin + cx.ref + 2, y - 5, 7, C.blue);
       labelLines.forEach((ln, i) => text(ctx, ln, margin + cx.label + 2, y - 5 - i * 9, 7, C.dark));
       eqLines.forEach((ln, i) => text(ctx, ln, margin + cx.eq + 2, y - 5 - i * 9, 7, rgb(0.49, 0.23, 0.93)));
       subLines.forEach((ln, i) => text(ctx, ln, margin + cx.sub + 2, y - 5 - i * 9, 7, C.mid));

@@ -4,6 +4,7 @@
  * DejaVu Sans is embedded so Greek/subscript/superscript render natively;
  * winAnsiSafe now only strips C0/C1 control chars.
  */
+/// <reference types="node" />
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
