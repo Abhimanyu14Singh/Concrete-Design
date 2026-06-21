@@ -56,8 +56,9 @@ function makeU(isEC2: boolean): UCtx {
     spanSfx: 'm',
     force: 'kN',
     moment: 'kN·m',
-    stressVal:    (v) => `${v} MPa`,
-    stressBarVal: (v) => `${v} MPa`,
+    // Values are stored in psi internally; convert to MPa for EC2 display.
+    stressVal:    (v) => `${(v * 0.00689476).toFixed(1)} MPa`,
+    stressBarVal: (v) => `${(v * 0.00689476).toFixed(0)} MPa`,
   } : {
     dimSfx: '"',
     spanSfx: 'ft',
@@ -163,7 +164,7 @@ function worstDCROf(r: DesignResults): number {
 /** Routes walls to the wall engine (same branch as the results screen). */
 const _resultCache = new Map<string, DesignResults>();
 function memberResult(m: Member, lc: LoadCase, code?: string): DesignResults {
-  const key = `${m.id}|${lc.id}`;
+  const key = `${m.id}|${lc.id}|${code ?? ''}`;
   const hit = _resultCache.get(key);
   if (hit) return hit;
   const r = m.memberType === 'wall' && m.wallRebar
@@ -537,7 +538,7 @@ export async function buildReportBytes(
       ? `dia${m.section.diameter ?? m.section.b}${u.dimSfx}`
       : `${m.section.b}${u.dimSfx}x${m.section.h}${u.dimSfx}`;
     const wall = m.memberType === 'wall' && !!m.wallRebar;
-    const fcLabel = isEC2 ? `${m.material.fc}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
+    const fcLabel = isEC2 ? `${(m.material.fc * 0.00689476).toFixed(0)}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
     const vals = [m.id, m.label.slice(0, 12), m.memberType, sec,
       fcLabel,
       (wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos).toFixed(2),
@@ -644,8 +645,14 @@ export async function buildReportBytes(
       }
       // EC2 SLS crack-width check (wk vs limit)
       if (opts.includeCrack && isEC2 && (worst.wk_bot != null || worst.wk_top != null)) {
-        const wLim = m.crackParams?.wLimitBot ?? 0.3;
-        const wk = Math.max(worst.wk_bot ?? 0, worst.wk_top ?? 0);
+        // Use the face that governs and its corresponding limit.
+        const wk_bot = worst.wk_bot ?? 0;
+        const wk_top = worst.wk_top ?? 0;
+        const botGoverns = wk_bot >= wk_top;
+        const wk = botGoverns ? wk_bot : wk_top;
+        const wLim = botGoverns
+          ? (m.crackParams?.wLimitBot ?? 0.3)
+          : (m.crackParams?.wLimitTop ?? 0.3);
         const okCrack = wk <= wLim;
         text(ctx, `Crack width wk = ${wk.toFixed(3)} mm  /  limit ${wLim.toFixed(2)} mm  ${okCrack ? '(OK)' : '(EXCEEDS)'}  [EC2 §7.3.4]`,
           margin, y - 2, 8, okCrack ? C.green : C.red, bold);
