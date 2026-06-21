@@ -72,7 +72,7 @@ export default function ExportModal({ project, onClose }: Props) {
                 {busy === 'pdf' ? 'Generating PDF…' : 'PDF Report'}
               </div>
               <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>
-                Cover page, member summaries, DCR tables, warnings with ACI references
+                Cover page, member summaries, DCR tables, warnings and code references
               </div>
             </div>
           </button>

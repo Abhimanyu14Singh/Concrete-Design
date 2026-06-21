@@ -462,7 +462,7 @@ export default function MapCanvas({
               </>
             )
           ) : (
-            <div style={{ color: '#9ca3af' }}>Not yet designed</div>
+            <div style={{ color: '#9ca3af' }}>No results — run design first</div>
           )}
           {hoveredInfo?.warnings && hoveredInfo.warnings.length > 0 && (() => {
             const sorted = [...hoveredInfo.warnings].sort((a, b) =>

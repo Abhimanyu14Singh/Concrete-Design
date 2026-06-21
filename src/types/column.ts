@@ -1,13 +1,4 @@
-/**
- * Column-specific types — stubs for future ACI 318-19 §10 implementation.
- *
- * To add column design:
- *  1. Fill out the interfaces below.
- *  2. Create src/engines/column/index.ts implementing DesignEngine<ColumnSection, ColumnRebar, ColumnLoadCase, ColumnResults>.
- *  3. Register the engine in src/engines/index.ts.
- *  4. Add ColumnMember to the Member union in src/types/member.ts.
- *  5. Add 'rectangular_column' | 'circular_column' to MemberType in src/types/index.ts.
- */
+/** Column-specific types for ACI 318-19 §10 / EN 1992-1-1 §5 column design. */
 
 import type { BaseMember, BaseLoadCase, BaseDesignResults, BarGroup, TieLayout } from './common';
 
@@ -35,7 +26,7 @@ export interface ColumnLoadCase extends BaseLoadCase {
   Vuy: number;  // Factored shear in y-direction (kips)
 }
 
-/** ACI 318-19 column design results (placeholder). */
+/** ACI 318-19 / EC2 column design results. */
 export interface ColumnResults extends BaseDesignResults {
   phi_Pn: number;
   phi_Mnx: number;
@@ -45,7 +36,7 @@ export interface ColumnResults extends BaseDesignResults {
   DCR_shear: number;
 }
 
-/** A concrete column member (stub — not yet implemented). */
+/** A concrete column member. */
 export interface ColumnMember extends BaseMember {
   memberType: 'column';
   section: ColumnSection;
