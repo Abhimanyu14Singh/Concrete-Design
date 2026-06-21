@@ -21,8 +21,10 @@ export function generateBreakdownEC2(
   rebar: RebarLayout,
   load: LoadCase,
   _span = 20,
-  crack: CrackControlParams = DEFAULT_CRACK_PARAMS,
+  crackIn: CrackControlParams = DEFAULT_CRACK_PARAMS,
 ): CalcSection[] {
+  // Merge with defaults so partial objects from old saves don't crash on missing fields.
+  const crack: CrackControlParams = { ...DEFAULT_CRACK_PARAMS, ...crackIn };
   const b = (section.bw ?? section.b) * IN_TO_MM;
   const h = (section.h ?? 12) * IN_TO_MM;
   const cover = section.coverClear * IN_TO_MM;
