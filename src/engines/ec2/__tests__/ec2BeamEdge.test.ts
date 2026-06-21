@@ -273,3 +273,151 @@ describe('designMemberEC2 — no stirrups case', () => {
     expect(r.phi_Vn).toBeGreaterThan(0);
   });
 });
+
+// ── §8.2 spacing — multi-layer, side bars, stirrup transverse ────────────────
+describe('EC2 §8.2 spacing — multi-layer bottom bars', () => {
+  it('no warning when all layers fit within §8.2 limits', () => {
+    // 3Ø16 outer + 2Ø16 inner, 300 mm web — generous spacing
+    const goodRb: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 3, barSize: -16 }, { numBars: 2, barSize: -16 }],
+      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
+      layerClearSpacing: mmToIn(30),
+    };
+    const r = designMemberEC2(sec, mat, goodRb,
+      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    const spacingWarns = r.warnings.filter(w => w.code === 'EC2 §8.2');
+    expect(spacingWarns).toHaveLength(0);
+  });
+
+  it('§8.2 error fires for inner bottom layer when bars are too crowded', () => {
+    // 6Ø25 in a 300 mm web — db=25, clear = (300-2×35-2×8-6×25)/5 = (214-150)/5 = 12.8 mm < 25 mm
+    const crowdedRb: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 6, barSize: -25 }, { numBars: 4, barSize: -25 }],
+      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
+      layerClearSpacing: mmToIn(28),
+    };
+    const r = designMemberEC2(sec, mat, crowdedRb,
+      { id: 'lc', label: '', Mu_pos: knmToKft(200), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    // Both layers should trigger: outer 6Ø25 definitely fails
+    const spacingWarns = r.warnings.filter(w => w.code === 'EC2 §8.2');
+    expect(spacingWarns.length).toBeGreaterThan(0);
+    expect(spacingWarns.some(w => w.message.includes('Bottom'))).toBe(true);
+  });
+
+  it('§8.2 vertical layer spacing warning when layers are too close', () => {
+    // layerClearSpacing = 15 mm < max(Ø16=16, dg+5=25, 20) = 25 mm
+    const tightLayers: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 3, barSize: -16 }, { numBars: 2, barSize: -16 }],
+      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
+      layerClearSpacing: mmToIn(15), // 15 mm < 25 mm (dg+5 governs)
+    };
+    const r = designMemberEC2(sec, mat, tightLayers,
+      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    const vertWarn = r.warnings.find(w => w.code === 'EC2 §8.2' && w.message.includes('vertical'));
+    expect(vertWarn).toBeDefined();
+  });
+
+  it('no vertical layer warning when layerClearSpacing ≥ §8.2 limit', () => {
+    const okLayers: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 3, barSize: -16 }, { numBars: 2, barSize: -16 }],
+      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
+      layerClearSpacing: mmToIn(30), // 30 mm > 25 mm — OK
+    };
+    const r = designMemberEC2(sec, mat, okLayers,
+      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    const vertWarn = r.warnings.find(w => w.code === 'EC2 §8.2' && w.message.includes('vertical'));
+    expect(vertWarn).toBeUndefined();
+  });
+});
+
+describe('EC2 §8.2 spacing — side/face bars', () => {
+  it('§8.2 error fires when side bars are too crowded in the web', () => {
+    // 6Ø25 side bars in a 300 mm web — same congestion as bottom layer test
+    const secWithSide: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 3, barSize: -16 }],
+      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
+      sideBars: [{ numBars: 6, barSize: -25 }],
+    };
+    const r = designMemberEC2(sec, mat, secWithSide,
+      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    const sideWarn = r.warnings.find(w => w.code === 'EC2 §8.2' && w.message.includes('Side'));
+    expect(sideWarn).toBeDefined();
+  });
+
+  it('no §8.2 warning when side bars are well-spaced', () => {
+    const secWithSide: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 3, barSize: -16 }],
+      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
+      sideBars: [{ numBars: 2, barSize: -12 }], // 2Ø12 — wide clear spacing
+    };
+    const r = designMemberEC2(sec, mat, secWithSide,
+      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    const sideWarn = r.warnings.find(w => w.code === 'EC2 §8.2' && w.message.includes('Side'));
+    expect(sideWarn).toBeUndefined();
+  });
+});
+
+describe('EC2 §9.2.2(8) stirrup transverse leg spacing', () => {
+  it('warning fires when leg spacing exceeds min(0.75d, 600 mm)', () => {
+    // 2-leg stirrup in 300 mm web: leg spacing = (300 - 2×35 - 2×8) / 1 = 214 mm
+    // d ≈ 447 mm → s_trans_max = min(0.75×447, 600) = 335 mm → 214 mm < 335, no warn
+    // Use a very wide beam (1000 mm) with 2 legs: leg spacing = (1000-2×35-2×8)/1 = 914 mm > 600 mm
+    const wideSec: SectionDimensions = {
+      type: 'rectangular_beam',
+      b: mmToIn(1000), h: mmToIn(600), coverClear: mmToIn(35), stirrupDia: -8,
+    };
+    const wideRb: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 4, barSize: -20 }],
+      ties: { barSize: -8, spacing: mmToIn(200), legs: 2 },
+    };
+    const r = designMemberEC2(wideSec, mat,wideRb,
+      { id: 'lc', label: '', Mu_pos: knmToKft(300), Mu_neg: 0, Vu: knToKip(150), Tu: 0, Pu: 0 },
+      mmToIn(8000), crack);
+    const legWarn = r.warnings.find(w => w.code === 'EC2 §9.2.2(8)');
+    expect(legWarn).toBeDefined();
+    expect(legWarn!.message).toMatch(/leg spacing/);
+  });
+
+  it('no §9.2.2(8) warning for a standard 2-leg stirrup in 300 mm web', () => {
+    // leg spacing ≈ 214 mm < 335 mm → no warning
+    const r = designMemberEC2(sec, mat, rb,
+      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
+      mmToIn(6000), crack);
+    const legWarn = r.warnings.find(w => w.code === 'EC2 §9.2.2(8)');
+    expect(legWarn).toBeUndefined();
+  });
+
+  it('adding more legs resolves the §9.2.2(8) warning for a wide beam', () => {
+    const wideSec: SectionDimensions = {
+      type: 'rectangular_beam',
+      b: mmToIn(1000), h: mmToIn(600), coverClear: mmToIn(35), stirrupDia: -8,
+    };
+    const rb2Legs: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: -16 }],
+      botBars: [{ numBars: 4, barSize: -20 }],
+      ties: { barSize: -8, spacing: mmToIn(200), legs: 2 },
+    };
+    const rb4Legs: RebarLayout = { ...rb2Legs, ties: { ...rb2Legs.ties!, legs: 4 } };
+    const rWarn = designMemberEC2(wideSec, mat, rb2Legs,
+      { id: 'lc', label: '', Mu_pos: knmToKft(300), Mu_neg: 0, Vu: knToKip(150), Tu: 0, Pu: 0 },
+      mmToIn(8000), crack);
+    const rOK = designMemberEC2(wideSec, mat, rb4Legs,
+      { id: 'lc', label: '', Mu_pos: knmToKft(300), Mu_neg: 0, Vu: knToKip(150), Tu: 0, Pu: 0 },
+      mmToIn(8000), crack);
+    expect(rWarn.warnings.some(w => w.code === 'EC2 §9.2.2(8)')).toBe(true);
+    expect(rOK.warnings.some(w  => w.code === 'EC2 §9.2.2(8)')).toBe(false);
+  });
+});

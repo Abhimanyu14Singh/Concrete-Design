@@ -401,13 +401,14 @@ export function designMemberEC2(
   // ── Minimum clear bar spacing §8.2 ──
   // Clear horizontal distance between parallel bars ≥ max(k1·db, dg + k2, 20 mm).
   // Recommended values: k1 = 1, k2 = 5 mm. dg = max aggregate size (default 20 mm
-  // — typical when unspecified). Checked on the outer (first) layer of each face,
-  // which is where bars are most congested.
+  // — typical when unspecified).
   const DG_MM = 20;              // assumed max aggregate size when not given
   const k1 = 1, k2 = 5;
+
+  // §8.2 horizontal clear check for one bar group in a horizontal layer.
   const checkClearSpacing = (
     grp: { numBars: number; barSize: number } | undefined,
-    face: 'Bottom' | 'Top',
+    face: string,
     active: boolean,
   ) => {
     if (!grp || grp.numBars < 2 || !active) return;
@@ -422,8 +423,44 @@ export function designMemberEC2(
         severity: 'error',
       });
   };
-  checkClearSpacing(rebar.botBars[0], 'Bottom', load.Mu_pos > 0 || As_bot_mm2 > 0);
-  checkClearSpacing(rebar.topBars[0], 'Top', load.Mu_neg > 0 || As_top_mm2 > 0);
+
+  // Check every layer on each face (§8.2 applies to all layers, not just the outermost).
+  for (const grp of rebar.botBars) checkClearSpacing(grp, 'Bottom', load.Mu_pos > 0 || As_bot_mm2 > 0);
+  for (const grp of rebar.topBars) checkClearSpacing(grp, 'Top',    load.Mu_neg > 0 || As_top_mm2 > 0);
+
+  // §8.2 side/face bars — each group uses the full web width available.
+  if (rebar.sideBars) {
+    for (const grp of rebar.sideBars) checkClearSpacing(grp, 'Side face', true);
+  }
+
+  // §8.2 vertical clear spacing between stacked bar layers ≥ max(db, dg+5mm, 20mm).
+  for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
+    const layers = bars.filter(g => g.numBars > 0);
+    if (layers.length < 2) continue;
+    // Layer clear spacing (stored in rebar.layerClearSpacing or default 25 mm = 1 in)
+    const sClear_mm = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
+    const dbMax_mm = Math.max(...layers.map(g => getBarDiam(g.barSize) * IN_TO_MM));
+    const vMin_mm = Math.max(dbMax_mm, DG_MM + k2, 20);
+    if (sClear_mm < vMin_mm - 0.5)
+      warnings.push({
+        code: 'EC2 §8.2',
+        message: `${face} bars: vertical clear spacing between layers ${sClear_mm.toFixed(0)} mm < min ${vMin_mm.toFixed(0)} mm (max of db=${dbMax_mm.toFixed(0)}, dg+5=${DG_MM + k2}, 20 mm)`,
+        severity: 'warning',
+      });
+  }
+
+  // §9.2.2(8) max transverse spacing between stirrup legs ≤ min(0.75d, 600 mm).
+  if (rebar.ties && rebar.ties.legs >= 2) {
+    const s_trans_max = Math.min(0.75 * d_bot, 600); // mm
+    // Transverse leg spacing = (bw − 2·cover − 2·stirrupØ) / (nLegs − 1)
+    const s_trans = (b_mm - 2 * cover_mm - 2 * stirrupD_mm) / (rebar.ties.legs - 1);
+    if (s_trans > s_trans_max + 0.5)
+      warnings.push({
+        code: 'EC2 §9.2.2(8)',
+        message: `Stirrup leg spacing ${s_trans.toFixed(0)} mm > max ${s_trans_max.toFixed(0)} mm (min(0.75d, 600 mm)) — add intermediate stirrup legs`,
+        severity: 'warning',
+      });
+  }
 
   // §6.3.2(3): longitudinal torsion steel is distributed around the perimeter.
   // The two horizontal faces (top/bot chords) carry ~half between them; report
