@@ -207,9 +207,13 @@ describe('designMemberEC2 — imperial in / imperial out', () => {
     expect(noTu.DCR_torsion).toBe(0);
   });
 
-  it('torsion below cracking threshold may be neglected (DCR 0)', () => {
+  it('torsion below cracking threshold shows T_Ed/T_Rd,c utilization (0 < DCR < 1)', () => {
+    // Below the cracking threshold the DCR is reported as T_Ed / T_Rd,c (the
+    // utilization of the concrete cracking resistance) so the user always sees
+    // a real ratio rather than a hard 0. It must stay below 1 for tiny torsion.
     const tiny = designMemberEC2(section, material, rebar, { ...load, Tu: 0.5 });
-    expect(tiny.DCR_torsion).toBe(0);
+    expect(tiny.DCR_torsion).toBeGreaterThan(0);
+    expect(tiny.DCR_torsion).toBeLessThan(1);
   });
 });
 

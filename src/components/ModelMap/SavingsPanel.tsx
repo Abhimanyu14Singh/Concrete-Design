@@ -4,7 +4,7 @@
  */
 import { useState, useMemo, Fragment } from 'react';
 import type { Member, DesignResults, DesignGroup } from '../../types';
-import { computeSavings, familyKey, steelWeightPerFt } from '../../utils/autoGroup';
+import { computeSavings, familyKey, steelWeightPerFt, flexSteelRatioPct } from '../../utils/autoGroup';
 import { useUnits } from '../../contexts/UnitsContext';
 
 interface SavingsPanelProps {
@@ -62,15 +62,37 @@ export default function SavingsPanel({
     return { longLb, stirrupLb, totalLb: longLb + stirrupLb, totalLenFt };
   }, [members]);
 
-  // Per-group rollup
+  // Per-group rollup. Reinforcement ratio ρ is averaged over the group's
+  // members for top and bottom faces. The "yield" ρ is what each face would
+  // drop to if trimmed to the required area at the target DCR — i.e. the ρ the
+  // estimated savings correspond to. Computed by scaling the provided ρ by
+  // (As required / As provided) per member, so it needs no extra geometry.
+  const memberById = useMemo(() => new Map(members.map(m => [m.id, m])), [members]);
+
   const groupSavings = useMemo(() => {
     return designGroups.map(g => {
       const lb = savings.perGroup[g.id] ?? 0;
-      const members = savings.perMember.filter(m => memberGroupId[m.memberId] === g.id);
-      const worstDCR = members.length ? Math.max(...members.map(m => m.dcrGov)) : 0;
-      return { group: g, lb, worstDCR, count: members.length };
+      const mems = savings.perMember.filter(m => memberGroupId[m.memberId] === g.id);
+      const worstDCR = mems.length ? Math.max(...mems.map(m => m.dcrGov)) : 0;
+
+      let rtP = 0, rbP = 0, rtY = 0, rbY = 0, n = 0;
+      for (const sm of mems) {
+        const member = memberById.get(sm.memberId);
+        if (!member) continue;
+        const rTop = flexSteelRatioPct(member, 'top');
+        const rBot = flexSteelRatioPct(member, 'bot');
+        rtP += rTop; rbP += rBot;
+        rtY += sm.AsProvTop > 0 ? rTop * Math.min(1, sm.AsReqTop / sm.AsProvTop) : rTop;
+        rbY += sm.AsProvBot > 0 ? rBot * Math.min(1, sm.AsReqBot / sm.AsProvBot) : rBot;
+        n++;
+      }
+      const rho = n > 0
+        ? { topProv: rtP / n, botProv: rbP / n, topYield: rtY / n, botYield: rbY / n }
+        : null;
+
+      return { group: g, lb, worstDCR, count: mems.length, rho };
     }).sort((a, b) => b.lb - a.lb);
-  }, [savings, designGroups, memberGroupId]);
+  }, [savings, designGroups, memberGroupId, memberById]);
 
   // Consolidation advisor: look for adjacent groups in the same family where merging is cheap
   const consolidationTips = useMemo(() => {
@@ -249,7 +271,7 @@ export default function SavingsPanel({
               </tr>
             </thead>
             <tbody>
-              {groupSavings.map(({ group, lb, worstDCR, count }) => (
+              {groupSavings.map(({ group, lb, worstDCR, count, rho }) => (
                 <Fragment key={group.id}>
                   <tr
                     style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
@@ -269,6 +291,17 @@ export default function SavingsPanel({
                       {totalInPlaceLb > 0 ? (lb / totalInPlaceLb * 100).toFixed(1) + '%' : '—'}
                     </td>
                   </tr>
+                  {expanded === group.id && rho && (
+                    <tr style={{ background: '#f9fafb' }}>
+                      <td colSpan={5} style={{ padding: '3px 12px', fontSize: 9, color: '#6b7280' }}>
+                        <span style={{ fontWeight: 600 }}>ρ (avg):</span>{' '}
+                        bot <span style={{ fontFamily: 'monospace', color: '#374151' }}>{rho.botProv.toFixed(2)}%</span>
+                        {' → '}<span style={{ fontFamily: 'monospace', color: '#16a34a' }}>{rho.botYield.toFixed(2)}%</span>
+                        {'   '}top <span style={{ fontFamily: 'monospace', color: '#374151' }}>{rho.topProv.toFixed(2)}%</span>
+                        {' → '}<span style={{ fontFamily: 'monospace', color: '#16a34a' }}>{rho.topYield.toFixed(2)}%</span>
+                      </td>
+                    </tr>
+                  )}
                   {expanded === group.id && savings.perMember
                     .filter(m => memberGroupId[m.memberId] === group.id)
                     .map(m => (

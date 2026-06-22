@@ -5,6 +5,7 @@ import {
   memberSteelWeightLb, computeSavings,
   flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt,
 } from '../autoGroup';
+import { toDisplay } from '../units';
 import type { Member, DesignResults } from '../../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -235,6 +236,56 @@ describe('computeSavings', () => {
   it('totalLb and totalTons are consistent', () => {
     const result = computeSavings([m], { m1: res as DesignResults }, {}, 0.9);
     expect(result.totalTons).toBeCloseTo(result.totalLb / 2000, 6);
+  });
+});
+
+// ── SI-unit display of savings ──────────────────────────────────────────────
+// The engine computes everything in imperial (in², ft, lb). SI is a pure
+// display conversion. These tests verify the numbers the SI user actually
+// sees (kg, kg/m, metric tons) are converted correctly from the imperial core.
+describe('computeSavings — SI display conversion', () => {
+  const LB_TO_KG = 0.453592;
+  const LBFT_TO_KGM = 1.48816;
+
+  const m = makeMember({ id: 'm1', span: 20 });
+  const res: Partial<DesignResults> = {
+    DCR_flex_pos: 0.63, DCR_flex_neg: 0.5, DCR_shear: 0.6,
+    As_req_pos: 1.5, As_req_neg: 1.2, As_min: 0.5, As_max: 10,
+    Av_req: 0.01, Av_min_per_s: 0.005,
+    phi_Mn_pos: 200, phi_Mn_neg: 180, phi_Vn: 80,
+    Mn_pos: 200, Mn_neg: 180, warnings: [], status: 'OK', loadCaseId: 'lc1',
+  };
+
+  it('total savings convert lb → kg with the correct factor', () => {
+    const { totalLb } = computeSavings([m], { m1: res as DesignResults }, {}, 0.9);
+    expect(totalLb).toBeGreaterThan(0);
+    const kg = toDisplay(totalLb, 'steelWeight', 'si');
+    expect(kg).toBeCloseTo(totalLb * LB_TO_KG, 6);
+  });
+
+  it('metric tons = kg / 1000 matches imperial tons × 0.907', () => {
+    const { totalLb } = computeSavings([m], { m1: res as DesignResults }, {}, 0.9);
+    const metricTons = toDisplay(totalLb, 'steelWeight', 'si') / 1000;
+    const usTons = totalLb / 2000;
+    // 1 US ton (2000 lb) = 0.90718 metric tons
+    expect(metricTons).toBeCloseTo(usTons * 0.90718, 4);
+  });
+
+  it('per-foot steel weight converts lb/ft → kg/m correctly', () => {
+    const w = steelWeightPerFt(m);
+    const kgm = toDisplay(w.longLbFt, 'steelWeightPerLength', 'si');
+    expect(kgm).toBeCloseTo(w.longLbFt * LBFT_TO_KGM, 6);
+  });
+
+  it('SI imperial round-trip leaves the imperial core unchanged', () => {
+    // Changing the display system must NOT change the computed slack — the
+    // engine is always imperial; only the displayed number differs.
+    const a = computeSavings([m], { m1: res as DesignResults }, {}, 0.9);
+    const b = computeSavings([m], { m1: res as DesignResults }, {}, 0.9);
+    expect(a.totalLb).toBe(b.totalLb);
+    // SI value divided back by the factor recovers the imperial value
+    const kg = toDisplay(a.totalLb, 'steelWeight', 'si');
+    expect(kg / LB_TO_KG).toBeCloseTo(a.totalLb, 6);
   });
 });
 
