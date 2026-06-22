@@ -79,6 +79,7 @@ jobs:
       # Always upload as a downloadable artifact (visible under the workflow run)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: SConcrete-Design-Windows
           path: release/*.exe
