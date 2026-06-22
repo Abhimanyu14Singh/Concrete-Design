@@ -17,6 +17,7 @@ import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import InfoTooltip from '../common/InfoTooltip';
 import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR } from '../../theme';
+import { flexSteelRatioPct } from '../../utils/autoGroup';
 
 interface Props {
   member: Member;
@@ -377,6 +378,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 minimum: max(0.26·fctm/fyk, 0.0013)·bt·d' : 'ACI §9.6.1 minimum: max(3√f\'c/fy, 200/fy)·bw·d'} />
           <KV k="As max" v={fmt(result.As_max, 'area')}
             tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 maximum: 0.04·Ac' : 'ACI §9.3.3.1 maximum: 0.04·Ag'} />
+          <KV k="ρ bot" v={`${flexSteelRatioPct(member, 'bot').toFixed(3)}%`}
+            tip="Bottom steel ratio ρ = As,bot / (bw · d). Effective depth d measured to centroid of tension steel." />
+          <KV k="ρ top" v={`${flexSteelRatioPct(member, 'top').toFixed(3)}%`}
+            tip="Top steel ratio ρ = As,top / (bw · d)." />
 
           <SectionLabel title="Shear" />
           <KV k={cap.Vc} v={fmt(result.Vc, 'force')}
@@ -404,7 +409,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
           <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')}
             tip="Design torsional resistance from closed stirrups. Checked against Tu." />
           <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion}
-            tip="Torsion DCR = Tu / φTn. 0.0 when Tu ≤ φTcr (torsion negligible)." />
+            tip={code === 'EN1992-1-1'
+              ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
+              : 'Torsion DCR = Tu / φTn.'} />
 
           {code === 'EN1992-1-1' && (
             <>

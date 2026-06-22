@@ -533,7 +533,11 @@ export function designMemberEC2(
   const DCR_flex_pos = MRd_pos > 0 ? MEd_pos / MRd_pos : (MEd_pos > 0 ? Infinity : 0);
   const DCR_flex_neg = MRd_neg > 0 ? MEd_neg / MRd_neg : (MEd_neg > 0 ? Infinity : 0);
   const DCR_shear    = VRd > 0 ? VEd / VRd : (VEd > 0 ? Infinity : 0);
-  const DCR_torsion  = TEd <= TRdc_val ? 0 : (TRd > 0 ? TEd / TRd : Infinity);
+  // Below cracking threshold show Tu/TRdc (utilization of concrete resistance);
+  // above it show Tu/TRd (utilization of full stirrup resistance).
+  const DCR_torsion  = TEd <= TRdc_val
+    ? (TRdc_val > 0 ? TEd / TRdc_val : 0)
+    : (TRd > 0 ? TEd / TRd : Infinity);
 
   if (DCR_flex_pos > 1)
     warnings.push({ code: 'EC2 §6.1', message: `Positive flexure NG: M_Ed = ${MEd_pos.toFixed(1)} kN·m > M_Rd = ${MRd_pos.toFixed(1)} kN·m`, severity: 'error' });

@@ -116,7 +116,10 @@ export default function ForceDiagram({ member, result, height = 150 }: Props) {
       </ResponsiveContainer>
 
       <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 }}>
-        Moment Diagram — envelope ({label('moment')}, sagging plotted down)
+        Moment Diagram — envelope of imported combos ({label('moment')}, sagging plotted down)
+      </div>
+      <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 2 }}>
+        Hover values show the envelope at each imported station. Applied Loads panel shows the max across all stations (used for design).
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>

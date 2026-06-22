@@ -159,8 +159,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         let bestRes: DesignResults | null = null;
         for (const l of m.loads) {
           const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolveCrack(m, project.code, project.slsCombo));
-          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
-          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear)) bestRes = r;
+          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0);
+          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear, bestRes.DCR_torsion, bestRes.DCR_crack ?? 0)) bestRes = r;
           dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);
           dcrShear = Math.max(dcrShear, r.DCR_shear);
         }
