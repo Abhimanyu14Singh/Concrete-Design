@@ -11,6 +11,7 @@ import MemberEditor from '../SectionInput/MemberEditor';
 import MemberResults from '../Results/MemberResults';
 import GroupRebarEditor from '../ModelMap/GroupRebarEditor';
 import InfoTooltip from '../common/InfoTooltip';
+import Dropdown from '../common/Dropdown';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface Props {
@@ -371,9 +372,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     <label style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Design Code</label>
-                    <select style={inp} value={meta.code} onChange={e => setMeta(m => ({ ...m, code: e.target.value as DesignCode }))}>
-                      {DESIGN_CODES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <Dropdown style={inp} value={meta.code} options={DESIGN_CODES.map(c => ({ value: c, label: c }))} onChange={v => setMeta(m => ({ ...m, code: v as DesignCode }))} />
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -629,15 +628,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
             </label>
             <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
               Bar size
-              <select
+              <Dropdown
                 value={skinBarSize}
-                onChange={e => setSkinBarSize(+e.target.value)}
+                options={barSizeOptions(units, skinBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                onChange={v => setSkinBarSize(+v)}
                 style={inp}
-              >
-                {barSizeOptions(units, skinBarSize).map(s => (
-                  <option key={s} value={s}>{formatBarLabel(s)}</option>
-                ))}
-              </select>
+              />
             </label>
             <button
               onClick={applySkinReinforcement}
@@ -659,15 +655,25 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
             DCR Overview <span style={{ color: '#9ca3af' }}>· {barData.length} members</span>
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <select value={dcrGroupFilter} onChange={e => setDcrGroupFilter(e.target.value)} style={{ ...inp, width: 'auto', fontSize: 11 }}>
-              <option value="__all__">All groups</option>
-              {groupSections.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
-              {ungrouped.length > 0 && <option value="__ungrouped__">Ungrouped</option>}
-            </select>
-            <select value={dcrSeriesFilter} onChange={e => setDcrSeriesFilter(e.target.value)} style={{ ...inp, width: 'auto', fontSize: 11 }}>
-              <option value="__all__">All DCRs</option>
-              {DCR_SERIES.map(s => <option key={s.key} value={s.key}>{s.key}</option>)}
-            </select>
+            <Dropdown
+              value={dcrGroupFilter}
+              options={[
+                { value: '__all__', label: 'All groups' },
+                ...groupSections.map(g => ({ value: g.id, label: g.label })),
+                ...(ungrouped.length > 0 ? [{ value: '__ungrouped__', label: 'Ungrouped' }] : []),
+              ]}
+              onChange={setDcrGroupFilter}
+              style={{ ...inp, width: 'auto', fontSize: 11 }}
+            />
+            <Dropdown
+              value={dcrSeriesFilter}
+              options={[
+                { value: '__all__', label: 'All DCRs' },
+                ...DCR_SERIES.map(s => ({ value: s.key, label: s.key })),
+              ]}
+              onChange={setDcrSeriesFilter}
+              style={{ ...inp, width: 'auto', fontSize: 11 }}
+            />
           </div>
         </div>
         <ResponsiveContainer width="100%" height={180}>

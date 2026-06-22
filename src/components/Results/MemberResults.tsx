@@ -16,6 +16,7 @@ import WallSectionView from '../Detailing/WallSectionView';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import InfoTooltip from '../common/InfoTooltip';
+import Dropdown from '../common/Dropdown';
 import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR } from '../../theme';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 
@@ -165,17 +166,12 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
         {/* Load case dropdown — C1: mark governing LC */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>Load Case</span>
-          <select
+          <Dropdown
             value={activeLoad}
-            onChange={e => setActiveLoad(e.target.value)}
+            options={member.loads.map(l => ({ value: l.id, label: `${govSet.has(l.id) ? '★ ' : ''}${l.label}` }))}
+            onChange={setActiveLoad}
             style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', cursor: 'pointer' }}
-          >
-            {member.loads.map(l => (
-              <option key={l.id} value={l.id}>
-                {govSet.has(l.id) ? '★ ' : ''}{l.label}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
         {/* Status pill */}

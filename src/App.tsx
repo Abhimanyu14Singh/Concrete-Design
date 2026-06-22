@@ -10,6 +10,7 @@ import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
 import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import Dropdown from './components/common/Dropdown';
 import { useUnits } from './contexts/UnitsContext';
 import { MEMBER_COLOR } from './theme';
 
@@ -430,11 +431,11 @@ export default function App() {
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ width: 28, height: 28, background: '#2563eb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', color: 'white', flexShrink: 0 }}>
-            SC
+            SD
           </div>
           {sidebarOpen && (
             <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: '#111827' }}>S-Concrete</div>
+              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: '#111827' }}>S-Dashboard</div>
               <div style={{ color: '#9ca3af', fontSize: 10, whiteSpace: 'nowrap' }}>{project.code}</div>
             </div>
           )}
@@ -613,15 +614,12 @@ export default function App() {
           {tab === 'member' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 11, color: '#6b7280' }}>Member:</span>
-              <select
+              <Dropdown
                 value={activeMemberId}
-                onChange={e => setActiveMemberId(e.target.value)}
+                options={project.members.map(m => ({ value: m.id, label: `${m.id} — ${m.label}` }))}
+                onChange={setActiveMemberId}
                 style={{ background: 'white', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', fontSize: 12, color: '#111827' }}
-              >
-                {project.members.map(m => (
-                  <option key={m.id} value={m.id}>{m.id} — {m.label}</option>
-                ))}
-              </select>
+              />
             </div>
           )}
 
@@ -754,21 +752,16 @@ export default function App() {
 
           {/* Project info */}
           <div style={{ fontSize: 11, color: '#6b7280' }}>{project.name}</div>
-          <select
+          <Dropdown
             value={project.code}
-            onChange={e => {
-              const newCode = e.target.value as import('./types').DesignCode;
-              if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') {
-                setUnits('si');
-              }
+            options={(['ACI318-19', 'ACI318-14', 'ACI318-25', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => ({ value: c, label: c }))}
+            onChange={v => {
+              const newCode = v as import('./types').DesignCode;
+              if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
               setProject(p => ({ ...p, code: newCode }));
             }}
             style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
-          >
-            {(['ACI318-19', 'ACI318-14', 'ACI318-25', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          />
         </header>
 
         {/* Content */}

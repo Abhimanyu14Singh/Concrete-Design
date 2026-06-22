@@ -8,6 +8,7 @@ import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea } from '../../utils/concreteDesign';
 import CodeBadge from '../common/CodeBadge';
 import { codeAccent } from '../../theme';
+import Dropdown from '../common/Dropdown';
 
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'rectangular_beam', label: 'Rect. Beam' },
@@ -74,21 +75,18 @@ interface SelectRowProps {
   onChange: (v: string) => void;
 }
 function SelectRow({ label, value, options, onChange }: SelectRowProps) {
-  // Self-heal: a controlled <select> whose `value` matches none of its
-  // <option> values silently desyncs the browser from React (the dropdown
-  // appears frozen — onChange fires with a stale baseline). Guarantee the
-  // current value is always selectable by synthesizing an option for it.
+  // Self-heal: Dropdown handles unknown values natively (it renders the raw
+  // value string if no option matches), but keep the synthesized-option logic
+  // so the option list still shows the current value as a selectable item.
   const hasValue = options.some(o => String(o.value) === String(value));
   const opts = hasValue ? options : [{ value, label: String(value) }, ...options];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
       <label style={{ fontSize: 12, color: '#6b7280', minWidth: 80, flexShrink: 0 }}>{label}</label>
-      <select
-        value={value} onChange={e => onChange(e.target.value)}
+      <Dropdown
+        value={value} options={opts} onChange={onChange}
         style={{ flex: 1, minWidth: 80, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', outline: 'none' }}
-      >
-        {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      />
     </div>
   );
 }
@@ -543,16 +541,15 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         {/* SLS Load Combo picker */}
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>SLS quasi-permanent combo</div>
-          <select
+          <Dropdown
             value={crackP.slsLoadCaseId ?? ''}
-            onChange={e => crack({ slsLoadCaseId: e.target.value || undefined })}
+            options={[
+              { value: '', label: '— use M_qp/Mu ratio —' },
+              ...m.loads.map(lc => ({ value: lc.id, label: lc.label })),
+            ]}
+            onChange={v => crack({ slsLoadCaseId: v || undefined })}
             style={{ width: '100%', fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 5 }}
-          >
-            <option value="">— use M_qp/Mu ratio —</option>
-            {m.loads.map(lc => (
-              <option key={lc.id} value={lc.id}>{lc.label}</option>
-            ))}
-          </select>
+          />
           <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
             If a project-level SLS combo is set in the ETABS import, it is applied
             automatically per beam from its station forces; this picker is a manual override.

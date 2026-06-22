@@ -20,6 +20,7 @@ import SavingsPanel from './SavingsPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import { useUnits } from '../../contexts/UnitsContext';
+import Dropdown from '../common/Dropdown';
 
 type RightTab = 'groups' | 'autogroup' | 'savings';
 type FlexFace = 'top' | 'bot';
@@ -451,10 +452,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
-          <select value={story} onChange={e => setStory(e.target.value)}
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}>
-            {storyDropdownOptions.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <Dropdown
+            value={story}
+            options={storyDropdownOptions.map(s => ({ value: s, label: s }))}
+            onChange={setStory}
+            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}
+          />
 
           {/* Color mode buttons */}
           <div style={{ display: 'flex', gap: 2 }}>

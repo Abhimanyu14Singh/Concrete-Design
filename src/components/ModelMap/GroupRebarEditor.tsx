@@ -8,6 +8,7 @@ import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import InfoTooltip from '../common/InfoTooltip';
+import Dropdown from '../common/Dropdown';
 
 interface Props {
   group: DesignGroup;
@@ -58,10 +59,12 @@ function BarGroupRow({ bg, onChange, label, units }: {
         onChange={v => onChange({ ...bg, numBars: Math.round(v) })}
         style={{ width: 44, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
       <span style={{ fontSize: 11, color: '#9ca3af' }}>×</span>
-      <select value={bg.barSize} onChange={e => onChange({ ...bg, barSize: parseInt(e.target.value) })}
-        style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
-        {barSizeOptions(units, bg.barSize).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
-      </select>
+      <Dropdown
+        value={bg.barSize}
+        options={barSizeOptions(units, bg.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+        onChange={v => onChange({ ...bg, barSize: parseInt(v) })}
+        style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}
+      />
     </div>
   );
 }
@@ -221,11 +224,12 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
           <InfoTooltip text="Transverse reinforcement (links) resisting shear and torsion. Vs = Av·fy·d/s (ACI) or V_Rd,s = Asw/s·z·fywd·cotθ (EC2). Spacing must also satisfy maximum spacing limits." />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <select value={ties.barSize} onChange={e => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(e.target.value) } }))}
-            style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}>
-            {/* stirrup-size bars only: US #3–#6 or metric Ø8–Ø12 (always keep the current value) */}
-            {barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 6 : -s <= 12)).map(s => <option key={s} value={s}>{formatBarLabel(s)}</option>)}
-          </select>
+          <Dropdown
+            value={ties.barSize}
+            options={barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 6 : -s <= 12)).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(v) } }))}
+            style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}
+          />
           {!rebar.tieZones && (
             <>
               <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>

@@ -10,7 +10,7 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: 'S-Concrete Design',
+    title: 'S-Dashboard',
     icon: path.join(__dirname, '../public/favicon.svg'),
     webPreferences: {
       nodeIntegration: false,
@@ -54,7 +54,7 @@ function createWindow() {
         { role: 'togglefullscreen' },
       ],
     },
-    { label: 'Help', submenu: [{ label: 'About S-Concrete', click: () => {} }] },
+    { label: 'Help', submenu: [{ label: 'About S-Dashboard', click: () => {} }] },
   ]);
   Menu.setApplicationMenu(menu);
 }

@@ -17,6 +17,7 @@ import type { Quantity } from '../../utils/units';
 import HistogramPanel from './HistogramPanel';
 import { GROUP_PALETTE } from './groupColors';
 import { useUnits } from '../../contexts/UnitsContext';
+import Dropdown from '../common/Dropdown';
 
 /**
  * Reformat a section-family label for the active unit system. Family labels
@@ -358,21 +359,16 @@ export default function AutoGroupPanel({
       {families.length > 1 && (
         <div>
           <div style={lbl}>{groupAllBeams ? 'Pool' : 'Section family'}</div>
-          <select
+          <Dropdown
             value={activeFamily}
-            onChange={e => setSelectedFamily(e.target.value)}
-            style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', width: '100%' }}>
-            {baseSuggestions.map(s => {
-              // Count always from bins (correct in face-split mode where familyKey has a suffix)
+            options={baseSuggestions.map(s => {
               const count = s.bins.reduce((sum, b) => sum + b.memberIds.length, 0);
               const faceLabel = s.face === 'bot' ? ' — M⁺ gov' : s.face === 'top' ? ' — M⁻ gov' : '';
-              return (
-                <option key={s.familyKey} value={s.familyKey}>
-                  {displayFamilyLabel(s.familyLabel, units)}{faceLabel} ({count} beams)
-                </option>
-              );
+              return { value: s.familyKey, label: `${displayFamilyLabel(s.familyLabel, units)}${faceLabel} (${count} beams)` };
             })}
-          </select>
+            onChange={setSelectedFamily}
+            style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', width: '100%' }}
+          />
         </div>
       )}
 

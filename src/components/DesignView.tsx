@@ -11,6 +11,7 @@ import { runDesign } from '../engines';
 import SectionView from './Detailing/SectionView';
 import ElevationView from './Detailing/ElevationView';
 import CalcBreakdownModal from './Results/CalcBreakdownModal';
+import Dropdown from './common/Dropdown';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer, Cell,
@@ -57,11 +58,7 @@ function Num({ value, onChange, min, step = 1 }: { value: number; onChange: (v: 
 }
 
 function Sel({ value, options, onChange }: { value: string | number; options: { value: string | number; label: string }[]; onChange: (v: string) => void }) {
-  return (
-    <select value={value} onChange={e => onChange(e.target.value)} style={{ ...FLD }}>
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  );
+  return <Dropdown value={value} options={options} onChange={onChange} style={{ ...FLD }} />;
 }
 
 function SectionHeader({ title }: { title: string }) {

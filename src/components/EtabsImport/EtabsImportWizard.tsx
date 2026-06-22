@@ -18,6 +18,7 @@ import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import PlanMap from './PlanMap';
 import { dcrToColor } from './dcrColors';
+import Dropdown from '../common/Dropdown';
 
 interface Props {
   code: DesignCode;
@@ -377,11 +378,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div style={card}>
                   <div style={lbl}>Story / floor</div>
-                  <select style={{ ...inp, width: '100%' }} value={selStory}
-                    onChange={e => { setSelStory(e.target.value); setMatchCount(null); }}>
-                    <option value="">All stories</option>
-                    {stories.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  <Dropdown style={{ ...inp, width: '100%' }} value={selStory}
+                    options={[{ value: '', label: 'All stories' }, ...stories.map(s => ({ value: s, label: s }))]}
+                    onChange={v => { setSelStory(v); setMatchCount(null); }} />
                 </div>
                 <div style={card}>
                   <div style={lbl}>Beam sections (frame properties)</div>
@@ -472,14 +471,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   )}
                   <div style={{ marginTop: 10 }}>
                     <div style={lbl}>SLS quasi-permanent combo (for EC2 crack width)</div>
-                    <select
+                    <Dropdown
                       style={{ ...inp, width: '100%' }}
                       value={slsComboId}
-                      onChange={e => setSlsComboId(e.target.value)}
-                    >
-                      <option value="">— none / use M_qp ratio —</option>
-                      {combos.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                      options={[{ value: '', label: '— none / use M_qp ratio —' }, ...combos.map(c => ({ value: c, label: c }))]}
+                      onChange={setSlsComboId}
+                    />
                     <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
                       If selected, this combo's moments are used as M_qp for EC2 §7.3.4 crack width checks.
                     </div>
@@ -519,13 +516,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div style={{ ...card, display: 'flex', gap: 24, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                 <div>
                   <div style={lbl}>Design code</div>
-                  <select
+                  <Dropdown
                     style={inp}
                     value={wizardCode}
-                    onChange={e => setWizardCode(e.target.value as DesignCode)}>
-                    <option value="ACI318-19">ACI 318-19</option>
-                    <option value="EN1992-1-1">EN 1992-1-1 (EC2)</option>
-                  </select>
+                    options={[{ value: 'ACI318-19', label: 'ACI 318-19' }, { value: 'EN1992-1-1', label: 'EN 1992-1-1 (EC2)' }]}
+                    onChange={v => setWizardCode(v as DesignCode)}
+                  />
                 </div>
                 <div>
                   <div style={lbl}>Units (rebar display)</div>
@@ -589,13 +585,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   ))}
                   <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
                     Stirrup size
-                    <select style={inp} value={seed.stirrupBarSize}
-                      onChange={e => setSeed(s => ({ ...s, stirrupBarSize: +e.target.value }))}>
-                      {/* stirrup-gauge bars only: US #3–#6 or metric Ø8–Ø12 (always keep current) */}
-                      {barSizeOptions(wizardUnits, seed.stirrupBarSize)
-                        .filter(b => b === seed.stirrupBarSize || (b > 0 ? b <= 6 : -b <= 12))
-                        .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
-                    </select>
+                    <Dropdown style={inp} value={seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)}
+                      options={barSizeOptions(wizardUnits, seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4))
+                        .filter(b => b === (seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)) || (b > 0 ? b <= 6 : -b <= 12))
+                        .map(b => ({ value: b, label: formatBarLabel(b) }))}
+                      onChange={v => setSeed(s => ({ ...s, stirrupBarSize: +v }))}
+                    />
                   </label>
                 </div>
                 <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
@@ -612,13 +607,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </label>
                   <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3, opacity: seed.imposeSkinReinf ? 1 : 0.4 }}>
                     Skin bar size
-                    <select style={inp} value={seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)}
+                    <Dropdown style={inp} value={seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)}
                       disabled={!seed.imposeSkinReinf}
-                      onChange={e => setSeed(s => ({ ...s, skinBarSize: +e.target.value }))}>
-                      {barSizeOptions(wizardUnits, seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5))
+                      options={barSizeOptions(wizardUnits, seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5))
                         .filter(b => b === (seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)) || (b > 0 ? b <= 8 : -b <= 20))
-                        .map(b => <option key={b} value={b}>{formatBarLabel(b)}</option>)}
-                    </select>
+                        .map(b => ({ value: b, label: formatBarLabel(b) }))}
+                      onChange={v => setSeed(s => ({ ...s, skinBarSize: +v }))}
+                    />
                   </label>
                 </div>
                 <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
@@ -694,12 +689,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   <div style={{ flex: 1 }} />
                   <label style={{ fontSize: 11, color: '#6b7280' }}>
                     Show DCR ≥{' '}
-                    <select style={inp} value={minDCR} onChange={e => setMinDCR(+e.target.value)}>
-                      <option value={0}>all</option>
-                      <option value={0.7}>0.70</option>
-                      <option value={0.9}>0.90</option>
-                      <option value={1.0}>1.00 (failing)</option>
-                    </select>
+                    <Dropdown style={inp} value={minDCR}
+                      options={[{ value: 0, label: 'all' }, { value: 0.7, label: '0.70' }, { value: 0.9, label: '0.90' }, { value: 1.0, label: '1.00 (failing)' }]}
+                      onChange={v => setMinDCR(+v)}
+                    />
                   </label>
                 </div>
                 <PlanMap
