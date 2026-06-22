@@ -1,6 +1,6 @@
 {
-  "name": "s-concrete-design",
-  "version": "1.0.0",
+  "name": "s-dashboard",
+  "version": "0.1.0",
   "description": "Reinforced concrete design per ACI 318-19",
   "private": true,
   "type": "module",
@@ -48,7 +48,7 @@
   },
   "build": {
     "appId": "com.sconcrete.design",
-    "productName": "S-Concrete Design",
+    "productName": "S-Dashboard",
     "directories": {
       "output": "release"
     },

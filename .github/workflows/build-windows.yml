@@ -117,7 +117,7 @@ jobs:
             - **Commit:** ${{ steps.meta.outputs.short }} (`${{ github.ref_name }}`)
             - **Built:** ${{ steps.meta.outputs.date }}
 
-            Download `${{ steps.find_exe.outputs.name }}` below and run it to install S-Concrete Design on Windows.
+            Download `${{ steps.find_exe.outputs.name }}` below and run it to install S-Dashboard on Windows.
 
             ${{ github.event.inputs.release_note }}
           files: release/*.exe
@@ -127,6 +127,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: "S-Concrete Design ${{ github.ref_name }}"
+          name: "S-Dashboard ${{ github.ref_name }}"
           generate_release_notes: true
           files: release/*.exe
