@@ -174,7 +174,7 @@ describe('designColumnEC2', () => {
     const biax: LoadCase = { id: 'b', label: '', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: knToKip(800), Mux: knmToKft(80), Muy: knmToKft(80) };
     const rUni  = designColumnEC2(sec400, mat, rebar4x20, uni);
     const rBiax = designColumnEC2(sec400, mat, rebar4x20, biax);
-    expect(rBiax.DCR_PM).toBeGreaterThan(rUni.DCR_PM);
+    expect(rBiax.DCR_PM).toBeGreaterThan(rUni.DCR_PM!);
   });
 
   it('circular column: resultant moment used (no curveY)', () => {

@@ -201,7 +201,7 @@ describe('designColumnACI', () => {
     const biaxLoad:  LoadCase = { id: 'b', label: '', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 300, Mux: 80, Muy: 80 };
     const rUni = designColumnACI(rectSec, mat, rebar4x8, uniaxLoad);
     const rBiax = designColumnACI(rectSec, mat, rebar4x8, biaxLoad);
-    expect(rBiax.DCR_PM).toBeGreaterThan(rUni.DCR_PM);
+    expect(rBiax.DCR_PM).toBeGreaterThan(rUni.DCR_PM!);
   });
   it('circular column does not crash with biaxial loads', () => {
     const load: LoadCase = { id: 'lc', label: '', Mu_pos: 0, Mu_neg: 0, Vu: 20, Tu: 0, Pu: 600, Mux: 100, Muy: 100 };
