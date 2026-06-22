@@ -54,6 +54,10 @@ export default function App() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('sc-collapsed-groups') ?? '[]')); } catch { return new Set(); }
   });
+  // Persist collapse state (toggled from either the sidebar or the Dashboard)
+  useEffect(() => {
+    localStorage.setItem('sc-collapsed-groups', JSON.stringify([...collapsedGroups]));
+  }, [collapsedGroups]);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editGroupLabel, setEditGroupLabel] = useState('');
 
@@ -377,7 +381,6 @@ export default function App() {
     setCollapsedGroups(prev => {
       const next = new Set(prev);
       if (next.has(gid)) next.delete(gid); else next.add(gid);
-      localStorage.setItem('sc-collapsed-groups', JSON.stringify([...next]));
       return next;
     });
   }
@@ -784,6 +787,8 @@ export default function App() {
                 project={project}
                 onSelectMember={handleSelectMember}
                 onProjectUpdate={p => setProject(p)}
+                collapsedGroups={collapsedGroups}
+                setCollapsedGroups={setCollapsedGroups}
               />
             )}
             {tab === 'map' && (

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import type { Project, Member, DesignResults, DesignCode, RebarLayout } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
@@ -17,6 +17,9 @@ interface Props {
   project: Project;
   onSelectMember: (id: string) => void;
   onProjectUpdate?: (p: Project) => void;
+  /** Collapse state lifted to App so it survives tab switches. */
+  collapsedGroups: Set<string>;
+  setCollapsedGroups: Dispatch<SetStateAction<Set<string>>>;
 }
 
 interface MemberSummary {
@@ -108,13 +111,12 @@ function DCRChip({ label, value, isWk }: DCRChipProps) {
   );
 }
 
-export default function Dashboard({ project, onSelectMember, onProjectUpdate }: Props) {
+export default function Dashboard({ project, onSelectMember, onProjectUpdate, collapsedGroups, setCollapsedGroups }: Props) {
   const { units, setUnits, fmtVal, label } = useUnits();
   const [editingMeta, setEditingMeta] = useState(false);
   const [skinNumBars, setSkinNumBars] = useState(2);
   const [skinBarSize, setSkinBarSize] = useState(units === 'si' ? -16 : 5);
   const [selection, setSelection] = useState<Selection>({ kind: 'member', id: project.members[0]?.id ?? '' });
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
   const [issuesOpen, setIssuesOpen] = useState(true);
   // Resizable panels
