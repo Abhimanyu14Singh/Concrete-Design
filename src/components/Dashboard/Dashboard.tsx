@@ -789,6 +789,9 @@ function GroupPanel({
         <span style={{ fontSize: 12, color: '#9ca3af' }}>{group.members.length} members</span>
       </div>
 
+      {/* Group DCR summary — averages + distribution histogram */}
+      <GroupDcrSummary members={group.members} summaryById={summaryById} code={code} />
+
       {/* Group reinforcement — full interactive editor */}
       <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
@@ -848,6 +851,88 @@ function GroupPanel({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Group DCR summary: averages + mini distribution histogram ─────────────────
+
+function AvgChip({ label, value }: { label: string; value: number | undefined }) {
+  const display = value === undefined ? '—' : value.toFixed(2);
+  const bg = value === undefined ? '#9ca3af' : chipColor(value);
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+      <span style={{ fontSize: 8, color: '#9ca3af', fontWeight: 600, lineHeight: 1 }}>{label}</span>
+      <span style={{
+        padding: '2px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
+        background: bg, color: 'white', fontFamily: 'monospace', lineHeight: 1.3,
+      }}>{display}</span>
+    </span>
+  );
+}
+
+const DCR_BUCKETS = [
+  { label: '<0.5', max: 0.5, color: '#16a34a' },
+  { label: '0.5–0.75', max: 0.75, color: '#65a30d' },
+  { label: '0.75–0.9', max: 0.9, color: '#d97706' },
+  { label: '0.9–1.0', max: 1.0, color: '#f59e0b' },
+  { label: '≥1.0', max: Infinity, color: '#dc2626' },
+];
+
+function DcrHistogram({ values }: { values: number[] }) {
+  const counts = DCR_BUCKETS.map(() => 0);
+  for (const v of values) {
+    let i = DCR_BUCKETS.findIndex(b => v < b.max);
+    if (i === -1) i = DCR_BUCKETS.length - 1;
+    counts[i]++;
+  }
+  const maxC = Math.max(1, ...counts);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 30 }}>
+      {DCR_BUCKETS.map((b, i) => (
+        <div key={i} title={`${b.label}: ${counts[i]} member${counts[i] === 1 ? '' : 's'}`}
+          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+          <span style={{ fontSize: 7, color: '#9ca3af', lineHeight: 1, marginBottom: 1 }}>{counts[i] || ''}</span>
+          <div style={{ width: 12, height: Math.max(2, (counts[i] / maxC) * 22), background: counts[i] ? b.color : '#e5e7eb', borderRadius: 1 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GroupDcrSummary({ members, summaryById, code }: { members: Member[]; summaryById: Map<string, MemberSummary>; code: DesignCode }) {
+  let sp = 0, sn = 0, ss = 0, sw = 0, cw = 0, n = 0;
+  const gov: number[] = [];
+  for (const m of members) {
+    const s = summaryById.get(m.id);
+    if (!s) continue;
+    const md = modeDCRs(s, code);
+    sp += md.flexPos; sn += md.flexNeg; ss += md.shear;
+    if (md.wk !== undefined) { sw += md.wk; cw++; }
+    gov.push(s.maxDCR);
+    n++;
+  }
+  if (!n) return null;
+  const avg = { flexPos: sp / n, flexNeg: sn / n, shear: ss / n, wk: cw ? sw / cw : undefined };
+  const avgGov = gov.reduce((a, b) => a + b, 0) / gov.length;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 14px' }}>
+      <div>
+        <div style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Average DCR</div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <AvgChip label="M⁺" value={avg.flexPos} />
+          <AvgChip label="M⁻" value={avg.flexNeg} />
+          <AvgChip label="V" value={avg.shear} />
+          <AvgChip label="wk" value={avg.wk} />
+        </div>
+      </div>
+      <div style={{ width: 1, alignSelf: 'stretch', background: '#e5e7eb' }} />
+      <div>
+        <div style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
+          DCR Distribution <span style={{ color: '#6b7280', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· avg gov {avgGov.toFixed(2)}</span>
+        </div>
+        <DcrHistogram values={gov} />
       </div>
     </div>
   );

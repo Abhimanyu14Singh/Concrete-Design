@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import type { DesignGroup, RebarLayout, BarGroup, Member, Project, TieZone } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import InfoTooltip from '../common/InfoTooltip';
@@ -124,6 +125,17 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
 
   const ties = rebar.ties ?? { barSize: units === 'si' ? -8 : 3, spacing: 6, legs: 2 };
 
+  // Reinforcement ratio ρ = As/(bw·d) for the current template, evaluated on a
+  // representative member of the group (members share the same section family).
+  const repMember = members[0];
+  const rhoTop = repMember ? flexSteelRatioPct({ ...repMember, rebar }, 'top') : 0;
+  const rhoBot = repMember ? flexSteelRatioPct({ ...repMember, rebar }, 'bot') : 0;
+  const rhoChipStyle: React.CSSProperties = {
+    marginLeft: 'auto', fontSize: 9, fontWeight: 700, fontFamily: 'monospace',
+    color: '#0369a1', background: '#e0f2fe', borderRadius: 3, padding: '1px 5px',
+    textTransform: 'none', letterSpacing: 0,
+  };
+
   return (
     <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
@@ -152,6 +164,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
           Top bars
           <InfoTooltip text="Hogging (negative moment) reinforcement placed near the top face. Used to compute φMn− capacity. Also contributes to compression in sagging regions." />
+          <span style={rhoChipStyle} title="Top reinforcement ratio ρ = As,top / (bw · d) for this template">ρ {rhoTop.toFixed(2)}%</span>
         </div>
         {rebar.topBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -168,6 +181,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
           Bottom bars
           <InfoTooltip text="Sagging (positive moment) reinforcement placed near the bottom face. Primary tension steel. As_req+ must be ≤ As_prov for status OK." />
+          <span style={rhoChipStyle} title="Bottom reinforcement ratio ρ = As,bot / (bw · d) for this template">ρ {rhoBot.toFixed(2)}%</span>
         </div>
         {rebar.botBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

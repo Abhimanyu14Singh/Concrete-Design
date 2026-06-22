@@ -433,22 +433,6 @@ export function designMemberEC2(
     for (const grp of rebar.sideBars) checkClearSpacing(grp, 'Side face', true);
   }
 
-  // §8.2 vertical clear spacing between stacked bar layers ≥ max(db, dg+5mm, 20mm).
-  for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
-    const layers = bars.filter(g => g.numBars > 0);
-    if (layers.length < 2) continue;
-    // Layer clear spacing (stored in rebar.layerClearSpacing or default 25 mm = 1 in)
-    const sClear_mm = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
-    const dbMax_mm = Math.max(...layers.map(g => getBarDiam(g.barSize) * IN_TO_MM));
-    const vMin_mm = Math.max(dbMax_mm, DG_MM + k2, 20);
-    if (sClear_mm < vMin_mm - 0.5)
-      warnings.push({
-        code: 'EC2 §8.2',
-        message: `${face} bars: vertical clear spacing between layers ${sClear_mm.toFixed(0)} mm < min ${vMin_mm.toFixed(0)} mm (max of db=${dbMax_mm.toFixed(0)}, dg+5=${DG_MM + k2}, 20 mm)`,
-        severity: 'warning',
-      });
-  }
-
   // §9.2.2(8) max transverse spacing between stirrup legs ≤ min(0.75d, 600 mm).
   if (rebar.ties && rebar.ties.legs >= 2) {
     const s_trans_max = Math.min(0.75 * d_bot, 600); // mm
@@ -556,8 +540,11 @@ export function designMemberEC2(
   );
 
   const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_crack);
-  const hasError = warnings.some(w => w.severity === 'error');
-  const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : (maxDCR > 0.9 || hasError) ? 'Warning' : 'OK';
+  // Status reflects ACTUAL issues, not raw utilization: NG when any capacity
+  // (incl. crack width) is exceeded; Warning only when a real code message
+  // exists; otherwise OK — even at high (but passing) utilization.
+  const hasMessage = warnings.length > 0;
+  const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : hasMessage ? 'Warning' : 'OK';
 
   // ── Convert back to imperial for the shared DesignResults shape ──
   // NOTE: phi_* fields hold γ-factored design resistances; Mn === phi_Mn.

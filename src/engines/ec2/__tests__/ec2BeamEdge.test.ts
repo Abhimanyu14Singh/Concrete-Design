@@ -308,34 +308,8 @@ describe('EC2 §8.2 spacing — multi-layer bottom bars', () => {
     expect(spacingWarns.some(w => w.message.includes('Bottom'))).toBe(true);
   });
 
-  it('§8.2 vertical layer spacing warning when layers are too close', () => {
-    // layerClearSpacing = 15 mm < max(Ø16=16, dg+5=25, 20) = 25 mm
-    const tightLayers: RebarLayout = {
-      topBars: [{ numBars: 2, barSize: -16 }],
-      botBars: [{ numBars: 3, barSize: -16 }, { numBars: 2, barSize: -16 }],
-      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
-      layerClearSpacing: mmToIn(15), // 15 mm < 25 mm (dg+5 governs)
-    };
-    const r = designMemberEC2(sec, mat, tightLayers,
-      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
-      mmToIn(6000), crack);
-    const vertWarn = r.warnings.find(w => w.code === 'EC2 §8.2' && w.message.includes('vertical'));
-    expect(vertWarn).toBeDefined();
-  });
-
-  it('no vertical layer warning when layerClearSpacing ≥ §8.2 limit', () => {
-    const okLayers: RebarLayout = {
-      topBars: [{ numBars: 2, barSize: -16 }],
-      botBars: [{ numBars: 3, barSize: -16 }, { numBars: 2, barSize: -16 }],
-      ties: { barSize: -8, spacing: mmToIn(150), legs: 2 },
-      layerClearSpacing: mmToIn(30), // 30 mm > 25 mm — OK
-    };
-    const r = designMemberEC2(sec, mat, okLayers,
-      { id: 'lc', label: '', Mu_pos: knmToKft(150), Mu_neg: 0, Vu: knToKip(60), Tu: 0, Pu: 0 },
-      mmToIn(6000), crack);
-    const vertWarn = r.warnings.find(w => w.code === 'EC2 §8.2' && w.message.includes('vertical'));
-    expect(vertWarn).toBeUndefined();
-  });
+  // Vertical layer-spacing (§8.2) warning intentionally not emitted — layer
+  // clear spacing is a detailing-only check the user opted out of.
 });
 
 describe('EC2 §8.2 spacing — side/face bars', () => {
