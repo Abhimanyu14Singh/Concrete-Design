@@ -83,7 +83,7 @@ jobs:
           name: SConcrete-Design-Windows
           path: release/*.exe
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 14
 
       # On manual dispatch: create/update a "Latest Build" pre-release
       - name: Create Latest pre-release (manual trigger)
