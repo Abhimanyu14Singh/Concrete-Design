@@ -21,6 +21,15 @@ export function demandValueFor(d: MemberDemand, metric: DemandMetric): number {
   }
 }
 
+/**
+ * Returns which flexural face governs for a member.
+ * Ties and zero-demand members fall to 'bot' (conservative — sagging is the
+ * more common case and bottom bars are typically the design face).
+ */
+export function governingFace(d: MemberDemand): 'top' | 'bot' {
+  return d.MuNeg > d.MuPos ? 'top' : 'bot';
+}
+
 export function metricUnitFor(metric: DemandMetric): string {
   return metric === 'Vu' ? 'kips' : metric === 'governing' ? '' : 'kip-ft';
 }
@@ -242,6 +251,10 @@ export interface AutoGroupSuggestion {
   gvf: number;               // goodness-of-variance fit
   metric: DemandMetric;
   metricUnit: string;
+  /** Present only when produced by splitByFace mode. */
+  face?: 'top' | 'bot';
+  /** The underlying section-family key without |top/|bot suffix. Present when face is set. */
+  rawFamilyKey?: string;
 }
 
 export function familyLabel(fk: string): string {
@@ -333,16 +346,19 @@ export function suggestGroups(
   totalGroups?: number,
   /** When true, cluster ALL beams together ignoring section family boundaries. */
   groupAllBeams = false,
+  /**
+   * When true, split each section-family pool into two sub-pools before
+   * clustering: bottom-governed (MuPos ≥ MuNeg) and top-governed (MuNeg >
+   * MuPos). Each sub-pool is clustered independently so no group ever mixes
+   * a heavily-sagging beam with a heavily-hogging one.
+   * Ignored when groupAllBeams is true.
+   */
+  splitByFace = false,
 ): AutoGroupSuggestion[] {
   const demands = extractDemands(members);
 
-  const demandValue = (d: MemberDemand): number => demandValueFor(d, metric);
-
-  const metricUnit = metricUnitFor(metric);
-
   const byFamily = new Map<string, MemberDemand[]>();
   if (groupAllBeams) {
-    // Treat every beam as part of one "All beams" pseudo-family.
     byFamily.set(ALL_BEAMS_FAMILY_KEY, demands);
   } else {
     for (const d of demands) {
@@ -352,24 +368,54 @@ export function suggestGroups(
     }
   }
 
-  // Global budget mode: per-family k comes from the allocation. In all-beams
-  // pool mode the whole budget applies to the single '__all__' pseudo-family.
+  // Global budget mode
   const alloc = totalGroups && totalGroups > 0
     ? (groupAllBeams
         ? { [ALL_BEAMS_FAMILY_KEY]: totalGroups }
         : allocateGroupBudget(members, totalGroups, metric))
     : null;
 
+  // Build the effective pool map. When splitByFace is on each section-family
+  // becomes two sub-pools keyed as `${rawFk}|bot` and `${rawFk}|top`.
+  type PoolEntry = {
+    demands: MemberDemand[];
+    metric: DemandMetric;
+    rawFamilyKey: string;
+    face?: 'top' | 'bot';
+  };
+  const effectiveByFamily = new Map<string, PoolEntry>();
+
+  if (splitByFace && !groupAllBeams) {
+    for (const [rawFk, fdemands] of byFamily) {
+      const botDemands = fdemands.filter(d => governingFace(d) === 'bot');
+      const topDemands = fdemands.filter(d => governingFace(d) === 'top');
+      const botMetric: DemandMetric = metric === 'governing' ? 'Mu_pos' : metric;
+      const topMetric: DemandMetric = metric === 'governing' ? 'Mu_neg' : metric;
+      if (botDemands.length > 0)
+        effectiveByFamily.set(`${rawFk}|bot`, { demands: botDemands, metric: botMetric, rawFamilyKey: rawFk, face: 'bot' });
+      if (topDemands.length > 0)
+        effectiveByFamily.set(`${rawFk}|top`, { demands: topDemands, metric: topMetric, rawFamilyKey: rawFk, face: 'top' });
+    }
+  } else {
+    for (const [fk, fdemands] of byFamily)
+      effectiveByFamily.set(fk, { demands: fdemands, metric, rawFamilyKey: fk });
+  }
+
   const suggestions: AutoGroupSuggestion[] = [];
 
-  for (const [fk, fdemands] of byFamily) {
+  for (const [fk, entry] of effectiveByFamily) {
+    const { demands: fdemands, metric: poolMetric, rawFamilyKey, face } = entry;
+    const demandValue = (d: MemberDemand) => demandValueFor(d, poolMetric);
     const vals = fdemands.map(d => demandValue(d));
 
     let breaks: number[];
     const breakFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
 
     if (alloc) {
-      breaks = breakFn(vals, Math.min(alloc[fk] ?? 1, fdemands.length));
+      // In face-split mode divide the family budget equally between sub-pools
+      const rawAlloc = alloc[rawFamilyKey] ?? 1;
+      const subK = face ? Math.min(Math.ceil(rawAlloc / 2), fdemands.length) : Math.min(rawAlloc, fdemands.length);
+      breaks = breakFn(vals, subK);
     } else if (kPerFamily === 'auto') {
       let best = { k: 1, breaks: [] as number[], gvf: 0 };
       for (let k = 2; k <= Math.min(5, fdemands.length); k++) {
@@ -400,16 +446,18 @@ export function suggestGroups(
     }
     for (const b of bins) { if (b.demandMin === Infinity) b.demandMin = 0; if (b.demandMax === -Infinity) b.demandMax = 0; }
 
-    suggestions.push({
+    const suggestion: AutoGroupSuggestion = {
       familyKey: fk,
-      familyLabel: familyLabel(fk),
+      familyLabel: familyLabel(rawFamilyKey),
       breaks,
       bins: bins.filter(b => b.memberIds.length > 0),
       algorithm,
       gvf: computeGVF(vals, breaks),
-      metric,
-      metricUnit,
-    });
+      metric: poolMetric,
+      metricUnit: metricUnitFor(poolMetric),
+    };
+    if (face) { suggestion.face = face; suggestion.rawFamilyKey = rawFamilyKey; }
+    suggestions.push(suggestion);
   }
 
   return suggestions.sort((a, b) => a.familyKey.localeCompare(b.familyKey));

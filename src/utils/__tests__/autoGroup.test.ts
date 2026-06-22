@@ -4,7 +4,9 @@ import {
   familyKey, extractDemands, suggestGroups, allocateGroupBudget,
   memberSteelWeightLb, computeSavings,
   flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt,
+  governingFace, ALL_BEAMS_FAMILY_KEY,
 } from '../autoGroup';
+import type { MemberDemand } from '../autoGroup';
 import { toDisplay } from '../units';
 import type { Member, DesignResults } from '../../types';
 
@@ -339,5 +341,134 @@ describe('steelWeightPerFt', () => {
     const m4 = makeMember({ id: 'c' });
     m4.rebar.ties = { barSize: 4, spacing: 6, legs: 4 };
     expect(steelWeightPerFt(m4).stirrupLbFt).toBeGreaterThan(steelWeightPerFt(m2).stirrupLbFt);
+  });
+});
+
+// ── suggestGroups — splitByFace ───────────────────────────────────────────────
+
+describe('governingFace', () => {
+  it('returns bot when MuPos >= MuNeg (sagging)', () => {
+    const d = { MuPos: 100, MuNeg: 80 } as MemberDemand;
+    expect(governingFace(d)).toBe('bot');
+  });
+
+  it('returns bot on tie (MuPos === MuNeg)', () => {
+    const d = { MuPos: 50, MuNeg: 50 } as MemberDemand;
+    expect(governingFace(d)).toBe('bot');
+  });
+
+  it('returns top when MuNeg > MuPos (hogging)', () => {
+    const d = { MuPos: 30, MuNeg: 120 } as MemberDemand;
+    expect(governingFace(d)).toBe('top');
+  });
+
+  it('returns bot when both are zero', () => {
+    const d = { MuPos: 0, MuNeg: 0 } as MemberDemand;
+    expect(governingFace(d)).toBe('bot');
+  });
+});
+
+describe('suggestGroups — splitByFace', () => {
+  // Build a mixed family: 4 sagging beams + 2 hogging beams, same section.
+  function makeFamily() {
+    const sagMembers = [100, 120, 130, 150].map((mu, i) =>
+      makeMember({
+        id: `s${i}`,
+        b: 14, h: 24,
+        loads: [{ id: 'lc', label: 'Env', Mu_pos: mu, Mu_neg: mu * 0.3, Vu: 30, Tu: 0, Pu: 0 }],
+      })
+    );
+    const hogMembers = [20, 30].map((mu, i) =>
+      makeMember({
+        id: `h${i}`,
+        b: 14, h: 24,
+        loads: [{ id: 'lc', label: 'Env', Mu_pos: mu, Mu_neg: mu * 5, Vu: 30, Tu: 0, Pu: 0 }],
+      })
+    );
+    return [...sagMembers, ...hogMembers];
+  }
+
+  it('mixed family → two sub-pools with face bot and top', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, false, true);
+    expect(result.length).toBe(2);
+    expect(result.some(s => s.face === 'bot')).toBe(true);
+    expect(result.some(s => s.face === 'top')).toBe(true);
+  });
+
+  it('no cross-face contamination — bot bins only sagging members', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, false, true);
+
+    const botSug = result.find(s => s.face === 'bot')!;
+    const topSug = result.find(s => s.face === 'top')!;
+
+    const botIds = new Set(botSug.bins.flatMap(b => b.memberIds));
+    const topIds = new Set(topSug.bins.flatMap(b => b.memberIds));
+
+    // No overlap
+    expect([...botIds].some(id => topIds.has(id))).toBe(false);
+
+    // Sagging members in bot pool
+    const sagIds = new Set(['s0', 's1', 's2', 's3']);
+    expect([...botIds].every(id => sagIds.has(id))).toBe(true);
+
+    // Hogging members in top pool
+    const hogIds = new Set(['h0', 'h1']);
+    expect([...topIds].every(id => hogIds.has(id))).toBe(true);
+  });
+
+  it('purely sagging family → only one bot sub-pool', () => {
+    const members = [100, 120, 130].map((mu, i) =>
+      makeMember({
+        id: `s${i}`,
+        b: 14, h: 24,
+        loads: [{ id: 'lc', label: 'Env', Mu_pos: mu, Mu_neg: mu * 0.2, Vu: 30, Tu: 0, Pu: 0 }],
+      })
+    );
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, false, true);
+    expect(result.length).toBe(1);
+    expect(result[0].face).toBe('bot');
+    expect(result.some(s => s.face === 'top')).toBe(false);
+  });
+
+  it('splitByFace = false → single suggestion with no face field', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, false, false);
+    expect(result.length).toBe(1);
+    expect(result[0].face).toBeUndefined();
+    expect(result[0].bins.flatMap(b => b.memberIds)).toHaveLength(6);
+  });
+
+  it('auto metric: governing → bot uses Mu_pos, top uses Mu_neg', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, false, true);
+    const botSug = result.find(s => s.face === 'bot')!;
+    const topSug = result.find(s => s.face === 'top')!;
+    expect(botSug.metric).toBe('Mu_pos');
+    expect(topSug.metric).toBe('Mu_neg');
+  });
+
+  it('explicit non-governing metric preserved in both sub-pools', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'Vu', undefined, false, true);
+    expect(result.every(s => s.metric === 'Vu')).toBe(true);
+  });
+
+  it('groupAllBeams = true ignores splitByFace', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, true, true);
+    expect(result.length).toBe(1);
+    expect(result[0].face).toBeUndefined();
+    expect(result[0].familyKey).toBe(ALL_BEAMS_FAMILY_KEY);
+  });
+
+  it('rawFamilyKey equals plain familyKey of member', () => {
+    const members = makeFamily();
+    const result = suggestGroups(members, 4, 'jenks', 'governing', undefined, false, true);
+    const plainKey = familyKey(members[0]);
+    result.forEach(s => {
+      expect(s.rawFamilyKey).toBe(plainKey);
+    });
   });
 });

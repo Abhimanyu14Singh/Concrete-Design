@@ -9,7 +9,7 @@ import { useState, useMemo, useEffect } from 'react';
 import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
-  demandValueFor,
+  demandValueFor, governingFace,
   ALL_BEAMS_FAMILY_KEY,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
@@ -52,12 +52,13 @@ export default function AutoGroupPanel({
   const [totalGroups, setTotalGroups] = useState<number | null>(null);
   // Cross-family: ignore section boundaries and cluster all beams as one pool
   const [groupAllBeams, setGroupAllBeams] = useState(false);
+  const [splitByFace, setSplitByFace] = useState(false);
   const [totalGroupsDraft, setTotalGroupsDraft] = useState('');
 
   // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
-    () => suggestGroups(members, kPerFamily, algorithm, metric, totalGroups ?? undefined, groupAllBeams),
-    [members, algorithm, kPerFamily, metric, totalGroups, groupAllBeams]
+    () => suggestGroups(members, kPerFamily, algorithm, metric, totalGroups ?? undefined, groupAllBeams, splitByFace),
+    [members, algorithm, kPerFamily, metric, totalGroups, groupAllBeams, splitByFace]
   );
 
   // Per-family user-tweaked breaks (initially from suggestion)
@@ -92,17 +93,22 @@ export default function AutoGroupPanel({
 
   const activeSuggestion = baseSuggestions.find(s => s.familyKey === activeFamily);
   const demands = useMemo(() => extractDemands(members), [members]);
-  const familyDemands = useMemo(
-    // In all-beams mode the active pool is the synthetic family, which no
-    // demand carries as its own familyKey — use every demand instead.
-    () => activeFamily === ALL_BEAMS_FAMILY_KEY
-      ? demands
-      : demands.filter(d => d.familyKey === activeFamily),
-    [demands, activeFamily]
-  );
+  const familyDemands = useMemo(() => {
+    if (activeFamily === ALL_BEAMS_FAMILY_KEY) return demands;
+    // In face-split mode filter by raw family key + governing face
+    if (activeSuggestion?.face && activeSuggestion.rawFamilyKey) {
+      return demands.filter(d =>
+        d.familyKey === activeSuggestion.rawFamilyKey &&
+        governingFace(d) === activeSuggestion.face
+      );
+    }
+    return demands.filter(d => d.familyKey === activeFamily);
+  }, [demands, activeFamily, activeSuggestion]);
 
   const currentBreaks = activeSuggestion ? getBreaks(activeFamily, activeSuggestion) : [];
-  const vals = familyDemands.map(d => demandValueFor(d, metric));
+  // Use the suggestion's metric (may differ from panel metric in face-split mode)
+  const poolMetric = activeSuggestion?.metric ?? metric;
+  const vals = familyDemands.map(d => demandValueFor(d, poolMetric));
   const binAssignment = vals.length ? assignByBreaks(vals, currentBreaks) : [];
 
   // Bin preview
@@ -122,8 +128,10 @@ export default function AutoGroupPanel({
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
         ? demands
-        : demands.filter(d => d.familyKey === sug.familyKey);
-      const famVals = famDemands.map(d => demandValueFor(d, metric));
+        : (sug.face && sug.rawFamilyKey)
+          ? demands.filter(d => d.familyKey === sug.rawFamilyKey && governingFace(d) === sug.face)
+          : demands.filter(d => d.familyKey === sug.familyKey);
+      const famVals = famDemands.map(d => demandValueFor(d, sug.metric));
       const assign = famVals.length ? assignByBreaks(famVals, breaks) : [];
       const numB = breaks.length + 1;
       const binsArr: string[][] = Array.from({ length: numB }, () => []);
@@ -173,14 +181,18 @@ export default function AutoGroupPanel({
     const newGroups: DesignGroup[] = [];
     let groupCount = 0;
     const sortedSuggestions = [...baseSuggestions].sort((a, b) => a.familyLabel.localeCompare(b.familyLabel));
-    const familyLetters = new Map(sortedSuggestions.map((s, i) => [s.familyKey, String.fromCharCode(65 + i)]));
+    // In face-split mode both sub-pools share the same raw family key and letter
+    const rawKeys = [...new Set(sortedSuggestions.map(s => s.rawFamilyKey ?? s.familyKey))].sort();
+    const familyLetters = new Map(rawKeys.map((rk, i) => [rk, String.fromCharCode(65 + i)]));
     for (const sug of sortedSuggestions) {
       // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
         ? demands
-        : demands.filter(d => d.familyKey === sug.familyKey);
-      const famVals = famDemands.map(d => demandValueFor(d, metric));
+        : (sug.face && sug.rawFamilyKey)
+          ? demands.filter(d => d.familyKey === sug.rawFamilyKey && governingFace(d) === sug.face)
+          : demands.filter(d => d.familyKey === sug.familyKey);
+      const famVals = famDemands.map(d => demandValueFor(d, sug.metric));
       const assign = assignByBreaks(famVals, breaks);
       const numB = breaks.length + 1;
       const bins: string[][] = Array.from({ length: numB }, () => []);
@@ -189,8 +201,9 @@ export default function AutoGroupPanel({
       bins.forEach((mIds, bi) => {
         if (!mIds.length) return;
         const dimStr = displayFamilyLabel(sug.familyLabel, units).replace('×', 'x').replace(' mm', '');
-        const letter = familyLetters.get(sug.familyKey) ?? '?';
-        const label = `${letter}_${dimStr}_${bi + 1}`;
+        const letter = familyLetters.get(sug.rawFamilyKey ?? sug.familyKey) ?? '?';
+        const faceSuffix = sug.face === 'bot' ? 'B' : sug.face === 'top' ? 'T' : '';
+        const label = `${letter}_${dimStr}_${faceSuffix}${bi + 1}`;
         newGroups.push({
           id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount}`,
           label,
@@ -249,6 +262,17 @@ export default function AutoGroupPanel({
               background: groupAllBeams ? '#2563eb' : 'white', color: groupAllBeams ? 'white' : '#374151' }}
             title="Cluster all beams together regardless of section dimensions or material">
             All beams
+          </button>
+          <span style={{ color: '#d1d5db', margin: '0 2px', fontSize: 12, alignSelf: 'center' }}>|</span>
+          <button
+            disabled={groupAllBeams}
+            onClick={() => { setSplitByFace(v => !v); setTweakedBreaks({}); }}
+            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: groupAllBeams ? 'not-allowed' : 'pointer',
+              opacity: groupAllBeams ? 0.4 : 1,
+              background: splitByFace && !groupAllBeams ? '#7c3aed' : 'white',
+              color: splitByFace && !groupAllBeams ? 'white' : '#374151' }}
+            title="Split each section family into M⁺-governed (bottom bars) and M⁻-governed (top bars) sub-pools before clustering — prevents mixing sagging and hogging beams in the same group">
+            Split by face
           </button>
         </div>
       </div>
@@ -339,12 +363,12 @@ export default function AutoGroupPanel({
             onChange={e => setSelectedFamily(e.target.value)}
             style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', width: '100%' }}>
             {baseSuggestions.map(s => {
-              const count = groupAllBeams
-                ? demands.length
-                : demands.filter(d => d.familyKey === s.familyKey).length;
+              // Count always from bins (correct in face-split mode where familyKey has a suffix)
+              const count = s.bins.reduce((sum, b) => sum + b.memberIds.length, 0);
+              const faceLabel = s.face === 'bot' ? ' — M⁺ gov' : s.face === 'top' ? ' — M⁻ gov' : '';
               return (
                 <option key={s.familyKey} value={s.familyKey}>
-                  {displayFamilyLabel(s.familyLabel, units)} ({count} beams)
+                  {displayFamilyLabel(s.familyLabel, units)}{faceLabel} ({count} beams)
                 </option>
               );
             })}
@@ -354,12 +378,13 @@ export default function AutoGroupPanel({
 
       {/* Histogram */}
       {activeSuggestion && (() => {
-        const q: Quantity | null = metric === 'Vu' ? 'force' : metric === 'governing' ? null : 'moment';
+        // Use poolMetric (may differ from panel metric in face-split mode)
+        const q: Quantity | null = poolMetric === 'Vu' ? 'force' : poolMetric === 'governing' ? null : 'moment';
         const dispVals = q ? vals.map(v => toDisplay(v, q)) : vals;
         const dispBreaks = q ? currentBreaks.map(b => toDisplay(b, q)) : currentBreaks;
-        const xLabelDisp = metric === 'governing' ? 'Governing demand →'
-          : metric === 'Vu' ? `Shear (${unitLabel('force')}) →`
-          : metric === 'Mu_pos' ? `M⁺ (${unitLabel('moment')}) →`
+        const xLabelDisp = poolMetric === 'governing' ? 'Governing demand →'
+          : poolMetric === 'Vu' ? `Shear (${unitLabel('force')}) →`
+          : poolMetric === 'Mu_pos' ? `M⁺ (${unitLabel('moment')}) →`
           : `M⁻ (${unitLabel('moment')}) →`;
         return (
           <div>
@@ -386,9 +411,9 @@ export default function AutoGroupPanel({
         <div style={lbl}>Group preview ({numBins} groups)</div>
         {binMemberIds.map((mIds, bi) => {
           if (!mIds.length) return null;
-          const worstDemand = Math.max(...familyDemands.filter(d => mIds.includes(d.memberId)).map(d => demandValueFor(d, metric)));
-          const q: Quantity | null = metric === 'Vu' ? 'force' : metric === 'governing' ? null : 'moment';
-          const demandStr = metric === 'governing'
+          const worstDemand = Math.max(...familyDemands.filter(d => mIds.includes(d.memberId)).map(d => demandValueFor(d, poolMetric)));
+          const q: Quantity | null = poolMetric === 'Vu' ? 'force' : poolMetric === 'governing' ? null : 'moment';
+          const demandStr = poolMetric === 'governing'
             ? `${(worstDemand * 100).toFixed(0)}%`
             : `${Math.round(toDisplay(worstDemand, q!))} ${unitLabel(q!)}`;
           return (
