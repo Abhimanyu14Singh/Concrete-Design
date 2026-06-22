@@ -31,6 +31,8 @@ interface HistogramPanelProps {
   /** Explicit ramp bounds (overrides data min/max) so bar colors match the map legend. */
   rampMin?: number;
   rampMax?: number;
+  /** Decimal places for hover-tooltip and min/max readouts (default 0). */
+  valueDecimals?: number;
 }
 
 export default function HistogramPanel({
@@ -42,6 +44,7 @@ export default function HistogramPanel({
   rampMode = false,
   rampMin,
   rampMax,
+  valueDecimals = 0,
 }: HistogramPanelProps) {
   const { bins, minVal, maxVal } = useMemo(() => {
     if (!values.length) return { bins: [], minVal: 0, maxVal: 0 };
@@ -113,7 +116,7 @@ export default function HistogramPanel({
           <RechartsTip
             contentStyle={{ fontSize: 10, padding: '2px 6px' }}
             formatter={(v) => [`${v} beams`, '']}
-            labelFormatter={(l) => `≈${Number(l).toFixed(0)}`}
+            labelFormatter={(l) => `≈${Number(l).toFixed(valueDecimals)}`}
           />
           {rampMode
             ? (
@@ -164,9 +167,9 @@ export default function HistogramPanel({
 
       {!onBreaksChange && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#9ca3af', marginTop: 2 }}>
-          <span>{minVal.toFixed(1)}</span>
+          <span>{minVal.toFixed(Math.max(1, valueDecimals))}</span>
           <span style={{ color: '#6b7280' }}>{xLabel}</span>
-          <span>{maxVal.toFixed(1)}</span>
+          <span>{maxVal.toFixed(Math.max(1, valueDecimals))}</span>
         </div>
       )}
     </div>

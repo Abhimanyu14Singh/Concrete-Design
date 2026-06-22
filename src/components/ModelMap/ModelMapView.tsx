@@ -776,6 +776,7 @@ function MetricLegendPanel({
           rampMax={range.max}
           breaks={override ? [range.min, range.max] : []}
           xLabel={label}
+          valueDecimals={2}
         />
       )}
 
