@@ -16,6 +16,8 @@ export interface SeedOptions {
   imposeSkinReinf?: boolean;
   /** Bar size to use for the skin/side bars (default #5 / Ø12). */
   skinBarSize?: number;
+  /** Clear cover to stirrup face (in). Overrides section default (1.5"). */
+  coverClear?: number;
 }
 
 const IN_TO_MM = 25.4;

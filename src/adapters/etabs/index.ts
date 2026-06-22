@@ -74,7 +74,7 @@ export function buildMembers(
       type: 'rectangular_beam' as const,
       b: sec?.width ?? 12,
       h: sec?.depth ?? 24,
-      coverClear: 1.5,
+      coverClear: seed.coverClear ?? 1.5,
       stirrupDia: seed.stirrupBarSize ?? 4,
     };
     const forces = forcesByFrame[beam.name] ?? [];

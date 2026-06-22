@@ -623,6 +623,34 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   {' '}Shallower sections get no side bars. Edit per beam afterwards.
                 </p>
               </div>
+              {/* Cover override */}
+              <div style={card}>
+                <div style={lbl}>Clear cover to stirrup face ({wizardUnits === 'si' ? 'mm' : 'in'})</div>
+                <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                  <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Cover
+                    <input
+                      type="number"
+                      step={wizardUnits === 'si' ? 5 : 0.25}
+                      min={wizardUnits === 'si' ? 10 : 0.5}
+                      max={wizardUnits === 'si' ? 100 : 4}
+                      style={{ ...inp, width: 80 }}
+                      value={wizardUnits === 'si'
+                        ? Math.round((seed.coverClear ?? 1.5) * IN_TO_MM)
+                        : (seed.coverClear ?? 1.5)}
+                      onChange={e => {
+                        const v = +e.target.value;
+                        setSeed(s => ({ ...s, coverClear: wizardUnits === 'si' ? v / IN_TO_MM : v }));
+                      }}
+                    />
+                  </label>
+                  <span style={{ fontSize: 11, color: '#9ca3af' }}>
+                    Applies to all imported beams (default {wizardUnits === 'si' ? '38 mm' : '1.5 in'}).
+                    Affects effective depth and bar placement.
+                  </span>
+                </div>
+              </div>
+
               {/* Material overrides */}
               <div style={card}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
