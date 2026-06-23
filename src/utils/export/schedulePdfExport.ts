@@ -3,19 +3,21 @@
  *
  * Generates a multi-page PDF containing:
  *  1. A cover page with project name and date.
- *  2. One or more "Beam Schedule" table pages listing each beam's rebar.
- *  3. A "Tagged Plan" page per story, with frames drawn in plan view and labelled.
+ *  2. One or more "Schedule" table pages — per-group (compact) or per-beam (full).
+ *  3. A "Tagged Plan" page per story with frames colour-coded by group and
+ *     annotated with a tiny group-index number so the legend is unambiguous.
  *
  * Uses pdf-lib + DejaVu fonts (same infrastructure as pdfExport.ts).
  */
-import { PDFDocument, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import type { Project, Member, MapFrame, DesignGroup } from '../../types';
+import type { Project, Member, MapFrame, DesignGroup, LoadCase } from '../../types';
 import { formatBarLabel } from '../rebar';
 import { winAnsiSafe, setFontLoader } from './pdfExport';
-export { setFontLoader };   // re-export so callers can override for tests
+import { runDesign } from '../../engines';
+export { setFontLoader };
 
-// ── helpers shared with pdfExport ──────────────────────────────────────────
+// ── colour palette ─────────────────────────────────────────────────────────
 
 const C = {
   navy:  rgb(0.04, 0.09, 0.24),
@@ -27,23 +29,19 @@ const C = {
   mid:   rgb(0.56, 0.63, 0.72),
   dark:  rgb(0.20, 0.25, 0.33),
   white: rgb(1, 1, 1),
-  // Group palette (matches groupColors.ts)
+  // Group palette (mirrors groupColors.ts order)
   groups: [
-    rgb(0.15, 0.39, 0.95),
-    rgb(0.06, 0.63, 0.41),
-    rgb(0.85, 0.47, 0.02),
-    rgb(0.58, 0.20, 0.92),
-    rgb(0.03, 0.57, 0.71),
-    rgb(0.84, 0.17, 0.17),
-    rgb(0.06, 0.49, 0.31),
-    rgb(0.96, 0.28, 0.51),
-    rgb(0.23, 0.51, 0.97),
+    rgb(0.15, 0.39, 0.95), rgb(0.06, 0.63, 0.41), rgb(0.85, 0.47, 0.02),
+    rgb(0.58, 0.20, 0.92), rgb(0.03, 0.57, 0.71), rgb(0.84, 0.17, 0.17),
+    rgb(0.06, 0.49, 0.31), rgb(0.96, 0.28, 0.51), rgb(0.23, 0.51, 0.97),
     rgb(0.63, 0.35, 0.08),
   ],
 };
 
+// ── draw context ───────────────────────────────────────────────────────────
+
 interface Ctx {
-  page: PDFPage;
+  page: ReturnType<PDFDocument['addPage']>;
   font: PDFFont;
   bold: PDFFont;
   w: number;
@@ -77,27 +75,52 @@ function rebarStr(bars: { numBars: number; barSize: number }[]): string {
   return bars.map(b => `${b.numBars}-${formatBarLabel(b.barSize)}`).join(' + ');
 }
 
-function stirrupStr(m: Member, isEC2: boolean): string {
-  const t = m.rebar.ties;
+function stirrupStr(
+  rebar: { ties?: { barSize: number; spacing: number; legs: number }; tieZones?: { spacing: number }[] },
+  isEC2: boolean,
+): string {
+  const t = rebar.ties;
   if (!t) return '—';
   const bar = formatBarLabel(t.barSize);
-  const sfx = isEC2 ? ' mm' : ' in';
   const conv = isEC2 ? (v: number) => (v * 25.4).toFixed(0) : (v: number) => v.toFixed(1);
-  if (m.rebar.tieZones) {
-    return `${bar} @ ${m.rebar.tieZones.map(z => conv(z.spacing)).join('/')}${sfx}`;
+  const sfx = isEC2 ? ' mm' : ' in';
+  if (rebar.tieZones) {
+    return `${bar} @ ${rebar.tieZones.map(z => conv(z.spacing)).join('/')}${sfx}`;
   }
   return `${bar} @ ${conv(t.spacing)}${sfx}`;
 }
 
 function sectionLabel(m: Member, isEC2: boolean): string {
   const s = m.section;
-  if (isEC2) {
-    return `${(s.b * 25.4).toFixed(0)}×${(s.h * 25.4).toFixed(0)}`;
-  }
+  if (isEC2) return `${(s.b * 25.4).toFixed(0)}×${(s.h * 25.4).toFixed(0)}`;
   return `${s.b.toFixed(2)}"×${s.h.toFixed(2)}"`;
 }
 
-// ── font loading (same deferred cache as pdfExport) ────────────────────────
+// ── DCR computation ────────────────────────────────────────────────────────
+
+function computeMaxDCR(m: Member, code: string): number {
+  // Use pre-computed results if available
+  let best = 0;
+  for (const r of m.results ?? []) {
+    const d = Math.max(
+      r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0,
+      r.DCR_shear ?? 0, r.DCR_torsion ?? 0,
+      r.DCR_crack ?? 0,
+    );
+    if (d > best) best = d;
+  }
+  if (best > 0) return best;
+
+  // Run design inline if no cached results
+  for (const lc of m.loads) {
+    const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
+    const d = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0);
+    if (d > best) best = d;
+  }
+  return best;
+}
+
+// ── font loading ───────────────────────────────────────────────────────────
 
 let _regularBytes: ArrayBuffer | null = null;
 let _boldBytes: ArrayBuffer | null = null;
@@ -123,7 +146,6 @@ function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont, margin = 36): C
   return { page, font, bold, w, h, margin };
 }
 
-/** Thin header/footer bar on every content page. */
 function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum: number) {
   const { w, h, margin } = ctx;
   fillRect(ctx, 0, h - 28, w, 28, C.navy);
@@ -134,42 +156,137 @@ function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum
   txt(ctx, `Page ${pageNum}`, w - margin - 30, 4, 8, C.mid);
 }
 
-// ── schedule table ─────────────────────────────────────────────────────────
+// ── GROUP schedule (compact — one row per design group) ────────────────────
 
-const COL_DEFS = [
-  { key: 'label',    header: 'Beam',              w: 90 },
-  { key: 'story',    header: 'Story',             w: 50 },
-  { key: 'section',  header: 'Section (b×h)',     w: 75 },
-  { key: 'span',     header: 'Span',              w: 45 },
-  { key: 'top',      header: 'Top bars',          w: 120 },
-  { key: 'bot',      header: 'Bottom bars',       w: 120 },
-  { key: 'skin',     header: 'Skin bars',         w: 80 },
-  { key: 'stirrups', header: 'Stirrups (z1/z2/z3)',w: 145 },
-  { key: 'dcr',      header: 'Max DCR',           w: 50 },
+const GRP_COL_DEFS = [
+  { key: 'idx',      header: '#',                  w: 22  },
+  { key: 'label',    header: 'Group',              w: 135 },
+  { key: 'section',  header: 'Section (b×h)',      w: 80  },
+  { key: 'count',    header: 'Beams',              w: 40  },
+  { key: 'top',      header: 'Top bars',           w: 120 },
+  { key: 'bot',      header: 'Bottom bars',        w: 120 },
+  { key: 'skin',     header: 'Skin bars',          w: 80  },
+  { key: 'stirrups', header: 'Stirrups (z1/z2/z3)', w: 150 },
+  { key: 'dcr',      header: 'Max DCR',            w: 50  },
 ];
 const TABLE_MARGIN_LEFT = 36;
-const ROW_H = 16;
-const HEADER_H = 20;
+const ROW_H = 17;
+const HEADER_H = 22;
 
-interface SchedRow {
+interface GroupSchedRow {
+  idx: string;
   label: string;
-  story: string;
   section: string;
-  span: string;
+  count: string;
   top: string;
   bot: string;
   skin: string;
   stirrups: string;
   dcr: string;
   dcrVal: number;
+  groupIdx: number; // for colour swatch
 }
 
-function buildRows(members: Member[], isEC2: boolean): SchedRow[] {
+function buildGroupRows(
+  groups: DesignGroup[],
+  memberById: Map<string, Member>,
+  isEC2: boolean,
+  code: string,
+): GroupSchedRow[] {
+  return groups.map((g, i) => {
+    const groupMembers = g.memberIds
+      .map(id => memberById.get(id))
+      .filter((m): m is Member => !!m);
+
+    const repMember = groupMembers[0];
+    const rebar = g.rebar ?? repMember?.rebar;
+
+    const top      = rebar ? rebarStr(rebar.topBars) : '—';
+    const bot      = rebar ? rebarStr(rebar.botBars) : '—';
+    const skin     = rebar ? rebarStr(rebar.sideBars ?? []) : '—';
+    const stirrups = rebar ? stirrupStr(rebar, isEC2) : '—';
+    const section  = repMember ? sectionLabel(repMember, isEC2) : '—';
+
+    // Worst DCR across all group members
+    let maxDCR = 0;
+    for (const m of groupMembers) {
+      const d = computeMaxDCR(m, code);
+      if (d > maxDCR) maxDCR = d;
+    }
+
+    return {
+      idx: String(i + 1),
+      label: g.label,
+      section,
+      count: String(groupMembers.length),
+      top, bot, skin, stirrups,
+      dcr: maxDCR > 0 ? maxDCR.toFixed(2) : '—',
+      dcrVal: maxDCR,
+      groupIdx: i,
+    };
+  });
+}
+
+function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
+  const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
+  fillRect(ctx, x0, y, totalW, HEADER_H, C.navy);
+  let x = x0;
+  for (const col of GRP_COL_DEFS) {
+    txt(ctx, col.header, x + 3, y + 7, 7.5, C.white, ctx.bold);
+    x += col.w;
+  }
+}
+
+function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade: boolean) {
+  const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
+  if (shade) fillRect(ctx, x0, y, totalW, ROW_H, C.light);
+
+  const cells = [row.idx, row.label, row.section, row.count, row.top, row.bot, row.skin, row.stirrups, row.dcr];
+  let x = x0;
+
+  GRP_COL_DEFS.forEach((col, i) => {
+    if (i === 0) {
+      // Colour swatch for group index
+      const gCol = C.groups[row.groupIdx % C.groups.length];
+      fillRect(ctx, x + 3, y + 4, 10, 9, gCol);
+      x += col.w;
+      return;
+    }
+    const cellColor = i === 8 && row.dcrVal > 0
+      ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
+      : C.dark;
+    txt(ctx, cells[i], x + 3, y + 5, 8, cellColor,
+      i === 1 ? ctx.bold : ctx.font);
+    x += col.w;
+  });
+  hline(ctx, x0, y, x0 + totalW);
+}
+
+// ── BEAM schedule (full — one row per beam) ────────────────────────────────
+
+const BEAM_COL_DEFS = [
+  { key: 'label',    header: 'Beam',              w: 90  },
+  { key: 'story',    header: 'Story',             w: 50  },
+  { key: 'section',  header: 'Section (b×h)',     w: 75  },
+  { key: 'span',     header: 'Span',              w: 45  },
+  { key: 'top',      header: 'Top bars',          w: 120 },
+  { key: 'bot',      header: 'Bottom bars',       w: 120 },
+  { key: 'skin',     header: 'Skin bars',         w: 80  },
+  { key: 'stirrups', header: 'Stirrups (z1/z2/z3)', w: 145 },
+  { key: 'dcr',      header: 'Max DCR',           w: 50  },
+];
+
+interface BeamSchedRow {
+  label: string; story: string; section: string; span: string;
+  top: string; bot: string; skin: string; stirrups: string;
+  dcr: string; dcrVal: number;
+}
+
+function buildBeamRows(members: Member[], isEC2: boolean, code: string): BeamSchedRow[] {
   return members
     .filter(m => m.memberType === 'beam' || !m.memberType)
     .sort((a, b) => {
-      const sa = a.etabs?.story ?? '';
-      const sb = b.etabs?.story ?? '';
+      const sa = a.etabs?.story ?? '', sb = b.etabs?.story ?? '';
       if (sa !== sb) return sa.localeCompare(sb);
       return (a.label ?? '').localeCompare(b.label ?? '');
     })
@@ -177,17 +294,7 @@ function buildRows(members: Member[], isEC2: boolean): SchedRow[] {
       const span = isEC2
         ? `${((m.span ?? 0) * 0.3048).toFixed(2)} m`
         : `${(m.span ?? 0).toFixed(1)} ft`;
-
-      let maxDCR = 0;
-      for (const r of m.results ?? []) {
-        const d = Math.max(
-          r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0,
-          r.DCR_shear ?? 0, r.DCR_torsion ?? 0,
-          r.DCR_crack ?? 0,
-        );
-        if (d > maxDCR) maxDCR = d;
-      }
-
+      const maxDCR = computeMaxDCR(m, code);
       return {
         label: m.etabs?.frameName ?? m.label,
         story: m.etabs?.story ?? '—',
@@ -196,41 +303,87 @@ function buildRows(members: Member[], isEC2: boolean): SchedRow[] {
         top: rebarStr(m.rebar.topBars),
         bot: rebarStr(m.rebar.botBars),
         skin: rebarStr(m.rebar.sideBars ?? []),
-        stirrups: stirrupStr(m, isEC2),
+        stirrups: stirrupStr(m.rebar, isEC2),
         dcr: maxDCR > 0 ? maxDCR.toFixed(2) : '—',
         dcrVal: maxDCR,
       };
     });
 }
 
-function drawScheduleTableHeader(ctx: Ctx, x0: number, y: number) {
-  fillRect(ctx, x0, y, COL_DEFS.reduce((s, c) => s + c.w, 0), HEADER_H, C.navy);
+function drawBeamTableHeader(ctx: Ctx, x0: number, y: number) {
+  const totalW = BEAM_COL_DEFS.reduce((s, c) => s + c.w, 0);
+  fillRect(ctx, x0, y, totalW, HEADER_H, C.navy);
   let x = x0;
-  for (const col of COL_DEFS) {
-    txt(ctx, col.header, x + 3, y + 6, 7.5, C.white, ctx.bold);
+  for (const col of BEAM_COL_DEFS) {
+    txt(ctx, col.header, x + 3, y + 7, 7.5, C.white, ctx.bold);
     x += col.w;
   }
 }
 
-function drawScheduleRow(ctx: Ctx, row: SchedRow, x0: number, y: number, shade: boolean) {
-  const totalW = COL_DEFS.reduce((s, c) => s + c.w, 0);
+function drawBeamRow(ctx: Ctx, row: BeamSchedRow, x0: number, y: number, shade: boolean) {
+  const totalW = BEAM_COL_DEFS.reduce((s, c) => s + c.w, 0);
   if (shade) fillRect(ctx, x0, y, totalW, ROW_H, C.light);
-
+  const cells = [row.label, row.story, row.section, row.span, row.top, row.bot, row.skin, row.stirrups, row.dcr];
   let x = x0;
-  const cells: string[] = [row.label, row.story, row.section, row.span, row.top, row.bot, row.skin, row.stirrups, row.dcr];
-  COL_DEFS.forEach((col, i) => {
+  BEAM_COL_DEFS.forEach((col, i) => {
     const cellColor = i === 8 && row.dcrVal > 0
       ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
       : C.dark;
-    txt(ctx, cells[i], x + 3, y + 4, 8, cellColor, i === 0 ? ctx.bold : ctx.font);
+    txt(ctx, cells[i], x + 3, y + 5, 8, cellColor, i === 0 ? ctx.bold : ctx.font);
     x += col.w;
   });
   hline(ctx, x0, y, x0 + totalW);
 }
 
-// ── plan view page ─────────────────────────────────────────────────────────
+function drawScheduleTable(
+  doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont,
+  rows: GroupSchedRow[] | BeamSchedRow[],
+  isGroup: boolean,
+  projectName: string,
+  startPageNum: number,
+): number {
+  const colDefs = isGroup ? GRP_COL_DEFS : BEAM_COL_DEFS;
+  const tableW = colDefs.reduce((s, c) => s + c.w, 0);
+  const topY = 595 - 44;
+  const rowsPerPage = Math.floor((topY - 24 - HEADER_H) / ROW_H);
+  let pageNum = startPageNum;
 
-/** Normalize frame coordinates to fit the canvas area. */
+  for (let start = 0; start < rows.length; start += rowsPerPage) {
+    const ctx = addPage(doc, fontReg, fontBold);
+    drawPageFrame(ctx, isGroup ? 'Group Schedule' : 'Beam Schedule', projectName, pageNum++);
+
+    if (isGroup) {
+      drawGroupTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+    } else {
+      drawBeamTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+    }
+
+    let y = topY - HEADER_H - ROW_H;
+    const chunk = rows.slice(start, start + rowsPerPage);
+    chunk.forEach((row, i) => {
+      if (isGroup) drawGroupRow(ctx, row as GroupSchedRow, TABLE_MARGIN_LEFT, y, i % 2 === 0);
+      else drawBeamRow(ctx, row as BeamSchedRow, TABLE_MARGIN_LEFT, y, i % 2 === 0);
+      y -= ROW_H;
+    });
+
+    strokeRect(ctx, TABLE_MARGIN_LEFT, y, tableW, topY - y - HEADER_H - ROW_H + ROW_H);
+
+    // Column dividers
+    let cx = TABLE_MARGIN_LEFT;
+    for (const col of colDefs.slice(0, -1)) {
+      cx += col.w;
+      ctx.page.drawLine({
+        start: { x: cx, y: topY - HEADER_H },
+        end:   { x: cx, y: y + ROW_H },
+        thickness: 0.3, color: C.mid,
+      });
+    }
+  }
+  return pageNum;
+}
+
+// ── plan view ──────────────────────────────────────────────────────────────
+
 function buildTransform(frames: MapFrame[], x0: number, y0: number, canW: number, canH: number) {
   if (!frames.length) return { scale: 1, ox: x0, oy: y0 };
   const xs = frames.flatMap(f => [f.pt1.x, f.pt2.x]);
@@ -245,12 +398,6 @@ function buildTransform(frames: MapFrame[], x0: number, y0: number, canW: number
   return { scale, ox, oy };
 }
 
-function groupColorForMember(memberId: string, groups: DesignGroup[]): ReturnType<typeof rgb> | null {
-  const idx = groups.findIndex(g => g.memberIds.includes(memberId));
-  if (idx < 0) return null;
-  return C.groups[idx % C.groups.length];
-}
-
 function drawPlanPage(
   ctx: Ctx,
   frames: MapFrame[],
@@ -259,63 +406,84 @@ function drawPlanPage(
   groups: DesignGroup[],
   projectName: string,
   pageNum: number,
-  labelMode: 'frameName' | 'group',
 ) {
   const { w, h, margin } = ctx;
   drawPageFrame(ctx, `Plan — ${storyName}`, projectName, pageNum);
 
-  const canX = margin, canY = 20, canW = w - margin - 200, canH = h - 52;
+  const LEGEND_W = 185;
+  const canX = margin, canY = 22, canW = w - margin - LEGEND_W - 8, canH = h - 54;
   strokeRect(ctx, canX, canY, canW, canH);
 
   const { scale, ox, oy } = buildTransform(frames, canX, canY, canW, canH);
+
+  // Build group-index lookup: memberId → group index
+  const memberGroupIdx = new Map<string, number>();
+  groups.forEach((g, gi) => g.memberIds.forEach(id => memberGroupIdx.set(id, gi)));
 
   for (const f of frames) {
     const x1 = ox + f.pt1.x * scale, y1 = oy + f.pt1.y * scale;
     const x2 = ox + f.pt2.x * scale, y2 = oy + f.pt2.y * scale;
 
-    const member = memberById.get(f.memberId ?? f.frameName);
-    const col = member ? (groupColorForMember(member.id, groups) ?? C.blue) : C.mid;
+    const member = memberById.get(f.memberId ?? '') ?? memberById.get(f.frameName);
+    const gi = member ? (memberGroupIdx.get(member.id) ?? -1) : -1;
+    const col = gi >= 0 ? C.groups[gi % C.groups.length] : C.mid;
 
-    ctx.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 2.5, color: col });
+    ctx.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 2, color: col });
 
-    // Label at midpoint
-    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-    const labelText = labelMode === 'group' && member
-      ? (groups.find(g => g.memberIds.includes(member.id))?.label ?? f.frameName)
-      : f.frameName;
-
-    // Small white box behind text for readability
-    const tlen = labelText.length * 4.5;
-    fillRect(ctx, mx - tlen / 2 - 1, my - 1, tlen + 2, 9, C.white);
-    txt(ctx, labelText, mx - tlen / 2, my + 1, 6.5, C.dark);
+    // Tiny group-index number at beam midpoint — no background, just small coloured text
+    if (gi >= 0) {
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      const label = String(gi + 1);
+      // White knockout behind number for contrast (only 1px padding)
+      const lw = label.length * 3.5;
+      ctx.page.drawRectangle({ x: mx - lw / 2 - 0.5, y: my - 0.5, width: lw + 1, height: 6, color: C.white, borderWidth: 0 });
+      txt(ctx, label, mx - lw / 2, my + 0.5, 5, col, ctx.bold);
+    }
   }
 
-  // Legend (right side)
-  const lx = w - 190, ly = h - 52;
-  txt(ctx, 'Design Groups', lx, ly - 14, 8, C.dark, ctx.bold);
-  groups.forEach((g, i) => {
-    const gy = ly - 30 - i * 14;
-    if (gy < 24) return; // clip
+  // ── Legend ────────────────────────────────────────────────────────────────
+  const lx = w - LEGEND_W - 4;
+  const legendTop = h - 48;
+
+  txt(ctx, 'Design Groups', lx, legendTop, 8, C.dark, ctx.bold);
+
+  const maxLegendRows = Math.floor((legendTop - 26) / 13);
+  const visibleGroups = groups.slice(0, maxLegendRows);
+
+  visibleGroups.forEach((g, i) => {
+    const gy = legendTop - 14 - i * 13;
     const col = C.groups[i % C.groups.length];
-    fillRect(ctx, lx, gy, 18, 8, col);
-    txt(ctx, g.label, lx + 22, gy + 1, 7.5, C.dark);
-    const memberCount = g.memberIds.length;
-    txt(ctx, `(${memberCount})`, lx + 22 + g.label.length * 4.5, gy + 1, 7, C.mid);
+    // Index number
+    const idxStr = String(i + 1);
+    txt(ctx, idxStr, lx, gy + 1, 7, col, ctx.bold);
+    // Colour swatch
+    fillRect(ctx, lx + 10, gy + 1, 12, 9, col);
+    // Group label — truncate to fit
+    const maxChars = 22;
+    const labelText = g.label.length > maxChars ? g.label.slice(0, maxChars) + '…' : g.label;
+    txt(ctx, labelText, lx + 25, gy + 2, 7, C.dark);
+    txt(ctx, `(${g.memberIds.length})`, lx + 25 + labelText.length * 4.2, gy + 2, 6.5, C.mid);
   });
+
+  if (groups.length > maxLegendRows) {
+    txt(ctx, `+ ${groups.length - maxLegendRows} more…`, lx, legendTop - 14 - maxLegendRows * 13, 6.5, C.mid);
+  }
   if (!groups.length) {
-    txt(ctx, 'No groups defined', lx, ly - 30, 7.5, C.mid);
-    txt(ctx, '(all beams shown in blue)', lx, ly - 44, 7, C.mid);
+    txt(ctx, 'No groups — all beams in blue', lx, legendTop - 20, 7, C.mid);
   }
 }
 
-// ── main export entry point ───────────────────────────────────────────────
+// ── main export entry point ────────────────────────────────────────────────
 
 export interface ScheduleExportOptions {
-  /** Label mode for the plan: show frame name or group label. */
-  planLabel?: 'frameName' | 'group';
-  /** Restrict to specific story (undefined = all stories, one plan page per story). */
+  /**
+   * 'group' (default) = one row per design group (compact, recommended).
+   * 'beam'            = one row per beam (verbose, full list).
+   */
+  mode?: 'group' | 'beam';
+  /** Restrict to a specific story on the plan pages. */
   story?: string;
-  /** Restrict to a specific subset of members. */
+  /** Restrict to a subset of member ids. */
   memberIds?: string[];
 }
 
@@ -330,94 +498,67 @@ export async function buildSchedulePDF(
   const fontReg = await doc.embedFont(regular);
   const fontBold = await doc.embedFont(bold);
 
-  const isEC2 = project.code === 'EN1992-1-1';
+  const isEC2  = project.code === 'EN1992-1-1';
+  const code   = project.code ?? 'ACI318-19';
   const projectName = winAnsiSafe(project.name ?? 'Unnamed Project');
+  const mode   = options.mode ?? 'group';
 
-  // Filter members
+  // Filter members to beams only
   const members = (project.members ?? []).filter(m => {
     if (options.memberIds && !options.memberIds.includes(m.id)) return false;
-    if (m.memberType && m.memberType !== 'beam') return false;
-    return true;
+    return !m.memberType || m.memberType === 'beam';
   });
 
   const memberById = new Map(members.map(m => [m.id, m]));
-  // Also index by frameName for map frame lookup
   for (const m of members) {
     if (m.etabs?.frameName) memberById.set(m.etabs.frameName, m);
   }
 
-  // ── Cover page ────────────────────────────────────────────────────────────
+  const groups = project.designGroups ?? [];
+
+  // ── Cover page ─────────────────────────────────────────────────────────────
   {
     const cover = doc.addPage([842, 595]);
     const { width: w, height: h } = cover.getSize();
     cover.drawRectangle({ x: 0, y: 0, width: w, height: h, color: C.navy });
     cover.drawRectangle({ x: 40, y: 120, width: w - 80, height: 3, color: C.blue });
     cover.drawText('S-Dashboard', { x: 44, y: h - 80, size: 18, color: C.mid, font: fontBold });
-    cover.drawText('Beam Schedule & Tagged Plan', { x: 44, y: h - 110, size: 28, color: C.white, font: fontBold });
+    const subtitle = mode === 'group' ? 'Group Schedule & Tagged Plan' : 'Beam Schedule & Tagged Plan';
+    cover.drawText(subtitle, { x: 44, y: h - 110, size: 28, color: C.white, font: fontBold });
     cover.drawText(winAnsiSafe(projectName), { x: 44, y: h - 148, size: 14, color: C.mid, font: fontReg });
     const today = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
     cover.drawText(today, { x: 44, y: 100, size: 10, color: C.mid, font: fontReg });
-    cover.drawText(`${members.length} beams`, { x: 44, y: 82, size: 10, color: C.mid, font: fontReg });
+    const info = mode === 'group'
+      ? `${groups.length} design groups · ${members.length} beams`
+      : `${members.length} beams`;
+    cover.drawText(info, { x: 44, y: 82, size: 10, color: C.mid, font: fontReg });
   }
 
   // ── Schedule table pages ───────────────────────────────────────────────────
-  const rows = buildRows(members, isEC2);
-  const tableW = COL_DEFS.reduce((s, c) => s + c.w, 0);
-  const pageH = 595;
-  const topY = pageH - 44;  // below page header
-  const bodyH = topY - 24;  // above page footer
-  const rowsPerPage = Math.floor((bodyH - HEADER_H) / ROW_H);
-
   let pageNum = 2;
-  for (let start = 0; start < rows.length; start += rowsPerPage) {
-    const ctx = addPage(doc, fontReg, fontBold);
-    drawPageFrame(ctx, 'Beam Schedule', projectName, pageNum++);
-
-    // Column header
-    drawScheduleTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
-
-    // Rows
-    let y = topY - HEADER_H - ROW_H;
-    const chunk = rows.slice(start, start + rowsPerPage);
-    chunk.forEach((row, i) => {
-      drawScheduleRow(ctx, row, TABLE_MARGIN_LEFT, y, i % 2 === 0);
-      y -= ROW_H;
-    });
-
-    // Outer border
-    strokeRect({ ...ctx, page: ctx.page }, TABLE_MARGIN_LEFT, y, tableW, topY - y - HEADER_H - ROW_H + ROW_H);
-
-    // Column dividers
-    let cx = TABLE_MARGIN_LEFT;
-    for (const col of COL_DEFS.slice(0, -1)) {
-      cx += col.w;
-      ctx.page.drawLine({
-        start: { x: cx, y: topY - HEADER_H },
-        end:   { x: cx, y: y + ROW_H },
-        thickness: 0.3, color: C.mid,
-      });
-    }
+  if (mode === 'group') {
+    const rows = buildGroupRows(groups, memberById, isEC2, code);
+    pageNum = drawScheduleTable(doc, fontReg, fontBold, rows, true, projectName, pageNum);
+  } else {
+    const rows = buildBeamRows(members, isEC2, code);
+    pageNum = drawScheduleTable(doc, fontReg, fontBold, rows, false, projectName, pageNum);
   }
 
-  // ── Plan pages ────────────────────────────────────────────────────────────
+  // ── Plan pages ─────────────────────────────────────────────────────────────
   const frames = project.modelMap?.frames ?? [];
   const stories = options.story
     ? [options.story]
     : [...new Set(frames.map(f => f.story))].sort();
 
-  const groups = project.designGroups ?? [];
-  const labelMode = options.planLabel ?? 'frameName';
-
   for (const story of stories) {
     const storyFrames = frames.filter(f =>
-      f.story === story && members.some(m =>
-        m.id === f.memberId || m.etabs?.frameName === f.frameName,
-      ),
+      f.story === story &&
+      members.some(m => m.id === f.memberId || m.etabs?.frameName === f.frameName),
     );
     if (!storyFrames.length) continue;
 
     const ctx = addPage(doc, fontReg, fontBold);
-    drawPlanPage(ctx, storyFrames, story, memberById, groups, projectName, pageNum++, labelMode);
+    drawPlanPage(ctx, storyFrames, story, memberById, groups, projectName, pageNum++);
   }
 
   return doc.save();

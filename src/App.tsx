@@ -683,12 +683,12 @@ export default function App() {
                 <button
                   onClick={async () => {
                     setShowExport(false);
-                    const bytes = await buildSchedulePDF(project);
+                    const bytes = await buildSchedulePDF(project, { mode: 'group' });
                     const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_schedule.pdf`;
+                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_group_schedule.pdf`;
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
@@ -696,7 +696,25 @@ export default function App() {
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
-                  Beam Schedule PDF
+                  Group Schedule PDF
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowExport(false);
+                    const bytes = await buildSchedulePDF(project, { mode: 'beam' });
+                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_beam_schedule.pdf`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Beam Schedule PDF <span style={{ fontSize: 10, color: '#9ca3af' }}>(full)</span>
                 </button>
                 <button
                   onClick={() => { window.print(); setShowExport(false); }}
