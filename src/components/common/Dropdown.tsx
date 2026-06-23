@@ -14,7 +14,8 @@
  *   onChange  — called with String(value), exactly like e.target.value
  * So existing call sites only need to change the JSX tag.
  */
-import { useState, useEffect, useRef, useId } from 'react';
+import { useState, useEffect, useRef, useId, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface DropdownOption {
   value: string | number;
@@ -34,12 +35,39 @@ interface Props {
   openUp?: boolean;
 }
 
+/** Rect of the trigger button, updated on open. */
+interface ListPos { top: number; bottom: number; left: number; width: number; viewH: number }
+
 export default function Dropdown({
   value, options, onChange, style, disabled, title, ariaLabel, openUp,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [listPos, setListPos] = useState<ListPos | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const id = useId();
+
+  // Measure trigger position whenever the list opens so the portal can
+  // position itself correctly regardless of scroll / overflow ancestors.
+  const measureAndOpen = useCallback(() => {
+    if (disabled) return;
+    const rect = ref.current?.getBoundingClientRect();
+    if (rect) {
+      setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight });
+    }
+    setOpen(o => !o);
+  }, [disabled]);
+
+  // Re-measure on scroll / resize so the portal tracks the trigger.
+  useEffect(() => {
+    if (!open) return;
+    function reposition() {
+      const rect = ref.current?.getBoundingClientRect();
+      if (rect) setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight });
+    }
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => { window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition); };
+  }, [open]);
 
   // Close on outside click
   useEffect(() => {
@@ -88,11 +116,16 @@ export default function Dropdown({
     ...style,
   };
 
-  const LIST: React.CSSProperties = {
-    position: 'absolute',
-    [openUp ? 'bottom' : 'top']: '100%',
-    left: 0,
-    minWidth: '100%',
+  // Portal list position: open downward if space allows, upward otherwise.
+  const goUp = listPos
+    ? (openUp || (listPos.viewH - listPos.top < 200 && listPos.bottom > 200))
+    : !!openUp;
+  const LIST: React.CSSProperties = listPos ? {
+    position: 'fixed',
+    top: goUp ? undefined : listPos.top + 2,
+    bottom: goUp ? (listPos.viewH - listPos.bottom + 2) : undefined,
+    left: listPos.left,
+    minWidth: listPos.width,
     maxHeight: 220,
     overflowY: 'auto',
     background: 'white',
@@ -100,13 +133,11 @@ export default function Dropdown({
     borderRadius: 6,
     boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
     zIndex: 9999,
-    marginTop: openUp ? undefined : 2,
-    marginBottom: openUp ? 2 : undefined,
-  };
+  } : {};
 
   return (
     <div ref={ref} data-dropdown={id}
-      style={{ position: 'relative', display: 'inline-block', width: style?.width ?? 'auto' }}
+      style={{ display: 'inline-block', width: style?.width ?? 'auto' }}
       onKeyDown={onKeyDown}
     >
       <button
@@ -116,14 +147,14 @@ export default function Dropdown({
         aria-label={ariaLabel ?? label}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => !disabled && setOpen(o => !o)}
+        onClick={measureAndOpen}
         style={TRIGGER}
       >
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
         <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
       </button>
 
-      {open && (
+      {open && listPos && createPortal(
         <div role="listbox" style={LIST}>
           {options.map(opt => {
             const selected = String(opt.value) === String(value);
@@ -153,7 +184,8 @@ export default function Dropdown({
               </div>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
