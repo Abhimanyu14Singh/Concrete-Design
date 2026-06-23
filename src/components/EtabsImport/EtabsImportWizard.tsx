@@ -383,7 +383,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     onChange={v => { setSelStory(v); setMatchCount(null); }} />
                 </div>
                 <div style={card}>
-                  <div style={lbl}>Beam sections (frame properties)</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <div style={lbl}>Beam sections</div>
+                    {(selSections.size > 0 || selGroups.size > 0) && (
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>sections ∪ groups — beams matching either are imported</span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {sections.map(s => (
                       <span key={s.name} style={chip(selSections.has(s.name))}
