@@ -240,7 +240,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Dropdown
             value={ties.barSize}
-            options={barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 6 : -s <= 12)).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            options={barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 8 : -s <= 20)).map(s => ({ value: s, label: formatBarLabel(s) }))}
             onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(v) } }))}
             style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}
           />

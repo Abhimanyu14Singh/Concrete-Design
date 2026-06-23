@@ -592,7 +592,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     Stirrup size
                     <Dropdown style={inp} value={seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)}
                       options={barSizeOptions(wizardUnits, seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4))
-                        .filter(b => b === (seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)) || (b > 0 ? b <= 6 : -b <= 12))
+                        .filter(b => b === (seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)) || (b > 0 ? b <= 8 : -b <= 20))
                         .map(b => ({ value: b, label: formatBarLabel(b) }))}
                       onChange={v => setSeed(s => ({ ...s, stirrupBarSize: +v }))}
                     />
