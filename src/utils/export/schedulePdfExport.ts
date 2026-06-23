@@ -13,9 +13,8 @@ import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, MapFrame, DesignGroup, LoadCase } from '../../types';
 import { formatBarLabel } from '../rebar';
-import { winAnsiSafe, setFontLoader } from './pdfExport';
+import { winAnsiSafe } from './pdfExport';
 import { runDesign } from '../../engines';
-export { setFontLoader };
 
 // ── colour palette ─────────────────────────────────────────────────────────
 
@@ -124,8 +123,17 @@ function computeMaxDCR(m: Member, code: string): number {
 
 let _regularBytes: ArrayBuffer | null = null;
 let _boldBytes: ArrayBuffer | null = null;
+let _fontLoader: (() => Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }>) | null = null;
+
+/** Override font loading (e.g. for Node tests that read from the filesystem). */
+export function setFontLoader(fn: () => Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }>): void {
+  _fontLoader = fn;
+  _regularBytes = null;
+  _boldBytes = null;
+}
 
 async function getFontBytes(): Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }> {
+  if (_fontLoader) return _fontLoader();
   if (!_regularBytes || !_boldBytes) {
     const base = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) ?? './';
     const [r, b] = await Promise.all([
