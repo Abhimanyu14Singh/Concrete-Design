@@ -151,6 +151,10 @@ export interface BarGroup {
   rows?: number;
   /** @deprecated unused — see RebarLayout.layerClearSpacing */
   rowSpacing?: number;
+  /** Vertical centre-to-centre spacing of skin bars (inches). Used for EC2
+   *  side-face crack width ρ_eff = As_bar / (spacing × hc,eff). When absent,
+   *  a uniform spacing over the available web height is assumed. */
+  spacing?: number;
 }
 
 export interface TieLayout {
