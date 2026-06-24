@@ -318,13 +318,19 @@ export default function App() {
     const m = project.members.find(mm => mm.id === id);
     if (!m) return;
     if (!confirm(`Delete member ${m.id} — "${m.label}"? (Ctrl+Z to undo)`)) return;
+    const frameName = m.etabs?.frameName;
     setProject(p => {
       const members = p.members.filter(mm => mm.id !== id);
       // Clean dangling group references; drop groups that become empty
       const designGroups = (p.designGroups ?? [])
         .map(g => ({ ...g, memberIds: g.memberIds.filter(mid => mid !== id) }))
         .filter(g => g.memberIds.length > 0);
-      return { ...p, members, designGroups };
+      // Drop the beam's frame from the connectivity snapshot so its line
+      // disappears from the map view.
+      const modelMap = p.modelMap
+        ? { ...p.modelMap, frames: p.modelMap.frames.filter(f => f.memberId !== id && f.frameName !== frameName) }
+        : p.modelMap;
+      return { ...p, members, designGroups, modelMap };
     });
     if (activeMemberId === id) {
       const remaining = project.members.filter(mm => mm.id !== id);
@@ -339,12 +345,18 @@ export default function App() {
   function deleteMembers(ids: string[]) {
     if (!ids.length) return;
     const idSet = new Set(ids);
+    const frameNames = new Set(
+      project.members.filter(mm => idSet.has(mm.id)).map(mm => mm.etabs?.frameName).filter(Boolean) as string[],
+    );
     setProject(p => {
       const members = p.members.filter(mm => !idSet.has(mm.id));
       const designGroups = (p.designGroups ?? [])
         .map(g => ({ ...g, memberIds: g.memberIds.filter(mid => !idSet.has(mid)) }))
         .filter(g => g.memberIds.length > 0);
-      return { ...p, members, designGroups };
+      const modelMap = p.modelMap
+        ? { ...p.modelMap, frames: p.modelMap.frames.filter(f => !idSet.has(f.memberId ?? '') && !frameNames.has(f.frameName)) }
+        : p.modelMap;
+      return { ...p, members, designGroups, modelMap };
     });
     if (activeMemberId && idSet.has(activeMemberId)) {
       const remaining = project.members.filter(mm => !idSet.has(mm.id));
