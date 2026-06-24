@@ -7,6 +7,7 @@ import { designWallACI } from '../wallDesign';
 import { getBarDiam, zoneShearDemands } from '../concreteDesign';
 import { generateBreakdown, type CalcSection } from '../calcBreakdown';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
+import { resolveCrack } from '../resolveCrack';
 import { generateColumnBreakdown } from '../calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../calcBreakdownColumnEC2';
 import { generateWallBreakdown } from '../calcBreakdownWall';
@@ -82,6 +83,11 @@ function makeU(isEC2: boolean): UCtx {
   };
 }
 
+// Project-level SLS quasi-permanent combo for the current report; set by
+// buildReportBytes so the EC2 crack-width sheet + design results honour it
+// (mirrors the module-level _resultCache lifecycle).
+let _slsCombo: string | undefined;
+
 function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] {
   const isWall = m.memberType === 'wall' && !!m.wallRebar;
   const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
@@ -93,7 +99,7 @@ function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] 
       : generateColumnBreakdown(m.section, m.material, m.rebar, lc);
   }
   return isEC2
-    ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, m.crackParams)
+    ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, resolveCrack(m, code, _slsCombo), _slsCombo)
     : generateBreakdown(
         m.section, m.material, m.rebar, lc, m.span,
         m.rebar.tieZones && m.stationForces?.length
@@ -202,7 +208,7 @@ function memberResult(m: Member, lc: LoadCase, code?: string): DesignResults {
   if (hit) return hit;
   const r = m.memberType === 'wall' && m.wallRebar
     ? designWallACI(m.section, m.material, m.wallRebar, lc)
-    : runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
+    : runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, resolveCrack(m, code ?? '', _slsCombo));
   _resultCache.set(key, r);
   return r;
 }
@@ -539,6 +545,7 @@ export async function buildReportBytes(
   project: Project, options: ReportOptions = DEFAULT_REPORT_OPTIONS,
 ): Promise<Uint8Array> {
   _resultCache.clear();
+  _slsCombo = project.slsCombo;
   const opts = { ...DEFAULT_REPORT_OPTIONS, ...options };
   const members = opts.memberIds
     ? project.members.filter(m => opts.memberIds!.includes(m.id))

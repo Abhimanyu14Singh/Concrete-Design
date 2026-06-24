@@ -163,6 +163,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
           member={member}
           loadId={activeLoad || member.loads[0]?.id}
           code={code}
+          slsCombo={slsCombo}
           onClose={() => setShowCalc(false)}
         />
       )}

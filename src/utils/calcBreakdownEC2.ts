@@ -22,6 +22,7 @@ export function generateBreakdownEC2(
   load: LoadCase,
   _span = 20,
   crackIn: CrackControlParams = DEFAULT_CRACK_PARAMS,
+  slsComboName?: string,
 ): CalcSection[] {
   // Merge with defaults so partial objects from old saves don't crash on missing fields.
   const crack: CrackControlParams = { ...DEFAULT_CRACK_PARAMS, ...crackIn };
@@ -164,14 +165,19 @@ export function generateBreakdownEC2(
   // ── Crack width §7.3.4 ──
   const Es_MPa = material.Es * PSI_TO_MPA;
   const alpha_e = Es_MPa / ecm(fck);
-  const Mqp_pos = crack.qpFactor * MEd;
-  const Mqp_neg = crack.qpFactor * MEd_neg;
+  // M_qp precedence mirrors the engine (ec2Beam.ts): use the resolved SLS combo
+  // moment (kip-ft → kN·m) when present, else the qpFactor × M_Ed ratio fallback.
+  const posFromCombo = crack.Mqp_pos !== undefined;
+  const negFromCombo = crack.Mqp_neg !== undefined;
+  const Mqp_pos = posFromCombo ? crack.Mqp_pos! * KIPFT_TO_KNM : crack.qpFactor * MEd;
+  const Mqp_neg = negFromCombo ? crack.Mqp_neg! * KIPFT_TO_KNM : crack.qpFactor * MEd_neg;
+  const usingCombo = posFromCombo || negFromCombo;
   const crackSectionNum = load.Tu > 0 ? 6 : 5;
   const crackSteps: CalcSection['steps'] = [];
 
   function addFaceSteps(
     faceLabel: string, Mqp: number, As_f: number, barD_f: number,
-    b_f: number, d_f: number, wLimit: number,
+    b_f: number, d_f: number, wLimit: number, fromCombo = false,
   ) {
     if (Mqp <= 0 || As_f <= 0) return;
     const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt);
@@ -182,7 +188,9 @@ export function generateBreakdownEC2(
       : { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = ${f(cw.k2, 2)}, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
     const dcr = wLimit > 0 ? cw.wk / wLimit : 0;
     crackSteps.push(
-      { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(Mqp / crack.qpFactor)}`, result: `M_qp = ${f(Mqp)} kN·m` },
+      fromCombo
+        ? { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = M_Ed (SLS combo)', substitution: slsComboName ? `quasi-permanent combo "${slsComboName}"` : 'selected SLS combo', result: `M_qp = ${f(Mqp)} kN·m` }
+        : { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(Mqp / crack.qpFactor)}`, result: `M_qp = ${f(Mqp)} kN·m` },
       { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'σs via elastic cracked section', substitution: `x = ${f(cw.x, 0)} mm, z = d−x/3 = ${f(d_f - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
       { ref: '§7.3.2(3)', label: `${faceLabel}: effective reinforcement ratio`, equation: 'ρp,eff = As/Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
       srStep,
@@ -191,15 +199,15 @@ export function generateBreakdownEC2(
     );
   }
 
-  addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, crack.wLimitBot);
-  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, d, crack.wLimitTop);
+  addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, crack.wLimitBot, posFromCombo);
+  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, d, crack.wLimitTop, negFromCombo);
 
   // Side face (skin reinforcement)
   if (rebar.sideBars && rebar.sideBars.length > 0) {
     const As_side = rebar.sideBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0) * IN2_TO_MM2;
     const sideBarD = getBarDiam(rebar.sideBars[0].barSize) * IN_TO_MM;
     const govMqp = Math.max(Mqp_pos, Mqp_neg);
-    addFaceSteps('Side face (skin rebar)', govMqp, As_side, sideBarD, b, h / 2, crack.wLimitFace);
+    addFaceSteps('Side face (skin rebar)', govMqp, As_side, sideBarD, b, h / 2, crack.wLimitFace, usingCombo);
   } else if (h > 1000) {
     crackSteps.push({
       ref: '§7.3.3', label: 'Side face — deep beam',
@@ -210,7 +218,10 @@ export function generateBreakdownEC2(
   }
 
   if (crackSteps.length > 0) {
-    sections.push({ title: `${crackSectionNum}. Crack Width (§7.3.4)`, steps: crackSteps });
+    const title = usingCombo && slsComboName
+      ? `${crackSectionNum}. Crack Width (§7.3.4) — SLS combo "${slsComboName}"`
+      : `${crackSectionNum}. Crack Width (§7.3.4)`;
+    sections.push({ title, steps: crackSteps });
   }
 
   return sections;
