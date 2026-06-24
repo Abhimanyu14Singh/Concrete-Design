@@ -7,6 +7,7 @@ import { MockConnection } from '../mock';
 import { envelopeLoadCase, zoneShearDemands, buildMembers, autoGroup } from '../index';
 import { seedRebar, pickBars, minSkinReinforcement } from '../rebarSeed';
 import { zonedShearCheck, getBarArea, effectiveDepth } from '../../../utils/concreteDesign';
+import { zonedShearCheckEC2 } from '../../../engines/ec2/ec2Beam';
 import { runDesign } from '../../../engines';
 import type { ComboForces, SectionDimensions } from '../../../types';
 
@@ -249,5 +250,52 @@ describe('zonedShearCheck', () => {
     const wideMid = { ...rebar, tieZones: [{ spacing: 3 }, { spacing: 18 }, { spacing: 3 }] as typeof rebar.tieZones };
     const z = zonedShearCheck(SECTION, material, wideMid, [50, 45, 50]);
     expect(z[1].DCR).toBeGreaterThan(z[0].DCR);
+  });
+});
+
+describe('zonedShearCheckEC2', () => {
+  const material = { fc: 5000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0 };
+  const rebar = {
+    topBars: [{ numBars: 3, barSize: 8 }],
+    botBars: [{ numBars: 4, barSize: 8 }],
+    ties: { barSize: 4, spacing: 4, legs: 2 },
+    tieZones: [{ spacing: 4 }, { spacing: 10 }, { spacing: 4 }] as [{ spacing: number }, { spacing: number }, { spacing: number }],
+  };
+
+  it('checks all three zones with EC2 variable-strut capacity', () => {
+    const z = zonedShearCheckEC2(SECTION, material, rebar, [60, 20, 55]);
+    expect(z).toHaveLength(3);
+    // Tighter end zones carry more (V_Rd,s ∝ Asw/s) until capped by V_Rd,max.
+    expect(z[0].phi_Vn).toBeGreaterThanOrEqual(z[1].phi_Vn);
+    expect(z[0].phi_Vn).toBeCloseTo(z[2].phi_Vn, 6);
+  });
+
+  it('DCR = zone demand / zone capacity (governing worst case per third)', () => {
+    const z = zonedShearCheckEC2(SECTION, material, rebar, [60, 20, 55]);
+    expect(z[0].DCR).toBeCloseTo(60 / z[0].phi_Vn, 6);
+    expect(z[1].DCR).toBeCloseTo(20 / z[1].phi_Vn, 6);
+    expect(z[2].DCR).toBeCloseTo(55 / z[2].phi_Vn, 6);
+  });
+
+  it('a wide middle zone can govern even with lower demand', () => {
+    const wideMid = { ...rebar, tieZones: [{ spacing: 3 }, { spacing: 18 }, { spacing: 3 }] as typeof rebar.tieZones };
+    const z = zonedShearCheckEC2(SECTION, material, wideMid, [50, 45, 50]);
+    expect(z[1].DCR).toBeGreaterThan(z[0].DCR);
+  });
+
+  it('returns empty without tieZones', () => {
+    const plain = { topBars: rebar.topBars, botBars: rebar.botBars, ties: rebar.ties };
+    expect(zonedShearCheckEC2(SECTION, material, plain, [60, 20, 55])).toEqual([]);
+  });
+
+  it('headline EC2 DCR_shear reflects the worst (widest) zone, not the tightest', () => {
+    // ties.spacing stores the tight end value (4"); the middle zone is wider (16").
+    const wideMid = { ...rebar, ties: { ...rebar.ties, spacing: 4 }, tieZones: [{ spacing: 4 }, { spacing: 16 }, { spacing: 4 }] as typeof rebar.tieZones };
+    const tight   = { ...rebar, ties: { ...rebar.ties, spacing: 4 }, tieZones: [{ spacing: 4 }, { spacing: 4 }, { spacing: 4 }] as typeof rebar.tieZones };
+    const load = { id: 'lc', label: 'LC1', Mu_pos: 100, Mu_neg: 80, Vu: 60, Tu: 0, Pu: 0 };
+    const rWide  = runDesign(SECTION, material, wideMid, load, 20, 'EN1992-1-1');
+    const rTight = runDesign(SECTION, material, tight, load, 20, 'EN1992-1-1');
+    // A loose middle zone must NOT show a lower headline DCR than uniform-tight links.
+    expect(rWide.DCR_shear).toBeGreaterThan(rTight.DCR_shear);
   });
 });

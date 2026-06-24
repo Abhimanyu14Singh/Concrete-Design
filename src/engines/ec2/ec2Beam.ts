@@ -311,17 +311,22 @@ export function designMemberEC2(
   const z = 0.9 * d_bot;
   const cotTheta = 2.5;
 
+  // Governing tie spacing for ALL spacing-derived capacity & detailing checks.
+  // When zoned stirrups exist the worst (most widely spaced) zone governs —
+  // ties.spacing stores the tightest end-zone value, which would overstate
+  // capacity and understate ρw / s_max. Used by shear, torsion and detailing
+  // so the single-value (headline) result reflects the critical zone. The
+  // per-zone breakdown (zonedShearCheckEC2) reports each third individually.
+  const worstSpacing = rebar.tieZones
+    ? Math.max(...rebar.tieZones.map(z => z.spacing))
+    : (rebar.ties?.spacing ?? 0);
+  const worstSpacing_mm = worstSpacing * IN_TO_MM;
+
   let VRds = 0, VRdmax = 0, Asw_s = 0;
   if (rebar.ties) {
     const Asw_mm2 = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
-    // When zoned stirrups exist, the headline capacity must reflect the worst
-    // (most widely spaced) zone — not the tightest end zone stored in ties.spacing.
-    const worstSpacing = rebar.tieZones
-      ? Math.max(...rebar.tieZones.map(z => z.spacing))
-      : rebar.ties.spacing;
-    const s_mm = worstSpacing * IN_TO_MM;
-    Asw_s = Asw_mm2 / s_mm;
-    VRds = vRds(Asw_mm2, s_mm, z, fywd, cotTheta);
+    Asw_s = Asw_mm2 / worstSpacing_mm;
+    VRds = vRds(Asw_mm2, worstSpacing_mm, z, fywd, cotTheta);
     VRdmax = vRdMax(b_mm, z, fck, fcd, cotTheta);
   }
 
@@ -347,7 +352,8 @@ export function designMemberEC2(
   const coverToCentre = cover_mm + stirrupD_mm + botBarD_mm / 2;
   if (rebar.ties) {
     const AtLeg_mm2 = getBarArea(rebar.ties.barSize) * IN2_TO_MM2; // one leg
-    const s_mm = rebar.ties.spacing * IN_TO_MM;
+    // Worst-zone spacing governs (see worstSpacing definition above).
+    const s_mm = worstSpacing_mm;
     const t = tRd(b_mm, h_mm, AtLeg_mm2, s_mm, fywd, fck, fcd, cotTheta, coverToCentre);
     TRd = Math.min(t.TRds, t.TRdMax);
     TRdc_val = t.TRdc;
@@ -466,7 +472,8 @@ export function designMemberEC2(
       warnings.push({ code: 'EC2 §9.2.2(5)', message: `ρw = ${(rho_w * 1000).toFixed(2)}‰ < ρw,min = ${(rho_w_min * 1000).toFixed(2)}‰`, severity: 'warning' });
 
     const s_max = 0.75 * d_bot;
-    const s_mm = rebar.ties.spacing * IN_TO_MM;
+    // Worst-zone spacing governs the s_max detailing limit (see above).
+    const s_mm = worstSpacing_mm;
     if (s_mm > s_max)
       warnings.push({ code: 'EC2 §9.2.2(6)', message: `Stirrup spacing ${s_mm.toFixed(0)} mm > s_max = 0.75d = ${s_max.toFixed(0)} mm`, severity: 'warning' });
   } else if (VEd > VRdc) {
@@ -568,8 +575,9 @@ export function designMemberEC2(
     DCR_flex_pos, DCR_flex_neg,
     Vc: toKip(VRdc), Vs: toKip(VRds), phi_Vn: toKip(VRd), DCR_shear,
     Tcr: toKipFt(TRdc_val), Tu_threshold: toKipFt(TRdc_val), phi_Tn: toKipFt(TRd), DCR_torsion,
-    // Flexure + shear tension shift (eq 6.18) + torsion longitudinal share,
-    // floored at As,min. AsLongReqBot/Top already include all three terms.
+    // Flexure + torsion longitudinal share (§6.3.2(3)), floored at As,min.
+    // The §6.2.3(7) shear tension shift is intentionally NOT included here
+    // (see AsLongReqBot/Top above) — only flexure and torsion contribute.
     As_req_pos: toIn2(Math.max(AsLongReqBot, AsMin_mm2)),
     As_req_neg: toIn2(Math.max(AsLongReqTop, MEd_neg > 0 ? AsMin_mm2 : 0)),
     As_min: toIn2(AsMin_mm2), As_max: toIn2(AsMax_mm2),

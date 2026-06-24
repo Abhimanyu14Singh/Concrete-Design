@@ -139,7 +139,7 @@ The headline `DCR_shear` (the single value shown on the results panel) now uses 
 worstSpacing = tieZones ? max(zone.spacing) : ties.spacing
 ```
 
-V_Rd,s for the headline is computed at `worstSpacing`, so the headline capacity reflects the least-reinforced third rather than the tightest end-zone spacing stored in `ties.spacing`. (Note: torsion and detailing checks below still use the bare `ties.spacing` — see reviewer flags.)
+V_Rd,s for the headline is computed at `worstSpacing`, so the headline capacity reflects the least-reinforced third rather than the tightest end-zone spacing stored in `ties.spacing`. The same `worstSpacing` now governs the torsion (T_Rd,s, combined V+T) and detailing (ρw,min, s_max) checks too, so every single-value resistance is evaluated at the critical zone consistently. The per-zone breakdown (`zonedShearCheckEC2`) reports each third with its own spacing and demand — the displayed headline shear DCR can no longer read lower than a failing zone.
 
 ### Required transverse steel (`ec2Beam.ts:579–580`)
 
@@ -171,7 +171,7 @@ Member-level (`ec2Beam.ts:338–386`):
 - **Combined V+T transverse demand** (`ec2Beam.ts:363–372`): per-leg torsion link demand `T_Ed/(2·A_k·fywd·cotθ)` **adds** to the per-leg shear link demand `V_Ed/(nLegs·z·fywd·cotθ)`; compared to provided Asw/s per leg → error if exceeded.
 - **Combined V+T interaction** §6.3.2(4) eq (6.29) (`ec2Beam.ts:381–386`): T_Ed/T_Rd,max + V_Ed/V_Rd,max ≤ 1.0; error if > 1.
 
-**Torsion uses bare `ties.spacing`** (`ec2Beam.ts:350`), not the worst-zone spacing.
+**Torsion uses the governing worst-zone spacing** (`ec2Beam.ts:350`, via the shared `worstSpacing_mm`), consistent with the headline shear check.
 
 ### DCR_torsion (`ec2Beam.ts:531–533`)
 
@@ -245,7 +245,7 @@ When a capacity is zero but demand > 0, DCR = Infinity (e.g. flexure/shear `ec2B
 
 3. **f'c = cylinder fck** with a single 0.00689476 factor (`ec2Beam.ts:15`, `274`). No cube-strength path; if users enter cube values the results are unconservative.
 
-4. **Headline shear uses worst-zone spacing, but torsion + detailing still use `ties.spacing`** (`ec2Beam.ts:350`, `469`). The combined V+T transverse check (`ec2Beam.ts:363–372`) and ρw,min/s_max checks therefore reflect the **stored** spacing, which may be the tight end zone, not the worst zone used for the headline shear DCR. Potential inconsistency between the headline shear DCR and the V+T link adequacy / spacing warnings when zones are present.
+4. ~~Headline shear uses worst-zone spacing, but torsion + detailing still use `ties.spacing`.~~ **RESOLVED.** A single function-scoped `worstSpacing_mm` (`ec2Beam.ts:317–326`) now feeds the headline shear, the torsion (T_Rd,s + combined V+T) and the ρw,min/s_max detailing checks. All single-value resistances are evaluated at the governing (widest) zone, so they are consistent with the headline shear DCR. The per-zone refinement remains in `zonedShearCheckEC2`.
 
 5. **k2 in crack width uses the general (a1+a2)/2a1 form, not the EC2 simplified 0.5** (`ec2Beam.ts:215–225`). Stated to match S-CONCRETE and be more conservative for deep effective-tension strips. A reviewer who expects literal §7.3.4 k2 = 0.5 for bending should note this deviation.
 
@@ -261,9 +261,9 @@ When a capacity is zero but demand > 0, DCR = Infinity (e.g. flexure/shear `ec2B
 
 11. **Aggregate size dg = 20 mm assumed** for §8.2 clear-spacing check (`ec2Beam.ts:411`); k1 = 1, k2 = 5 mm recommended values.
 
-12. **Shear tension-shift longitudinal steel §6.2.3(7) is intentionally excluded** (`ec2Beam.ts:388–389`) despite the returned-field comment at `ec2Beam.ts:571` mentioning "shear tension shift (eq 6.18)". **The comment is misleading** — `AsLongReqBot/Top` (`ec2Beam.ts:391–393`) include only flexure + torsion longitudinal share, **not** a tension-shift term. Reviewer flag: comment/implementation mismatch.
+12. **Shear tension-shift longitudinal steel §6.2.3(7) is intentionally excluded** (`ec2Beam.ts:388–389`). `AsLongReqBot/Top` include only flexure + torsion longitudinal share, **not** a tension-shift term. The previously misleading returned-field comment has been corrected to state this explicitly (`ec2Beam.ts` return block). Reviewer note: the §6.2.3(7) shift is simply not provided by this engine — confirm that is acceptable for the intended scope.
 
-13. **Calc sheet uses bare `ties.spacing` and no zones** (`calcBreakdownEC2.ts:97–110`) and computes V_Rd,c with `vRdc(b,d,As,fck)` omitting the axial σ_cp term that the member check includes — minor inconsistency between the calc sheet and the governing engine when axial load is present.
+13. **Calc sheet now uses the worst-zone spacing** (`calcBreakdownEC2.ts`) consistent with the engine, with a note showing the zoned spacings. It still computes V_Rd,c with `vRdc(b,d,As,fck)` omitting the axial σ_cp term the member check includes — minor remaining inconsistency only when axial load is present.
 
 14. **Torsion calc-sheet `tRd` call omits `coverToCentre`** (`calcBreakdownEC2.ts:117`, default 0), so the displayed tef/Ak use the bare A/u wall, whereas the member check applies the 2×cover floor. The calc sheet can therefore show different torsion numbers than the governing check.
 
