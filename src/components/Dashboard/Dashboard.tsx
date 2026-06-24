@@ -94,7 +94,7 @@ function DCRChip({ label, value, isWk }: DCRChipProps) {
     bg = '#9ca3af';
   } else if (isWk) {
     if (value > 1.0) { display = '!'; bg = CHIP_RED; }
-    else if (value > 0.75) { display = '!'; bg = CHIP_AMBER; }
+    else if (value > 0.9) { display = '!'; bg = CHIP_AMBER; }
     else { display = 'OK'; bg = CHIP_GREEN; }
   } else {
     display = value.toFixed(2);
@@ -941,8 +941,8 @@ function GroupDcrSummary({ members, summaryById, code }: { members: Member[]; su
 function DCRInlineCell({ value, isWk }: { value: number | undefined; isWk?: boolean }) {
   if (value === undefined) return <span style={{ fontSize: 11, color: '#9ca3af' }}>—</span>;
   if (isWk) {
-    const ok = value <= 0.75;
-    const warn = value > 0.75 && value <= 1.0;
+    const ok = value <= 0.9;
+    const warn = value > 0.9 && value <= 1.0;
     const fail = value > 1.0;
     const color = fail ? '#dc2626' : warn ? '#d97706' : '#16a34a';
     const bg = fail ? '#fef2f2' : warn ? '#fffbeb' : '#f0fdf4';
