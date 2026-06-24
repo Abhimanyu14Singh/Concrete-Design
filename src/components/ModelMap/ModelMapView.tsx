@@ -27,7 +27,7 @@ type FlexFace = 'top' | 'bot';
 
 interface Props {
   project: Project;
-  onProjectChange: (p: Project) => void;
+  onProjectChange: (updater: (prev: Project) => Project) => void;
   onOpenEtabsImport: () => void;
   onPickMember: (memberId: string) => void;
   onDeleteMember?: (memberId: string) => void;
@@ -257,15 +257,16 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     : undefined;
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
-    onProjectChange({ ...project, designGroups: newGroups });
+    onProjectChange(prev => ({ ...prev, designGroups: newGroups }));
   }
 
   function handleApplyRebar(groupId: string, rebar: RebarLayout, memberIds: string[]) {
-    const newGroups = groups.map(g => g.id === groupId ? { ...g, rebar } : g);
-    const newMembers = members.map(m =>
-      memberIds.includes(m.id) ? { ...m, rebar } : m
-    );
-    onProjectChange({ ...project, designGroups: newGroups, members: newMembers });
+    const memberIdSet = new Set(memberIds);
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => g.id === groupId ? { ...g, rebar } : g),
+      members: prev.members.map(m => memberIdSet.has(m.id) ? { ...m, rebar } : m),
+    }));
   }
 
   function handleDeleteGroupWithMembers(groupId: string) {
@@ -283,10 +284,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   function handleSuggestAllGroups() {
     const target = project.targetDCR ?? 0.9;
-    let nextGroups = groups;
-    let nextMembers = members;
     let ok = 0, fail = 0;
     let firstError: string | null = null;
+    // Resolve the suggested rebar per group up front; apply it inside the
+    // functional update so we never clobber a concurrent member/group edit.
+    const rebarByGroupId = new Map<string, RebarLayout>();
+    const rebarByMemberId = new Map<string, RebarLayout>();
 
     for (const g of groups) {
       const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
@@ -299,13 +302,16 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         continue;
       }
       ok++;
-      const memberIdSet = new Set(g.memberIds);
-      nextGroups = nextGroups.map(gg => gg.id === g.id ? { ...gg, rebar: r.rebar } : gg);
-      nextMembers = nextMembers.map(m => memberIdSet.has(m.id) ? { ...m, rebar: r.rebar } : m);
+      rebarByGroupId.set(g.id, r.rebar);
+      for (const id of g.memberIds) rebarByMemberId.set(id, r.rebar);
     }
 
     if (ok > 0) {
-      onProjectChange({ ...project, designGroups: nextGroups, members: nextMembers });
+      onProjectChange(prev => ({
+        ...prev,
+        designGroups: (prev.designGroups ?? []).map(g => rebarByGroupId.has(g.id) ? { ...g, rebar: rebarByGroupId.get(g.id)! } : g),
+        members: prev.members.map(m => rebarByMemberId.has(m.id) ? { ...m, rebar: rebarByMemberId.get(m.id)! } : m),
+      }));
     }
     const total = ok + fail;
     setSuggestAllNote(
@@ -356,8 +362,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }
 
   function handleHideBeam(memberId: string) {
-    const next = [...new Set([...(project.hiddenMemberIds ?? []), memberId])];
-    onProjectChange({ ...project, hiddenMemberIds: next });
+    onProjectChange(prev => ({ ...prev, hiddenMemberIds: [...new Set([...(prev.hiddenMemberIds ?? []), memberId])] }));
   }
 
   function handleDeleteBeam(memberId: string) {
@@ -374,9 +379,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }
 
   function toggleStoryVisibility(s: string) {
-    const hidden = new Set(project.hiddenStories ?? []);
-    if (hidden.has(s)) hidden.delete(s); else hidden.add(s);
-    onProjectChange({ ...project, hiddenStories: [...hidden] });
+    onProjectChange(prev => {
+      const hidden = new Set(prev.hiddenStories ?? []);
+      if (hidden.has(s)) hidden.delete(s); else hidden.add(s);
+      return { ...prev, hiddenStories: [...hidden] };
+    });
   }
 
   const handleOverlayChange = useCallback((bins: AutoGroupBin[]) => {
@@ -440,7 +447,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               color,
               source: 'manual',
             };
-            onProjectChange({ ...project, designGroups: [...groups, newGroup] });
+            onProjectChange(prev => ({ ...prev, designGroups: [...(prev.designGroups ?? []), newGroup] }));
             setSelectedFrames(new Set());
             void frame;
           }}
@@ -553,7 +560,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               );
             })}
             {hiddenStories.size > 0 && (
-              <button onClick={() => onProjectChange({ ...project, hiddenStories: [] })}
+              <button onClick={() => onProjectChange(prev => ({ ...prev, hiddenStories: [] }))}
                 style={{ padding: '2px 6px', borderRadius: 12, border: '1px solid #fca5a5', fontSize: 10, cursor: 'pointer', background: '#fee2e2', color: '#dc2626' }}>
                 Show all
               </button>
@@ -695,7 +702,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               designGroups={groups}
               onMergeGroups={handleMergeGroups}
               targetDCR={project.targetDCR ?? 0.9}
-              onTargetDCRChange={v => onProjectChange({ ...project, targetDCR: v })}
+              onTargetDCRChange={v => onProjectChange(prev => ({ ...prev, targetDCR: v }))}
             />
           )}
         </div>

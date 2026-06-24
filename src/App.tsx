@@ -828,7 +828,7 @@ export default function App() {
               <Dashboard
                 project={project}
                 onSelectMember={handleSelectMember}
-                onProjectUpdate={p => setProject(p)}
+                onProjectUpdate={setProject}
                 collapsedGroups={collapsedGroups}
                 setCollapsedGroups={setCollapsedGroups}
               />
@@ -838,7 +838,7 @@ export default function App() {
                 <ErrorBoundary area="the model map">
                   <ModelMapView
                     project={project}
-                    onProjectChange={p => setProject(p)}
+                    onProjectChange={setProject}
                     onOpenEtabsImport={() => setShowEtabsImport(true)}
                     onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
                     onDeleteMember={id => deleteMember(id)}

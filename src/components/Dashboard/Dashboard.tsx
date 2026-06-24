@@ -17,7 +17,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 interface Props {
   project: Project;
   onSelectMember: (id: string) => void;
-  onProjectUpdate?: (p: Project) => void;
+  onProjectUpdate?: (updater: (prev: Project) => Project) => void;
   /** Collapse state lifted to App so it survives tab switches. */
   collapsedGroups: Set<string>;
   setCollapsedGroups: Dispatch<SetStateAction<Set<string>>>;
@@ -146,10 +146,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   const showSkinControl = project.code === 'EN1992-1-1' && skinFlagged.length > 0;
 
   function applySkinReinforcement() {
-    onProjectUpdate?.({
-      ...project,
-      members: applyMinSkinReinforcement(project.members, flaggedIdSet, { numBars: skinNumBars, barSize: skinBarSize }),
-    });
+    onProjectUpdate?.(prev => ({
+      ...prev,
+      members: applyMinSkinReinforcement(prev.members, flaggedIdSet, { numBars: skinNumBars, barSize: skinBarSize }),
+    }));
   }
 
   const summaryById = new Map(summaries.map(s => [s.member.id, s]));
@@ -173,7 +173,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
     : null;
 
   function handleMemberUpdate(updated: Member) {
-    onProjectUpdate?.({ ...project, members: project.members.map(m => m.id === updated.id ? updated : m) });
+    onProjectUpdate?.(prev => ({ ...prev, members: prev.members.map(m => m.id === updated.id ? updated : m) }));
   }
 
   function toggleGroup(id: string) {
@@ -194,11 +194,11 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
 
   function handleApplyGroupRebar(groupId: string, rebar: RebarLayout, memberIds: string[]) {
     const memberIdSet = new Set(memberIds);
-    onProjectUpdate?.({
-      ...project,
-      designGroups: (project.designGroups ?? []).map(g => g.id === groupId ? { ...g, rebar } : g),
-      members: project.members.map(m => memberIdSet.has(m.id) ? { ...m, rebar } : m),
-    });
+    onProjectUpdate?.(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => g.id === groupId ? { ...g, rebar } : g),
+      members: prev.members.map(m => memberIdSet.has(m.id) ? { ...m, rebar } : m),
+    }));
   }
 
   // Compute group-level failure mode worst DCRs
@@ -334,7 +334,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
     if (meta.code === 'EN1992-1-1' && project.code !== 'EN1992-1-1') {
       setUnits('si');
     }
-    onProjectUpdate?.({ ...project, ...meta });
+    onProjectUpdate?.(prev => ({ ...prev, ...meta }));
     setEditingMeta(false);
   }
 
@@ -699,7 +699,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
 interface GroupMaterialEditorProps {
   group: { id: string; label: string; members: Member[] };
   project: Project;
-  onProjectUpdate?: (p: Project) => void;
+  onProjectUpdate?: (updater: (prev: Project) => Project) => void;
 }
 
 function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialEditorProps) {
@@ -715,12 +715,12 @@ function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialE
 
   function applyToGroup() {
     const ids = new Set(group.members.map(m => m.id));
-    onProjectUpdate?.({
-      ...project,
-      members: project.members.map(m => ids.has(m.id)
+    onProjectUpdate?.(prev => ({
+      ...prev,
+      members: prev.members.map(m => ids.has(m.id)
         ? { ...m, material: { ...m.material, fc: fromDisplay(fck, 'stress'), fy: fromDisplay(fyLong, 'stress'), fyt: fromDisplay(fyTie, 'stress') } }
         : m),
-    });
+    }));
   }
 
   const inp: React.CSSProperties = { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, width: 80, fontFamily: 'monospace' };
@@ -771,7 +771,7 @@ interface GroupPanelProps {
   onSelectMember: (id: string) => void;
   onSelectMemberTab: (id: string) => void;
   inp: React.CSSProperties;
-  onProjectUpdate?: (p: Project) => void;
+  onProjectUpdate?: (updater: (prev: Project) => Project) => void;
 }
 
 function GroupPanel({
