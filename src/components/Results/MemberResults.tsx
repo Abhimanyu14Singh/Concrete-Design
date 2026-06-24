@@ -436,6 +436,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
               {code === 'EN1992-1-1' && (result.wk_bot !== undefined || result.wk_top !== undefined) && (() => {
                 const cp = member.crackParams ?? DEFAULT_CRACK_PARAMS;
                 const slsFails = (result.wk_bot ?? 0) > cp.wLimitBot || (result.wk_top ?? 0) > cp.wLimitTop || (result.wk_face !== undefined && result.wk_face > cp.wLimitFace);
+                const comboLabel = slsCombo ? `SLS combo "${slsCombo}"` : 'ψ·M_Ed (ratio)';
                 return (
                   <div style={{ marginTop: 4 }}>
                     <span style={{
@@ -444,7 +445,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
                       color: slsFails ? '#b91c1c' : '#15803d',
                       border: `1px solid ${slsFails ? '#fca5a5' : '#86efac'}`,
                     }}>
-                      {slsFails ? '⚠ SLS governs — upsize bars for crack width' : '✓ ULS governs — crack width OK'}
+                      {slsFails ? `⚠ Crack width exceeds limit — M_qp from ${comboLabel}` : `✓ Crack width OK — M_qp from ${comboLabel}`}
                     </span>
                   </div>
                 );
