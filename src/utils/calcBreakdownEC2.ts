@@ -21,8 +21,10 @@ export function generateBreakdownEC2(
   rebar: RebarLayout,
   load: LoadCase,
   _span = 20,
-  crack: CrackControlParams = DEFAULT_CRACK_PARAMS,
+  crackIn: CrackControlParams = DEFAULT_CRACK_PARAMS,
 ): CalcSection[] {
+  // Merge with defaults so partial objects from old saves don't crash on missing fields.
+  const crack: CrackControlParams = { ...DEFAULT_CRACK_PARAMS, ...crackIn };
   const b = (section.bw ?? section.b) * IN_TO_MM;
   const h = (section.h ?? 12) * IN_TO_MM;
   const cover = section.coverClear * IN_TO_MM;
@@ -33,7 +35,7 @@ export function generateBreakdownEC2(
   const fck = material.fc * PSI_TO_MPA;
   const fyk = material.fy * PSI_TO_MPA;
   const fywk = material.fyt * PSI_TO_MPA;
-  const fcd = fck / 1.5;
+  const fcd = 0.85 * fck / 1.5;
   const fyd = fyk / 1.15;
   const fywd = fywk / 1.15;
   const { lambda, eta } = lambdaEta(fck);
@@ -43,6 +45,16 @@ export function generateBreakdownEC2(
   const VEd = load.Vu * KIP_TO_KN;
   const TEd = load.Tu * KIPFT_TO_KNM;
 
+  // Governing tie spacing — matches the engine: with zoned stirrups the worst
+  // (widest) zone governs the single-value resistances shown on this sheet.
+  const worstSpacing = rebar.tieZones
+    ? Math.max(...rebar.tieZones.map(z => z.spacing))
+    : (rebar.ties?.spacing ?? 0);
+  const worstSpacing_mm = worstSpacing * IN_TO_MM;
+  const zonedNote = rebar.tieZones
+    ? ` (worst of zoned spacings ${rebar.tieZones.map(z => `${z.spacing}"`).join('/')})`
+    : '';
+
   const botDesc = rebar.botBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
 
   const sections: CalcSection[] = [];
@@ -51,7 +63,7 @@ export function generateBreakdownEC2(
   sections.push({
     title: '1. Design Values (EN 1992-1-1 §2.4, §3.1)',
     steps: [
-      { ref: '§3.1.6', label: 'Design compressive strength', equation: 'fcd = αcc·fck/γc', substitution: `1.0 × ${f(fck)} / 1.5`, result: `fcd = ${f(fcd)} MPa` },
+      { ref: '§3.1.6', label: 'Design compressive strength', equation: 'fcd = αcc·fck/γc', substitution: `0.85 × ${f(fck)} / 1.5`, result: `fcd = ${f(fcd)} MPa` },
       { ref: '§3.2.7', label: 'Design steel strength', equation: 'fyd = fyk/γs', substitution: `${f(fyk, 0)} / 1.15`, result: `fyd = ${f(fyd, 0)} MPa` },
       { ref: '§3.1.7', label: 'Stress block factors', equation: 'λ, η (fck ≤ 50 MPa)', substitution: `fck = ${f(fck)} MPa`, result: `λ = ${f(lambda, 2)}, η = ${f(eta, 2)}` },
       { ref: '—', label: 'Effective depth', equation: 'd = h − c − Øst − Øbar/2', substitution: `${f(h, 0)} − ${f(cover, 0)} − ${f(stirrupD, 1)} − ${f(botBarD / 2, 1)}`, result: `d = ${f(d, 0)} mm`, note: `Bottom steel: ${botDesc}, As = ${f(As, 0)} mm²` },
@@ -94,12 +106,12 @@ export function generateBreakdownEC2(
   let VRd_kN = VRdc_v;
   if (rebar.ties) {
     const Asw = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
-    const s_mm = rebar.ties.spacing * IN_TO_MM;
+    const s_mm = worstSpacing_mm;
     const VRds_v = vRds(Asw, s_mm, z, fywd, cotT);
     const VRdmax_v = vRdMax(b, z, fck, fcd, cotT);
     VRd_kN = Math.min(VRds_v, VRdmax_v);
     shearSteps.push(
-      { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = 21.8° (cotθ = 2.5)` },
+      { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = 21.8° (cotθ = 2.5)${zonedNote}` },
       { ref: '§6.2.3', label: 'Strut crushing limit', equation: 'V_Rd,max = bw·z·ν1·fcd/(cotθ+tanθ)', substitution: `ν1 = 0.6(1 − ${f(fck)}/250) = ${f(0.6 * (1 - fck / 250), 3)}`, result: `V_Rd,max = ${f(VRdmax_v)} kN` },
       { ref: '§6.2', label: 'Governing shear resistance', equation: 'V_Rd = min(V_Rd,s, V_Rd,max)', substitution: `min(${f(VRds_v)}, ${f(VRdmax_v)})`, result: `V_Rd = ${f(VRd_kN)} kN ${VEd <= VRd_kN ? '✓' : '✗'}`, note: `V_Ed = ${f(VEd)} kN → DCR = ${VRd_kN > 0 ? f(VEd / VRd_kN, 3) : '—'}` },
     );
@@ -111,7 +123,7 @@ export function generateBreakdownEC2(
   // ── Torsion ──
   if (load.Tu > 0) {
     const AtLeg = getBarArea(rebar.ties?.barSize ?? 0) * IN2_TO_MM2;
-    const s_mm = (rebar.ties?.spacing ?? 1) * IN_TO_MM;
+    const s_mm = rebar.ties ? worstSpacing_mm : IN_TO_MM;
     const t = tRd(b, h, rebar.ties ? AtLeg : 0, s_mm, fywd, fck, fcd, cotT);
     const TRd = Math.min(t.TRds, t.TRdMax);
     sections.push({
@@ -139,12 +151,12 @@ export function generateBreakdownEC2(
   ];
   if (rebar.ties) {
     const Asw = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
-    const s_mm = rebar.ties.spacing * IN_TO_MM;
+    const s_mm = worstSpacing_mm;
     const rho_w = Asw / (s_mm * b);
     const rho_w_min = 0.08 * Math.sqrt(fck) / fywk;
     detailSteps.push(
-      { ref: '§9.2.2(5)', label: 'Minimum shear reinforcement ratio', equation: 'ρw,min = 0.08·√fck/fywk', substitution: `0.08 × √${f(fck)} / ${f(fywk, 0)}`, result: `ρw = ${f(rho_w * 1000, 2)}‰ vs ρw,min = ${f(rho_w_min * 1000, 2)}‰ ${rho_w >= rho_w_min ? '✓' : '✗'}` },
-      { ref: '§9.2.2(6)', label: 'Maximum stirrup spacing', equation: 's_max = 0.75·d', substitution: `0.75 × ${f(d, 0)}`, result: `s = ${f(s_mm, 0)} mm vs s_max = ${f(0.75 * d, 0)} mm ${s_mm <= 0.75 * d ? '✓' : '✗'}` },
+      { ref: '§9.2.2(5)', label: 'Minimum shear reinforcement ratio', equation: 'ρw,min = 0.08·√fck/fywk', substitution: `0.08 × √${f(fck)} / ${f(fywk, 0)}`, result: `ρw = ${f(rho_w * 1000, 2)}‰ vs ρw,min = ${f(rho_w_min * 1000, 2)}‰ ${rho_w >= rho_w_min ? '✓' : '✗'}`, note: zonedNote ? `evaluated at${zonedNote}` : undefined },
+      { ref: '§9.2.2(6)', label: 'Maximum stirrup spacing', equation: 's_max = 0.75·d', substitution: `0.75 × ${f(d, 0)}`, result: `s = ${f(s_mm, 0)} mm vs s_max = ${f(0.75 * d, 0)} mm ${s_mm <= 0.75 * d ? '✓' : '✗'}`, note: zonedNote ? `worst zone${zonedNote}` : undefined },
     );
   }
   sections.push({ title: `${load.Tu > 0 ? 5 : 4}. Detailing (§9.2)`, steps: detailSteps });
@@ -163,12 +175,19 @@ export function generateBreakdownEC2(
   ) {
     if (Mqp <= 0 || As_f <= 0) return;
     const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt);
+    // Show whichever max-crack-spacing equation actually governed (§7.3.4(3)):
+    // eq (7.11) for closely-spaced bonded bars, else the upper bound eq (7.14).
+    const srStep = cw.srEq === '7.14'
+      ? { ref: 'eq (7.14)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = 1.3·(h − x)', substitution: `bars spaced > 5(c+Ø/2) ⇒ upper bound governs; h−x = ${f(h - cw.x, 0)} mm`, result: `sr,max = ${f(cw.sr_max, 0)} mm` }
+      : { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = ${f(cw.k2, 2)}, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
+    const dcr = wLimit > 0 ? cw.wk / wLimit : 0;
     crackSteps.push(
       { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(Mqp / crack.qpFactor)}`, result: `M_qp = ${f(Mqp)} kN·m` },
       { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'σs via elastic cracked section', substitution: `x = ${f(cw.x, 0)} mm, z = d−x/3 = ${f(d_f - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
       { ref: '§7.3.2(3)', label: `${faceLabel}: effective reinforcement ratio`, equation: 'ρp,eff = As/Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
-      { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = 3.4c + 0.425·k1·k2·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = 0.5`, result: `sr,max = ${f(cw.sr_max, 0)} mm` },
-      { ref: 'eq (7.8)', label: `${faceLabel}: crack width`, equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)} (${crack.kt === 0.4 ? 'long-term' : 'short-term'})`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(wLimit, 2)} mm ${cw.wk <= wLimit ? '✓' : '✗'}` },
+      srStep,
+      { ref: 'eq (7.8)', label: `${faceLabel}: crack width`, equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)} (${crack.kt === 0.4 ? 'long-term' : 'short-term'})`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(wLimit, 2)} mm` },
+      { ref: '§7.3.1', label: `${faceLabel}: crack DCR`, equation: 'DCR = wk / w_max', substitution: `${f(cw.wk, 3)} / ${f(wLimit, 2)}`, result: `DCR = ${f(dcr, 3)} ${dcr <= 1 ? '✓ OK' : '✗ NG'}` },
     );
   }
 

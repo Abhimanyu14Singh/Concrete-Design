@@ -278,7 +278,7 @@ export default function SectionView({
             return (
               <>
                 <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
-                  {`As=${asBot.toFixed(2)}in²`}
+                  {`As=${fmt(asBot, 'area')}`}
                 </text>
                 <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? DCR.pass : DCR.fail} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
                   {`Req:${reqBot.toFixed(2)} ${ok ? '✓' : '⚠'}`}

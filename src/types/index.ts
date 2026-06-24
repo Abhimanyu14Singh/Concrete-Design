@@ -108,6 +108,8 @@ export interface DesignGroup {
   memberIds: string[];
   color?: string;      // display color on the model map
   rebar?: RebarLayout; // group template — fanned out to members on Apply
+  /** 'auto' = created by auto-grouping (replaceable); 'manual' = user-created. */
+  source?: 'auto' | 'manual';
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */
@@ -208,6 +210,7 @@ export interface DesignResults {
   wk_bot?: number;      // crack width at bottom face (mm)
   wk_top?: number;      // crack width at top face (mm)
   wk_face?: number;     // crack width at side face (mm)
+  DCR_crack?: number;   // governing crack-width DCR = wk / w_limit (SLS)
   // Wall-specific results (ACI 318-25)
   phi_Vn_wall?: number;
   phi_Mn_wall?: number;
@@ -226,6 +229,14 @@ export interface DesignResults {
   status: 'OK' | 'NG' | 'Warning';
 }
 
+/** One auto-group bin used as a reference overlay on the map. */
+export interface AutoGroupBin {
+  binKey: string;     // e.g. "14x24|4000|60000-0"
+  memberIds: string[];
+  color: string;
+  label: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -236,6 +247,17 @@ export interface Project {
   members: Member[];
   designGroups?: DesignGroup[]; // beam design groups (ETABS import)
   modelMap?: ModelMap;          // persistent connectivity snapshot
+  /** Target DCR for rebar suggestions and savings analytics (default 0.9). */
+  targetDCR?: number;
+  /** Member ids hidden from the map view (not deleted). */
+  hiddenMemberIds?: string[];
+  /** Stories (floors) hidden from the map view. */
+  hiddenStories?: string[];
+  /**
+   * EC2 crack-width quasi-permanent combo (NAME, e.g. "SLS-QP"); resolved per
+   * beam from stationForces. Chosen in the ETABS import wizard.
+   */
+  slsCombo?: string;
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */
@@ -245,6 +267,10 @@ export interface CrackControlParams {
   wLimitFace: number;  // allowable crack width at side faces (mm)
   qpFactor: number;    // quasi-permanent moment ratio: M_qp = qpFactor × Mu (0–1)
   kt: number;          // load duration factor: 0.4 long-term, 0.6 short-term
+  // NEW: when set, these override qpFactor × Mu for crack width checks
+  slsLoadCaseId?: string;   // ID of the SLS quasi-permanent load case
+  Mqp_pos?: number;         // kip-ft, resolved from slsLoadCaseId at call site
+  Mqp_neg?: number;         // kip-ft, resolved from slsLoadCaseId at call site
 }
 
 export const DEFAULT_CRACK_PARAMS: CrackControlParams = {

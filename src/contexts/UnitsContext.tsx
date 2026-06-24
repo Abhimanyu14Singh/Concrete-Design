@@ -36,18 +36,32 @@ export function UnitsProvider({ children }: { children: ReactNode }) {
   return <UnitsContext.Provider value={value}>{children}</UnitsContext.Provider>;
 }
 
+let warnedNoProvider = false;
+
 export function useUnits(): UnitsCtx {
   const ctx = useContext(UnitsContext);
   if (!ctx) {
-    // Fallback for components rendered outside the provider (e.g. tests)
+    // No <UnitsProvider> above us. This must NOT silently force imperial:
+    // doing so clamps SI inputs against imperial limits and stores display
+    // values as raw inches (the double-conversion bug). Honour the user's
+    // PERSISTED unit system so conversions stay correct and symmetric, and
+    // shout in dev so the missing provider gets fixed.
+    if (import.meta.env?.DEV && !warnedNoProvider) {
+      warnedNoProvider = true;
+      console.warn(
+        '[useUnits] called outside <UnitsProvider>. Falling back to persisted ' +
+        'units; wrap this subtree in <UnitsProvider> to share live unit state.',
+      );
+    }
+    const u = loadUnits();
     return {
-      units: 'imperial',
+      units: u,
       setUnits: () => {},
-      fmt: (v, q, d) => fmt(v, q, 'imperial', d),
-      fmtVal: (v, q, d) => fmtVal(v, q, 'imperial', d),
-      label: q => unitLabel(q, 'imperial'),
-      toDisplay: v => v,
-      fromDisplay: v => v,
+      fmt: (v, q, d) => fmt(v, q, u, d),
+      fmtVal: (v, q, d) => fmtVal(v, q, u, d),
+      label: q => unitLabel(q, u),
+      toDisplay: (v, q) => toDisplay(v, q, u),
+      fromDisplay: (v, q) => fromDisplay(v, q, u),
     };
   }
   return ctx;

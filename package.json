@@ -1,6 +1,6 @@
 {
-  "name": "s-concrete-design",
-  "version": "1.0.0",
+  "name": "s-dashboard",
+  "version": "0.1.0",
   "description": "Reinforced concrete design per ACI 318-19",
   "private": true,
   "type": "module",
@@ -13,10 +13,11 @@
     "test:watch": "vitest",
     "electron:dev": "NODE_ENV=development electron electron/main.cjs",
     "electron:build": "npm run build && electron-builder",
-    "rebuild:native": "electron-rebuild -w winax",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build:helper": "dotnet publish tools/EtabsHelper -c Release -r win-x64 --no-self-contained -o build-helper"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "lucide-react": "^1.17.0",
     "pdf-lib": "^1.17.1",
     "react": "^19.2.6",
@@ -24,10 +25,8 @@
     "recharts": "^3.8.1",
     "xlsx": "^0.18.5"
   },
-  "optionalDependencies": {
-    "winax": "^3.4.2"
-  },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
@@ -36,12 +35,12 @@
     "@vitest/ui": "^4.1.8",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.2",
-    "@electron/rebuild": "^4.0.1",
     "electron-is-dev": "^3.0.1",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "playwright-core": "^1.61.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
@@ -49,18 +48,14 @@
   },
   "build": {
     "appId": "com.sconcrete.design",
-    "productName": "S-Concrete Design",
+    "productName": "S-Dashboard",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json",
-      "node_modules/winax/**/*"
-    ],
-    "asarUnpack": [
-      "node_modules/winax/**/*"
+      "package.json"
     ],
     "win": {
       "target": [
@@ -80,6 +75,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build-helper",
+        "to": "etabs-helper"
+      }
+    ]
   }
 }

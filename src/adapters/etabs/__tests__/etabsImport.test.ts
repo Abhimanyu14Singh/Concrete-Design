@@ -5,8 +5,9 @@
 import { describe, it, expect } from 'vitest';
 import { MockConnection } from '../mock';
 import { envelopeLoadCase, zoneShearDemands, buildMembers, autoGroup } from '../index';
-import { seedRebar, pickBars } from '../rebarSeed';
+import { seedRebar, pickBars, minSkinReinforcement } from '../rebarSeed';
 import { zonedShearCheck, getBarArea, effectiveDepth } from '../../../utils/concreteDesign';
+import { zonedShearCheckEC2 } from '../../../engines/ec2/ec2Beam';
 import { runDesign } from '../../../engines';
 import type { ComboForces, SectionDimensions } from '../../../types';
 
@@ -118,6 +119,37 @@ describe('pickBars / seedRebar', () => {
     // engine single-spacing check uses the tightest spacing
     expect(rebar.ties!.spacing).toBe(4);
   });
+
+  it('imposes no skin steel on a shallow section, even when requested', () => {
+    const rebar = seedRebar(SECTION, { // h = 28 in < 36 in ACI threshold
+      rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
+      imposeSkinReinf: true, skinBarSize: 5,
+    }, 'ACI318-19');
+    expect(rebar.sideBars).toBeUndefined();
+  });
+
+  it('imposes ACI skin steel when h > 36 in', () => {
+    const deep: SectionDimensions = { ...SECTION, h: 48 };
+    const rebar = seedRebar(deep, {
+      rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
+      imposeSkinReinf: true, skinBarSize: 5,
+    }, 'ACI318-19');
+    expect(rebar.sideBars?.[0].barSize).toBe(5);
+    expect(rebar.sideBars![0].numBars).toBeGreaterThan(0);
+    expect(rebar.sideBars![0].numBars % 2).toBe(0); // both faces
+  });
+
+  it('EC2 threshold (h > 1000 mm ≈ 39.4 in) differs from ACI', () => {
+    const h42: SectionDimensions = { ...SECTION, h: 42 }; // > both thresholds
+    const aci = minSkinReinforcement(h42, 'ACI318-19', 5);
+    const ec2 = minSkinReinforcement(h42, 'EN1992-1-1', 5);
+    expect(aci).toBeDefined();
+    expect(ec2).toBeDefined();
+    // A section between 36 in and 39.4 in triggers ACI but not EC2
+    const h38: SectionDimensions = { ...SECTION, h: 38 };
+    expect(minSkinReinforcement(h38, 'ACI318-19', 5)).toBeDefined();
+    expect(minSkinReinforcement(h38, 'EN1992-1-1', 5)).toBeUndefined();
+  });
 });
 
 describe('buildMembers + autoGroup', () => {
@@ -148,7 +180,7 @@ describe('buildMembers + autoGroup', () => {
     expect(Number.isFinite(r.DCR_shear)).toBe(true);
   });
 
-  it('auto-groups by story × section and tags members', async () => {
+  it('auto-groups by story × section by default and tags members', async () => {
     const conn = new MockConnection();
     await conn.connect();
     const beams = await conn.getBeams({});
@@ -163,6 +195,27 @@ describe('buildMembers + autoGroup', () => {
       const g = groups.find(g => g.id === m.etabs!.designGroupId)!;
       expect(g.memberIds).toContain(m.id);
     }
+  });
+
+  it('mirrors only opted-in ETABS group names; others fall back to story × section', async () => {
+    const conn = new MockConnection();
+    await conn.connect();
+    const beams = await conn.getBeams({});
+    const members = buildMembers(beams, await conn.getFrameSections(), await conn.getMaterials(), {}, {
+      rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
+    });
+    const groups = autoGroup(members, new Set(['Girders']));
+    const girders = groups.find(g => g.label === 'Girders');
+    expect(girders).toBeDefined();
+    // Girders members all carry the ETABS 'Girders' group
+    for (const mid of girders!.memberIds) {
+      const m = members.find(mm => mm.id === mid)!;
+      expect(m.etabs!.groups).toContain('Girders');
+    }
+    // Non-girder beams still bucket by story · section
+    const fallback = groups.filter(g => g.label.includes(' · '));
+    expect(fallback.length).toBeGreaterThan(0);
+    expect(groups.reduce((s, g) => s + g.memberIds.length, 0)).toBe(members.length);
   });
 });
 
@@ -197,5 +250,52 @@ describe('zonedShearCheck', () => {
     const wideMid = { ...rebar, tieZones: [{ spacing: 3 }, { spacing: 18 }, { spacing: 3 }] as typeof rebar.tieZones };
     const z = zonedShearCheck(SECTION, material, wideMid, [50, 45, 50]);
     expect(z[1].DCR).toBeGreaterThan(z[0].DCR);
+  });
+});
+
+describe('zonedShearCheckEC2', () => {
+  const material = { fc: 5000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0 };
+  const rebar = {
+    topBars: [{ numBars: 3, barSize: 8 }],
+    botBars: [{ numBars: 4, barSize: 8 }],
+    ties: { barSize: 4, spacing: 4, legs: 2 },
+    tieZones: [{ spacing: 4 }, { spacing: 10 }, { spacing: 4 }] as [{ spacing: number }, { spacing: number }, { spacing: number }],
+  };
+
+  it('checks all three zones with EC2 variable-strut capacity', () => {
+    const z = zonedShearCheckEC2(SECTION, material, rebar, [60, 20, 55]);
+    expect(z).toHaveLength(3);
+    // Tighter end zones carry more (V_Rd,s ∝ Asw/s) until capped by V_Rd,max.
+    expect(z[0].phi_Vn).toBeGreaterThanOrEqual(z[1].phi_Vn);
+    expect(z[0].phi_Vn).toBeCloseTo(z[2].phi_Vn, 6);
+  });
+
+  it('DCR = zone demand / zone capacity (governing worst case per third)', () => {
+    const z = zonedShearCheckEC2(SECTION, material, rebar, [60, 20, 55]);
+    expect(z[0].DCR).toBeCloseTo(60 / z[0].phi_Vn, 6);
+    expect(z[1].DCR).toBeCloseTo(20 / z[1].phi_Vn, 6);
+    expect(z[2].DCR).toBeCloseTo(55 / z[2].phi_Vn, 6);
+  });
+
+  it('a wide middle zone can govern even with lower demand', () => {
+    const wideMid = { ...rebar, tieZones: [{ spacing: 3 }, { spacing: 18 }, { spacing: 3 }] as typeof rebar.tieZones };
+    const z = zonedShearCheckEC2(SECTION, material, wideMid, [50, 45, 50]);
+    expect(z[1].DCR).toBeGreaterThan(z[0].DCR);
+  });
+
+  it('returns empty without tieZones', () => {
+    const plain = { topBars: rebar.topBars, botBars: rebar.botBars, ties: rebar.ties };
+    expect(zonedShearCheckEC2(SECTION, material, plain, [60, 20, 55])).toEqual([]);
+  });
+
+  it('headline EC2 DCR_shear reflects the worst (widest) zone, not the tightest', () => {
+    // ties.spacing stores the tight end value (4"); the middle zone is wider (16").
+    const wideMid = { ...rebar, ties: { ...rebar.ties, spacing: 4 }, tieZones: [{ spacing: 4 }, { spacing: 16 }, { spacing: 4 }] as typeof rebar.tieZones };
+    const tight   = { ...rebar, ties: { ...rebar.ties, spacing: 4 }, tieZones: [{ spacing: 4 }, { spacing: 4 }, { spacing: 4 }] as typeof rebar.tieZones };
+    const load = { id: 'lc', label: 'LC1', Mu_pos: 100, Mu_neg: 80, Vu: 60, Tu: 0, Pu: 0 };
+    const rWide  = runDesign(SECTION, material, wideMid, load, 20, 'EN1992-1-1');
+    const rTight = runDesign(SECTION, material, tight, load, 20, 'EN1992-1-1');
+    // A loose middle zone must NOT show a lower headline DCR than uniform-tight links.
+    expect(rWide.DCR_shear).toBeGreaterThan(rTight.DCR_shear);
   });
 });

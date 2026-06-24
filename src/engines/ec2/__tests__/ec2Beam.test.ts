@@ -4,7 +4,7 @@ import { designMember } from '../../../utils/concreteDesign';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../../types';
 
 // ── Pure SI function checks (textbook: 300×500 C30/37, B500) ─────────────────
-const fck = 30, fcd = fck / 1.5, fyk = 500, fyd = fyk / 1.15;
+const fck = 30, fcd = 0.85 * fck / 1.5, fyk = 500, fyd = fyk / 1.15; // UK NA: αcc = 0.85
 
 describe('lambdaEta §3.1.7', () => {
   it('fck ≤ 50: λ=0.8, η=1.0', () => {
@@ -28,10 +28,10 @@ describe('mRd §6.1 — 3Ø20 B500, b=300, d=450', () => {
   const As = 3 * Math.PI * 10 * 10; // 942.5 mm²
   it('hand-check: M_Rd ≈ 170 kN·m', () => {
     const { MRd, x } = mRd(As, 450, 300, fck, fcd, fyd);
-    // x = As·fyd/(η·fcd·λ·b) = 409,772/4800 ≈ 85.4 mm
-    expect(x).toBeCloseTo(85.37, 0);
-    // M_Rd = As·fyd·(d − λx/2) ≈ 170.4 kN·m
-    expect(MRd).toBeCloseTo(170.4, 0);
+    // x = As·fyd/(η·fcd·λ·b); UK NA fcd=0.85×30/1.5=17 MPa → x≈100.4 mm
+    expect(x).toBeCloseTo(100.43, 0);
+    // M_Rd = As·fyd·(d − λx/2) ≈ 168.0 kN·m
+    expect(MRd).toBeCloseTo(167.94, 0);
   });
   it('zero steel → zero capacity', () => {
     expect(mRd(0, 450, 300, fck, fcd, fyd).MRd).toBe(0);
@@ -75,7 +75,7 @@ describe('vRds / vRdMax §6.2.3 — Ø8@200 2-leg, z=405', () => {
     expect(vRds(Asw, 200, 405, fyd, 2.5)).toBeCloseTo(221.3, 0);
   });
   it('hand-check: V_Rd,max ≈ 442 kN', () => {
-    expect(vRdMax(300, 405, fck, fcd, 2.5)).toBeCloseTo(442.4, 0);
+    expect(vRdMax(300, 405, fck, fcd, 2.5)).toBeCloseTo(376.1, 0);
   });
   it('V_Rd,max governs at very tight spacing', () => {
     const vrds = vRds(Asw, 25, 405, fyd, 2.5); // s=25mm — huge V_Rd,s
@@ -107,6 +107,39 @@ describe('tRd §6.3 — 300×500', () => {
   });
 });
 
+// ── S-CONCRETE 2026 EC2 benchmark calibration ────────────────────────────────
+// Altair S-CONCRETE report: b=300, h=600, C40, B500, 3H25 top & bottom,
+// H12@250 2-leg closed links, 50mm clear cover. Reference values from the PDF.
+describe('S-CONCRETE benchmark — 300×600 C40, 3H25, H12@250', () => {
+  const fck40 = 40, fcd40 = 0.85 * 40 / 1.5, fyd40 = 500 / 1.15;
+  // cover-to-centre = 50 (clear) + 12 (link) + 25/2 = 74.5 → tef = 149 mm
+  const c2c = 50 + 12 + 25 / 2;
+  const AswLeg = Math.PI * 6 * 6; // H12 one leg = 113.1 mm²
+
+  it('V_Rd,c = 102.3 kN', () => {
+    // b=300, d=526, Asl=1473 (3H25)
+    expect(vRdc(300, 526, 1473, fck40)).toBeCloseTo(102.3, 0);
+  });
+  it('V_Rd,s = 465.2 kN (z=0.9d, cotθ=2.5)', () => {
+    expect(vRds(2 * AswLeg, 250, 0.9 * 526, fyd40, 2.5)).toBeCloseTo(465.2, 0);
+  });
+  it('V_Rd,max ≈ 558.9 kN (within 1%)', () => {
+    expect(vRdMax(300, 0.9 * 526, fck40, fcd40, 2.5)).toBeCloseTo(558.9, -1);
+  });
+  it('M_Rd ≈ 305.8 kNm (3H25, d=526, within 1%)', () => {
+    expect(mRd(1473, 526, 300, fck40, fcd40, fyd40).MRd).toBeCloseTo(305.8, -1);
+  });
+  it('torsion: Ak=68101, uk=1204, T_Rd,c=32.7, T_Rd,s=67.0, T_Rd,max=79.9', () => {
+    const t = tRd(300, 600, AswLeg, 250, fyd40, fck40, fcd40, 2.5, c2c);
+    expect(t.tef).toBeCloseTo(149, 0);
+    expect(t.Ak).toBeCloseTo(68101, -1);
+    expect(t.uk).toBeCloseTo(1204, 0);
+    expect(t.TRdc).toBeCloseTo(32.7, 0);
+    expect(t.TRds).toBeCloseTo(67.0, 0);
+    expect(t.TRdMax).toBeCloseTo(79.9, 0);
+  });
+});
+
 // ── Imperial boundary round-trip via designMemberEC2 ─────────────────────────
 const section: SectionDimensions = {
   type: 'rectangular_beam', b: 11.81, h: 19.69, // ≈ 300×500 mm
@@ -134,7 +167,9 @@ describe('designMemberEC2 — imperial in / imperial out', () => {
 
   it('M_Rd matches direct SI calc converted to kip-ft', () => {
     // d = 500 − 25 − 8 − 10 = 457 mm, As = 942.5 mm²
-    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd, fyd).MRd / 1.35582;
+    // UK NA: αcc = 0.85 → fcd_uk = 0.85 * fck / γc
+    const fcd_uk = 0.85 * fck / 1.5;
+    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd_uk, fyd).MRd / 1.35582;
     expect(r.phi_Mn_pos).toBeCloseTo(expected, 0);
   });
 
@@ -172,9 +207,13 @@ describe('designMemberEC2 — imperial in / imperial out', () => {
     expect(noTu.DCR_torsion).toBe(0);
   });
 
-  it('torsion below cracking threshold may be neglected (DCR 0)', () => {
+  it('torsion below cracking threshold shows T_Ed/T_Rd,c utilization (0 < DCR < 1)', () => {
+    // Below the cracking threshold the DCR is reported as T_Ed / T_Rd,c (the
+    // utilization of the concrete cracking resistance) so the user always sees
+    // a real ratio rather than a hard 0. It must stay below 1 for tiny torsion.
     const tiny = designMemberEC2(section, material, rebar, { ...load, Tu: 0.5 });
-    expect(tiny.DCR_torsion).toBe(0);
+    expect(tiny.DCR_torsion).toBeGreaterThan(0);
+    expect(tiny.DCR_torsion).toBeLessThan(1);
   });
 });
 

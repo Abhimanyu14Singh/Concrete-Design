@@ -2,13 +2,10 @@
  * GroupPanel — list of DesignGroups with create/rename/assign/dissolve actions.
  * Also highlights group members on the map when a group is selected.
  */
-import { useState } from 'react';
-import type { DesignGroup, MapFrame } from '../../types';
-
-const PALETTE = [
-  '#2563eb','#16a34a','#d97706','#9333ea','#0891b2',
-  '#dc2626','#65a30d','#7c3aed','#0284c7','#be185d',
-];
+import { useState, useMemo } from 'react';
+import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
+import { flexSteelRatioPct } from '../../utils/autoGroup';
+import { GROUP_PALETTE as PALETTE, groupColor } from './groupColors';
 
 interface Props {
   groups: DesignGroup[];
@@ -19,14 +16,27 @@ interface Props {
   onActiveGroupChange: (id: string | null) => void;
   onSelectionChange: (names: Set<string>) => void;
   dcrById?: Record<string, number>;
+  designResultsById?: Record<string, DesignResults>;
+  members?: Member[];
+  onDeleteGroupWithMembers?: (groupId: string) => void;
+  onSuggestAll?: () => void;
+  suggestAllNote?: string | null;
 }
 
 export default function GroupPanel({
   groups, frames, selected, activeGroupId,
   onGroupsChange, onActiveGroupChange, onSelectionChange, dcrById = {},
+  designResultsById = {}, members = [],
+  onDeleteGroupWithMembers, onSuggestAll, suggestAllNote,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
+  const [expandedStats, setExpandedStats] = useState<string | null>(null);
+  const [checkedGroups, setCheckedGroups] = useState<Set<string>>(new Set());
+  function toggleCheck(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setCheckedGroups(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   const framesByMember = new Map<string, MapFrame>();
   for (const f of frames) if (f.memberId) framesByMember.set(f.memberId, f);
@@ -63,9 +73,12 @@ export default function GroupPanel({
     const memberIds = [...selected]
       .map(fname => frames.find(f => f.frameName === fname)?.memberId)
       .filter(Boolean) as string[];
-    onGroupsChange(groups.map(g => g.id === gId
-      ? { ...g, memberIds: [...new Set([...g.memberIds, ...memberIds])] }
-      : g));
+    // Exclusivity: remove these members from all other groups
+    onGroupsChange(groups.map(g =>
+      g.id === gId
+        ? { ...g, memberIds: [...new Set([...g.memberIds, ...memberIds])] }
+        : { ...g, memberIds: g.memberIds.filter(id => !memberIds.includes(id)) }
+    ));
   }
 
   function removeSelectionFromGroup(gId: string) {
@@ -80,8 +93,16 @@ export default function GroupPanel({
   }
 
   function dissolveGroup(gId: string) {
+    const grp = groups.find(g => g.id === gId);
+    if (!confirm(`Delete group "${grp?.label ?? 'this group'}"? Members are not removed, only the group.`)) return;
     onGroupsChange(groups.filter(g => g.id !== gId));
     if (activeGroupId === gId) onActiveGroupChange(null);
+  }
+
+  function deleteGroupWithMembers(g: DesignGroup) {
+    if (!confirm(`Delete group "${g.label}" AND its ${g.memberIds.length} beams permanently? This cannot be undone.`)) return;
+    onDeleteGroupWithMembers?.(g.id);
+    if (activeGroupId === g.id) onActiveGroupChange(null);
   }
 
   function renameStart(g: DesignGroup) {
@@ -102,6 +123,54 @@ export default function GroupPanel({
   const unassignedCount = frames.filter(f => f.memberId && !groups.some(g => g.memberIds.includes(f.memberId!))).length;
   const designedCount = frames.filter(f => f.memberId).length;
 
+  // Chips: selected frames that are designed members, with group membership info
+  const selectionChips = [...selected]
+    .map(fname => {
+      const f = frames.find(fr => fr.frameName === fname);
+      return f?.memberId ? { frameName: fname, memberId: f.memberId } : null;
+    })
+    .filter(Boolean) as { frameName: string; memberId: string }[];
+
+  function removeMemberFromGroup(gId: string, memberId: string) {
+    onGroupsChange(groups.map(g => g.id === gId
+      ? { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
+      : g));
+  }
+
+  function addMemberToGroup(gId: string, memberId: string) {
+    // Exclusivity: remove from all other groups first
+    onGroupsChange(groups.map(g =>
+      g.id === gId
+        ? { ...g, memberIds: g.memberIds.includes(memberId) ? g.memberIds : [...g.memberIds, memberId] }
+        : { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
+    ));
+  }
+
+  const memberById = useMemo(() => new Map(members.map(m => [m.id, m])), [members]);
+
+  const allGroupStats = useMemo(() => {
+    const mean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+    const std = (arr: number[]) => { const m = mean(arr); return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length); };
+    return new Map(groups.map(g => {
+      const gMembers = g.memberIds.map(id => memberById.get(id)).filter(Boolean) as import('../../types').Member[];
+      if (!gMembers.length) return [g.id, null] as const;
+      const dcrs = gMembers.map(m => {
+        const r = designResultsById[m.id];
+        return r ? { pos: r.DCR_flex_pos, neg: r.DCR_flex_neg, shear: r.DCR_shear } : null;
+      }).filter(Boolean) as { pos: number; neg: number; shear: number }[];
+      if (!dcrs.length) return [g.id, null] as const;
+      const posArr = dcrs.map(d => d.pos), negArr = dcrs.map(d => d.neg), shArr = dcrs.map(d => d.shear);
+      const rhoTopArr = gMembers.map(m => flexSteelRatioPct(m, 'top'));
+      const rhoBotArr = gMembers.map(m => flexSteelRatioPct(m, 'bot'));
+      return [g.id, {
+        posM: mean(posArr), posS: std(posArr),
+        negM: mean(negArr), negS: std(negArr),
+        shM: mean(shArr), shS: std(shArr),
+        rhoTop: mean(rhoTopArr), rhoBot: mean(rhoBotArr),
+      }] as const;
+    }));
+  }, [groups, memberById, designResultsById]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 12 }}>
       {/* Header actions */}
@@ -113,19 +182,65 @@ export default function GroupPanel({
         >
           + Group selection ({selected.size})
         </button>
-        {activeGroupId && (
-          <>
-            <button onClick={() => addSelectionToGroup(activeGroupId)} disabled={selected.size === 0}
-              style={{ padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer', fontSize: 11, background: 'white' }}>
-              Add to group
-            </button>
-            <button onClick={() => removeSelectionFromGroup(activeGroupId)} disabled={selected.size === 0}
-              style={{ padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer', fontSize: 11, background: 'white' }}>
-              Remove
-            </button>
-          </>
+        {onSuggestAll && (
+          <button
+            onClick={onSuggestAll}
+            disabled={groups.length === 0}
+            title="Suggest the lightest practical rebar for every group at once"
+            style={{ flexShrink: 0, padding: '6px 8px', background: groups.length ? 'white' : '#f3f4f6', color: groups.length ? '#7c3aed' : '#9ca3af', border: `1px solid ${groups.length ? '#c4b5fd' : '#e5e7eb'}`, borderRadius: 6, cursor: groups.length ? 'pointer' : 'default', fontWeight: 700, fontSize: 11 }}
+          >
+            ✨ Suggest all groups
+          </button>
+        )}
+        {suggestAllNote && (
+          <div style={{ flexBasis: '100%', fontSize: 10, color: '#6d28d9' }}>{suggestAllNote}</div>
+        )}
+        {checkedGroups.size > 0 && (
+          <button
+            onClick={() => {
+              if (!confirm(`Delete ${checkedGroups.size} selected group(s)? Members are kept.`)) return;
+              onGroupsChange(groups.filter(g => !checkedGroups.has(g.id)));
+              if (checkedGroups.has(activeGroupId ?? '')) onActiveGroupChange(null);
+              setCheckedGroups(new Set());
+            }}
+            style={{ flexShrink: 0, padding: '6px 8px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 11 }}
+          >
+            🗑 Delete {checkedGroups.size}
+          </button>
         )}
       </div>
+
+      {/* Selection chips — per-frame add/remove buttons */}
+      {selectionChips.length > 0 && activeGroupId && (
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid #f3f4f6', background: '#f9fafb' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 4, textTransform: 'uppercase' }}>
+            Selected frames
+          </div>
+          {(selectionChips.length > 8 ? selectionChips.slice(0, 8) : selectionChips).map(chip => {
+            const grp = groups.find(g => g.id === activeGroupId);
+            const inGroup = grp?.memberIds.includes(chip.memberId) ?? false;
+            return (
+              <div key={chip.frameName} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', fontSize: 11 }}>
+                <span style={{ flex: 1, fontFamily: 'monospace', color: '#374151' }}>{chip.frameName}</span>
+                {inGroup ? (
+                  <button onClick={() => removeMemberFromGroup(activeGroupId, chip.memberId)}
+                    style={{ padding: '2px 7px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    − Remove
+                  </button>
+                ) : (
+                  <button onClick={() => addMemberToGroup(activeGroupId, chip.memberId)}
+                    style={{ padding: '2px 7px', background: '#dcfce7', color: '#16a34a', border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    + Add
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {selectionChips.length > 8 && (
+            <div style={{ fontSize: 10, color: '#9ca3af' }}>+{selectionChips.length - 8} more selected</div>
+          )}
+        </div>
+      )}
 
       {/* Group list */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
@@ -134,24 +249,35 @@ export default function GroupPanel({
             No groups yet. Select members on the map and click "+ Group selection".
           </div>
         )}
-        {groups.map(g => {
+        {groups.map((g, gIdx) => {
           const dcr = worstDCR(g);
           const isActive = activeGroupId === g.id;
+          const stats = allGroupStats.get(g.id) ?? null;
+          const statsOpen = expandedStats === g.id;
+          // Dot color matches the map: explicit color, else palette by position.
+          const dotColor = groupColor(g.color, gIdx);
           return (
+            <div key={g.id}>
             <div
-              key={g.id}
               onClick={() => selectGroup(g)}
               style={{
                 padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
                 background: isActive ? '#eff6ff' : 'white',
                 borderLeft: `3px solid ${isActive ? '#2563eb' : 'transparent'}`,
-                borderBottom: '1px solid #f3f4f6',
+                borderBottom: statsOpen ? 'none' : '1px solid #f3f4f6',
               }}
             >
+              <input
+                type="checkbox"
+                checked={checkedGroups.has(g.id)}
+                onChange={() => {}}
+                onClick={e => toggleCheck(g.id, e)}
+                style={{ marginRight: 2, cursor: 'pointer', flexShrink: 0 }}
+              />
               {/* Color chip — click to cycle color */}
               <div
-                onClick={e => { e.stopPropagation(); setGroupColor(g.id, PALETTE[(PALETTE.indexOf(g.color ?? PALETTE[0]) + 1) % PALETTE.length]); }}
-                style={{ width: 12, height: 12, borderRadius: '50%', background: g.color ?? PALETTE[0], flexShrink: 0, cursor: 'pointer', border: '1px solid rgba(0,0,0,0.12)' }}
+                onClick={e => { e.stopPropagation(); setGroupColor(g.id, PALETTE[(PALETTE.indexOf(dotColor) + 1) % PALETTE.length]); }}
+                style={{ width: 12, height: 12, borderRadius: '50%', background: dotColor, flexShrink: 0, cursor: 'pointer', border: '1px solid rgba(0,0,0,0.12)' }}
                 title="Click to change color"
               />
 
@@ -187,12 +313,46 @@ export default function GroupPanel({
                 </span>
               )}
 
+              {/* Stats toggle */}
+              {stats && (
+                <button
+                  onClick={e => { e.stopPropagation(); setExpandedStats(statsOpen ? null : g.id); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 10, padding: '0 2px' }}
+                  title="Show group statistics"
+                >{statsOpen ? '▾' : '▸'}</button>
+              )}
+
+              {/* Delete group + its beams */}
+              {onDeleteGroupWithMembers && (
+                <button
+                  onClick={e => { e.stopPropagation(); deleteGroupWithMembers(g); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 12, padding: '0 2px' }}
+                  title="Delete group AND its beams permanently"
+                >🗑</button>
+              )}
+
               {/* Dissolve */}
               <button
                 onClick={e => { e.stopPropagation(); dissolveGroup(g.id); }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14, padding: '0 2px' }}
-                title="Dissolve group"
+                title="Dissolve group (keep beams)"
               >×</button>
+            </div>
+
+            {/* Expandable stats */}
+            {statsOpen && stats && (
+              <div style={{ padding: '4px 12px 6px 28px', background: '#f8fafc', borderLeft: `3px solid ${isActive ? '#2563eb' : 'transparent'}`, borderBottom: '1px solid #f3f4f6', fontSize: 10, color: '#374151', lineHeight: 1.7 }}>
+                <div>
+                  <span style={{ color: '#9ca3af' }}>Flex+:</span> {stats.posM.toFixed(2)} ±{stats.posS.toFixed(2)}
+                  {' '}<span style={{ color: '#9ca3af' }}>Flex−:</span> {stats.negM.toFixed(2)} ±{stats.negS.toFixed(2)}
+                  {' '}<span style={{ color: '#9ca3af' }}>V:</span> {stats.shM.toFixed(2)} ±{stats.shS.toFixed(2)}
+                </div>
+                <div>
+                  <span style={{ color: '#9ca3af' }}>ρ top:</span> {stats.rhoTop.toFixed(2)}%
+                  {'  '}<span style={{ color: '#9ca3af' }}>ρ bot:</span> {stats.rhoBot.toFixed(2)}%
+                </div>
+              </div>
+            )}
             </div>
           );
         })}

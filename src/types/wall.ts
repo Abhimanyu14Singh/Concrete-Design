@@ -1,13 +1,4 @@
-/**
- * Wall-specific types — stubs for future ACI 318-19 §11 implementation.
- *
- * To add wall design:
- *  1. Fill out the interfaces below.
- *  2. Create src/engines/wall/index.ts implementing DesignEngine<WallSection, WallRebar, WallLoadCase, WallResults>.
- *  3. Register the engine in src/engines/index.ts.
- *  4. Add WallMember to the Member union in src/types/member.ts.
- *  5. Add 'rectangular_wall' to MemberType in src/types/index.ts.
- */
+/** Wall-specific types for ACI 318-19 §11 shear wall design. */
 
 import type { BaseMember, BaseLoadCase, BaseDesignResults, BarGroup } from './common';
 
@@ -34,7 +25,7 @@ export interface WallLoadCase extends BaseLoadCase {
   Mu: number;    // In-plane factored moment (kip-ft)
 }
 
-/** ACI 318-19 §11 wall design results (placeholder). */
+/** ACI 318-19 §11 wall design results. */
 export interface WallResults extends BaseDesignResults {
   phi_Pn: number;
   phi_Vn: number;
@@ -45,7 +36,7 @@ export interface WallResults extends BaseDesignResults {
   boundaryElementRequired: boolean;
 }
 
-/** A concrete wall member (stub — not yet implemented). */
+/** A concrete wall member. */
 export interface WallMember extends BaseMember {
   memberType: 'wall';
   section: WallSection;

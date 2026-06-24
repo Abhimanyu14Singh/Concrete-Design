@@ -12,7 +12,10 @@ export type Quantity =
   | 'force'       // kips ↔ kN
   | 'moment'      // kip-ft ↔ kN·m
   | 'area'        // in² ↔ mm²
-  | 'spanLength'; // ft ↔ m
+  | 'spanLength'  // ft ↔ m
+  | 'steelWeight'    // lb ↔ kg
+  | 'steelWeightPerLength' // lb/ft ↔ kg/m
+  | 'areaPerLength'; // in²/in ↔ mm²/mm  (also used for in²/ft → mm²/m display)
 
 /** Multiplicative factors: imperial value × factor = SI value */
 const TO_SI: Record<Quantity, number> = {
@@ -23,23 +26,30 @@ const TO_SI: Record<Quantity, number> = {
   moment:     1.35582,
   area:       645.16,
   spanLength: 0.3048,
+  steelWeight: 0.453592,           // lb → kg
+  steelWeightPerLength: 1.48816,   // lb/ft → kg/m
+  areaPerLength: 25.4,             // in²/in → mm²/mm
 };
 
 const SI_LABEL: Record<Quantity, string> = {
   length: 'mm', stress: 'MPa', stressKsi: 'MPa', force: 'kN',
   moment: 'kN·m', area: 'mm²', spanLength: 'm',
+  steelWeight: 'kg', steelWeightPerLength: 'kg/m', areaPerLength: 'mm²/mm',
 };
 const IMP_LABEL: Record<Quantity, string> = {
   length: 'in', stress: 'psi', stressKsi: 'ksi', force: 'kips',
   moment: 'kip-ft', area: 'in²', spanLength: 'ft',
+  steelWeight: 'lb', steelWeightPerLength: 'lb/ft', areaPerLength: 'in²/in',
 };
 
 /** Idiomatic decimal places for SI display */
 const SI_DIGITS: Record<Quantity, number> = {
   length: 0, stress: 1, stressKsi: 0, force: 1, moment: 1, area: 0, spanLength: 2,
+  steelWeight: 0, steelWeightPerLength: 1, areaPerLength: 3,
 };
 const IMP_DIGITS: Record<Quantity, number> = {
   length: 2, stress: 0, stressKsi: 0, force: 1, moment: 1, area: 2, spanLength: 1,
+  steelWeight: 0, steelWeightPerLength: 1, areaPerLength: 4,
 };
 
 /** Imperial (stored) value → display value in the chosen unit system. */

@@ -9,8 +9,12 @@ on:
         required: false
         default: ''
 
-  # Run automatically when a version tag is pushed (e.g. v1.0.1)
+  # Run automatically on every push to main, and when a version tag is
+  # pushed (e.g. v1.0.1). Pushes to main produce a unique tracked release;
+  # version tags produce a proper versioned release.
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -34,28 +38,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # winax is an optionalDependency — if its node-gyp build fails during
-      # `npm ci` the package is silently skipped and the app ships without it.
-      # Install it explicitly WITHOUT running its build script: winax 3.6.x
-      # targets a newer V8 than Node 22 ships (HolderV2 API), so compiling
-      # against Node fails — but that compile is a throwaway anyway. The only
-      # build that matters is the electron-rebuild below, which compiles
-      # against Electron's (much newer) V8 headers.
-      - name: Install winax sources (COM bridge, no node build)
-        run: npm install winax@^3.4.2 --no-save --ignore-scripts
+      # Build the .NET sidecar that attaches to the running ETABS instance
+      # through the .NET API (ETABSv1.dll via reflection — no COM, no native
+      # node modules). Bundled into the installer as resources/etabs-helper.
+      - name: Build ETABS helper (.NET sidecar)
+        run: npm run build:helper
 
-      # Compile the winax COM native module against Electron's ABI so the
-      # packaged desktop app can attach to a live ETABS instance.
-      - name: Rebuild native modules for Electron
-        run: npm run rebuild:native
-
-      - name: Verify winax native binary exists
-        run: |
-          node -e "require.resolve('winax/package.json'); console.log('winax present:', require('winax/package.json').version)"
-          $nativeFile = Get-ChildItem -Path node_modules/winax/build/Release -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nativeFile) { Write-Error "winax .node binary not found in build/Release — electron-rebuild did not compile it"; exit 1 }
-          Write-Host "winax binary: $($nativeFile.FullName)"
+      - name: Verify ETABS helper exists
         shell: pwsh
+        run: |
+          if (-not (Test-Path "build-helper/EtabsHelper.exe")) {
+            Write-Error "EtabsHelper.exe not produced by dotnet publish"; exit 1
+          }
+          Write-Host "Helper: $((Get-Item build-helper/EtabsHelper.exe).FullName)"
 
       - name: Build web assets (Vite)
         run: npm run build
@@ -67,16 +62,15 @@ jobs:
           # (no certificate configured). Remove when a code-signing cert is added.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Verify winax is packaged in asar.unpacked
+      - name: Verify ETABS helper is packaged
         shell: pwsh
         run: |
-          $unpackedPath = "release\win-unpacked\resources\app.asar.unpacked\node_modules\winax\build\Release"
-          $nativeFile = Get-ChildItem -Path $unpackedPath -Filter "*.node" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nativeFile) {
-            Write-Error "winax .node binary not found in asar.unpacked at: $unpackedPath"
+          $exe = "release\win-unpacked\resources\etabs-helper\EtabsHelper.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "EtabsHelper.exe not found in packaged resources at: $exe"
             exit 1
           }
-          Write-Host "Packaged winax binary: $($nativeFile.FullName)"
+          Write-Host "Packaged helper: $((Get-Item $exe).FullName)"
 
       - name: Find installer path
         id: find_exe
@@ -86,27 +80,44 @@ jobs:
           echo "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
           echo "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
 
+      # Build a unique tag + date for this run so every build is its own
+      # entry in the Releases list (e.g. build-42-a1b2c3d).
+      - name: Compute build metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $short = "${{ github.sha }}".Substring(0,7)
+          $date  = Get-Date -Format "yyyy-MM-dd HH:mm"
+          echo "tag=build-${{ github.run_number }}-$short" >> $env:GITHUB_OUTPUT
+          echo "date=$date" >> $env:GITHUB_OUTPUT
+          echo "short=$short" >> $env:GITHUB_OUTPUT
+
       # Always upload as a downloadable artifact (visible under the workflow run)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: SConcrete-Design-Windows
           path: release/*.exe
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 14
 
-      # On manual dispatch: create/update a "Latest Build" pre-release
-      - name: Create Latest pre-release (manual trigger)
-        if: github.event_name == 'workflow_dispatch'
+      # On push to main or manual dispatch: create a UNIQUE pre-release per
+      # build so the Releases list keeps a full history of every change.
+      - name: Create build release (main push / manual)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-build
-          name: "Latest Build"
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "Build ${{ github.run_number }} (${{ steps.meta.outputs.date }})"
           prerelease: true
           body: |
-            **Automatically updated on every manual workflow run.**
+            Automated Windows build.
 
-            Download `${{ steps.find_exe.outputs.name }}` below and run it to install S-Concrete Design on Windows.
+            - **Commit:** ${{ steps.meta.outputs.short }} (`${{ github.ref_name }}`)
+            - **Built:** ${{ steps.meta.outputs.date }}
+
+            Download `${{ steps.find_exe.outputs.name }}` below and run it to install S-Dashboard on Windows.
 
             ${{ github.event.inputs.release_note }}
           files: release/*.exe
@@ -116,6 +127,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: "S-Concrete Design ${{ github.ref_name }}"
+          name: "S-Dashboard ${{ github.ref_name }}"
           generate_release_notes: true
           files: release/*.exe

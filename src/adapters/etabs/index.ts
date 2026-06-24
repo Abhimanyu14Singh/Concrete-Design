@@ -6,7 +6,7 @@
  *  - as a registered ModelAdapter for raw EtabsModel JSON files
  */
 import type {
-  Member, Project, LoadCase, ComboForces, DesignGroup, MaterialProps,
+  Member, Project, LoadCase, ComboForces, DesignGroup, MaterialProps, DesignCode,
 } from '../../types';
 import type { ModelAdapter } from '../types';
 import type { EtabsBeamGeom, EtabsSectionInfo, EtabsMaterialInfo } from './connection';
@@ -66,6 +66,7 @@ export function buildMembers(
   materials: EtabsMaterialInfo[],
   forcesByFrame: Record<string, ComboForces[]>,
   seed: SeedOptions,
+  code?: DesignCode | string,
 ): Member[] {
   return beams.map(beam => {
     const sec = sections.find(s => s.name === beam.section);
@@ -73,7 +74,7 @@ export function buildMembers(
       type: 'rectangular_beam' as const,
       b: sec?.width ?? 12,
       h: sec?.depth ?? 24,
-      coverClear: 1.5,
+      coverClear: seed.coverClear ?? 1.5,
       stirrupDia: seed.stirrupBarSize ?? 4,
     };
     const forces = forcesByFrame[beam.name] ?? [];
@@ -83,7 +84,7 @@ export function buildMembers(
       memberType: 'beam' as const,
       material: materialFor(beam.section, sections, materials),
       section: sectionDims,
-      rebar: seedRebar(sectionDims, seed),
+      rebar: seedRebar(sectionDims, seed, code),
       loads: [envelopeLoadCase(forces)],
       span: +beam.lengthFt.toFixed(2),
       etabs: {
@@ -100,19 +101,26 @@ export function buildMembers(
 }
 
 /**
- * Auto-group imported beams: one design group per (story, section) pair.
+ * Auto-group imported beams: one design group per (story, section) pair,
+ * or per ETABS group name for groups the user chose to mirror.
  * One rebar set per group, checked against every member in the group.
  */
-export function autoGroup(members: Member[]): DesignGroup[] {
+export function autoGroup(members: Member[], mirrorGroups?: Set<string>): DesignGroup[] {
   const byKey = new Map<string, DesignGroup>();
   for (const m of members) {
     if (!m.etabs) continue;
-    const key = `${m.etabs.story}|${m.etabs.sectionName}`;
+    // Mirror an ETABS group name only when the user opted that group in;
+    // first matching group wins. Everything else buckets by story·section.
+    const etabsGroup = mirrorGroups?.size
+      ? m.etabs.groups?.find(g => mirrorGroups.has(g))
+      : undefined;
+    const key = etabsGroup ?? `${m.etabs.story}|${m.etabs.sectionName}`;
+    const label = etabsGroup ?? `${m.etabs.story} · ${m.etabs.sectionName}`;
     let g = byKey.get(key);
     if (!g) {
       g = {
         id: `dg-${byKey.size + 1}`,
-        label: `${m.etabs.story} · ${m.etabs.sectionName}`,
+        label,
         memberIds: [],
       };
       byKey.set(key, g);

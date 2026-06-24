@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <!-- Run on .NET 6, 7, 8… — whatever runtime the ETABS install brought along -->
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <AssemblyName>EtabsHelper</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import type { Member } from '../../types';
 import { dcrToColor } from './dcrColors';
+import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   members: Member[];                 // beams with etabs link
@@ -23,6 +24,7 @@ export default function PlanMap({
   width = 560, height = 420,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
+  const { fmt } = useUnits();
 
   const pts = members.flatMap(m => m.etabs ? [m.etabs.pt1, m.etabs.pt2] : []);
   if (!pts.length) return null;
@@ -100,7 +102,7 @@ export default function PlanMap({
           pointerEvents: 'none',
         }}>
           <div style={{ fontWeight: 700, color: '#111827' }}>{hovered.etabs.frameName}</div>
-          <div>{hovered.etabs.story} · {hovered.etabs.sectionName} · L = {hovered.span?.toFixed(1)} ft</div>
+          <div>{hovered.etabs.story} · {hovered.etabs.sectionName} · L = {hovered.span != null ? fmt(hovered.span, 'spanLength') : '—'}</div>
           <div>
             DCR = <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(dcrById[hovered.id] ?? 0) }}>
               {(dcrById[hovered.id] ?? 0).toFixed(3)}

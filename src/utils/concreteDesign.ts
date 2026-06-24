@@ -624,8 +624,11 @@ export function designMember(
     warnings.push({ code: 'ACI §9.7.2.3', message: `h = ${h}" > 36" — skin reinforcement required on each face (ACI §9.7.2.3)`, severity: 'warning' });
 
   const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion);
-  const hasCriticalWarning = warnings.some(w => w.severity === 'error');
-  const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : (maxDCR > 0.9 || hasCriticalWarning) ? 'Warning' : 'OK';
+  // Status reflects ACTUAL issues, not raw utilization: NG when capacity is
+  // exceeded (DCR > 1); Warning only when a real code message exists (error- or
+  // warning-severity); otherwise OK — even at high (but passing) utilization.
+  const hasMessage = warnings.length > 0;
+  const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : hasMessage ? 'Warning' : 'OK';
 
   return {
     loadCaseId: load.id,

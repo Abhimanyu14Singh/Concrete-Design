@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { runDesign } from '../../engines';
+import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
+import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -13,19 +16,26 @@ import InteractionDiagram from '../Detailing/InteractionDiagram';
 import WallSectionView from '../Detailing/WallSectionView';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
+import InfoTooltip from '../common/InfoTooltip';
+import Dropdown from '../common/Dropdown';
 import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR } from '../../theme';
+import { flexSteelRatioPct } from '../../utils/autoGroup';
 
 interface Props {
   member: Member;
   code?: DesignCode;
+  /** Project-level EC2 SLS quasi-permanent combo name (auto-applied to crack checks). */
+  slsCombo?: string;
   onRebarChange?: (updated: Member) => void;
 }
 
-function KV({ k, v, dcr }: { k: string; v: string; dcr?: number }) {
+function KV({ k, v, dcr, tip, formula }: { k: string; v: string; dcr?: number; tip?: string; formula?: string }) {
   const dcrColor = dcr !== undefined ? themeDcrColor(dcr) : undefined;
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 8, minWidth: 0 }}>
-      <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>{k}</span>
+      <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+        {k}{tip && <InfoTooltip text={tip} formula={formula} />}
+      </span>
       <span style={{ fontSize: 11, color: dcrColor ?? '#111827', fontFamily: 'monospace', fontWeight: dcr !== undefined ? 700 : 400 }}>{v}</span>
     </div>
   );
@@ -39,7 +49,7 @@ function dcrStyle(dcr: number): React.CSSProperties {
   return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
-export default function MemberResults({ member, code = 'ACI318-19', onRebarChange }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, onRebarChange }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -51,17 +61,22 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   const isWall = member.memberType === 'wall' && !!member.wallRebar;
   const result: DesignResults = isWall
     ? designWallACI(member.section, member.material, member.wallRebar!, load)
-    : runDesign(member.section, member.material, member.rebar, load, member.span, code, member.crackParams);
+    : runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
   // Per-zone shear DCRs for beams with zoned stirrups + station forces
   const zoneResults = member.memberType === 'beam' && member.rebar.tieZones && member.stationForces?.length
-    ? zonedShearCheck(
-        member.section, member.material, member.rebar,
-        zoneShearDemands(member.stationForces, member.span ?? 20),
-        load.Pu,
-      )
+    ? code === 'EN1992-1-1'
+      ? zonedShearCheckEC2(
+          member.section, member.material, member.rebar,
+          zoneShearDemands(member.stationForces, member.span ?? 20),
+        )
+      : zonedShearCheck(
+          member.section, member.material, member.rebar,
+          zoneShearDemands(member.stationForces, member.span ?? 20),
+          load.Pu,
+        )
     : [];
 
   // Neutral axis depth at Pn = Pu (§18.10.6.2) for the wall SBZ graphics
@@ -82,7 +97,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
     id: l.id, label: l.label,
     r: isWall
       ? designWallACI(member.section, member.material, member.wallRebar!, l)
-      : runDesign(member.section, member.material, member.rebar, l, member.span, code, member.crackParams),
+      : runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo)),
   }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
@@ -105,7 +120,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, member.crackParams));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo)));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 
@@ -157,17 +172,12 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
         {/* Load case dropdown — C1: mark governing LC */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>Load Case</span>
-          <select
+          <Dropdown
             value={activeLoad}
-            onChange={e => setActiveLoad(e.target.value)}
+            options={member.loads.map(l => ({ value: l.id, label: `${govSet.has(l.id) ? '★ ' : ''}${l.label}` }))}
+            onChange={setActiveLoad}
             style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', cursor: 'pointer' }}
-          >
-            {member.loads.map(l => (
-              <option key={l.id} value={l.id}>
-                {govSet.has(l.id) ? '★ ' : ''}{l.label}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
         {/* Status pill */}
@@ -214,32 +224,35 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
         {/* Left: member properties + applied loads */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
           <SectionLabel title="Member" />
-          <KV k={code === 'EN1992-1-1' ? 'fck (cyl)' : "f'c"} v={fmt(member.material.fc, 'stress')} />
-          <KV k="fy" v={fmt(member.material.fy / 1000, 'stressKsi')} />
-          <KV k="λ" v={member.material.lambdaConcrete.toFixed(2)} />
-          <KV k="b" v={fmt(s.b, 'length')} />
-          <KV k="h" v={fmt(s.h, 'length')} />
-          {s.bw && <KV k="bw" v={fmt(s.bw, 'length')} />}
-          {s.hf && <KV k="hf" v={fmt(s.hf, 'length')} />}
-          <KV k="Cover" v={fmt(s.coverClear, 'length')} />
-          {t && <KV k="Stirrups" v={`${formatBarLabel(t.barSize)}@${fmt(t.spacing, 'length')}`} />}
-          {member.span && <KV k="Span" v={fmt(member.span, 'spanLength')} />}
+          <KV k={code === 'EN1992-1-1' ? 'fck (cyl)' : "f'c"} v={fmt(member.material.fc, 'stress')}
+            tip={code === 'EN1992-1-1' ? 'Characteristic cylinder compressive strength. Design value fcd = αcc·fck/γc (αcc=0.85, γc=1.5).' : 'Specified 28-day cylinder compressive strength.'} />
+          <KV k="fy" v={fmt(member.material.fy / 1000, 'stressKsi')}
+            tip={code === 'EN1992-1-1' ? 'Characteristic yield strength of longitudinal reinforcement. Design value fyd = fyk/γs (γs=1.15).' : 'Specified yield strength of longitudinal reinforcement.'} />
+          <KV k="λ" v={member.material.lambdaConcrete.toFixed(2)}
+            tip="Lightweight concrete modification factor (ACI §19.2.4). 1.0 = normal-weight; 0.75 = all-lightweight." />
+          <KV k="b" v={fmt(s.b, 'length')} tip="Section width (flange width for T/L beams)." />
+          <KV k="h" v={fmt(s.h, 'length')} tip="Overall section depth. Effective depth d = h − cover − stirrup − bar_radius." />
+          {s.bw && <KV k="bw" v={fmt(s.bw, 'length')} tip="Web width — governs shear and torsion calculations." />}
+          {s.hf && <KV k="hf" v={fmt(s.hf, 'length')} tip="Flange thickness. Compression block confined to flange when a ≤ hf." />}
+          <KV k="Cover" v={fmt(s.coverClear, 'length')} tip="Clear cover to the face of the stirrup. Effective depth = h − cover − stirrupDia − barDia/2." />
+          {t && <KV k="Stirrups" v={`${formatBarLabel(t.barSize)}@${fmt(t.spacing, 'length')}`} tip="Transverse reinforcement: bar size @ spacing. Vs = Av·fy·d/s per stirrup legs." />}
+          {member.span && <KV k="Span" v={fmt(member.span, 'spanLength')} tip="Clear span used for minimum steel and deflection checks." />}
 
           <SectionLabel title="Applied Loads" />
           {isColumn ? (
             <>
-              <KV k="Pu" v={fmt(load.Pu, 'force')} />
-              <KV k="Mux" v={fmt(load.Mux ?? 0, 'moment')} />
-              <KV k="Muy" v={fmt(load.Muy ?? 0, 'moment')} />
-              <KV k="Vu" v={fmt(load.Vu, 'force')} />
+              <KV k="Pu" v={fmt(load.Pu, 'force')} tip="Factored axial demand (positive = compression). Checked against φPn on the P-M interaction surface." />
+              <KV k="Mux" v={fmt(load.Mux ?? 0, 'moment')} tip="Factored moment about X-axis (strong axis). Combined with Pu on interaction diagram." />
+              <KV k="Muy" v={fmt(load.Muy ?? 0, 'moment')} tip="Factored moment about Y-axis (weak axis). Combined with Pu on interaction diagram." />
+              <KV k="Vu" v={fmt(load.Vu, 'force')} tip="Factored shear demand." />
             </>
           ) : (
             <>
-              {load.Mu_pos > 0 && <KV k="Mu+" v={fmt(load.Mu_pos, 'moment')} />}
-              {load.Mu_neg > 0 && <KV k="Mu−" v={fmt(load.Mu_neg, 'moment')} />}
-              <KV k="Vu" v={fmt(load.Vu, 'force')} />
-              {load.Tu > 0 && <KV k="Tu" v={fmt(load.Tu, 'moment')} />}
-              {load.Pu !== 0 && <KV k="Pu" v={fmt(load.Pu, 'force')} />}
+              {load.Mu_pos > 0 && <KV k="Mu+" v={fmt(load.Mu_pos, 'moment')} tip="Factored sagging (positive) moment at the governing section." />}
+              {load.Mu_neg > 0 && <KV k="Mu−" v={fmt(load.Mu_neg, 'moment')} tip="Factored hogging (negative) moment at the governing section." />}
+              <KV k="Vu" v={fmt(load.Vu, 'force')} tip="Factored shear demand. Checked against φVn = φ(Vc + Vs)." />
+              {load.Tu > 0 && <KV k="Tu" v={fmt(load.Tu, 'moment')} tip="Factored torsional demand. Torsion design required when Tu > φTcr." />}
+              {load.Pu !== 0 && <KV k="Pu" v={fmt(load.Pu, 'force')} tip="Axial force on beam (positive = compression). Modifies Vc via σcp term." />}
             </>
           )}
         </div>
@@ -286,7 +299,7 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
             </div>
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
-            <ForceDiagram member={member} result={result} height={130} />
+            <ForceDiagram member={member} result={result} code={code} height={130} />
           )}
           {onRebarChange && (
             <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>
@@ -301,12 +314,12 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
             <>
               <SectionLabel title="In-Plane Shear §18.10.4" />
               <KV k="αc" v={(result.alphaC ?? 0).toFixed(2)} />
-              <KV k="φVn" v={`${(result.phi_Vn_wall ?? 0).toFixed(1)} k`} />
-              <KV k="Vn,max" v={`${(result.wallVnMax ?? 0).toFixed(1)} k`} />
+              <KV k="φVn" v={fmt(result.phi_Vn_wall ?? 0, 'force')} />
+              <KV k="Vn,max" v={fmt(result.wallVnMax ?? 0, 'force')} />
               <KV k="  DCR" v={(result.DCR_shear_wall ?? 0).toFixed(3)} dcr={result.DCR_shear_wall ?? 0} />
 
               <SectionLabel title="P-M §18.10.5" />
-              <KV k="φMn,wall" v={`${(result.phi_Mn_wall ?? 0).toFixed(1)} k-ft`} />
+              <KV k="φMn,wall" v={fmt(result.phi_Mn_wall ?? 0, 'moment')} />
               <KV k="  DCR" v={(result.DCR_flex_wall ?? 0).toFixed(3)} dcr={result.DCR_flex_wall ?? 0} />
 
               <SectionLabel title="Min. Reinf. §11.6" />
@@ -319,9 +332,9 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
               <KV k="Required" v={result.sbzRequired ? '⚠ YES' : '✓ No'} />
               {result.sbzRequired && (
                 <>
-                  <KV k="lbe" v={`${(result.sbzLength ?? 0).toFixed(1)}"`} />
-                  <KV k="Ash,req" v={`${(result.sbzAshRequired ?? 0).toFixed(3)} in²`} />
-                  <KV k="Ash,prov" v={`${(result.sbzAshProvided ?? 0).toFixed(3)} in²`} />
+                  <KV k="lbe" v={fmt(result.sbzLength ?? 0, 'length')} />
+                  <KV k="Ash,req" v={fmt(result.sbzAshRequired ?? 0, 'area', 3)} />
+                  <KV k="Ash,prov" v={fmt(result.sbzAshProvided ?? 0, 'area', 3)} />
                   <KV k="  DCR" v={(result.DCR_sbzAsh ?? 0).toFixed(3)} dcr={result.DCR_sbzAsh ?? 0} />
                 </>
               )}
@@ -350,43 +363,91 @@ export default function MemberResults({ member, code = 'ACI318-19', onRebarChang
           ) : (
             <>
           <SectionLabel title="Flexure" />
-          <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')} />
-          <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} />
-          <KV k={`${cap.Mn}−`} v={fmt(result.phi_Mn_neg, 'moment')} />
-          <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg} />
-          {code !== 'EN1992-1-1' && <KV k="As req+" v={fmt(result.As_req_pos, 'area')} />}
-          {code !== 'EN1992-1-1' && <KV k="As req−" v={fmt(result.As_req_neg, 'area')} />}
-          <KV k="As min" v={fmt(result.As_min, 'area')} />
-          <KV k="As max" v={fmt(result.As_max, 'area')} />
+          <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')}
+            tip="Sagging (positive) flexural capacity after applying φ=0.9 (ACI) or 1/γ (EC2). Must exceed Mu+."
+            formula={code === 'EN1992-1-1' ? 'M_Rd = As·fyd·z·(1 − λ·x/(2d))' : 'φMn = φ·As·fy·(d − a/2)'} />
+          <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos}
+            tip="Demand-to-Capacity Ratio = Mu+ / φMn+. Must be ≤ 1.0. Values ≥ 0.9 are flagged in amber." />
+          <KV k={`${cap.Mn}−`} v={fmt(result.phi_Mn_neg, 'moment')}
+            tip="Hogging (negative) flexural capacity. Computed using top steel area." />
+          <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg}
+            tip="Demand-to-Capacity Ratio = Mu− / φMn−. Must be ≤ 1.0." />
+          <KV k="As req+" v={fmt(result.As_req_pos, 'area')}
+            tip="Minimum bottom steel area to carry Mu+. The engine uses this to flag under-reinforced sections." />
+          <KV k="As req−" v={fmt(result.As_req_neg, 'area')}
+            tip="Minimum top steel area to carry Mu−." />
+          <KV k="As min" v={fmt(result.As_min, 'area')}
+            tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 minimum: max(0.26·fctm/fyk, 0.0013)·bt·d' : 'ACI §9.6.1 minimum: max(3√f\'c/fy, 200/fy)·bw·d'} />
+          <KV k="As max" v={fmt(result.As_max, 'area')}
+            tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 maximum: 0.04·Ac' : 'ACI §9.3.3.1 maximum: 0.04·Ag'} />
+          <KV k="ρ bot" v={`${flexSteelRatioPct(member, 'bot').toFixed(3)}%`}
+            tip="Bottom steel ratio ρ = As,bot / (bw · d). Effective depth d measured to centroid of tension steel." />
+          <KV k="ρ top" v={`${flexSteelRatioPct(member, 'top').toFixed(3)}%`}
+            tip="Top steel ratio ρ = As,top / (bw · d)." />
 
           <SectionLabel title="Shear" />
-          <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
-          <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
-          <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
-          <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
+          <KV k={cap.Vc} v={fmt(result.Vc, 'force')}
+            tip={code === 'EN1992-1-1' ? 'Concrete shear resistance without links V_Rd,c (§6.2.2). Depends on ρl and fck.' : 'ACI concrete contribution Vc. Includes axial modification.'}
+            formula={code === 'EN1992-1-1' ? 'V_Rd,c = [CRd,c·k·(100ρl·fck)^⅓]·bw·d' : undefined} />
+          <KV k={cap.Vs} v={fmt(result.Vs, 'force')}
+            tip="Steel contribution to shear resistance from stirrups."
+            formula={code === 'EN1992-1-1' ? 'V_Rd,s = Asw/s · z · fywd · cotθ' : 'Vs = Av·fy·d/s'} />
+          <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')}
+            tip="Total design shear resistance = φ(Vc + Vs). Must exceed Vu." />
+          <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear}
+            tip="Shear DCR = Vu / φVn. Must be ≤ 1.0." />
           {zoneResults.map(z => (
-            <KV key={z.zone} k={`  z${z.zone + 1}@${z.spacing}"`} v={z.DCR.toFixed(3)} dcr={z.DCR} />
+            <KV key={z.zone} k={`  z${z.zone + 1}@${fmt(z.spacing, 'length')}`} v={z.DCR.toFixed(3)} dcr={z.DCR}
+              tip={`Zone ${z.zone + 1} shear DCR using the stirrup spacing in this third of the span.`} />
           ))}
-          {code !== 'EN1992-1-1' && <KV k="Av req" v={`${result.Av_req.toFixed(4)} in²/in`} />}
-          {code !== 'EN1992-1-1' && <KV k="Av min/s" v={`${result.Av_min_per_s.toFixed(4)} in²/in`} />}
+          {code !== 'EN1992-1-1' && <KV k="Av req" v={fmt(result.Av_req, 'areaPerLength')}
+            tip="Required shear steel area per unit length = Vu/(φ·fy·d)." />}
+          {code !== 'EN1992-1-1' && <KV k="Av min/s" v={fmt(result.Av_min_per_s, 'areaPerLength')}
+            tip="ACI §9.6.3 minimum transverse reinforcement: 0.75·√f'c/fyt·bw." />}
 
           <SectionLabel title="Torsion" />
-          <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')} />
-          <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')} />
-          <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion} />
+          <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')}
+            tip="Cracking torsion threshold. Torsion design required when Tu > φTcr." />
+          <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')}
+            tip="Design torsional resistance from closed stirrups. Checked against Tu." />
+          <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion}
+            tip={code === 'EN1992-1-1'
+              ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
+              : 'Torsion DCR = Tu / φTn.'} />
 
           {code === 'EN1992-1-1' && (
             <>
               <SectionLabel title="Crack Width §7.3.4" />
               <KV k="wk bot" v={`${(result.wk_bot ?? 0).toFixed(3)} mm`}
-                dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} />
+                dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)}
+                tip="Characteristic crack width at bottom face under quasi-permanent load combination."
+                formula="wk = sr,max · (εsm − εcm)" />
               <KV k="wk top" v={`${(result.wk_top ?? 0).toFixed(3)} mm`}
-                dcr={(result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)} />
+                dcr={(result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)}
+                tip="Characteristic crack width at top face under quasi-permanent combination." />
               {result.wk_face !== undefined && (
                 <KV k="wk face" v={`${result.wk_face.toFixed(3)} mm`}
-                  dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} />
+                  dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)}
+                  tip="Side-face crack width (EC2 §7.3.3). Relevant when h > 1000 mm." />
               )}
-              <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`} />
+              <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`}
+                tip="Crack width limit from EC2 Table 7.1N. Typically 0.30 mm (XC2–XC4) or 0.40 mm (XC1)." />
+              {code === 'EN1992-1-1' && (result.wk_bot !== undefined || result.wk_top !== undefined) && (() => {
+                const cp = member.crackParams ?? DEFAULT_CRACK_PARAMS;
+                const slsFails = (result.wk_bot ?? 0) > cp.wLimitBot || (result.wk_top ?? 0) > cp.wLimitTop || (result.wk_face !== undefined && result.wk_face > cp.wLimitFace);
+                return (
+                  <div style={{ marginTop: 4 }}>
+                    <span style={{
+                      fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 600,
+                      background: slsFails ? '#fee2e2' : '#dcfce7',
+                      color: slsFails ? '#b91c1c' : '#15803d',
+                      border: `1px solid ${slsFails ? '#fca5a5' : '#86efac'}`,
+                    }}>
+                      {slsFails ? '⚠ SLS governs — upsize bars for crack width' : '✓ ULS governs — crack width OK'}
+                    </span>
+                  </div>
+                );
+              })()}
             </>
           )}
             </>

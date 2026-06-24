@@ -57,12 +57,22 @@ export interface EtabsConnection {
   getCombos(): Promise<string[]>;
   getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
-  getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>>;
+  getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
 }
 
 export function matchesFilter(beam: EtabsBeamGeom, filter: BeamFilter): boolean {
+  // Story is a hard scope — AND.
   if (filter.stories?.length && !filter.stories.includes(beam.story)) return false;
-  if (filter.sections?.length && !filter.sections.includes(beam.section)) return false;
-  if (filter.groups?.length && !beam.groups.some(g => filter.groups!.includes(g))) return false;
+
+  // Sections + groups are additive (union). If either selector is active, the
+  // beam must match at least one of them. If neither is active, all beams pass.
+  const hasSecFilter = !!filter.sections?.length;
+  const hasGrpFilter = !!filter.groups?.length;
+  if (hasSecFilter || hasGrpFilter) {
+    const matchesSec = hasSecFilter && filter.sections!.includes(beam.section);
+    const matchesGrp = hasGrpFilter && beam.groups.some(g => filter.groups!.includes(g));
+    if (!matchesSec && !matchesGrp) return false;
+  }
+
   return true;
 }

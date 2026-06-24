@@ -20,8 +20,14 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
   const ox = pad.l;
   const oy = pad.t;
 
+  // Cap the number of drawn stirrups so a tiny/zero spacing can't spawn
+  // thousands of SVG nodes (which freezes the renderer). The drawing is
+  // schematic — once lines are sub-pixel apart, more add no information.
+  const MAX_STIRRUP_LINES = 80;
   const ties = member.rebar.ties;
-  const numTies = ties ? Math.ceil(span / ties.spacing) : 0;
+  // Guard against zero/negative spacing before dividing.
+  const safeSpacing = ties && ties.spacing > 0 ? ties.spacing : span;
+  const numTies = ties ? Math.min(MAX_STIRRUP_LINES, Math.max(1, Math.ceil(span / safeSpacing))) : 0;
   const tieZones = member.rebar.tieZones;
 
   // Stirrup x-positions for the zoned layout: each third uses its own pitch
@@ -29,9 +35,12 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
   if (ties && tieZones) {
     const third = span / 3;
     for (let zi = 0; zi < 3; zi++) {
-      const s = tieZones[zi].spacing;
+      const s = tieZones[zi].spacing > 0 ? tieZones[zi].spacing : third;
       const z0 = zi * third;
-      for (let x = z0; x < z0 + third - 1e-6; x += s) zonedStirrupXs.push(x);
+      // Cap per-zone count; step evenly if the spacing is too dense to draw.
+      const count = Math.min(MAX_STIRRUP_LINES, Math.max(1, Math.ceil(third / s)));
+      const step = third / count;
+      for (let k = 0; k < count; k++) zonedStirrupXs.push(z0 + k * step);
     }
     zonedStirrupXs.push(span);
   }
@@ -74,7 +83,7 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
             <text key={`zl-${i}`}
               x={ox + ((i + 0.5) / 3) * drawW} y={oy + drawH + 14}
               textAnchor="middle" fontSize="9" fill="#d97706" fontFamily="monospace">
-              {formatBarLabel(ties.barSize)}@{z.spacing}"
+              {formatBarLabel(ties.barSize)}@{fmt(z.spacing, 'length')}
             </text>
           ))}
         </>
