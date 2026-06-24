@@ -5,6 +5,7 @@ import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
+import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -66,11 +67,16 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
 
   // Per-zone shear DCRs for beams with zoned stirrups + station forces
   const zoneResults = member.memberType === 'beam' && member.rebar.tieZones && member.stationForces?.length
-    ? zonedShearCheck(
-        member.section, member.material, member.rebar,
-        zoneShearDemands(member.stationForces, member.span ?? 20),
-        load.Pu,
-      )
+    ? code === 'EN1992-1-1'
+      ? zonedShearCheckEC2(
+          member.section, member.material, member.rebar,
+          zoneShearDemands(member.stationForces, member.span ?? 20),
+        )
+      : zonedShearCheck(
+          member.section, member.material, member.rebar,
+          zoneShearDemands(member.stationForces, member.span ?? 20),
+          load.Pu,
+        )
     : [];
 
   // Neutral axis depth at Pn = Pu (§18.10.6.2) for the wall SBZ graphics
@@ -293,7 +299,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             </div>
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
-            <ForceDiagram member={member} result={result} height={130} />
+            <ForceDiagram member={member} result={result} code={code} height={130} />
           )}
           {onRebarChange && (
             <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>

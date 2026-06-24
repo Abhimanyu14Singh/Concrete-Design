@@ -19,6 +19,7 @@ import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase,
   DesignResults, DesignWarning, CrackControlParams,
 } from '../../types';
+import type { ZoneShearResult } from '../../utils/concreteDesign';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea, getBarDiam } from '../../utils/concreteDesign';
 
@@ -313,7 +314,12 @@ export function designMemberEC2(
   let VRds = 0, VRdmax = 0, Asw_s = 0;
   if (rebar.ties) {
     const Asw_mm2 = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
-    const s_mm = rebar.ties.spacing * IN_TO_MM;
+    // When zoned stirrups exist, the headline capacity must reflect the worst
+    // (most widely spaced) zone — not the tightest end zone stored in ties.spacing.
+    const worstSpacing = rebar.tieZones
+      ? Math.max(...rebar.tieZones.map(z => z.spacing))
+      : rebar.ties.spacing;
+    const s_mm = worstSpacing * IN_TO_MM;
     Asw_s = Asw_mm2 / s_mm;
     VRds = vRds(Asw_mm2, s_mm, z, fywd, cotTheta);
     VRdmax = vRdMax(b_mm, z, fck, fcd, cotTheta);
@@ -495,11 +501,14 @@ export function designMemberEC2(
     if (As_side > 0) {
       const governingAs = Mqp_pos >= Mqp_neg ? As_bot_mm2 : As_top_mm2;
       const governingD  = Mqp_pos >= Mqp_neg ? d_bot : d_top;
-      const cwMain = crackWidth(governingMqp, governingAs, sideBarD, b_mm, h_mm, governingD,
+      // Side-face crack: use skin bar area and diameter (not main chord steel).
+      // crackWidth() needs a reference strain; we derive it by calling it with
+      // the governing main-chord moment but with the side-bar geometry.
+      const cwMain = crackWidth(governingMqp, As_side, sideBarD, b_mm, h_mm, governingD,
         cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt);
-      // Effective tension strip on each side face per §7.3.2: width = web
-      // thickness exposure, height ≈ distance over which side bars are smeared
-      const hc_side = Math.min(2.5 * (cover_mm + stirrupD_mm + sideBarD / 2) * 2, h_mm / 2);
+      // Effective tension strip height on each side face per EC2 §7.3.2:
+      //   h_c,ef = 2.5 × (c + φ_link + φ_skin/2), measured from each face.
+      const hc_side = Math.min(2.5 * (cover_mm + stirrupD_mm + sideBarD / 2), h_mm / 2);
       const rho_side = As_side / (b_mm * hc_side);
       const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
       const sr_side = k3 * (cover_mm + stirrupD_mm) + k1 * k2 * k4 * sideBarD / Math.max(rho_side, 1e-4);
@@ -572,4 +581,52 @@ export function designMemberEC2(
     wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face, DCR_crack,
     warnings, status,
   };
+}
+
+/**
+ * Per-zone shear check for EC2 beams with `rebar.tieZones`. Mirrors
+ * `zonedShearCheck` in concreteDesign.ts but uses EC2 variable-strut
+ * formulas (V_Rd = min(V_Rd,s, V_Rd,max)) instead of ACI §22.5.
+ *
+ * `zoneVu` = [end1, middle, end2] max shear (kips) per third.
+ */
+export function zonedShearCheckEC2(
+  section: SectionDimensions,
+  material: MaterialProps,
+  rebar: RebarLayout,
+  zoneVu: [number, number, number],
+): ZoneShearResult[] {
+  const zones = rebar.tieZones;
+  if (!zones || !rebar.ties) return [];
+
+  const b_mm = (section.bw ?? section.b) * IN_TO_MM;
+  const h_mm = (section.h ?? 12) * IN_TO_MM;
+  const cover_mm = section.coverClear * IN_TO_MM;
+  const stirrupD_mm = getBarDiam(section.stirrupDia) * IN_TO_MM;
+  const botBarD_mm = getBarDiam(rebar.botBars[0]?.barSize ?? 8) * IN_TO_MM;
+  const d_bot = h_mm - cover_mm - stirrupD_mm - botBarD_mm / 2;
+  const z = 0.9 * d_bot;
+  const cotTheta = 2.5;
+
+  const fck  = material.fc * PSI_TO_MPA;
+  const fywk = material.fyt * PSI_TO_MPA;
+  const fywd = fywk / GAMMA_S;
+  const fcd  = ALPHA_CC * fck / GAMMA_C;
+
+  const Asw_mm2 = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
+
+  return zones.map((zone, i) => {
+    const s_mm = zone.spacing * IN_TO_MM;
+    const VRds_z = vRds(Asw_mm2, s_mm, z, fywd, cotTheta);
+    const VRdmax_z = vRdMax(b_mm, z, fck, fcd, cotTheta);
+    const phi_Vn_kip = Math.min(VRds_z, VRdmax_z) / KIP_TO_KN;
+    const Vu = zoneVu[i];
+    return {
+      zone: i as 0 | 1 | 2,
+      spacing: zone.spacing,
+      Vu,
+      phi_Vn: phi_Vn_kip,
+      DCR: phi_Vn_kip > 0 ? Vu / phi_Vn_kip : 0,
+    };
+  });
 }

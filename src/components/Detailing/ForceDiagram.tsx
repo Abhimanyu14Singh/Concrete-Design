@@ -8,13 +8,15 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer,
 } from 'recharts';
-import type { Member, DesignResults } from '../../types';
+import type { Member, DesignResults, DesignCode } from '../../types';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
+import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { useUnits } from '../../contexts/UnitsContext';
 
 interface Props {
   member: Member;
   result: DesignResults;
+  code?: DesignCode;
   height?: number;
 }
 
@@ -61,7 +63,7 @@ function buildEnvelope(member: Member): DiagramPoint[] {
 const axisTick = { fill: '#9ca3af', fontSize: 10 };
 const tooltipStyle = { background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 };
 
-export default function ForceDiagram({ member, result, height = 150 }: Props) {
+export default function ForceDiagram({ member, result, code, height = 150 }: Props) {
   const { label, toDisplay } = useUnits();
   const raw = buildEnvelope(member);
   if (raw.length < 2) return null;
@@ -71,7 +73,9 @@ export default function ForceDiagram({ member, result, height = 150 }: Props) {
   // Stepped shear capacity from tie zones (constant if no zones), in imperial first
   if (member.rebar.tieZones && member.rebar.ties) {
     const demands = zoneShearDemands(member.stationForces ?? [], spanRaw);
-    const zones = zonedShearCheck(member.section, member.material, member.rebar, demands);
+    const zones = code === 'EN1992-1-1'
+      ? zonedShearCheckEC2(member.section, member.material, member.rebar, demands)
+      : zonedShearCheck(member.section, member.material, member.rebar, demands);
     for (const pt of raw) {
       const zi = Math.min(2, Math.floor((pt.x / spanRaw) * 3));
       pt.phiVn = zones[zi]?.phi_Vn ?? result.phi_Vn;
