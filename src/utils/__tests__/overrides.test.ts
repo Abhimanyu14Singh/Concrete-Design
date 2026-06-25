@@ -35,10 +35,10 @@ describe('warningOverrideKey — clause classification', () => {
 
 describe('isOverridden', () => {
   it('direct key', () => {
-    expect(isOverridden({ DCR_crack: { reviewedBy: 'X', date: '2026-01-01' } }, 'DCR_crack')).toBe(true);
+    expect(isOverridden({ DCR_crack: {} }, 'DCR_crack')).toBe(true);
   });
   it("'all' covers every key", () => {
-    const ov: MemberOverrides = { all: { reviewedBy: 'X', date: '2026-01-01' } };
+    const ov: MemberOverrides = { all: {} };
     expect(isOverridden(ov, 'DCR_shear')).toBe(true);
     expect(isOverridden(ov, 'DCR_crack')).toBe(true);
   });
@@ -66,17 +66,17 @@ describe('effectiveStatus', () => {
   });
   it('overriding the only failing check → OK', () => {
     const r = baseResult({ status: 'Warning', DCR_crack: 1.1, warnings: [warn] });
-    const ov: MemberOverrides = { DCR_crack: { reviewedBy: 'X', date: '2026-01-01' } };
+    const ov: MemberOverrides = { DCR_crack: {} };
     expect(effectiveStatus(r, ov)).toBe('OK');
   });
   it('partial override leaves status unchanged when another check still fails', () => {
     const r = baseResult({ status: 'NG', DCR_crack: 1.1, DCR_shear: 1.3, warnings: [warn] });
-    const ov: MemberOverrides = { DCR_crack: { reviewedBy: 'X', date: '2026-01-01' } };
+    const ov: MemberOverrides = { DCR_crack: {} };
     expect(effectiveStatus(r, ov)).toBe('NG');
   });
   it("'all' forces OK", () => {
     const r = baseResult({ status: 'NG', DCR_shear: 1.3, warnings: [warn] });
-    expect(effectiveStatus(r, { all: { reviewedBy: 'X', date: '2026-01-01' } })).toBe('OK');
+    expect(effectiveStatus(r, { all: {} })).toBe('OK');
   });
 });
 
@@ -85,12 +85,12 @@ describe('visibleWarnings', () => {
   const shearWarn: DesignWarning = { code: 'EC2 §6.2', message: 'shear NG', severity: 'error' };
 
   it('suppresses warnings covered by an override', () => {
-    const ov: MemberOverrides = { DCR_crack: { reviewedBy: 'X', date: '2026-01-01' } };
+    const ov: MemberOverrides = { DCR_crack: {} };
     const out = visibleWarnings([crackWarn, shearWarn], ov);
     expect(out).toEqual([shearWarn]);
   });
   it("'all' suppresses everything", () => {
-    expect(visibleWarnings([crackWarn, shearWarn], { all: { reviewedBy: 'X', date: '2026-01-01' } })).toEqual([]);
+    expect(visibleWarnings([crackWarn, shearWarn], { all: {} })).toEqual([]);
   });
   it('no overrides → unchanged', () => {
     expect(visibleWarnings([crackWarn, shearWarn], undefined)).toHaveLength(2);

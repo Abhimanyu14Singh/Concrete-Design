@@ -111,7 +111,7 @@ describe('EC2/SI PDF generation', () => {
   it('renders engineer-override stamp without throwing (includeOverrides on/off)', async () => {
     const project = makeEC2Project();
     (project.members[0] as Member).overrides = {
-      all: { reviewedBy: 'J. Smith, PE', date: '2026-06-25', note: 'wk marginally over limit — accepted.' },
+      all: { note: 'wk marginally over limit — accepted.' },
     };
     const withStamp = await buildReportBytes(project, {
       governingOnly: false, includeDiagrams: false, includeCalcs: false, includeCrack: true, includeOverrides: true,

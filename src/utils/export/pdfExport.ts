@@ -791,7 +791,7 @@ export async function buildReportBytes(
       y -= 18;
       for (const [key, ov] of reviews) {
         if (y < margin + 28) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
-        const line1 = `[OK] ${OVERRIDE_KEY_LABEL[key]} — Reviewed & accepted by ${ov.reviewedBy || '—'} on ${ov.date}`;
+        const line1 = `[OK] Member reviewed & accepted by engineer`;
         text(ctx, line1, margin, y, 8, C.green, bold);
         y -= 12;
         if (ov.note) {

@@ -170,9 +170,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   const shownWarnings = visibleWarnings(result.warnings, overrides);
   const reviewable = failingKeys(result);
 
-  function applyOverride(key: OverrideKey, ov: MemberOverride) {
-    const next = { ...(member.overrides ?? {}), [key]: ov };
-    onRebarChange?.({ ...member, overrides: next });
+  function applyOverride(ov: MemberOverride) {
+    onRebarChange?.({ ...member, overrides: { all: ov } });
     setShowReviewForm(false);
   }
   function clearOverride(key: OverrideKey) {
@@ -586,8 +585,6 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           {/* Inline review form */}
           {showReviewForm && (
             <ReviewForm
-              reviewable={reviewable}
-              defaultEngineer={engineer ?? ''}
               onCancel={() => setShowReviewForm(false)}
               onConfirm={applyOverride}
             />
@@ -598,8 +595,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', borderRadius: 6, background: DCR.passBg, border: `1px solid ${DCR.pass}40`, marginBottom: 4 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: DCR.pass, flexShrink: 0, marginTop: 1 }}>✓ Reviewed</span>
               <span style={{ fontSize: 11, color: '#374151', flex: 1 }}>
-                <b>{OVERRIDE_KEY_LABEL[key]}</b> — accepted by {ov.reviewedBy || '—'} on {ov.date}
-                {ov.note && <span style={{ color: '#6b7280' }}> · {ov.note}</span>}
+                {ov.note || 'No note.'}
               </span>
               {onRebarChange && (
                 <button onClick={() => clearOverride(key)} title="Remove override"
@@ -623,39 +619,15 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   );
 }
 
-/** Inline form for stamping a failing check as engineer-reviewed. */
-function ReviewForm({ reviewable, defaultEngineer, onCancel, onConfirm }: {
-  reviewable: OverrideKey[];
-  defaultEngineer: string;
+/** Inline form for stamping the whole member as engineer-reviewed. */
+function ReviewForm({ onCancel, onConfirm }: {
   onCancel: () => void;
-  onConfirm: (key: OverrideKey, ov: MemberOverride) => void;
+  onConfirm: (ov: MemberOverride) => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const [key, setKey] = useState<OverrideKey>(reviewable[0] ?? 'all');
-  const [reviewedBy, setReviewedBy] = useState(defaultEngineer);
-  const [date, setDate] = useState(today);
   const [note, setNote] = useState('');
-  const opts: { value: OverrideKey; label: string }[] = [
-    ...reviewable.map(k => ({ value: k, label: OVERRIDE_KEY_LABEL[k] })),
-    { value: 'all', label: OVERRIDE_KEY_LABEL.all },
-  ];
   const inputStyle: React.CSSProperties = { fontSize: 11, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, color: '#111827', background: 'white' };
   return (
     <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
-          CHECK
-          <Dropdown value={key} options={opts} onChange={v => setKey(v as OverrideKey)} style={inputStyle} />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700, flex: 1, minWidth: 120 }}>
-          REVIEWED BY
-          <input value={reviewedBy} onChange={e => setReviewedBy(e.target.value)} placeholder="e.g. J. Smith, PE" style={inputStyle} />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
-          DATE
-          <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} />
-        </label>
-      </div>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
         NOTE (optional)
         <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
@@ -664,7 +636,7 @@ function ReviewForm({ reviewable, defaultEngineer, onCancel, onConfirm }: {
       </label>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onCancel} style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', background: 'white', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>Cancel</button>
-        <button onClick={() => onConfirm(key, { reviewedBy: reviewedBy.trim(), date, note: note.trim() || undefined })}
+        <button onClick={() => onConfirm({ note: note.trim() || undefined })}
           style={{ fontSize: 11, fontWeight: 700, color: 'white', background: DCR.pass, border: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>
           Confirm Review
         </button>

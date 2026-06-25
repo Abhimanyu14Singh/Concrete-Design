@@ -281,11 +281,9 @@ export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
   wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4,
 };
 
-/** Per-check engineer override — stamps a failing check as reviewed & accepted. */
+/** Engineer override — stamps a failing member as reviewed & accepted. */
 export interface MemberOverride {
-  reviewedBy: string;    // free-text, e.g. "J. Smith, PE"
-  date: string;          // ISO date string, e.g. "2026-06-25"
-  note?: string;         // optional rationale
+  note?: string;
 }
 
 /** Keys identifying which design check an override applies to. 'all'
