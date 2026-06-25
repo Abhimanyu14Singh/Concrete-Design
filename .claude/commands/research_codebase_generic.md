@@ -43,25 +43,25 @@ Then wait for the user's research query.
 
 4. **Wait for all sub-agents to complete and synthesize findings:**
    - IMPORTANT: Wait for ALL sub-agent tasks to complete before proceeding
-   - Compile all sub-agent results (both codebase and thoughts findings)
+   - Compile all sub-agent results (both codebase and docs/ findings)
    - Prioritize live codebase findings as primary source of truth
-   - Use thoughts/ findings as supplementary historical context
+   - Use docs/ findings as supplementary historical context
    - Connect findings across different components
    - Include specific file paths and line numbers for reference
-   - Verify all thoughts/ paths are correct (e.g., thoughts/allison/ not thoughts/shared/ for personal files)
+   - Verify all docs/ paths are correct
    - Highlight patterns, connections, and architectural decisions
    - Answer the user's specific questions with concrete evidence
 
 5. **Gather metadata for the research document:**
-   - generate all relevant metadata
-   - Filename: `thoughts/shared/research/YYYY-MM-DD-ENG-XXXX-description.md`
-     - Format: `YYYY-MM-DD-ENG-XXXX-description.md` where:
+   - Gather all relevant metadata with Bash (e.g. `git rev-parse HEAD` for the commit hash, `git branch --show-current` for the branch, `date` for the timestamp, and the repository name `Abhimanyu14Singh/Concrete-Design`)
+   - Filename: `docs/research/YYYY-MM-DD-ISSUE-description.md`
+     - Format: `YYYY-MM-DD-ISSUE-description.md` where:
        - YYYY-MM-DD is today's date
-       - ENG-XXXX is the ticket number (omit if no ticket)
+       - ISSUE is the GitHub issue number prefixed with `#` (omit if no issue)
        - description is a brief kebab-case description of the research topic
      - Examples:
-       - With ticket: `2025-01-08-ENG-1478-parent-child-tracking.md`
-       - Without ticket: `2025-01-08-authentication-flow.md`
+       - With issue: `2025-01-08-#123-parent-child-tracking.md`
+       - Without issue: `2025-01-08-authentication-flow.md`
 
 6. **Generate research document:**
    - Use the metadata gathered in step 4
@@ -72,7 +72,7 @@ Then wait for the user's research query.
      researcher: [Researcher name]
      git_commit: [Current commit hash]
      branch: [Current branch name]
-     repository: [Repository name]
+     repository: Abhimanyu14Singh/Concrete-Design
      topic: "[User's Question/Topic]"
      tags: [research, codebase, relevant-component-names]
      status: complete
@@ -86,7 +86,7 @@ Then wait for the user's research query.
      **Researcher**: [Researcher name]
      **Git Commit**: [Current commit hash from step 4]
      **Branch**: [Current branch name from step 4]
-     **Repository**: [Repository name]
+     **Repository**: Abhimanyu14Singh/Concrete-Design
 
      ## Research Question
      [Original user query]
@@ -111,27 +111,27 @@ Then wait for the user's research query.
      ## Architecture Insights
      [Patterns, conventions, and design decisions discovered]
 
-     ## Historical Context (from thoughts/)
-     [Relevant insights from thoughts/ directory with references]
-     - `thoughts/shared/something.md` - Historical decision about X
-     - `thoughts/local/notes.md` - Past exploration of Y
-     Note: Paths exclude "searchable/" even if found there
+     ## Historical Context (from docs/)
+     [Relevant insights from the docs/ directory with references]
+     - `docs/research/something.md` - Historical decision about X
+     - `docs/plans/notes.md` - Past exploration of Y
 
      ## Related Research
-     [Links to other research documents in thoughts/shared/research/]
+     [Links to other research documents in docs/research/]
 
      ## Open Questions
      [Any areas that need further investigation]
      ```
 
 7. **Add GitHub permalinks (if applicable):**
-   - Check if on main branch or if commit is pushed: `git branch --show-current` and `git status`
+   - Check if on the main branch or if the commit is pushed: `git branch --show-current` and `git status`
    - If on main/master or pushed, generate GitHub permalinks:
-     - Get repo info: `gh repo view --json owner,name`
-     - Create permalinks: `https://github.com/{owner}/{repo}/blob/{commit}/{file}#L{line}`
+     - The repository is `Abhimanyu14Singh/Concrete-Design` (owner `Abhimanyu14Singh`, repo `Concrete-Design`)
+     - Create permalinks: `https://github.com/Abhimanyu14Singh/Concrete-Design/blob/{commit}/{file}#L{line}`
    - Replace local file references with permalinks in the document
 
-8. **Sync and present findings:**
+8. **Present findings:**
+   - The research document is saved in the repo at `docs/research/`; remember to commit it so the team has access
    - Present a concise summary of findings to the user
    - Include key file references for easy navigation
    - Ask if they have follow-up questions or need clarification
@@ -142,12 +142,12 @@ Then wait for the user's research query.
    - Add `last_updated_note: "Added follow-up research for [brief description]"` to frontmatter
    - Add a new section: `## Follow-up Research [timestamp]`
    - Spawn new sub-agents as needed for additional investigation
-   - Continue updating the document and syncing
+   - Continue updating the document (and remember to commit the changes)
 
 ## Important notes:
 - Always use parallel Task agents to maximize efficiency and minimize context usage
 - Always run fresh codebase research - never rely solely on existing research documents
-- The thoughts/ directory provides historical context to supplement live findings
+- The docs/ directory provides historical context to supplement live findings
 - Focus on finding concrete file paths and line numbers for developer reference
 - Research documents should be self-contained with all necessary context
 - Each sub-agent prompt should be specific and focused on read-only operations
@@ -156,21 +156,15 @@ Then wait for the user's research query.
 - Link to GitHub when possible for permanent references
 - Keep the main agent focused on synthesis, not deep file reading
 - Encourage sub-agents to find examples and usage patterns, not just definitions
-- Explore all of thoughts/ directory, not just research subdirectory
+- Explore all of the docs/ directory, not just the research subdirectory
 - **File reading**: Always read mentioned files FULLY (no limit/offset) before spawning sub-tasks
 - **Critical ordering**: Follow the numbered steps exactly
   - ALWAYS read mentioned files first before spawning sub-tasks (step 1)
   - ALWAYS wait for all sub-agents to complete before synthesizing (step 4)
   - ALWAYS gather metadata before writing the document (step 5 before step 6)
   - NEVER write the research document with placeholder values
-- **Path handling**: The thoughts/searchable/ directory contains hard links for searching
-  - Always document paths by removing ONLY "searchable/" - preserve all other subdirectories
-  - Examples of correct transformations:
-    - `thoughts/searchable/allison/old_stuff/notes.md` → `thoughts/allison/old_stuff/notes.md`
-    - `thoughts/searchable/shared/prs/123.md` → `thoughts/shared/prs/123.md`
-    - `thoughts/searchable/global/shared/templates.md` → `thoughts/global/shared/templates.md`
-  - NEVER change allison/ to shared/ or vice versa - preserve the exact directory structure
-  - This ensures paths are correct for editing and navigation
+- **Path handling**: Historical context lives under `docs/` (e.g. `docs/research/`, `docs/plans/`, `docs/tickets/`)
+  - Always reference docs/ paths exactly as they exist on disk so they are correct for editing and navigation
 - **Frontmatter consistency**:
   - Always include frontmatter at the beginning of research documents
   - Keep frontmatter fields consistent across all research documents

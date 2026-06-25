@@ -1,16 +1,17 @@
 ---
-description: Implement technical plans from thoughts/shared/plans with verification
+description: Implement technical plans from docs/plans with verification
+argument-hint: [path-to-plan]
 ---
 
 # Implement Plan
 
-You are tasked with implementing an approved technical plan from `thoughts/shared/plans/`. These plans contain phases with specific changes and success criteria.
+You are tasked with implementing an approved technical plan from `docs/plans/`. These plans contain phases with specific changes and success criteria.
 
 ## Getting Started
 
 When given a plan path:
 - Read the plan completely and check for any existing checkmarks (- [x])
-- Read the original ticket and all files mentioned in the plan
+- Read the original issue and all files mentioned in the plan
 - **Read files fully** - never use limit/offset parameters, you need complete context
 - Think deeply about how the pieces fit together
 - Create a todo list to track your progress
@@ -43,7 +44,7 @@ If you encounter a mismatch:
 ## Verification Approach
 
 After implementing a phase:
-- Run the success criteria checks (usually `make check test` covers everything)
+- Run the success criteria checks (usually `npm test`, `npm run lint`, and `npm run build` cover everything)
 - Fix any issues before proceeding
 - Update your progress in both the plan and your todos
 - Check off completed items in the plan file itself using Edit

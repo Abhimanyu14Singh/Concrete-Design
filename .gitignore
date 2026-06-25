@@ -28,4 +28,5 @@ release
 tools/EtabsHelper/bin/
 tools/EtabsHelper/obj/
 build-helper/
-.claude/
+.claude/*
+!.claude/commands/

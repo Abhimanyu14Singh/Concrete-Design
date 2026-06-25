@@ -1,5 +1,6 @@
 ---
-description: Create detailed implementation plans with thorough research and iteration
+description: Create detailed implementation plans through interactive research and iteration
+argument-hint: "[ticket/issue reference or file path, e.g. docs/tickets/123.md]"
 model: opus
 ---
 
@@ -27,8 +28,8 @@ Please provide:
 
 I'll analyze this information and work with you to create a comprehensive plan.
 
-Tip: You can also invoke this command with a ticket file directly: `/create_plan thoughts/allison/tickets/eng_1234.md`
-For deeper analysis, try: `/create_plan think deeply about thoughts/allison/tickets/eng_1234.md`
+Tip: You can also invoke this command with a ticket file directly: `/create_plan docs/tickets/123.md`
+For deeper analysis, try: `/create_plan think deeply about docs/tickets/123.md`
 ```
 
 Then wait for the user's input.
@@ -38,7 +39,7 @@ Then wait for the user's input.
 ### Step 1: Context Gathering & Initial Analysis
 
 1. **Read all mentioned files immediately and FULLY**:
-   - Ticket files (e.g., `thoughts/allison/tickets/eng_1234.md`)
+   - Ticket/issue files (e.g., `docs/tickets/123.md`)
    - Research documents
    - Related implementation plans
    - Any JSON/data files mentioned
@@ -47,15 +48,16 @@ Then wait for the user's input.
    - **NEVER** read files partially - if a file is mentioned, read it completely
 
 2. **Spawn initial research tasks to gather context**:
-   Before asking the user any questions, use specialized agents to research in parallel:
+   Before asking the user any questions, use the Task tool to spawn agents to research in parallel:
 
-   - Use the **codebase-locator** agent to find all files related to the ticket/task
-   - Use the **codebase-analyzer** agent to understand how the current implementation works
-   - If relevant, use the **thoughts-locator** agent to find any existing thoughts documents about this feature
-   - If a Linear ticket is mentioned, use the **linear-ticket-reader** agent to get full details
+   - Spawn the **Explore** agent (read-only code search) to locate all files related to the ticket/task
+   - Spawn the **Explore** agent to analyze how the current implementation works
+   - If relevant, spawn the **Explore** (or `general-purpose`) agent over `docs/` to find any existing research/plan documents about this feature
+   - If a GitHub Issue is mentioned, look it up via the GitHub MCP tools (`mcp__github__issue_read` / `mcp__github__list_issues`) to get full details
 
    These agents will:
    - Find relevant source files, configs, and tests
+   - Identify the specific directories to focus on (e.g., if the UI is mentioned, they'll focus on `src/components/`)
    - Trace data flow and key functions
    - Return detailed explanations with file:line references
 
@@ -100,20 +102,20 @@ After getting initial clarifications:
 2. **Create a research todo list** using TodoWrite to track exploration tasks
 
 3. **Spawn parallel sub-tasks for comprehensive research**:
-   - Create multiple Task agents to research different aspects concurrently
-   - Use the right agent for each type of research:
+   - Use the Task tool to spawn multiple agents to research different aspects concurrently
+   - Tailor each spawn's prompt to the type of research:
 
-   **For deeper investigation:**
-   - **codebase-locator** - To find more specific files (e.g., "find all files that handle [specific component]")
-   - **codebase-analyzer** - To understand implementation details (e.g., "analyze how [system] works")
-   - **codebase-pattern-finder** - To find similar features we can model after
+   **For deeper investigation (spawn the Explore agent):**
+   - Locate more specific files (e.g., "find all files that handle [specific component]")
+   - Analyze implementation details (e.g., "analyze how [system] works")
+   - Find similar features we can model after (existing patterns to reuse)
 
-   **For historical context:**
-   - **thoughts-locator** - To find any research, plans, or decisions about this area
-   - **thoughts-analyzer** - To extract key insights from the most relevant documents
+   **For historical context (spawn the Explore or `general-purpose` agent over `docs/`):**
+   - Find any research, plans, or decisions about this area
+   - Extract key insights from the most relevant documents
 
-   **For related tickets:**
-   - **linear-searcher** - To find similar issues or past implementations
+   **For related issues:**
+   - Search GitHub Issues via the GitHub MCP tools (`mcp__github__search_issues` / `mcp__github__list_issues`) to find similar issues or past implementations
 
    Each agent knows how to:
    - Find the right files and code patterns
@@ -168,14 +170,14 @@ Once aligned on approach:
 
 After structure approval:
 
-1. **Write the plan** to `thoughts/shared/plans/YYYY-MM-DD-ENG-XXXX-description.md`
-   - Format: `YYYY-MM-DD-ENG-XXXX-description.md` where:
+1. **Write the plan** to `docs/plans/YYYY-MM-DD-issue-XXX-description.md`
+   - Format: `YYYY-MM-DD-issue-XXX-description.md` where:
      - YYYY-MM-DD is today's date
-     - ENG-XXXX is the ticket number (omit if no ticket)
+     - issue-XXX is the GitHub Issue number (omit if no issue)
      - description is a brief kebab-case description
    - Examples:
-     - With ticket: `2025-01-08-ENG-1478-parent-child-tracking.md`
-     - Without ticket: `2025-01-08-improve-error-handling.md`
+     - With issue: `2025-01-08-issue-148-parent-child-tracking.md`
+     - Without issue: `2025-01-08-improve-error-handling.md`
 2. **Use this template structure**:
 
 ````markdown
@@ -224,11 +226,9 @@ After structure approval:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Migration applies cleanly: `make migrate`
-- [ ] Unit tests pass: `make test-component`
-- [ ] Type checking passes: `npm run typecheck`
-- [ ] Linting passes: `make lint`
-- [ ] Integration tests pass: `make test-integration`
+- [ ] Unit tests pass: `npm test`
+- [ ] Type checking and build pass: `npm run build`
+- [ ] Linting passes: `npm run lint`
 
 #### Manual Verification:
 - [ ] Feature works as expected when tested via UI
@@ -270,20 +270,21 @@ After structure approval:
 
 ## References
 
-- Original ticket: `thoughts/allison/tickets/eng_XXXX.md`
-- Related research: `thoughts/shared/research/[relevant].md`
+- Original issue: `docs/tickets/XXX.md` (or GitHub Issue #XXX)
+- Related research: `docs/research/[relevant].md`
 - Similar implementation: `[file:line]`
 ````
 
-### Step 5: Sync and Review
+### Step 5: Save and Review
 
-1. **Sync the thoughts directory**:
-   - This ensures the plan is properly indexed and available
+1. **Save the plan in the repo**:
+   - The plan is saved under `docs/plans/` in this repository
+   - There is no external sync tool — remember to commit the new plan file to version control (GitHub) so it is tracked and shareable
 
 2. **Present the draft plan location**:
    ```
    I've created the initial implementation plan at:
-   `thoughts/shared/plans/YYYY-MM-DD-ENG-XXXX-description.md`
+   `docs/plans/YYYY-MM-DD-issue-XXX-description.md`
 
    Please review it and let me know:
    - Are the phases properly scoped?
@@ -297,6 +298,7 @@ After structure approval:
    - Adjust technical approach
    - Clarify success criteria (both automated and manual)
    - Add/remove scope items
+   - After making changes, remember to commit the updated plan file
 
 4. **Continue refining** until the user is satisfied
 
@@ -319,6 +321,7 @@ After structure approval:
    - Research actual code patterns using parallel sub-tasks
    - Include specific file paths and line numbers
    - Write measurable success criteria with clear automated vs manual distinction
+   - automated steps should use the repo's npm scripts whenever possible - for example `npm test`, `npm run lint`, and `npm run build`
 
 4. **Be Practical**:
    - Focus on incremental, testable changes
@@ -343,7 +346,7 @@ After structure approval:
 **Always separate success criteria into two categories:**
 
 1. **Automated Verification** (can be run by execution agents):
-   - Commands that can be run: `make test`, `npm run lint`, etc.
+   - Commands that can be run: `npm test`, `npm run lint`, `npm run build`, etc.
    - Specific files that should exist
    - Code compilation/type checking
    - Automated test suites
@@ -359,39 +362,38 @@ After structure approval:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Database migration runs successfully: `make migrate`
-- [ ] All unit tests pass: `go test ./...`
-- [ ] No linting errors: `golangci-lint run`
-- [ ] API endpoint returns 200: `curl localhost:8080/api/new-endpoint`
+- [ ] All unit tests pass: `npm test`
+- [ ] No linting errors: `npm run lint`
+- [ ] Type checking and build succeed: `npm run build`
 
 #### Manual Verification:
 - [ ] New feature appears correctly in the UI
 - [ ] Performance is acceptable with 1000+ items
 - [ ] Error messages are user-friendly
-- [ ] Feature works correctly on mobile devices
+- [ ] Feature works correctly across the supported window sizes
 ```
 
 ## Common Patterns
 
-### For Database Changes:
-- Start with schema/migration
-- Add store methods
-- Update business logic
-- Expose via API
-- Update clients
+### For Engine / Calculation Changes:
+- Start with the data model / types (`src/types/`)
+- Update the core calculation logic (`src/engines/`)
+- Wire through adapters/utilities (`src/adapters/`, `src/utils/`)
+- Surface results in the UI (`src/components/`)
+- Cover with Vitest tests
 
 ### For New Features:
 - Research existing patterns first
-- Start with data model
-- Build backend logic
-- Add API endpoints
+- Start with data model / types
+- Build core logic (engines/adapters)
+- Add Electron integration if needed (`electron/`)
 - Implement UI last
 
 ### For Refactoring:
 - Document current behavior
 - Plan incremental changes
 - Maintain backwards compatibility
-- Include migration strategy
+- Include a migration strategy for any persisted/serialized data
 
 ## Sub-task Spawning Best Practices
 
@@ -405,8 +407,12 @@ When spawning research sub-tasks:
    - What information to extract
    - Expected output format
 4. **Be EXTREMELY specific about directories**:
+   - If the work concerns the UI, specify `src/components/`
+   - If it concerns calculation logic, specify `src/engines/`
+   - If it concerns the desktop shell, specify `electron/`; for the ETABS helper, `tools/EtabsHelper/`
+   - Use precise paths instead of generic terms like "UI" or "backend"
    - Include the full path context in your prompts
-5. **Specify read-only tools** to use
+5. **Use the read-only Explore agent** for code search
 6. **Request specific file:line references** in responses
 7. **Wait for all tasks to complete** before synthesizing
 8. **Verify sub-task results**:
@@ -414,29 +420,24 @@ When spawning research sub-tasks:
    - Cross-check findings against the actual codebase
    - Don't accept results that seem incorrect
 
-Example of spawning multiple tasks:
-```python
-# Spawn these tasks concurrently:
-tasks = [
-    Task("Research database schema", db_research_prompt),
-    Task("Find API patterns", api_research_prompt),
-    Task("Investigate UI components", ui_research_prompt),
-    Task("Check test patterns", test_research_prompt)
-]
-```
+Example of spawning multiple Explore agents concurrently (one Task tool call each, sent together):
+- Explore: "Find the data model / types involved"
+- Explore: "Analyze how the relevant engine logic works"
+- Explore: "Investigate the related UI components in src/components/"
+- Explore: "Find existing Vitest test patterns for this area"
 
 ## Example Interaction Flow
 
 ```
-User: /implementation_plan
+User: /create_plan
 Assistant: I'll help you create a detailed implementation plan...
 
-User: We need to add parent-child tracking for Claude sub-tasks. See thoughts/allison/tickets/eng_1478.md
+User: We need to add biaxial bending support to the column engine. See docs/tickets/148.md
 Assistant: Let me read that ticket file completely first...
 
 [Reads file fully]
 
-Based on the ticket, I understand we need to track parent-child relationships for Claude sub-task events in the daemon. Before I start planning, I have some questions...
+Based on the ticket, I understand we need to extend the column design engine in src/engines/ to handle biaxial bending. Before I start planning, I have some questions...
 
 [Interactive process continues...]
 ```

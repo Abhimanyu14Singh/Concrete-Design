@@ -1,5 +1,6 @@
 ---
 description: Resume work from handoff document with context analysis and validation
+argument-hint: "[path/to/handoff.md | issue#]"
 ---
 
 # Resume work from a handoff document
@@ -13,19 +14,18 @@ When this command is invoked:
 1. **If the path to a handoff document was provided**:
    - If a handoff document path was provided as a parameter, skip the default message
    - Immediately read the handoff document FULLY
-   - Immediately read any research or plan documents that it links to under `thoughts/shared/plans` or `thoughts/shared/research`. do NOT use a sub-agent to read these critical files.
+   - Immediately read any research or plan documents that it links to under `docs/plans` or `docs/research`. do NOT use a sub-agent to read these critical files.
    - Begin the analysis process by ingesting relevant context from the handoff document, reading additional files it mentions
    - Then propose a course of action to the user and confirm, or ask for clarification on direction.
 
-2. **If a ticket number (like ENG-XXXX) was provided**:
-   - run `humanlayer thoughts sync` to ensure your `thoughts/` directory is up to date.
-   - locate the most recent handoff document for the ticket. Tickets will be located in `thoughts/shared/handoffs/ENG-XXXX` where `ENG-XXXX` is the ticket number. e.g. for `ENG-2124` the handoffs would be in `thoughts/shared/handoffs/ENG-2124/`. **List this directory's contents.**
+2. **If a GitHub issue number (like #123) was provided**:
+   - locate the most recent handoff document for the issue. Handoffs are located in `docs/handoffs/<issue#>` where `<issue#>` is the issue number. e.g. for issue `124` the handoffs would be in `docs/handoffs/124/`. **List this directory's contents.**
    - There may be zero, one or multiple files in the directory.
    - **If there are zero files in the directory, or the directory does not exist**: tell the user: "I'm sorry, I can't seem to find that handoff document. Can you please provide me with a path to it?"
    - **If there is only one file in the directory**: proceed with that handoff
    - **If there are multiple files in the directory**: using the date and time specified in the file name (it will be in the format `YYYY-MM-DD_HH-MM-SS` in 24-hour time format), proceed with the _most recent_ handoff document.
    - Immediately read the handoff document FULLY
-   - Immediately read any research or plan documents that it links to under `thoughts/shared/plans` or `thoughts/shared/research`; do NOT use a sub-agent to read these critical files.
+   - Immediately read any research or plan documents that it links to under `docs/plans` or `docs/research`; do NOT use a sub-agent to read these critical files.
    - Begin the analysis process by ingesting relevant context from the handoff document, reading additional files it mentions
    - Then propose a course of action to the user and confirm, or ask for clarification on direction.
 
@@ -35,9 +35,9 @@ I'll help you resume work from a handoff document. Let me find the available han
 
 Which handoff would you like to resume from?
 
-Tip: You can invoke this command directly with a handoff path: `/resume_handoff `thoughts/shared/handoffs/ENG-XXXX/YYYY-MM-DD_HH-MM-SS_ENG-XXXX_description.md`
+Tip: You can invoke this command directly with a handoff path: `/resume_handoff docs/handoffs/<issue#>/YYYY-MM-DD_HH-MM-SS_<issue#>_description.md`
 
-or using a ticket number to resume from the most recent handoff for that ticket: `/resume_handoff ENG-XXXX`
+or using a GitHub issue number to resume from the most recent handoff for that issue: `/resume_handoff #123`
 ```
 
 Then wait for the user's input.
@@ -198,7 +198,7 @@ Then wait for the user's input.
 ## Example Interaction Flow
 
 ```
-User: /resume_handoff specification/feature/handoffs/handoff-0.md
+User: /resume_handoff docs/handoffs/123/2025-01-08_13-44-55_123_webhook-validation.md
 Assistant: Let me read and analyze that handoff document...
 
 [Reads handoff completely]

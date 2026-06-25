@@ -24,7 +24,9 @@ When invoked:
    git diff HEAD~N..HEAD  # Where N covers implementation commits
 
    # Run comprehensive checks
-   cd $(git rev-parse --show-toplevel) && make check test
+   npm test
+   npm run lint
+   npm run build
    ```
 
 ## Validation Process
@@ -39,20 +41,20 @@ If starting fresh or need more context:
    - Note all success criteria (automated and manual)
    - Identify key functionality to verify
 
-3. **Spawn parallel research tasks** to discover implementation:
+3. **Spawn parallel research tasks** (via the Task tool, using the **Explore** agent) to discover implementation:
    ```
-   Task 1 - Verify database changes:
-   Research if migration [N] was added and schema changes match plan.
-   Check: migration files, schema version, table structure
-   Return: What was implemented vs what plan specified
-
-   Task 2 - Verify code changes:
+   Task 1 - Verify code changes:
    Find all modified files related to [feature].
    Compare actual changes to plan specifications.
    Return: File-by-file comparison of planned vs actual
 
+   Task 2 - Verify type/contract changes:
+   Research if the types, interfaces, or public contracts described in the plan
+   were added/updated (e.g. under src/types/, engine result shapes, adapter signatures).
+   Return: What was implemented vs what the plan specified
+
    Task 3 - Verify test coverage:
-   Check if tests were added/modified as specified.
+   Check if tests were added/modified as specified (Vitest specs).
    Run test commands and capture results.
    Return: Test status and any missing coverage
    ```
@@ -92,15 +94,15 @@ Create comprehensive validation summary:
 ⚠️ Phase 3: [Name] - Partially implemented (see issues)
 
 ### Automated Verification Results
-✓ Build passes: `make build`
-✓ Tests pass: `make test`
-✗ Linting issues: `make lint` (3 warnings)
+✓ Build passes: `npm run build`
+✓ Tests pass: `npm test`
+✗ Linting issues: `npm run lint` (3 warnings)
 
 ### Code Review Findings
 
 #### Matches Plan:
-- Database migration correctly adds [table]
-- API endpoints implement specified methods
+- Engine/module correctly implements [behavior]
+- Public functions implement specified signatures
 - Error handling follows plan
 
 #### Deviations from Plan:
@@ -108,8 +110,8 @@ Create comprehensive validation summary:
 - Added extra validation in [file:line] (improvement)
 
 #### Potential Issues:
-- Missing index on foreign key could impact performance
-- No rollback handling in migration
+- Unhandled edge case could impact results
+- Missing input validation in [file:line]
 
 ### Manual Testing Required:
 1. UI functionality:

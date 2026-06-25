@@ -42,29 +42,28 @@ Then wait for the user's research query.
 
 3. **Spawn parallel sub-agent tasks for comprehensive research:**
    - Create multiple Task agents to research different aspects concurrently
-   - We now have specialized agents that know how to do specific research tasks:
+   - Use the built-in agents via the Task tool to do specific research tasks:
 
    **For codebase research:**
-   - Use the **codebase-locator** agent to find WHERE files and components live
-   - Use the **codebase-analyzer** agent to understand HOW specific code works (without critiquing it)
-   - Use the **codebase-pattern-finder** agent to find examples of existing patterns (without evaluating them)
+   - Use the **Explore** agent to find WHERE files and components live (locate intent)
+   - Use the **Explore** agent to understand HOW specific code works, without critiquing it (analyze intent)
+   - Use the **Explore** agent to find examples of existing patterns, without evaluating them (find-patterns intent)
 
    **IMPORTANT**: All agents are documentarians, not critics. They will describe what exists without suggesting improvements or identifying issues.
 
    **For web research (only if user explicitly asks):**
-   - Use the **web-search-researcher** agent for external documentation and resources
-   - IF you use web-research agents, instruct them to return LINKS with their findings, and please INCLUDE those links in your final report
+   - Use **WebSearch** directly, or a **general-purpose** agent, for external documentation and resources
+   - IF you use web research, instruct it to return LINKS with the findings, and please INCLUDE those links in your final report
 
-   **For Linear tickets (if relevant):**
-   - Use the **linear-ticket-reader** agent to get full details of a specific ticket
-   - Use the **linear-searcher** agent to find related tickets or historical context
+   **For GitHub Issues (if relevant):**
+   - Use the GitHub MCP tools (`mcp__github__issue_read`) to get full details of a specific issue
+   - Use the GitHub MCP tools (`mcp__github__search_issues` / `mcp__github__list_issues`) to find related issues or historical context
 
    The key is to use these agents intelligently:
-   - Start with locator agents to find what exists
-   - Then use analyzer agents on the most promising findings to document how they work
+   - Start with locate-intent searches to find what exists
+   - Then use analyze-intent searches on the most promising findings to document how they work
    - Run multiple agents in parallel when they're searching for different things
    - Each agent knows its job - just tell it what you're looking for
-   - Don't write detailed prompts about HOW to search - the agents already know
    - Remind agents they are documenting, not evaluating or improving
 
 4. **Wait for all sub-agents to complete and synthesize findings:**
@@ -77,15 +76,15 @@ Then wait for the user's research query.
    - Answer the user's specific questions with concrete evidence
 
 5. **Gather metadata for the research document:**
-   - Run Bash() tools to generate all relevant metadata
-   - Filename: `thoughts/shared/research/YYYY-MM-DD-ENG-XXXX-description.md`
-     - Format: `YYYY-MM-DD-ENG-XXXX-description.md` where:
+   - Run Bash() tools to generate all relevant metadata (e.g. `git rev-parse HEAD` for the commit hash, `git branch --show-current` for the branch, `date` for the timestamp, and the repository name `Abhimanyu14Singh/Concrete-Design`)
+   - Filename: `docs/research/YYYY-MM-DD-ISSUE-description.md`
+     - Format: `YYYY-MM-DD-ISSUE-description.md` where:
        - YYYY-MM-DD is today's date
-       - ENG-XXXX is the ticket number (omit if no ticket)
+       - ISSUE is the GitHub issue number prefixed with `#` (omit if no issue)
        - description is a brief kebab-case description of the research topic
      - Examples:
-       - With ticket: `2025-01-08-ENG-1478-parent-child-tracking.md`
-       - Without ticket: `2025-01-08-authentication-flow.md`
+       - With issue: `2025-01-08-#123-parent-child-tracking.md`
+       - Without issue: `2025-01-08-authentication-flow.md`
 
 6. **Generate research document:**
    - Use the metadata gathered in step 4
@@ -96,7 +95,7 @@ Then wait for the user's research query.
      researcher: [Researcher name from metadata]
      git_commit: [Current commit hash]
      branch: [Current branch name]
-     repository: [Repository name]
+     repository: Abhimanyu14Singh/Concrete-Design
      topic: "[User's Question/Topic]"
      tags: [research, codebase, relevant-component-names]
      status: complete
@@ -110,7 +109,7 @@ Then wait for the user's research query.
      **Researcher**: [Researcher name from metadata]
      **Git Commit**: [Current commit hash from step 4]
      **Branch**: [Current branch name from step 4]
-     **Repository**: [Repository name]
+     **Repository**: Abhimanyu14Singh/Concrete-Design
 
      ## Research Question
      [Original user query]
@@ -136,20 +135,21 @@ Then wait for the user's research query.
      [Current patterns, conventions, and design implementations found in the codebase]
 
      ## Related Research
-     [Links to other research documents in thoughts/shared/research/]
+     [Links to other research documents in docs/research/]
 
      ## Open Questions
      [Any areas that need further investigation]
      ```
 
 7. **Add GitHub permalinks (if applicable):**
-   - Check if on main branch or if commit is pushed: `git branch --show-current` and `git status`
+   - Check if on the main branch or if the commit is pushed: `git branch --show-current` and `git status`
    - If on main/master or pushed, generate GitHub permalinks:
-     - Get repo info: `gh repo view --json owner,name`
-     - Create permalinks: `https://github.com/{owner}/{repo}/blob/{commit}/{file}#L{line}`
+     - The repository is `Abhimanyu14Singh/Concrete-Design` (owner `Abhimanyu14Singh`, repo `Concrete-Design`)
+     - Create permalinks: `https://github.com/Abhimanyu14Singh/Concrete-Design/blob/{commit}/{file}#L{line}`
    - Replace local file references with permalinks in the document
 
 8. **Present findings:**
+   - The research document is saved in the repo at `docs/research/`; remember to commit it so the team has access
    - Present a concise summary of findings to the user
    - Include key file references for easy navigation
    - Ask if they have follow-up questions or need clarification

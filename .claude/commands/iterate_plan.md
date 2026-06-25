@@ -1,6 +1,7 @@
 ---
 description: Iterate on existing implementation plans with thorough research and updates
 model: opus
+argument-hint: [path-to-plan] [feedback]
 ---
 
 # Iterate Implementation Plan
@@ -12,7 +13,7 @@ You are tasked with updating existing implementation plans based on user feedbac
 When this command is invoked:
 
 1. **Parse the input to identify**:
-   - Plan file path (e.g., `thoughts/shared/plans/2025-10-16-feature.md`)
+   - Plan file path (e.g., `docs/plans/2025-10-16-feature.md`)
    - Requested changes/feedback
 
 2. **Handle different input scenarios**:
@@ -21,9 +22,9 @@ When this command is invoked:
    ```
    I'll help you iterate on an existing implementation plan.
 
-   Which plan would you like to update? Please provide the path to the plan file (e.g., `thoughts/shared/plans/2025-10-16-feature.md`).
+   Which plan would you like to update? Please provide the path to the plan file (e.g., `docs/plans/2025-10-16-feature.md`).
 
-   Tip: You can list recent plans with `ls -lt thoughts/shared/plans/ | head`
+   Tip: You can list recent plans with `ls -lt docs/plans/ | head`
    ```
    Wait for user input, then re-check for feedback.
 
@@ -69,11 +70,16 @@ If the user's feedback requires understanding new code patterns or validating as
    Use the right agent for each type of research:
 
    **For code investigation:**
-   - **codebase-locator** - To find relevant files
-   - **codebase-analyzer** - To understand implementation details
-   - **codebase-pattern-finder** - To find similar patterns
+   - Use the **Explore** agent (via the Task tool) to find relevant files, understand implementation details, and find similar patterns.
+
+   **For historical context:**
+   - Use the **Explore** agent (or `general-purpose`) over `docs/` to find related research or decisions and extract insights from documents.
 
    **Be EXTREMELY specific about directories**:
+   - If the change involves the UI, specify the `src/components/` directory
+   - If it involves engine logic, specify the `src/engines/` directory
+   - If it involves the Electron host, specify the `electron/` directory
+   - If it involves the C# helper, specify the `tools/EtabsHelper/` directory
    - Include full path context in prompts
 
 3. **Read any new files identified by research**:
@@ -121,14 +127,18 @@ Get user confirmation before proceeding.
 3. **Preserve quality standards**:
    - Include specific file paths and line numbers for new content
    - Write measurable success criteria
-   - Use `make` commands for automated verification
+   - Use `npm` commands (`npm test`, `npm run lint`, `npm run build`) for automated verification
    - Keep language clear and actionable
 
-### Step 5: Sync and Review
+### Step 5: Save and Review
 
-**Present the changes made**:
+1. **The updated plan is saved in the repo**:
+   - The plan lives under `docs/plans/` and is tracked in version control
+   - Remember to commit the updated plan so the change is preserved
+
+2. **Present the changes made**:
    ```
-   I've updated the plan at `thoughts/shared/plans/[filename].md`
+   I've updated the plan at `docs/plans/[filename].md`
 
    Changes made:
    - [Specific change 1]
@@ -141,7 +151,7 @@ Get user confirmation before proceeding.
    Would you like any further adjustments?
    ```
 
-**Be ready to iterate further** based on feedback
+3. **Be ready to iterate further** based on feedback
 
 ## Important Guidelines
 
@@ -185,9 +195,10 @@ Get user confirmation before proceeding.
 When updating success criteria, always maintain the two-category structure:
 
 1. **Automated Verification** (can be run by execution agents):
-   - Commands that can be run: `make test`, `npm run lint`, etc.
+   - Commands that can be run: `npm test`, `npm run lint`, `npm run build`, etc.
+   - Prefer the project npm scripts: `npm run lint` rather than invoking ESLint binaries directly
    - Specific files that should exist
-   - Code compilation/type checking
+   - Code compilation/type checking (`npm run build` runs `tsc -b && vite build`)
 
 2. **Manual Verification** (requires human testing):
    - UI/UX functionality
@@ -215,13 +226,13 @@ When spawning research sub-tasks:
 
 **Scenario 1: User provides everything upfront**
 ```
-User: /iterate_plan thoughts/shared/plans/2025-10-16-feature.md - add phase for error handling
+User: /iterate_plan docs/plans/2025-10-16-feature.md - add phase for error handling
 Assistant: [Reads plan, researches error handling patterns, updates plan]
 ```
 
 **Scenario 2: User provides just plan file**
 ```
-User: /iterate_plan thoughts/shared/plans/2025-10-16-feature.md
+User: /iterate_plan docs/plans/2025-10-16-feature.md
 Assistant: I've found the plan. What changes would you like to make?
 User: Split Phase 2 into two phases - one for backend, one for frontend
 Assistant: [Proceeds with update]
@@ -231,8 +242,8 @@ Assistant: [Proceeds with update]
 ```
 User: /iterate_plan
 Assistant: Which plan would you like to update? Please provide the path...
-User: thoughts/shared/plans/2025-10-16-feature.md
+User: docs/plans/2025-10-16-feature.md
 Assistant: I've found the plan. What changes would you like to make?
-User: Add more specific success criteria to phase 4
+User: Add more specific success criteria
 Assistant: [Proceeds with update]
 ```
