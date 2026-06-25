@@ -108,6 +108,22 @@ describe('EC2/SI PDF generation', () => {
     expect(String.fromCharCode(...bytes.slice(0, 4))).toBe('%PDF');
   });
 
+  it('renders engineer-override stamp without throwing (includeOverrides on/off)', async () => {
+    const project = makeEC2Project();
+    (project.members[0] as Member).overrides = {
+      all: { reviewedBy: 'J. Smith, PE', date: '2026-06-25', note: 'wk marginally over limit — accepted.' },
+    };
+    const withStamp = await buildReportBytes(project, {
+      governingOnly: false, includeDiagrams: false, includeCalcs: false, includeCrack: true, includeOverrides: true,
+    });
+    const noStamp = await buildReportBytes(project, {
+      governingOnly: false, includeDiagrams: false, includeCalcs: false, includeCrack: true, includeOverrides: false,
+    });
+    expect(withStamp.length).toBeGreaterThan(5000);
+    expect(noStamp.length).toBeGreaterThan(5000);
+    expect(String.fromCharCode(...withStamp.slice(0, 4))).toBe('%PDF');
+  });
+
   it('does not crash when crackParams is a partial object (missing kt / wLimitFace)', async () => {
     const project = makeEC2Project();
     // Simulate an old save that has crackParams but is missing kt and wLimitFace

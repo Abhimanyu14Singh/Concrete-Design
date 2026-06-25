@@ -11,6 +11,9 @@ import { resolveCrack } from '../resolveCrack';
 import { generateColumnBreakdown } from '../calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../calcBreakdownColumnEC2';
 import { generateWallBreakdown } from '../calcBreakdownWall';
+import {
+  OVERRIDE_KEY_LABEL, isOverridden, visibleWarnings, overrideEntries, effectiveStatus,
+} from '../overrides';
 
 /** What goes into the report and how it is scoped. */
 export interface ReportOptions {
@@ -34,6 +37,10 @@ export interface ReportOptions {
   reportEngineer?: string;
   /** Override date on cover page. */
   reportDate?: string;
+  /** Honor engineer overrides — suppress reviewed warnings, show review stamps,
+   *  and green the overridden DCR bars. When false, raw results are shown.
+   *  Optional; defaults to true via DEFAULT_REPORT_OPTIONS. */
+  includeOverrides?: boolean;
 }
 
 export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
@@ -41,6 +48,7 @@ export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
   includeDiagrams: true,
   includeCalcs: true,
   includeCrack: true,
+  includeOverrides: true,
 };
 
 /** Dimension/force/moment labels and value formatters keyed on unit system. */
@@ -325,15 +333,17 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
 }
 
 /** Horizontal DCR bar with a marker at 1.0; track spans dcr 0–1.5. */
-function drawDCRBar(ctx: DrawCtx, label: string, dcr: number, x: number, y: number, w: number): void {
+function drawDCRBar(ctx: DrawCtx, label: string, dcr: number, x: number, y: number, w: number, overridden = false): void {
   const trackW = w - 100;
+  // An engineer-overridden check renders green regardless of its true DCR.
+  const clr = overridden ? C.green : dcrColor(dcr);
   text(ctx, label, x, y, 8, C.dark);
   rect(ctx, x + 60, y - 1, trackW, 8, C.light);
   const fillW = Math.min(Math.max(dcr, 0), 1.5) / 1.5 * trackW;
-  if (fillW > 0) rect(ctx, x + 60, y - 1, fillW, 8, dcrColor(dcr));
+  if (fillW > 0) rect(ctx, x + 60, y - 1, fillW, 8, clr);
   const oneX = x + 60 + (1.0 / 1.5) * trackW;
   line(ctx, oneX, y - 3, oneX, y + 9, 0.8, C.dark);
-  text(ctx, dcr.toFixed(2), x + 60 + trackW + 6, y, 8, dcrColor(dcr), ctx.bold);
+  text(ctx, overridden ? `${dcr.toFixed(2)} ✓` : dcr.toFixed(2), x + 60 + trackW + 6, y, 8, clr, ctx.bold);
 }
 
 async function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont): Promise<DrawCtx> {
@@ -597,6 +607,7 @@ export async function buildReportBytes(
   for (const m of members) {
     const r = worstResult(m, project.code);
     if (!r) continue;
+    const summaryStatus = opts.includeOverrides ? effectiveStatus(r, m.overrides) : r.status;
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
     const bg = members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
@@ -611,10 +622,10 @@ export async function buildReportBytes(
       dp2(wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos),
       wall ? '-' : dp2(r.DCR_flex_neg),
       dp2(wall ? (r.DCR_shear_wall ?? 0) : r.DCR_shear),
-      wall ? '-' : dp2(r.DCR_torsion), r.status];
+      wall ? '-' : dp2(r.DCR_torsion), summaryStatus];
     vals.forEach((v, i) => {
       let clr = C.dark;
-      if (i === 8) clr = statusColor(r.status);
+      if (i === 8) clr = statusColor(summaryStatus);
       else if (i >= 4 && i <= 7) clr = dcrColor(parseFloat(v));
       text(ctx, v, margin + cols[i], row, 8, clr);
     });
@@ -675,6 +686,7 @@ export async function buildReportBytes(
 
     for (const lc of lcsToShow) {
       const r = memberResult(m, lc, project.code);
+      const dispStatus = opts.includeOverrides ? effectiveStatus(r, m.overrides) : r.status;
       const bg = lcsToShow.indexOf(lc) % 2 === 0 ? C.light : C.white;
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
       const lcLabel = clipText(font, lc.label, 7, lcCols[1] - 4);
@@ -683,23 +695,23 @@ export async function buildReportBytes(
             u.moment_(Math.max(lc.Mu_pos, lc.Mu_neg)), u.force_(lc.Vu), u.force_(lc.Pu),
             u.moment_(r.phi_Mn_wall ?? 0), u.force_(r.phi_Vn_wall ?? 0),
             (r.DCR_flex_wall ?? 0).toFixed(2), (r.DCR_shear_wall ?? 0).toFixed(2),
-            (r.DCR_sbzAsh ?? 0).toFixed(2), r.sbzRequired ? 'Yes' : 'No', r.status]
+            (r.DCR_sbzAsh ?? 0).toFixed(2), r.sbzRequired ? 'Yes' : 'No', dispStatus]
         : isBeam
         ? [lcLabel,
             u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
             u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
             r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2),
-            r.DCR_torsion.toFixed(2), r.status]
+            r.DCR_torsion.toFixed(2), dispStatus]
         : [lcLabel,
             u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
             u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
-            r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2), r.status];
+            r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2), dispStatus];
       const statusIdx = lcVals.length - 1;
       const dcrStart = isWall ? 6 : 7;
       const dcrEnd   = isWall ? 8 : isBeam ? 10 : 9;
       lcVals.forEach((v, i) => {
         let clr = C.dark;
-        if (i === statusIdx) clr = statusColor(r.status);
+        if (i === statusIdx) clr = statusColor(dispStatus);
         else if (i >= dcrStart && i <= dcrEnd) clr = dcrColor(parseFloat(v));
         text(ctx, v, margin + lcCols[i], y, 7, clr);
       });
@@ -721,8 +733,15 @@ export async function buildReportBytes(
            ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion],
            ...(worst.DCR_crack != null && worst.DCR_crack > 0
              ? [['Crack (SLS)', worst.DCR_crack] as [string, number]] : [])];
+      const ovr = opts.includeOverrides ? m.overrides : undefined;
+      const BAR_LABEL_KEY: Record<string, Parameters<typeof isOverridden>[1]> = {
+        'Flexure +': 'DCR_flex_pos', 'Flexure -': 'DCR_flex_neg',
+        'Shear': 'DCR_shear', 'Torsion': 'DCR_torsion',
+        'Crack (SLS)': 'DCR_crack', 'P-M': 'DCR_PM',
+      };
       for (const [lbl, dcr] of dcrRows) {
-        drawDCRBar(ctx, lbl, dcr, margin, y, barW);
+        const key = BAR_LABEL_KEY[lbl];
+        drawDCRBar(ctx, lbl, dcr, margin, y, barW, key ? isOverridden(ovr, key) : false);
         y -= 14;
       }
       if (isWall) {
@@ -743,8 +762,10 @@ export async function buildReportBytes(
         const wLim = botGoverns
           ? (m.crackParams?.wLimitBot ?? 0.3)
           : (m.crackParams?.wLimitTop ?? 0.3);
-        const okCrack = wk <= wLim;
-        text(ctx, `Crack width wk = ${wk.toFixed(3)} mm  /  limit ${wLim.toFixed(2)} mm  ${okCrack ? '(OK)' : '(EXCEEDS)'}  [EC2 §7.3.4]`,
+        const crackOverridden = opts.includeOverrides && isOverridden(m.overrides, 'DCR_crack');
+        const okCrack = wk <= wLim || crackOverridden;
+        const crackTag = wk <= wLim ? '(OK)' : crackOverridden ? '(reviewed)' : '(EXCEEDS)';
+        text(ctx, `Crack width wk = ${wk.toFixed(3)} mm  /  limit ${wLim.toFixed(2)} mm  ${crackTag}  [EC2 §7.3.4]`,
           margin, y - 2, 8, okCrack ? C.green : C.red, bold);
         y -= 14;
       }
@@ -760,7 +781,28 @@ export async function buildReportBytes(
       y -= consumed + 6;
     }
 
-    // Warnings
+    // Engineer review stamps — printed before warnings so accepted checks are
+    // clearly attributed. Honored only when opts.includeOverrides is true.
+    const overrides = opts.includeOverrides ? m.overrides : undefined;
+    const reviews = overrideEntries(overrides);
+    if (reviews.length > 0) {
+      if (y < margin + 40) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+      text(ctx, 'Engineer Review', margin, y - 8, 10, C.green, bold);
+      y -= 18;
+      for (const [key, ov] of reviews) {
+        if (y < margin + 28) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+        const line1 = `[OK] ${OVERRIDE_KEY_LABEL[key]} — Reviewed & accepted by ${ov.reviewedBy || '—'} on ${ov.date}`;
+        text(ctx, line1, margin, y, 8, C.green, bold);
+        y -= 12;
+        if (ov.note) {
+          text(ctx, `Note: ${ov.note}`, margin + 12, y, 8, C.dark);
+          y -= 12;
+        }
+      }
+      y -= 4;
+    }
+
+    // Warnings — suppress those covered by an engineer override.
     const allWarnings: { code: string; message: string; severity: string }[] = [];
     for (const lc of m.loads) {
       const r = memberResult(m, lc, project.code);
@@ -768,12 +810,15 @@ export async function buildReportBytes(
         if (!allWarnings.find(x => x.message === w.message))
           allWarnings.push(w);
     }
+    const shownWarnings = opts.includeOverrides
+      ? visibleWarnings(allWarnings as { code: string; message: string; severity: 'error' | 'warning' }[], overrides)
+      : allWarnings;
 
-    if (allWarnings.length > 0) {
+    if (shownWarnings.length > 0) {
       if (y < margin + 40) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
       text(ctx, 'Code Warnings', margin, y - 8, 10, C.dark, bold);
       y -= 20;
-      for (const w of allWarnings) {
+      for (const w of shownWarnings) {
         if (y < margin + 20) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
         const clr = w.severity === 'error' ? C.red : C.amber;
         text(ctx, `[${w.code}]`, margin, y, 8, clr, bold);

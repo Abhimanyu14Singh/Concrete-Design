@@ -1,6 +1,10 @@
 import { useState } from 'react';
-import type { Member, DesignResults, RebarLayout, DesignCode } from '../../types';
+import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride } from '../../types';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
+import {
+  OVERRIDE_KEY_LABEL, failingKeys, isOverridden, effectiveStatus,
+  visibleWarnings, overrideEntries,
+} from '../../utils/overrides';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
@@ -26,17 +30,22 @@ interface Props {
   code?: DesignCode;
   /** Project-level EC2 SLS quasi-permanent combo name (auto-applied to crack checks). */
   slsCombo?: string;
+  /** Project engineer name — pre-fills the "Reviewed by" field on overrides. */
+  engineer?: string;
   onRebarChange?: (updated: Member) => void;
 }
 
-function KV({ k, v, dcr, tip, formula }: { k: string; v: string; dcr?: number; tip?: string; formula?: string }) {
-  const dcrColor = dcr !== undefined ? themeDcrColor(dcr) : undefined;
+function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr?: number; tip?: string; formula?: string; overridden?: boolean }) {
+  // An engineer-overridden check renders green regardless of its true DCR.
+  const dcrColor = overridden ? DCR.pass : dcr !== undefined ? themeDcrColor(dcr) : undefined;
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 8, minWidth: 0 }}>
       <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         {k}{tip && <InfoTooltip text={tip} formula={formula} />}
       </span>
-      <span style={{ fontSize: 11, color: dcrColor ?? '#111827', fontFamily: 'monospace', fontWeight: dcr !== undefined ? 700 : 400 }}>{v}</span>
+      <span style={{ fontSize: 11, color: dcrColor ?? '#111827', fontFamily: 'monospace', fontWeight: dcr !== undefined ? 700 : 400 }}>
+        {v}{overridden && <span title="Reviewed by engineer" style={{ marginLeft: 4 }}>✓</span>}
+      </span>
     </div>
   );
 }
@@ -49,11 +58,12 @@ function dcrStyle(dcr: number): React.CSSProperties {
   return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, onRebarChange }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, onRebarChange }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
   const [elevZoom, setElevZoom] = useState(1);
+  const [showReviewForm, setShowReviewForm] = useState(false);
   const { fmt } = useUnits();
   const cap = capacityLabels(code);
 
@@ -151,8 +161,26 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
     }
   }
 
-  const statusColor = result.status === 'OK' ? DCR.pass : result.status === 'NG' ? DCR.fail : DCR.warn;
-  const statusBg    = result.status === 'OK' ? DCR.passBg : result.status === 'NG' ? DCR.failBg : DCR.warnBg;
+  // Engineer overrides (display-layer only — engine results keep true DCRs).
+  const overrides = member.overrides;
+  const dispStatus = effectiveStatus(result, overrides);
+  const isReviewed = dispStatus === 'OK' && result.status !== 'OK';
+  const statusColor = dispStatus === 'OK' ? DCR.pass : dispStatus === 'NG' ? DCR.fail : DCR.warn;
+  const statusBg    = dispStatus === 'OK' ? DCR.passBg : dispStatus === 'NG' ? DCR.failBg : DCR.warnBg;
+  const shownWarnings = visibleWarnings(result.warnings, overrides);
+  const reviewable = failingKeys(result);
+
+  function applyOverride(key: OverrideKey, ov: MemberOverride) {
+    const next = { ...(member.overrides ?? {}), [key]: ov };
+    onRebarChange?.({ ...member, overrides: next });
+    setShowReviewForm(false);
+  }
+  function clearOverride(key: OverrideKey) {
+    const next = { ...(member.overrides ?? {}) };
+    delete next[key];
+    onRebarChange?.({ ...member, overrides: Object.keys(next).length ? next : undefined });
+  }
+
   const s = member.section;
   const t = member.rebar.ties;
 
@@ -185,7 +213,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 20, background: statusBg, border: `1px solid ${statusColor}40` }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, display: 'inline-block', flexShrink: 0 }} />
           <span style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
-            {result.status === 'OK' ? 'All checks pass' : result.status === 'NG' ? 'Section inadequate' : 'Near capacity — review'}
+            {isReviewed ? 'Reviewed by Engineer'
+              : dispStatus === 'OK' ? 'All checks pass'
+              : dispStatus === 'NG' ? 'Section inadequate'
+              : 'Near capacity — review'}
           </span>
         </div>
 
@@ -344,18 +375,18 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             <>
               <SectionLabel title="Axial" />
               <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
-              <KV k="  DCR" v={(result.DCR_axial ?? 0).toFixed(3)} dcr={result.DCR_axial ?? 0} />
+              <KV k="  DCR" v={(result.DCR_axial ?? 0).toFixed(3)} dcr={result.DCR_axial ?? 0} overridden={isOverridden(overrides, 'DCR_axial')} />
 
               <SectionLabel title="P-M Interaction" />
               <KV k={code === 'EN1992-1-1' ? 'M_Rd,x @NEd' : 'φMnx @Pu'} v={fmt(result.phi_Mnx ?? 0, 'moment')} />
               <KV k={code === 'EN1992-1-1' ? 'M_Rd,y @NEd' : 'φMny @Pu'} v={fmt(result.phi_Mny ?? 0, 'moment')} />
-              <KV k="  DCR" v={(result.DCR_PM ?? 0).toFixed(3)} dcr={result.DCR_PM ?? 0} />
+              <KV k="  DCR" v={(result.DCR_PM ?? 0).toFixed(3)} dcr={result.DCR_PM ?? 0} overridden={isOverridden(overrides, 'DCR_PM')} />
 
               <SectionLabel title="Shear" />
               <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
               <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
               <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
-              <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} />
+              <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')} />
 
               <SectionLabel title="Steel Limits" />
               <KV k="As min" v={fmt(result.As_min, 'area')} />
@@ -367,11 +398,11 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
           <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')}
             tip="Sagging (positive) flexural capacity after applying φ=0.9 (ACI) or 1/γ (EC2). Must exceed Mu+."
             formula={code === 'EN1992-1-1' ? 'M_Rd = As·fyd·z·(1 − λ·x/(2d))' : 'φMn = φ·As·fy·(d − a/2)'} />
-          <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos}
+          <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} overridden={isOverridden(overrides, 'DCR_flex_pos')}
             tip="Demand-to-Capacity Ratio = Mu+ / φMn+. Must be ≤ 1.0. Values ≥ 0.9 are flagged in amber." />
           <KV k={`${cap.Mn}−`} v={fmt(result.phi_Mn_neg, 'moment')}
             tip="Hogging (negative) flexural capacity. Computed using top steel area." />
-          <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg}
+          <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg} overridden={isOverridden(overrides, 'DCR_flex_neg')}
             tip="Demand-to-Capacity Ratio = Mu− / φMn−. Must be ≤ 1.0." />
           <KV k="As req+" v={fmt(result.As_req_pos, 'area')}
             tip="Minimum bottom steel area to carry Mu+. The engine uses this to flag under-reinforced sections." />
@@ -395,7 +426,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             formula={code === 'EN1992-1-1' ? 'V_Rd,s = Asw/s · z · fywd · cotθ' : 'Vs = Av·fy·d/s'} />
           <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')}
             tip="Total design shear resistance = φ(Vc + Vs). Must exceed Vu." />
-          <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear}
+          <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')}
             tip="Shear DCR = Vu / φVn. Must be ≤ 1.0." />
           {zoneResults.map(z => (
             <KV key={z.zone} k={`  z${z.zone + 1}@${fmt(z.spacing, 'length')}`} v={z.DCR.toFixed(3)} dcr={z.DCR}
@@ -411,7 +442,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             tip="Cracking torsion threshold. Torsion design required when Tu > φTcr." />
           <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')}
             tip="Design torsional resistance from closed stirrups. Checked against Tu." />
-          <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion}
+          <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion} overridden={isOverridden(overrides, 'DCR_torsion')}
             tip={code === 'EN1992-1-1'
               ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
               : 'Torsion DCR = Tu / φTn.'} />
@@ -420,15 +451,15 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
             <>
               <SectionLabel title="Crack Width §7.3.4" />
               <KV k="wk bot" v={`${(result.wk_bot ?? 0).toFixed(3)} mm`}
-                dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)}
+                dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                 tip="Characteristic crack width at bottom face under quasi-permanent load combination."
                 formula="wk = sr,max · (εsm − εcm)" />
               <KV k="wk top" v={`${(result.wk_top ?? 0).toFixed(3)} mm`}
-                dcr={(result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)}
+                dcr={(result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                 tip="Characteristic crack width at top face under quasi-permanent combination." />
               {result.wk_face !== undefined && (
                 <KV k="wk face" v={`${result.wk_face.toFixed(3)} mm`}
-                  dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)}
+                  dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                   tip="Side-face crack width (EC2 §7.3.3). Relevant when h > 1000 mm." />
               )}
               <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`}
@@ -537,12 +568,49 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
         </div>
       )}
 
-      {/* Warnings */}
-      {result.warnings.length > 0 && (
+      {/* Warnings + engineer review */}
+      {(result.warnings.length > 0 || overrideEntries(overrides).length > 0) && (
         <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Code Checks / Warnings</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>Code Checks / Warnings</div>
+            {onRebarChange && reviewable.length > 0 && !showReviewForm && (
+              <button
+                onClick={() => setShowReviewForm(true)}
+                style={{ fontSize: 10, fontWeight: 700, color: DCR.pass, background: DCR.passBg, border: `1px solid ${DCR.pass}40`, borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}
+              >
+                ✓ Mark as Reviewed
+              </button>
+            )}
+          </div>
+
+          {/* Inline review form */}
+          {showReviewForm && (
+            <ReviewForm
+              reviewable={reviewable}
+              defaultEngineer={engineer ?? ''}
+              onCancel={() => setShowReviewForm(false)}
+              onConfirm={applyOverride}
+            />
+          )}
+
+          {/* Existing engineer reviews (green chips) */}
+          {overrideEntries(overrides).map(([key, ov]) => (
+            <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', borderRadius: 6, background: DCR.passBg, border: `1px solid ${DCR.pass}40`, marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: DCR.pass, flexShrink: 0, marginTop: 1 }}>✓ Reviewed</span>
+              <span style={{ fontSize: 11, color: '#374151', flex: 1 }}>
+                <b>{OVERRIDE_KEY_LABEL[key]}</b> — accepted by {ov.reviewedBy || '—'} on {ov.date}
+                {ov.note && <span style={{ color: '#6b7280' }}> · {ov.note}</span>}
+              </span>
+              {onRebarChange && (
+                <button onClick={() => clearOverride(key)} title="Remove override"
+                  style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, lineHeight: 1 }}>×</button>
+              )}
+            </div>
+          ))}
+
+          {/* Remaining (non-overridden) warnings */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {result.warnings.map((w, i) => (
+            {shownWarnings.map((w, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 8px', borderRadius: 6, background: w.severity === 'error' ? '#fef2f2' : '#fffbeb' }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: w.severity === 'error' ? '#dc2626' : '#d97706', flexShrink: 0, marginTop: 1 }}>{w.code}</span>
                 <span style={{ fontSize: 11, color: '#374151' }}>{w.message}</span>
@@ -551,6 +619,56 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, on
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Inline form for stamping a failing check as engineer-reviewed. */
+function ReviewForm({ reviewable, defaultEngineer, onCancel, onConfirm }: {
+  reviewable: OverrideKey[];
+  defaultEngineer: string;
+  onCancel: () => void;
+  onConfirm: (key: OverrideKey, ov: MemberOverride) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [key, setKey] = useState<OverrideKey>(reviewable[0] ?? 'all');
+  const [reviewedBy, setReviewedBy] = useState(defaultEngineer);
+  const [date, setDate] = useState(today);
+  const [note, setNote] = useState('');
+  const opts: { value: OverrideKey; label: string }[] = [
+    ...reviewable.map(k => ({ value: k, label: OVERRIDE_KEY_LABEL[k] })),
+    { value: 'all', label: OVERRIDE_KEY_LABEL.all },
+  ];
+  const inputStyle: React.CSSProperties = { fontSize: 11, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, color: '#111827', background: 'white' };
+  return (
+    <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
+          CHECK
+          <Dropdown value={key} options={opts} onChange={v => setKey(v as OverrideKey)} style={inputStyle} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700, flex: 1, minWidth: 120 }}>
+          REVIEWED BY
+          <input value={reviewedBy} onChange={e => setReviewedBy(e.target.value)} placeholder="e.g. J. Smith, PE" style={inputStyle} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
+          DATE
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} />
+        </label>
+      </div>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
+        NOTE (optional)
+        <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+          placeholder="e.g. wk = 0.31 mm vs 0.30 mm limit — acceptable given conservative SLS combo."
+          style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+      </label>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', background: 'white', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>Cancel</button>
+        <button onClick={() => onConfirm(key, { reviewedBy: reviewedBy.trim(), date, note: note.trim() || undefined })}
+          style={{ fontSize: 11, fontWeight: 700, color: 'white', background: DCR.pass, border: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>
+          Confirm Review
+        </button>
+      </div>
     </div>
   );
 }

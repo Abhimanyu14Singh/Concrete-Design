@@ -889,6 +889,7 @@ export default function App() {
                       member={activeMember}
                       code={project.code}
                       slsCombo={project.slsCombo}
+                      engineer={project.engineer}
                       onRebarChange={handleUpdateMember}
                     />
                   </ErrorBoundary>

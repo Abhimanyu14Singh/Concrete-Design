@@ -43,6 +43,7 @@ export default function ReportModal({ project, onClose }: Props) {
   const [includeDiagrams, setIncludeDiagrams] = useState(DEFAULT_REPORT_OPTIONS.includeDiagrams);
   const [includeCalcs, setIncludeCalcs] = useState(DEFAULT_REPORT_OPTIONS.includeCalcs);
   const [includeCrack, setIncludeCrack] = useState(DEFAULT_REPORT_OPTIONS.includeCrack);
+  const [includeOverrides, setIncludeOverrides] = useState(DEFAULT_REPORT_OPTIONS.includeOverrides);
 
   // Title block
   const [jobNumber, setJobNumber] = useState('');
@@ -74,13 +75,13 @@ export default function ReportModal({ project, onClose }: Props) {
 
   const buildOptions = useCallback((): ReportOptions => ({
     memberIds: resolveMemberIds(),
-    governingOnly, includeDiagrams, includeCalcs, includeCrack,
+    governingOnly, includeDiagrams, includeCalcs, includeCrack, includeOverrides,
     jobNumber: jobNumber.trim() || undefined,
     revision: revision.trim() || undefined,
     reportName: reportName.trim() || undefined,
     reportEngineer: reportEngineer.trim() || undefined,
     reportDate: reportDate.trim() || undefined,
-  }), [resolveMemberIds, governingOnly, includeDiagrams, includeCalcs, includeCrack,
+  }), [resolveMemberIds, governingOnly, includeDiagrams, includeCalcs, includeCrack, includeOverrides,
       jobNumber, revision, reportName, reportEngineer, reportDate]);
 
   const generate = useCallback(async () => {
@@ -112,7 +113,7 @@ export default function ReportModal({ project, onClose }: Props) {
     debounceTimer.current = setTimeout(() => { void generate(); }, 600);
     return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, groupIds, selectedIds, governingOnly, includeDiagrams, includeCalcs, includeCrack,
+  }, [scope, groupIds, selectedIds, governingOnly, includeDiagrams, includeCalcs, includeCrack, includeOverrides,
       jobNumber, revision, reportName, reportEngineer, reportDate]);
 
   // Clean up blob URL on unmount
@@ -220,6 +221,7 @@ export default function ReportModal({ project, onClose }: Props) {
               ['Governing load case only', governingOnly, setGoverningOnly],
               ['Shear & moment diagrams', includeDiagrams, setIncludeDiagrams],
               ['Step-by-step calcs + clauses', includeCalcs, setIncludeCalcs],
+              ['Engineer review stamps', includeOverrides, setIncludeOverrides],
             ].map(([lbl, val, set]) => (
               <label key={lbl as string} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', padding: '3px 0', cursor: 'pointer' }}>
                 <input type="checkbox" checked={val as boolean} onChange={e => (set as (v: boolean) => void)(e.target.checked)} />
