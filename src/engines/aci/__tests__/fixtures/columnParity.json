@@ -1,0 +1,583 @@
+{
+  "schema": "column-parity/v1",
+  "source": "Column_Design_DW/design_engine.py :: compute_all_outputs + phi_pn",
+  "note": "Golden reference outputs from the S-Concrete-calibrated Python column engine. Used as parity vectors for the Concrete-Design TS aciColumn port (Phase 0). Regenerate with parity/export_parity_vectors.py; copy into Concrete-Design/src/engines/aci/__tests__/fixtures/columnParity.json.",
+  "cases": [
+    {
+      "id": "rect-18x18-fc4-8#8-biax",
+      "notes": "Baseline tied biaxial column (matches the existing aciColumn.test fixture geometry).",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 18,
+        "h": 18,
+        "fc_ksi": 4,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 3,
+        "ny": 3,
+        "long_bar": "#8",
+        "tie_bar": "#4",
+        "s_actual": 12,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -450,
+            "M3": 120,
+            "M2": 60,
+            "V2": 35,
+            "V3": 20,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 324,
+        "n_bars_total": 8,
+        "bar_area_in2": 0.79,
+        "Ast_in2": 6.32,
+        "rho": 0.019506
+      },
+      "python": {
+        "phi_pn_kips": 758.84224,
+        "flexural": {
+          "axial_comp_util": 0.593,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.729,
+          "theta_deg": 153.0,
+          "NM_util": 0.729
+        },
+        "shear": {
+          "Vuz_kips": 20,
+          "Vuy_kips": 35,
+          "Vuz_phiVnz": 0.391,
+          "Vuy_phiVny": 0.224,
+          "VT_util": 0.41,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 7.75
+        }
+      }
+    },
+    {
+      "id": "rect-24x24-fc5-12#9-biax",
+      "notes": "Larger tied section, moderate biaxial demand.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 24,
+        "h": 24,
+        "fc_ksi": 5,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 4,
+        "ny": 4,
+        "long_bar": "#9",
+        "tie_bar": "#4",
+        "s_actual": 12,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -900,
+            "M3": 200,
+            "M2": 120,
+            "V2": 50,
+            "V3": 30,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 576,
+        "n_bars_total": 12,
+        "bar_area_in2": 1.0,
+        "Ast_in2": 12.0,
+        "rho": 0.020833
+      },
+      "python": {
+        "phi_pn_kips": 1620.84,
+        "flexural": {
+          "axial_comp_util": 0.555,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.438,
+          "theta_deg": 149.0,
+          "NM_util": 0.555
+        },
+        "shear": {
+          "Vuz_kips": 30,
+          "Vuy_kips": 50,
+          "Vuz_phiVnz": 0.249,
+          "Vuy_phiVny": 0.149,
+          "VT_util": 0.266,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 24.0
+        }
+      }
+    },
+    {
+      "id": "rect-20x30-fc6-#10-biax",
+      "notes": "Non-square section (b != h) to exercise weak/strong-axis asymmetry.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 20,
+        "h": 30,
+        "fc_ksi": 6,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 3,
+        "ny": 4,
+        "long_bar": "#10",
+        "tie_bar": "#4",
+        "s_actual": 10,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -1200,
+            "M3": 300,
+            "M2": 80,
+            "V2": 60,
+            "V3": 20,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 600,
+        "n_bars_total": 10,
+        "bar_area_in2": 1.27,
+        "Ast_in2": 12.7,
+        "rho": 0.021167
+      },
+      "python": {
+        "phi_pn_kips": 1953.7596,
+        "flexural": {
+          "axial_comp_util": 0.614,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.446,
+          "theta_deg": 158.0,
+          "NM_util": 0.614
+        },
+        "shear": {
+          "Vuz_kips": 20,
+          "Vuy_kips": 60,
+          "Vuz_phiVnz": 0.233,
+          "Vuy_phiVny": 0.101,
+          "VT_util": 0.233,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 20.0
+        }
+      }
+    },
+    {
+      "id": "rect-16x16-fc4-#7-light",
+      "notes": "Small section, light loads \u2014 low DCR sanity case.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 16,
+        "h": 16,
+        "fc_ksi": 4,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 3,
+        "ny": 3,
+        "long_bar": "#7",
+        "tie_bar": "#3",
+        "s_actual": 10,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -200,
+            "M3": 40,
+            "M2": 20,
+            "V2": 15,
+            "V3": 10,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 256,
+        "n_bars_total": 8,
+        "bar_area_in2": 0.6,
+        "Ast_in2": 4.8,
+        "rho": 0.01875
+      },
+      "python": {
+        "phi_pn_kips": 593.8816,
+        "flexural": {
+          "axial_comp_util": 0.337,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.328,
+          "theta_deg": 153.0,
+          "NM_util": 0.337
+        },
+        "shear": {
+          "Vuz_kips": 10,
+          "Vuy_kips": 15,
+          "Vuz_phiVnz": 0.269,
+          "Vuy_phiVny": 0.179,
+          "VT_util": 0.299,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 16.0
+        }
+      }
+    },
+    {
+      "id": "rect-18x18-pure-axial",
+      "notes": "Pure axial \u2014 clean exact-parity anchor for phi*Pn,max.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 18,
+        "h": 18,
+        "fc_ksi": 4,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 3,
+        "ny": 3,
+        "long_bar": "#8",
+        "tie_bar": "#4",
+        "s_actual": 12,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -600,
+            "M3": 0,
+            "M2": 0,
+            "V2": 0,
+            "V3": 0,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 324,
+        "n_bars_total": 8,
+        "bar_area_in2": 0.79,
+        "Ast_in2": 6.32,
+        "rho": 0.019506
+      },
+      "python": {
+        "phi_pn_kips": 758.84224,
+        "flexural": {
+          "axial_comp_util": 0.791,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.34,
+          "theta_deg": 90.0,
+          "NM_util": 0.791
+        },
+        "shear": {
+          "Vuz_kips": 0.0,
+          "Vuy_kips": 0.0,
+          "Vuz_phiVnz": 0.0,
+          "Vuy_phiVny": 0.0,
+          "VT_util": null,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 18.0
+        }
+      }
+    },
+    {
+      "id": "rect-30x30-fc8-#11-heavy-biax",
+      "notes": "High-strength concrete, heavy biaxial demand.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 30,
+        "h": 30,
+        "fc_ksi": 8,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 5,
+        "ny": 5,
+        "long_bar": "#11",
+        "tie_bar": "#4",
+        "s_actual": 12,
+        "cover": 2.0,
+        "forces": [
+          {
+            "P": -2000,
+            "M3": 500,
+            "M2": 400,
+            "V2": 90,
+            "V3": 70,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 900,
+        "n_bars_total": 16,
+        "bar_area_in2": 1.56,
+        "Ast_in2": 24.96,
+        "rho": 0.027733
+      },
+      "python": {
+        "phi_pn_kips": 3872.89344,
+        "flexural": {
+          "axial_comp_util": 0.516,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.436,
+          "theta_deg": 141.0,
+          "NM_util": 0.516
+        },
+        "shear": {
+          "Vuz_kips": 70,
+          "Vuy_kips": 90,
+          "Vuz_phiVnz": 0.284,
+          "Vuy_phiVny": 0.221,
+          "VT_util": 0.336,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 30.0
+        }
+      }
+    },
+    {
+      "id": "rect-24x24-fc5-#9-highmoment-lowaxial",
+      "notes": "Low axial, high uniaxial moment \u2014 tension-transition region of the P-M curve.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 24,
+        "h": 24,
+        "fc_ksi": 5,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 4,
+        "ny": 4,
+        "long_bar": "#9",
+        "tie_bar": "#4",
+        "s_actual": 12,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -100,
+            "M3": 250,
+            "M2": 0,
+            "V2": 40,
+            "V3": 0,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 576,
+        "n_bars_total": 12,
+        "bar_area_in2": 1.0,
+        "Ast_in2": 12.0,
+        "rho": 0.020833
+      },
+      "python": {
+        "phi_pn_kips": 1620.84,
+        "flexural": {
+          "axial_comp_util": 0.062,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.419,
+          "theta_deg": 177.0,
+          "NM_util": 0.419
+        },
+        "shear": {
+          "Vuz_kips": 0,
+          "Vuy_kips": 40,
+          "Vuz_phiVnz": 0.308,
+          "Vuy_phiVny": 0.0,
+          "VT_util": 0.308,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 10.72
+        }
+      }
+    },
+    {
+      "id": "circ-D20-fc4-8#8-spiral-uniax",
+      "notes": "Circular spiral column, uniaxial moment.",
+      "inputs": {
+        "shape": "circular",
+        "tie_type": "spiral",
+        "b": 20,
+        "h": 20,
+        "fc_ksi": 4,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 8,
+        "ny": 0,
+        "long_bar": "#8",
+        "tie_bar": "#4",
+        "s_actual": 3,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -400,
+            "M3": 90,
+            "M2": 0,
+            "V2": 25,
+            "V3": 0,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 314.159265,
+        "n_bars_total": 8,
+        "bar_area_in2": 0.79,
+        "Ast_in2": 6.32,
+        "rho": 0.020117
+      },
+      "python": {
+        "phi_pn_kips": 908.981608,
+        "flexural": {
+          "axial_comp_util": 0.57,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.286,
+          "theta_deg": 156.0,
+          "NM_util": 0.57
+        },
+        "shear": {
+          "Vuz_kips": 0,
+          "Vuy_kips": 25,
+          "Vuz_phiVnz": 0.15,
+          "Vuy_phiVny": 0.0,
+          "VT_util": 0.15,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 20.0
+        }
+      }
+    },
+    {
+      "id": "circ-D24-fc5-10#9-spiral-biax",
+      "notes": "Circular spiral column, resultant (biaxial) moment.",
+      "inputs": {
+        "shape": "circular",
+        "tie_type": "spiral",
+        "b": 24,
+        "h": 24,
+        "fc_ksi": 5,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 10,
+        "ny": 0,
+        "long_bar": "#9",
+        "tie_bar": "#4",
+        "s_actual": 3,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -700,
+            "M3": 120,
+            "M2": 60,
+            "V2": 35,
+            "V3": 20,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 452.389342,
+        "n_bars_total": 10,
+        "bar_area_in2": 1.0,
+        "Ast_in2": 10.0,
+        "rho": 0.022105
+      },
+      "python": {
+        "phi_pn_kips": 1581.098624,
+        "flexural": {
+          "axial_comp_util": 0.57,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.201,
+          "theta_deg": 147.0,
+          "NM_util": 0.57
+        },
+        "shear": {
+          "Vuz_kips": 20,
+          "Vuy_kips": 35,
+          "Vuz_phiVnz": 0.159,
+          "Vuy_phiVny": 0.091,
+          "VT_util": 0.166,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 24.0
+        }
+      }
+    },
+    {
+      "id": "rect-18x18-envelope-multiforce",
+      "notes": "Multiple load combos \u2014 exercises governing-case envelope selection.",
+      "inputs": {
+        "shape": "rectangular",
+        "tie_type": "tied",
+        "b": 18,
+        "h": 18,
+        "fc_ksi": 4,
+        "fy_ksi": 60,
+        "fys_ksi": 60,
+        "nz": 3,
+        "ny": 3,
+        "long_bar": "#8",
+        "tie_bar": "#4",
+        "s_actual": 12,
+        "cover": 1.5,
+        "forces": [
+          {
+            "P": -450,
+            "M3": 120,
+            "M2": 60,
+            "V2": 35,
+            "V3": 20,
+            "T": 0
+          },
+          {
+            "P": -300,
+            "M3": 180,
+            "M2": 30,
+            "V2": 45,
+            "V3": 10,
+            "T": 0
+          },
+          {
+            "P": -700,
+            "M3": 40,
+            "M2": 20,
+            "V2": 20,
+            "V3": 15,
+            "T": 0
+          }
+        ]
+      },
+      "derived": {
+        "Ag_in2": 324,
+        "n_bars_total": 8,
+        "bar_area_in2": 0.79,
+        "Ast_in2": 6.32,
+        "rho": 0.019506
+      },
+      "python": {
+        "phi_pn_kips": 758.84224,
+        "flexural": {
+          "axial_comp_util": 0.922,
+          "axial_tens_util": 0.0,
+          "moment_res_util": 0.855,
+          "theta_deg": 171.0,
+          "NM_util": 0.922
+        },
+        "shear": {
+          "Vuz_kips": 10,
+          "Vuy_kips": 45,
+          "Vuz_phiVnz": 0.549,
+          "Vuy_phiVny": 0.122,
+          "VT_util": 0.549,
+          "Avz_S_req_in": 0.0,
+          "Avy_S_req_in": 0.0,
+          "S_req_in": 7.75
+        }
+      }
+    }
+  ]
+}

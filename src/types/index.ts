@@ -203,6 +203,21 @@ export interface DesignResults {
   phi_Mnx?: number;     // moment capacity about x at Pu (kip-ft)
   phi_Mny?: number;     // moment capacity about y at Pu (kip-ft)
   interaction?: InteractionPoint[]; // P-M curve (about x) for chart/calc sheet
+  // Extended column outputs — ported target from Column_Design_DW
+  // design_engine.compute_all_outputs(). Optional so beam/wall paths are unaffected.
+  theta_deg?: number;          // governing resultant-moment vector angle (deg)
+  NM_util?: number;            // governing combined axial + biaxial-moment utilization
+  DCR_axial_tens?: number;     // axial tension utilization = Pu / φ(As·fy)
+  phi_Vnz?: number;            // shear capacity, z-direction / strong face (kips)
+  phi_Vny?: number;            // shear capacity, y-direction / weak face (kips)
+  DCR_Vz?: number;             // shear DCR, z-direction
+  DCR_Vy?: number;             // shear DCR, y-direction
+  VT_util?: number;            // governing shear+torsion utilization
+  Sreq_z?: number;             // required tie spacing from z-shear (in)
+  Sreq_y?: number;             // required tie spacing from y-shear (in)
+  Sreq?: number;               // governing required tie spacing (in)
+  phi_Tcr?: number;            // torsion cracking threshold φTcr (kip-ft)
+  governingLoadCaseId?: string;
   // Additional
   As_req_pos: number;   // Required steel (in²)
   As_req_neg: number;
