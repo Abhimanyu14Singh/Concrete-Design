@@ -56,7 +56,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 7.75
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -142.2829,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 209.872243
+          },
+          {
+            "Pu_kips": -284.5658,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 195.400843
+          },
+          {
+            "Pu_kips": -426.8488,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 186.685827
+          },
+          {
+            "Pu_kips": -569.1317,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 164.285496
+          },
+          {
+            "Pu_kips": -711.4146,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 122.177347
+          },
+          {
+            "Pu_kips": -853.6975,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 50.947933
+          }
+        ]
       }
     },
     {
@@ -112,7 +144,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 24.0
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -303.9075,
+            "theta_deg": 30.9638,
+            "phi_mr_kft": 580.30546
+          },
+          {
+            "Pu_kips": -607.815,
+            "theta_deg": 30.9638,
+            "phi_mr_kft": 543.804612
+          },
+          {
+            "Pu_kips": -911.7225,
+            "theta_deg": 30.9638,
+            "phi_mr_kft": 531.256269
+          },
+          {
+            "Pu_kips": -1215.63,
+            "theta_deg": 30.9638,
+            "phi_mr_kft": 476.650122
+          },
+          {
+            "Pu_kips": -1519.5375,
+            "theta_deg": 30.9638,
+            "phi_mr_kft": 361.846727
+          },
+          {
+            "Pu_kips": -1823.445,
+            "theta_deg": 30.9638,
+            "phi_mr_kft": 153.43323
+          }
+        ]
       }
     },
     {
@@ -168,7 +232,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 20.0
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -366.3299,
+            "theta_deg": 14.9314,
+            "phi_mr_kft": 852.297926
+          },
+          {
+            "Pu_kips": -732.6598,
+            "theta_deg": 14.9314,
+            "phi_mr_kft": 804.946489
+          },
+          {
+            "Pu_kips": -1098.9898,
+            "theta_deg": 14.9314,
+            "phi_mr_kft": 791.008531
+          },
+          {
+            "Pu_kips": -1465.3197,
+            "theta_deg": 14.9314,
+            "phi_mr_kft": 714.338148
+          },
+          {
+            "Pu_kips": -1831.6496,
+            "theta_deg": 14.9314,
+            "phi_mr_kft": 546.638505
+          },
+          {
+            "Pu_kips": -2197.9796,
+            "theta_deg": 14.9314,
+            "phi_mr_kft": 232.536373
+          }
+        ]
       }
     },
     {
@@ -224,7 +320,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 16.0
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -111.3528,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 142.716654
+          },
+          {
+            "Pu_kips": -222.7056,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 134.054689
+          },
+          {
+            "Pu_kips": -334.0584,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 128.643616
+          },
+          {
+            "Pu_kips": -445.4112,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 113.524549
+          },
+          {
+            "Pu_kips": -556.764,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 84.667977
+          },
+          {
+            "Pu_kips": -668.1168,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 35.330117
+          }
+        ]
       }
     },
     {
@@ -280,7 +408,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 18.0
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -142.2829,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 262.556775
+          },
+          {
+            "Pu_kips": -284.5658,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 241.56052
+          },
+          {
+            "Pu_kips": -426.8488,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 209.21323
+          },
+          {
+            "Pu_kips": -569.1317,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 176.888985
+          },
+          {
+            "Pu_kips": -711.4146,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 126.279097
+          },
+          {
+            "Pu_kips": -853.6975,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 52.00542
+          }
+        ]
       }
     },
     {
@@ -336,7 +496,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 30.0
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -726.1675,
+            "theta_deg": 38.6598,
+            "phi_mr_kft": 1390.422875
+          },
+          {
+            "Pu_kips": -1452.335,
+            "theta_deg": 38.6598,
+            "phi_mr_kft": 1430.105739
+          },
+          {
+            "Pu_kips": -2178.5026,
+            "theta_deg": 38.6598,
+            "phi_mr_kft": 1466.807207
+          },
+          {
+            "Pu_kips": -2904.6701,
+            "theta_deg": 38.6598,
+            "phi_mr_kft": 1370.263053
+          },
+          {
+            "Pu_kips": -3630.8376,
+            "theta_deg": 38.6598,
+            "phi_mr_kft": 1085.81917
+          },
+          {
+            "Pu_kips": -4357.0051,
+            "theta_deg": 38.6598,
+            "phi_mr_kft": 468.994276
+          }
+        ]
       }
     },
     {
@@ -392,7 +584,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 10.72
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -303.9075,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 711.30697
+          },
+          {
+            "Pu_kips": -607.815,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 684.568576
+          },
+          {
+            "Pu_kips": -911.7225,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 593.115693
+          },
+          {
+            "Pu_kips": -1215.63,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 509.306622
+          },
+          {
+            "Pu_kips": -1519.5375,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 371.497404
+          },
+          {
+            "Pu_kips": -1823.445,
+            "theta_deg": 0.0,
+            "phi_mr_kft": 154.966495
+          }
+        ]
       }
     },
     {
@@ -448,7 +672,8 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 20.0
-        }
+        },
+        "biaxial_probe": []
       }
     },
     {
@@ -504,7 +729,8 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 24.0
-        }
+        },
+        "biaxial_probe": []
       }
     },
     {
@@ -576,7 +802,39 @@
           "Avz_S_req_in": 0.0,
           "Avy_S_req_in": 0.0,
           "S_req_in": 7.75
-        }
+        },
+        "biaxial_probe": [
+          {
+            "Pu_kips": -142.2829,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 209.872243
+          },
+          {
+            "Pu_kips": -284.5658,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 195.400843
+          },
+          {
+            "Pu_kips": -426.8488,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 186.685827
+          },
+          {
+            "Pu_kips": -569.1317,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 164.285496
+          },
+          {
+            "Pu_kips": -711.4146,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 122.177347
+          },
+          {
+            "Pu_kips": -853.6975,
+            "theta_deg": 26.5651,
+            "phi_mr_kft": 50.947933
+          }
+        ]
       }
     }
   ]
