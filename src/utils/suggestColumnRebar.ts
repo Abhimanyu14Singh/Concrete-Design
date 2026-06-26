@@ -22,6 +22,7 @@ import { runDesign } from '../engines';
 import { getBarArea, getBarDiam } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
 import { grossArea } from '../engines/column/sectionModel';
+import { autoSizeColumnSection, describeColumnSection } from './autoSizeColumn';
 import type { SuggestResult, SuggestError } from './suggestRebar';
 
 // Typical column longitudinal bar sizes (US #; metric Ø in mm as negatives).
@@ -275,7 +276,18 @@ export function suggestColumnRebar(
     const detail = Number.isFinite(leastInfeasiblePM)
       ? ` Best achievable DCR ≈ ${leastInfeasiblePM.toFixed(2)} at ρ = 8%.`
       : '';
-    return { error: `Even ρ = 8% longitudinal steel exceeds the target DCR — enlarge the section.${detail}` };
+    // Recommend a larger section (axial-demand sized, ≥ current + 2") to retry.
+    let govPu = 0;
+    for (const m of cols) for (const lc of m.loads) govPu = Math.max(govPu, Math.abs(lc.Pu ?? 0));
+    const rec = autoSizeColumnSection({
+      governingPuKip: govPu,
+      fcPsi: cols[0].material.fc, fyPsi: cols[0].material.fy,
+      targetDCR, spiral: tieType === 'spiral',
+      shape: refSection.type === 'circular_column' ? 'circular' : 'rectangular',
+      currentBIn: refSection.b, currentHIn: refSection.h ?? refSection.b,
+    });
+    const recMsg = rec ? ` Try ${describeColumnSection(rec)} and re-run Suggest.` : '';
+    return { error: `Even ρ = 8% longitudinal steel exceeds the target DCR — enlarge the section.${detail}${recMsg}` };
   }
 
   // 2. Size the ties for shear + detailing on the chosen cage.
