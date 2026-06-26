@@ -18,12 +18,13 @@ import TopProgressBar from '../common/TopProgressBar';
 import HistogramPanel from './HistogramPanel';
 import { rampStops } from './colorRamp';
 import SavingsPanel from './SavingsPanel';
+import TakeoffPanel from './TakeoffPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
 
-type RightTab = 'groups' | 'autogroup' | 'savings';
+type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff';
 type FlexFace = 'top' | 'bot';
 
 interface Props {
@@ -660,6 +661,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}>Groups</button>
           <button style={tabStyle(rightTab === 'autogroup')} onClick={() => setRightTab('autogroup')}>Auto-Group</button>
           <button style={tabStyle(rightTab === 'savings')} onClick={() => setRightTab('savings')}>Savings</button>
+          <button style={tabStyle(rightTab === 'takeoff')} onClick={() => setRightTab('takeoff')}>Takeoff</button>
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -716,6 +718,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               targetDCR={project.targetDCR ?? 0.9}
               onTargetDCRChange={v => onProjectChange(prev => ({ ...prev, targetDCR: v }))}
             />
+          )}
+
+          {rightTab === 'takeoff' && (
+            <TakeoffPanel members={members} />
           )}
         </div>
       </div>
