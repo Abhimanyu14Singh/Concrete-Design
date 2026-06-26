@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const { registerEtabsBridge, killHelper } = require('./etabsBridge.cjs');
+const { registerSconcreteBridge } = require('./sconcreteBridge.cjs');
 const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow() {
@@ -103,6 +104,10 @@ ipcMain.handle('open-file', async (event) => {
 // ── IPC: ETABS CSI OAPI bridge (Windows + ETABS running; errors elsewhere) ───
 
 registerEtabsBridge(ipcMain);
+
+// ── IPC: S-Concrete batch runner (Windows + S-Concrete; errors elsewhere) ────
+
+registerSconcreteBridge(ipcMain);
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 

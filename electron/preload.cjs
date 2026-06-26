@@ -9,6 +9,7 @@ function setSingleListener(channel, cb) {
 contextBridge.exposeInMainWorld('electronAPI', {
   saveFile:       (opts) => ipcRenderer.invoke('save-file', opts),
   etabs:          (method, args) => ipcRenderer.invoke('etabs', { method, args }),
+  sconcrete:      (method, args) => ipcRenderer.invoke('sconcrete', { method, args }),
   openFile:       ()     => ipcRenderer.invoke('open-file'),
   onTriggerSave:  (cb)   => setSingleListener('trigger-save', cb),
   onTriggerOpen:  (cb)   => setSingleListener('trigger-open', cb),
