@@ -19,12 +19,13 @@ import HistogramPanel from './HistogramPanel';
 import { rampStops } from './colorRamp';
 import SavingsPanel from './SavingsPanel';
 import TakeoffPanel from './TakeoffPanel';
+import ColumnStacksPanel from './ColumnStacksPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
 
-type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff';
+type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff' | 'stacks';
 type FlexFace = 'top' | 'bot';
 
 interface Props {
@@ -662,6 +663,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           <button style={tabStyle(rightTab === 'autogroup')} onClick={() => setRightTab('autogroup')}>Auto-Group</button>
           <button style={tabStyle(rightTab === 'savings')} onClick={() => setRightTab('savings')}>Savings</button>
           <button style={tabStyle(rightTab === 'takeoff')} onClick={() => setRightTab('takeoff')}>Takeoff</button>
+          <button style={tabStyle(rightTab === 'stacks')} onClick={() => setRightTab('stacks')}>Stacks</button>
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -722,6 +724,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
           {rightTab === 'takeoff' && (
             <TakeoffPanel members={members} />
+          )}
+
+          {rightTab === 'stacks' && (
+            <ColumnStacksPanel members={members} code={project.code} />
           )}
         </div>
       </div>
