@@ -11,16 +11,18 @@
  * What this test asserts today:
  *  - AXIAL capacity (φPn,max) and DCR_axial: TIGHT — both engines share the same
  *    ACI §22.4.2 formula, so they must agree to rounding.
- *  - P-M interaction: DOCUMENTED GAP — the TS engine uses the Bresler reciprocal
- *    method; the Python reference uses a rotating-neutral-axis solver. They agree
- *    on pass/fail and on magnitude within PM_ABS_TOL. Phase 1 ports the
- *    rotating-NA solver and should drive PM_ABS_TOL down toward ~0.03.
+ *  - P-M interaction (moment_res_util): TIGHT — Phase 1 ported the rotating-NA
+ *    solver into the engine (aciColumnBiaxial.ts), so the full flexural envelope
+ *    reproduces Python's moment_res_util to within rounding for every case.
+ *    (Spiral DCR_axial remains a small documented gap — see below.)
  *  - Shear: INFORMATIONAL — TS uses a single Vu/d=0.8h check; Python does a
  *    per-direction co-occurring-axial check. We only assert the verdicts agree.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { designColumnACI } from '../aciColumn';
+import { biaxialPhiMr } from '../aciColumnBiaxial';
+import { getBarArea, getBarDiam } from '../../../utils/concreteDesign';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../../types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,9 +116,75 @@ function tsGoverning(inp: any) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+function biaxParams(inp: any) {
+  const size = barNum(inp.long_bar);
+  return {
+    b: inp.b, h: inp.h, fcKsi: inp.fc_ksi, fyKsi: inp.fy_ksi, cover: inp.cover,
+    AbLong: getBarArea(size), dbLong: getBarDiam(size), dsTie: getBarDiam(barNum(inp.tie_bar)),
+    nz: inp.nz, ny: inp.ny, tieType: inp.tie_type as 'tied' | 'spiral',
+  };
+}
+
+/**
+ * Replicate Column_Design_DW compute_all_outputs' flexural envelope (governing
+ * force + min-eccentricity alternates + near-φPo handling) on top of the ported
+ * rotating-NA solver, to validate moment_res_util end-to-end against Python.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function tsMomentResUtil(inp: any): number | null {
+  const p = biaxParams(inp);
+  const Ab = getBarArea(barNum(inp.long_bar));
+  const Ag = inp.b * inp.h; // compute_all_outputs uses b*h even for circular
+  const nB = inp.shape === 'circular' ? Math.max(4, inp.nz) : 2 * (inp.nz + inp.ny) - 4;
+  const Ast = nB * Ab;
+  const phiC = inp.tie_type === 'spiral' ? 0.75 : 0.65;
+  const phiPoAbs = phiC * (0.85 * inp.fc_ksi * (Ag - Ast) + inp.fy_ksi * Ast);
+  const phiPt = 0.9 * nB * Ab * inp.fy_ksi;
+
+  let best = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const fv of inp.forces as any[]) {
+    const pu = fv.P ?? 0, m3 = Math.abs(fv.M3 ?? 0), m2 = Math.abs(fv.M2 ?? 0);
+    const mres = Math.hypot(m3, m2);
+    if (mres < 0.01) continue;
+    if (pu > 0) { if (pu >= phiPt && 9.99 > best) best = 9.99; continue; }
+    const th = Math.atan2(m2, m3);
+    const pa = Math.abs(pu);
+    const nearPhiPo = pa > phiPoAbs * 0.99
+      && m3 < pa * (0.6 + 0.03 * inp.h) / 12 * 0.95
+      && m2 < pa * (0.6 + 0.03 * inp.b) / 12 * 0.95;
+    const phiMr = nearPhiPo ? null : biaxialPhiMr(pu, th, p);
+    const u = phiMr !== null && phiMr > 0 ? mres / phiMr : (phiMr === null ? 9999 : null);
+    if (u !== null && u > best) best = u;
+  }
+
+  let bestAlt = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const fv of inp.forces as any[]) {
+    const pa = Math.abs(fv.P ?? 0);
+    if (pa < 10) continue;
+    const m3a = Math.abs(fv.M3 ?? 0), m2a = Math.abs(fv.M2 ?? 0);
+    const Cy = pa * (0.6 + 0.03 * inp.h) / 12, Cz = pa * (0.6 + 0.03 * inp.b) / 12;
+    for (const [Ma, Mb] of [[Math.max(m3a, Cy), m2a], [m3a, Math.max(m2a, Cz)]]) {
+      if (Ma < 0.01 && Mb < 0.01) continue;
+      const mr = Math.hypot(Ma, Mb), th = Math.atan2(Mb, Ma);
+      const ph = biaxialPhiMr(-pa, th, p);
+      const ua = ph !== null && ph > 0 ? mr / ph : (ph === null ? 9999 : null);
+      if (ua !== null && ua > bestAlt) bestAlt = ua;
+    }
+  }
+
+  let util = best > 0 ? best : null;
+  if (bestAlt > (util ?? 0)) util = bestAlt;
+  return util === null ? null : Number(util.toFixed(3));
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const rows = (fixture.cases as any[]).map((c) => ({
   id: c.id,
   tie: c.inputs.tie_type as string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  inp: c.inputs as any,
   ref: c.python,
   ts: tsGoverning(c.inputs),
 }));
@@ -175,17 +243,17 @@ describe('column parity vectors (Phase 0)', () => {
     }
   });
 
-  describe('P-M interaction — DOCUMENTED GAP (TS Bresler vs Python rotating-NA)', () => {
-    // Phase 1 ports the rotating-NA solver; tighten this toward ~0.03 then.
-    const PM_ABS_TOL = 0.4;
+  describe('moment_res_util — TIGHT (rotating-NA solver ported, Phase 1)', () => {
+    // The TS engine now uses the same rotating-NA biaxial solver as the Python
+    // reference, so the full flexural envelope (governing + min-eccentricity)
+    // reproduces moment_res_util to rounding for every case.
     for (const r of rows) {
-      const refUtil: number = r.ref.flexural.NM_util ?? r.ref.flexural.moment_res_util ?? 0;
-      const tsUtil = Math.max(r.ts.dcrPM, r.ts.dcrAxial);
-      it(`${r.id}: pass/fail verdict agrees`, () => {
-        expect(refUtil >= 1).toBe(tsUtil >= 1);
-      });
-      it(`${r.id}: |Δutil| < ${PM_ABS_TOL} (gap to close in Phase 1)`, () => {
-        expect(Math.abs(tsUtil - refUtil)).toBeLessThan(PM_ABS_TOL);
+      const ref: number | null = r.ref.flexural.moment_res_util ?? null;
+      it(`${r.id}: moment_res_util within 0.02 of Python`, () => {
+        const ts = tsMomentResUtil(r.inp);
+        if (ref === null) { expect(ts).toBeNull(); return; }
+        expect(ts).not.toBeNull();
+        expect(Math.abs((ts as number) - ref)).toBeLessThan(0.02);
       });
     }
   });

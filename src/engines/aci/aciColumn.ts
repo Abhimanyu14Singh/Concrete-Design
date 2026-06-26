@@ -17,6 +17,7 @@ import {
   rectBarLayout, circBarLayout, circularSegment, grossArea,
   type BarPoint, type BarLayoutInput,
 } from '../column/sectionModel';
+import { biaxialPhiMrFromLayout } from './aciColumnBiaxial';
 
 const EPS_CU = 0.003;
 
@@ -342,16 +343,34 @@ export function designColumnACI(
   const shear = aciColumnShear(section, material, rebar, load.Vu, Pu);
   const warnings = aciColumnDetailing(section, rebar);
 
+  // Prefer the rotating-NA resultant-moment method (calibrated vs S-Concrete) for
+  // the rectangular biaxial path; fall back to Bresler (aciBiaxialCheck) if the
+  // layout doesn't map or Pu is outside the solver's range.
+  let DCR_PM = biax.DCR_PM;
+  let phiMnCol = biax.phiMnx;
+  let pmMethod: string = biax.method;
+  let thetaDeg: number | undefined;
+  if (!isCircular && Math.abs(Mux) > 0.5 && Math.abs(Muy) > 0.5) {
+    const theta = Math.atan2(Math.abs(Muy), Math.abs(Mux));
+    const phiMrR = biaxialPhiMrFromLayout(section, material, rebar, Pu, theta);
+    if (phiMrR && phiMrR > 0) {
+      DCR_PM = Math.hypot(Mux, Muy) / phiMrR;
+      phiMnCol = phiMrR;
+      pmMethod = 'rotating-na';
+      thetaDeg = Math.round((90 + Math.atan2(Math.abs(Mux), Math.abs(Muy)) * 180 / Math.PI) % 360);
+    }
+  }
+
   const DCR_axial = phiPnMax > 0 ? Pu / phiPnMax : (Pu > 0 ? Infinity : 0);
 
-  if (biax.DCR_PM > 1)
-    warnings.push({ code: 'ACI §22.4', message: `P-M interaction NG: DCR = ${biax.DCR_PM.toFixed(2)} (${biax.method})`, severity: 'error' });
+  if (DCR_PM > 1)
+    warnings.push({ code: 'ACI §22.4', message: `P-M interaction NG: DCR = ${DCR_PM.toFixed(2)} (${pmMethod})`, severity: 'error' });
   if (shear.DCR_shear > 1)
     warnings.push({ code: 'ACI §22.5', message: `Shear NG: DCR = ${shear.DCR_shear.toFixed(2)}`, severity: 'error' });
   if (DCR_axial > 1)
     warnings.push({ code: 'ACI §22.4.2', message: `Axial NG: Pu = ${Pu} kips > φPn,max = ${phiPnMax.toFixed(0)} kips`, severity: 'error' });
 
-  const maxDCR = Math.max(biax.DCR_PM, shear.DCR_shear, DCR_axial);
+  const maxDCR = Math.max(DCR_PM, shear.DCR_shear, DCR_axial);
   const hasError = warnings.some(w => w.severity === 'error');
   const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : (maxDCR > 0.9 || hasError) ? 'Warning' : 'OK';
 
@@ -371,9 +390,10 @@ export function designColumnACI(
     phi_Pn_max: phiPnMax,
     phi_Mnx: biax.phiMnx,
     phi_Mny: biax.phiMny,
-    phi_Mn_col: biax.phiMnx,
+    phi_Mn_col: phiMnCol,
+    theta_deg: thetaDeg,
     DCR_axial,
-    DCR_PM: biax.DCR_PM,
+    DCR_PM,
     interaction: curveX,
     warnings, status,
   };

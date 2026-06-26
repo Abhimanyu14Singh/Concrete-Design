@@ -18,6 +18,9 @@
  *          θ (this captures the M3↔M2 coupling that Bresler cannot).
  */
 
+import type { SectionDimensions, MaterialProps, RebarLayout } from '../../types';
+import { getBarArea, getBarDiam } from '../../utils/concreteDesign';
+
 const PHI = { tied: 0.65, spiral: 0.75 } as const;
 const ALPHA = { tied: 0.8, spiral: 0.85 } as const;
 const ES_KSI = 29000.0;
@@ -251,4 +254,44 @@ export function biaxialPhiMr(PuKip: number, thetaMoment: number, p: BiaxialParam
   const thE = findTh(cExact);
   const [, M3e, M2e, etE] = sc(cExact, thE);
   return Math.max(0.0, phi(etE) * Math.sqrt(M3e * M3e + M2e * M2e) / 12.0);
+}
+
+/**
+ * Convenience wrapper: compute φMr from the engine's RebarLayout. Infers the
+ * per-face bar counts (ny = top-face bars, nz = side bars / 2 + 2) — the inverse
+ * of the rect bar layout — and calls biaxialPhiMr. Returns null for circular
+ * sections or layouts that don't fit the symmetric rectangular bar model (the
+ * caller then falls back to the Bresler method).
+ *
+ * `PuKip` is +compression (the engine convention); it is negated for the solver.
+ */
+export function biaxialPhiMrFromLayout(
+  section: SectionDimensions,
+  material: MaterialProps,
+  rebar: RebarLayout,
+  PuKip: number,
+  thetaMoment: number,
+): number | null {
+  if (section.type !== 'rectangular_column') return null;
+  const top = rebar.topBars.reduce((s, b) => s + b.numBars, 0);
+  const bot = rebar.botBars.reduce((s, b) => s + b.numBars, 0);
+  const side = (rebar.sideBars ?? []).reduce((s, b) => s + b.numBars, 0);
+  if (top <= 0 || top !== bot) return null;      // expects symmetric top/bottom faces
+  const ny = top;
+  const nz = side / 2 + 2;
+  if (!Number.isInteger(nz) || nz < 2) return null;
+  const barSize = rebar.topBars[0].barSize;
+  return biaxialPhiMr(-PuKip, thetaMoment, {
+    b: section.b,
+    h: section.h ?? section.b,
+    fcKsi: material.fc / 1000,
+    fyKsi: material.fy / 1000,
+    cover: section.coverClear,
+    AbLong: getBarArea(barSize),
+    dbLong: getBarDiam(barSize),
+    dsTie: getBarDiam(section.stirrupDia),
+    nz,
+    ny,
+    tieType: rebar.tieType === 'spiral' ? 'spiral' : 'tied',
+  });
 }
