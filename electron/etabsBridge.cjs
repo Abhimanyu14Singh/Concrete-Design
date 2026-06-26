@@ -119,6 +119,8 @@ const handlers = {
   // fetches a 10-minute budget instead of the default 2 minutes.
   getTable: ({ key, group }) => call('getTable', { key, group: group ?? '' }, 600000),
   selectCombos: ({ combos }) => call('selectCombos', { combos: combos ?? [] }),
+  // Write-back: create an ETABS group and assign member frames to it.
+  setGroupAssign: ({ groupName, frameNames }) => call('setGroupAssign', { groupName, frameNames: frameNames ?? [] }, 60000),
   disconnect: async () => {
     try { await call('disconnect', {}, 5000); } catch { /* best effort */ }
     killHelper();

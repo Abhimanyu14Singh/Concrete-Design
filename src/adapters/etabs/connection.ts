@@ -17,6 +17,14 @@ export interface EtabsConnectInfo {
   units: string; // display only, e.g. "kip-ft"
 }
 
+/** Result of pushing one design group back to ETABS as a named group. */
+export interface PushGroupResult {
+  groupName: string;
+  assigned: number;   // frames successfully assigned
+  total: number;      // frames requested
+  failures?: string[];
+}
+
 export interface EtabsSectionInfo {
   name: string;
   material: string;
@@ -58,6 +66,10 @@ export interface EtabsConnection {
   getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
   getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
+  /** Push design groups back to the ETABS model: create each named group and
+   *  assign its member frames. Only the live COM connection supports this
+   *  (optional — file/mock sources omit it). */
+  pushGroups?(groups: Array<{ name: string; frameNames: string[] }>): Promise<PushGroupResult[]>;
 }
 
 export function matchesFilter(beam: EtabsBeamGeom, filter: BeamFilter): boolean {

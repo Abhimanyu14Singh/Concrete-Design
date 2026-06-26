@@ -52,6 +52,10 @@ internal static class Program
                                             ?? throw new ArgumentException("getTable requires params.key"),
                                         p?["group"]?.GetValue<string>() ?? ""),
                     "selectCombos" => SelectCombos(p?["combos"]?.AsArray()),
+                    "setGroupAssign" => SetGroupAssign(
+                                        p?["groupName"]?.GetValue<string>()
+                                            ?? throw new ArgumentException("setGroupAssign requires params.groupName"),
+                                        p?["frameNames"]?.AsArray()),
                     "disconnect" => Disconnect(),
                     _ => throw new ArgumentException($"Unknown method: {method}"),
                 };
@@ -168,6 +172,91 @@ internal static class Program
         catch { /* optional */ }
 
         return new JsonObject { ["modelName"] = modelName, ["dll"] = dll };
+    }
+
+    // ── setGroupAssign: create an ETABS group and assign frame objects to it ──
+    // Mirrors the column repo's write-back pattern (unlock → write). The CSI .NET
+    // API is invoked through the c* interface types by reflection, like Connect.
+    private static JsonNode SetGroupAssign(string groupName, JsonArray? frameNamesNode)
+    {
+        if (_sapModel is not object sap || _iSapInterface is not Type iSap)
+            throw new InvalidOperationException("Not connected — call connect first.");
+        var asm = iSap.Assembly;
+
+        var frameNames = (frameNamesNode ?? new JsonArray())
+            .Select(n => n?.GetValue<string>() ?? "")
+            .Where(s => s.Length > 0).ToArray();
+        if (frameNames.Length == 0)
+            throw new ArgumentException("setGroupAssign requires a non-empty frameNames array");
+
+        // Unlock the model so assignments can be written.
+        try { iSap.GetMethod("SetModelIsLocked", new[] { typeof(bool) })?.Invoke(sap, new object[] { false }); }
+        catch { /* best effort */ }
+
+        // Ensure the group exists: SapModel.GroupDef.SetGroup(name, ...)
+        var groupDef = iSap.GetProperty("GroupDef")?.GetValue(sap)
+            ?? throw new InvalidOperationException("cSapModel.GroupDef not found");
+        var iGroupDef = asm.GetType("ETABSv1.cGroupDef")
+            ?? throw new InvalidOperationException("ETABSv1.cGroupDef not found");
+        var setGroup = iGroupDef.GetMethods().FirstOrDefault(m => m.Name == "SetGroup")
+            ?? throw new InvalidOperationException("cGroupDef.SetGroup not found");
+        {
+            var pars = setGroup.GetParameters();
+            var args = new object[pars.Length];
+            args[0] = groupName;
+            // color (int) = -1 (auto); all "SpecifiedFor*" booleans = true so the group is usable.
+            for (int k = 1; k < pars.Length; k++)
+            {
+                var pt = pars[k].ParameterType; if (pt.IsByRef) pt = pt.GetElementType()!;
+                args[k] = pt == typeof(int) ? -1 : pt == typeof(bool) ? (object)true
+                          : pt.IsEnum ? Enum.ToObject(pt, 0) : pt.IsValueType ? Activator.CreateInstance(pt)! : null!;
+            }
+            setGroup.Invoke(groupDef, args);
+        }
+
+        // Assign each frame: SapModel.FrameObj.SetGroupAssign(name, groupName, remove=false, itemType=Object)
+        var frameObj = iSap.GetProperty("FrameObj")?.GetValue(sap)
+            ?? throw new InvalidOperationException("cSapModel.FrameObj not found");
+        var iFrameObj = asm.GetType("ETABSv1.cFrameObj")
+            ?? throw new InvalidOperationException("ETABSv1.cFrameObj not found");
+        var setGA = iFrameObj.GetMethods().FirstOrDefault(m => m.Name == "SetGroupAssign")
+            ?? throw new InvalidOperationException("cFrameObj.SetGroupAssign not found");
+        var gaPars = setGA.GetParameters();
+
+        int assigned = 0;
+        var failures = new JsonArray();
+        foreach (var fn in frameNames)
+        {
+            try
+            {
+                var args = new object[gaPars.Length];
+                args[0] = fn;
+                if (gaPars.Length > 1) args[1] = groupName;
+                for (int k = 2; k < gaPars.Length; k++)
+                {
+                    var pt = gaPars[k].ParameterType; if (pt.IsByRef) pt = pt.GetElementType()!;
+                    // 3rd param is Remove (false); enum params (eItemType) = Object (0).
+                    args[k] = pt == typeof(bool) ? (object)false : pt.IsEnum ? Enum.ToObject(pt, 0)
+                              : pt.IsValueType ? Activator.CreateInstance(pt)! : null!;
+                }
+                var ret = setGA.Invoke(frameObj, args);
+                if (ret is int rc && rc == 0) assigned++;
+                else failures.Add((JsonNode)JsonValue.Create(fn));
+            }
+            catch (Exception ex)
+            {
+                var inner = (ex as TargetInvocationException)?.InnerException?.Message ?? ex.Message;
+                failures.Add((JsonNode)JsonValue.Create($"{fn}: {inner}"));
+            }
+        }
+
+        return new JsonObject
+        {
+            ["groupName"] = groupName,
+            ["assigned"] = assigned,
+            ["total"] = frameNames.Length,
+            ["failures"] = failures,
+        };
     }
 
     private static JsonNode Disconnect()
