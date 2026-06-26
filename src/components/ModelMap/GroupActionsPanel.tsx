@@ -11,7 +11,6 @@
  */
 import { useState } from 'react';
 import type { Member, DesignGroup, DesignCode } from '../../types';
-import type { BeamMember } from '../../types/beam';
 import { buildGroupScoFiles, parseBatchResults } from '../../utils/sco/scoBatch';
 import { runScoBatch, hasSconcrete, type SconcreteRunConfig } from '../../utils/sco/sconcreteClient';
 import type { ScrsResult } from '../../utils/sco/scrsParser';
@@ -54,7 +53,11 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
 
-  const beams = members.filter((m): m is BeamMember => m.memberType === 'beam');
+  // S-Concrete sections: beams (Member Type 1) + rectangular columns (Type 3,
+  // validated writer). Circular columns use a template the writer can't emit yet.
+  const scoMembers = members.filter(
+    (m) => m.memberType === 'beam' || m.section.type === 'rectangular_column',
+  );
   const desktop = hasSconcrete();
   const hasEtabs = !!(window as Window & { electronAPI?: { etabs?: unknown } }).electronAPI?.etabs;
 
@@ -82,8 +85,8 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
   async function runBatch() {
     setErr(null); setMsg(null); setResults(null); setBusy('sco');
     try {
-      const files = buildGroupScoFiles(beams, code);
-      if (!files.length) throw new Error('No beam members to export.');
+      const files = buildGroupScoFiles(scoMembers, code);
+      if (!files.length) throw new Error('No beam or rectangular-column members to export.');
       if (!cfg.pythonExe || !cfg.batchReporter || !cfg.outDir) {
         setShowCfg(true);
         throw new Error('Set the S-Concrete paths (Python, BatchReporter, output folder) below first.');
@@ -122,7 +125,7 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
           title={desktop ? 'Generate .SCO, run S-Concrete batch, pull results' : 'S-Concrete batch requires the Windows desktop app'}
           onClick={runBatch}
         >
-          {busy === 'sco' ? 'Running…' : `⚙ S-Concrete batch (${beams.length} beams)`}
+          {busy === 'sco' ? 'Running…' : `⚙ S-Concrete batch (${scoMembers.length} members)`}
         </button>
 
         <button style={{ ...btn, background: '#374151' }} onClick={() => setShowCfg((s) => !s)} disabled={!!busy}>
