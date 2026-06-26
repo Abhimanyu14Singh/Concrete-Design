@@ -11,6 +11,7 @@ import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
+import GroupActionsPanel from './GroupActionsPanel';
 import GroupRebarEditor from './GroupRebarEditor';
 import AutoGroupPanel from './AutoGroupPanel';
 import TopProgressBar from '../common/TopProgressBar';
@@ -119,6 +120,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const map = project.modelMap;
   const groups = project.designGroups ?? [];
   const members = project.members;
+  const frameByMemberId = useMemo(() => {
+    const fm = new Map<string, string>();
+    for (const f of project.modelMap?.frames ?? []) if (f.memberId) fm.set(f.memberId, f.frameName);
+    return fm;
+  }, [project.modelMap]);
   // Defer the heavy design recompute so changing a dropdown / applying rebar
   // keeps the UI responsive instead of blocking the thread. `recomputing` is
   // true while the deferred value lags behind — used to show a progress bar.
@@ -673,6 +679,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                 onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
                 onSuggestAll={handleSuggestAllGroups}
                 suggestAllNote={suggestAllNote}
+              />
+              <GroupActionsPanel
+                groups={groups}
+                members={members}
+                code={project.code}
+                frameByMemberId={frameByMemberId}
               />
               {activeGroup && (
                 <GroupRebarEditor

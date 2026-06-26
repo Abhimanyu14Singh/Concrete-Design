@@ -17,7 +17,7 @@
  * against a real S-Concrete beam .SCO on Windows before use.
  */
 
-import type { DesignCode } from '../../types/common';
+import type { DesignCode } from '../../types';
 
 // Bar name → [tableIndex, diameter_in, area_in2]
 export const BAR_INFO: Record<string, [number, number, number]> = {

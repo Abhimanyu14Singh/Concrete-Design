@@ -14,7 +14,7 @@
 import { buildBeamScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
 import { parseScrs, type ScrsResult } from './scrsParser';
 import type { BeamMember } from '../../types/beam';
-import type { DesignCode } from '../../types/common';
+import type { DesignCode } from '../../types';
 
 export interface ScoFile {
   fileName: string;
