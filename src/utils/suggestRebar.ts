@@ -15,6 +15,7 @@ import type { Member, RebarLayout, Project, DesignResults } from '../types';
 import { runDesign } from '../engines';
 import { getBarArea, getBarDiam } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
+import { suggestColumnRebar, isColumnMember } from './suggestColumnRebar';
 
 const LONG_BAR_SIZES_US  = [5, 6, 7, 8, 9];
 const LONG_BAR_SIZES_EC2 = [-10, -12, -16, -20, -25, -32];
@@ -31,10 +32,14 @@ const MAX_VERIFY_RETRIES = 5;
 
 export interface SuggestResult {
   rebar: RebarLayout;
-  worstDCRFlex: number;
+  worstDCRFlex: number;       // columns: governing P-M interaction DCR
   worstDCRShear: number;
   steelLb: number;           // total longitudinal steel for the group (lb)
   governingMemberId: string;
+  /** 'column' when produced by the column auto-design path; 'beam'/undefined otherwise. */
+  kind?: 'beam' | 'column';
+  worstDCRAxial?: number;    // columns only — governing axial DCR
+  rhoPct?: number;           // columns only — final longitudinal steel ratio (%)
 }
 
 export interface SuggestError { error: string }
@@ -122,7 +127,14 @@ export function suggestGroupRebar(
   code: Project['code'],
   targetDCR = 0.9,
 ): SuggestResult | SuggestError {
+  // Column groups use the dedicated column auto-design path (symmetric cage +
+  // tie sizing against the P-M / axial / shear checks). Only fall through to the
+  // beam path when the group has no loaded columns.
+  const hasColumns = members.some(m => isColumnMember(m) && m.loads.length > 0);
   const beams = members.filter(m => m.memberType === 'beam' && m.loads.length > 0);
+  if (hasColumns && !beams.length) {
+    return suggestColumnRebar(members, code, targetDCR);
+  }
   if (!beams.length) return { error: 'No designed beam members with loads in this group.' };
 
   // 1. Demand pass: worst As_req / Av_req across the group (engine demand-side
