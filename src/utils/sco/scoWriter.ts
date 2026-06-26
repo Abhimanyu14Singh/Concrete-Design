@@ -447,3 +447,55 @@ export function designCodeToScoHeader(
       return null;
   }
 }
+
+export interface BeamScoParams {
+  memberName: string;
+  bIn: number;             // web / overall width (in)
+  hIn: number;             // overall depth (in)
+  fcKsi: number;
+  fyKsi: number;
+  coverIn?: number;        // default 1.5
+  stirrupBar: string;      // e.g. '#4'
+  stirrupSpacingIn: number;
+  topBar?: string;         // representative longitudinal bar (seed only)
+  forces?: ScoForce;
+  loadCases?: ScoLoadCase[];
+  codeNumber?: number;
+  units?: number;
+  barType?: number;
+}
+
+/**
+ * Build an S-Concrete BEAM .SCO (Member Type 1).
+ *
+ * BEST-EFFORT / UNVALIDATED: this reuses the byte-validated column .SCO machinery
+ * and switches the member type to beam. The section, cover, stirrups, and — most
+ * importantly — the load forces (carried into the Sectional Loads table) are
+ * correct; the seed longitudinal reinforcement is approximate (S-Concrete designs
+ * a beam from the loads when "Initialize Reinf" is set). The exact `Bm *`
+ * reinforcement-table mapping and the load-component convention MUST be confirmed
+ * against a real S-Concrete beam .SCO on Windows before production use.
+ */
+export function buildBeamScoText(p: BeamScoParams): string {
+  const col = buildColumnScoText({
+    memberName: p.memberName,
+    bIn: p.bIn,
+    hIn: p.hIn,
+    fcKsi: p.fcKsi,
+    fyKsi: p.fyKsi,
+    nzBars: 2,
+    nyBars: 2,
+    longBar: p.topBar ?? '#8',
+    tieBar: p.stirrupBar,
+    tieSpacingIn: p.stirrupSpacingIn,
+    coverIn: p.coverIn,
+    forces: p.forces,
+    loadCases: p.loadCases,
+    codeNumber: p.codeNumber,
+    units: p.units,
+    barType: p.barType,
+  });
+  // Switch Member Type 3 (column) -> 1 (beam) in the Identifiers + Parameters
+  // blocks. "Member Status 3" is a different token and is left untouched.
+  return col.split('Member Type\t 3').join('Member Type\t 1');
+}
