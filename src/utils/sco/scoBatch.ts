@@ -21,12 +21,18 @@
  */
 import { buildBeamScoText, buildColumnScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
 import { parseScrs, type ScrsResult } from './scrsParser';
-import type { Member, DesignCode } from '../../types';
+import type { Member, DesignCode, DesignGroup } from '../../types';
 
 export interface ScoFile {
   fileName: string;
   text: string;
   memberId: string;
+}
+
+export interface GroupScoBundle {
+  groupId: string;
+  groupLabel: string;
+  files: ScoFile[];
 }
 
 const barName = (n: number): string => `#${n}`;
@@ -144,6 +150,24 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode): ScoFile
     // other member types (walls) are not S-Concrete sections — skipped
   }
   return files;
+}
+
+/**
+ * Build .SCO files for each design group the user created, resolving the group's
+ * memberIds against the project members. Unknown ids are skipped; each group's
+ * members route through buildGroupScoFiles (beams + rectangular columns), so
+ * every member's section AND its full set of load cases/forces are emitted.
+ */
+export function buildScoFilesByGroup(
+  groups: DesignGroup[], members: Member[], code: DesignCode,
+): GroupScoBundle[] {
+  const byId = new Map(members.map((m) => [m.id, m]));
+  return groups.map((g) => {
+    const groupMembers = g.memberIds
+      .map((id) => byId.get(id))
+      .filter((m): m is Member => m != null);
+    return { groupId: g.id, groupLabel: g.label, files: buildGroupScoFiles(groupMembers, code) };
+  });
 }
 
 /** Parse an S-Concrete .SCRS batch report and key the results by member name. */
