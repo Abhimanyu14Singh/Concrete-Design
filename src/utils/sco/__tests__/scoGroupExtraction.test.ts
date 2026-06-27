@@ -6,7 +6,7 @@
  * fails loudly.
  */
 import { describe, it, expect } from 'vitest';
-import { buildScoFilesByGroup, buildGroupScoFiles } from '../scoBatch';
+import { buildScoFilesByGroup, buildGroupScoFiles, collectGroupScoFiles } from '../scoBatch';
 import type { Member, DesignGroup } from '../../../types';
 
 // ── Sectional Loads (Table 16) parser ─────────────────────────────────────────
@@ -186,5 +186,44 @@ describe('edge cases', () => {
     const viaGroup = buildScoFilesByGroup([group('g', 'G', ['b1', 'b2'])], members, 'ACI318-19')[0].files;
     const direct = buildGroupScoFiles(members, 'ACI318-19');
     expect(viaGroup.map(f => f.text)).toEqual(direct.map(f => f.text));
+  });
+});
+
+describe('collectGroupScoFiles — the flat list fed to the batch run', () => {
+  it('unions the groups, exporting each member once', () => {
+    const members = [beam('b1', 'B1'), beam('b2', 'B2'), beam('b3', 'B3')];
+    const files = collectGroupScoFiles(
+      [group('g1', 'G1', ['b1', 'b2']), group('g2', 'G2', ['b3'])], members, 'ACI318-19');
+    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2', 'b3']);
+  });
+
+  it('de-duplicates a member that belongs to several groups', () => {
+    const members = [beam('b1', 'B1'), beam('b2', 'B2')];
+    const files = collectGroupScoFiles(
+      [group('g1', 'G1', ['b1', 'b2']), group('g2', 'G2', ['b1'])], members, 'ACI318-19');
+    expect(files.filter(f => f.memberId === 'b1')).toHaveLength(1);   // not duplicated
+    expect(files).toHaveLength(2);
+  });
+
+  it('scopes to grouped members only — ungrouped beams are excluded', () => {
+    const members = [beam('b1', 'B1'), beam('ungrouped', 'BU')];
+    const files = collectGroupScoFiles([group('g1', 'G1', ['b1'])], members, 'ACI318-19');
+    expect(files.map(f => f.memberId)).toEqual(['b1']);
+  });
+
+  it('falls back to ALL eligible members when no groups are defined', () => {
+    const members = [beam('b1', 'B1'), beam('b2', 'B2'), wall('w', 'W')];
+    const files = collectGroupScoFiles([], members, 'ACI318-19');
+    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);   // wall excluded
+  });
+
+  it('returns nothing when the groups contain no eligible members', () => {
+    const files = collectGroupScoFiles([group('g', 'G', ['w'])], [wall('w', 'W')], 'ACI318-19');
+    expect(files).toEqual([]);
+  });
+
+  it('refuses EC2 before producing any file', () => {
+    expect(() => collectGroupScoFiles([group('g', 'G', ['b1'])], [beam('b1', 'B1')], 'EN1992-1-1'))
+      .toThrow(/No confirmed S-Concrete/);
   });
 });

@@ -11,7 +11,7 @@
  */
 import { useState } from 'react';
 import type { Member, DesignGroup, DesignCode } from '../../types';
-import { buildGroupScoFiles, parseBatchResults } from '../../utils/sco/scoBatch';
+import { collectGroupScoFiles, parseBatchResults } from '../../utils/sco/scoBatch';
 import { runScoBatch, hasSconcrete, type SconcreteRunConfig } from '../../utils/sco/sconcreteClient';
 import type { ScrsResult } from '../../utils/sco/scrsParser';
 import { buildGroupPushPayload, summarizePushResults } from '../../adapters/etabs/pushGroups';
@@ -55,9 +55,14 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
 
   // S-Concrete sections: beams (Member Type 1) + rectangular columns (Type 3,
   // validated writer). Circular columns use a template the writer can't emit yet.
-  const scoMembers = members.filter(
-    (m) => m.memberType === 'beam' || m.section.type === 'rectangular_column',
-  );
+  const isScoEligible = (m: typeof members[number]) =>
+    m.memberType === 'beam' || m.section.type === 'rectangular_column';
+  const scoMembers = members.filter(isScoEligible);
+  // When the user has defined design groups, the batch is scoped to the union of
+  // their members (deduped); otherwise it falls back to all eligible members.
+  const groupedMemberIds = new Set(groups.flatMap((g) => g.memberIds));
+  const eligibleInGroups = members.filter((m) => groupedMemberIds.has(m.id) && isScoEligible(m));
+  const runCount = groups.length ? eligibleInGroups.length : scoMembers.length;
   const desktop = hasSconcrete();
   const hasEtabs = !!(window as Window & { electronAPI?: { etabs?: unknown } }).electronAPI?.etabs;
 
@@ -85,8 +90,12 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
   async function runBatch() {
     setErr(null); setMsg(null); setResults(null); setBusy('sco');
     try {
-      const files = buildGroupScoFiles(scoMembers, code);
-      if (!files.length) throw new Error('No beam or rectangular-column members to export.');
+      const files = collectGroupScoFiles(groups, members, code);
+      if (!files.length) {
+        throw new Error(groups.length
+          ? 'No S-Concrete-eligible members in the design groups. Add beams/rectangular columns to a group first.'
+          : 'No beam or rectangular-column members to export.');
+      }
       if (!cfg.pythonExe || !cfg.batchReporter || !cfg.outDir) {
         setShowCfg(true);
         throw new Error('Set the S-Concrete paths (Python, BatchReporter, output folder) below first.');
@@ -125,7 +134,7 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
           title={desktop ? 'Generate .SCO, run S-Concrete batch, pull results' : 'S-Concrete batch requires the Windows desktop app'}
           onClick={runBatch}
         >
-          {busy === 'sco' ? 'Running…' : `⚙ S-Concrete batch (${scoMembers.length} members)`}
+          {busy === 'sco' ? 'Running…' : `⚙ S-Concrete batch (${runCount}${groups.length ? ` in ${groups.length} group${groups.length !== 1 ? 's' : ''}` : ' members'})`}
         </button>
 
         <button style={{ ...btn, background: '#374151' }} onClick={() => setShowCfg((s) => !s)} disabled={!!busy}>

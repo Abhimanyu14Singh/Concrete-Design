@@ -170,6 +170,30 @@ export function buildScoFilesByGroup(
   });
 }
 
+/**
+ * Flat, de-duplicated .SCO file list for a batch RUN scoped to the user's design
+ * groups: the union of every group's S-Concrete-eligible members, with each
+ * physical member exported once even if it belongs to several groups. Falls back
+ * to all eligible members when no groups have been defined, so the batch still
+ * works before any grouping. Throws (via buildGroupScoFiles) for design codes
+ * without a confirmed S-Concrete mapping.
+ */
+export function collectGroupScoFiles(
+  groups: DesignGroup[], members: Member[], code: DesignCode,
+): ScoFile[] {
+  if (groups.length === 0) return buildGroupScoFiles(members, code);
+  const seen = new Set<string>();
+  const out: ScoFile[] = [];
+  for (const bundle of buildScoFilesByGroup(groups, members, code)) {
+    for (const f of bundle.files) {
+      if (seen.has(f.memberId)) continue;
+      seen.add(f.memberId);
+      out.push(f);
+    }
+  }
+  return out;
+}
+
 /** Parse an S-Concrete .SCRS batch report and key the results by member name. */
 export function parseBatchResults(scrsText: string): Record<string, ScrsResult> {
   const out: Record<string, ScrsResult> = {};
