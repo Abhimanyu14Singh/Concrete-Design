@@ -6,8 +6,8 @@
  * fails loudly.
  */
 import { describe, it, expect } from 'vitest';
-import { buildScoFilesByGroup, buildGroupScoFiles, collectGroupScoFiles } from '../scoBatch';
-import type { Member, DesignGroup } from '../../../types';
+import { buildScoFilesByGroup, buildGroupScoFiles, collectGroupScoFiles, crackWidthScoLoadCase, buildCrackWidthScoFiles } from '../scoBatch';
+import type { Member, DesignGroup, Project } from '../../../types';
 
 // ── Sectional Loads (Table 16) parser ─────────────────────────────────────────
 // Row layout (scoWriter lcRow): i, Nf(P), Tf(T), Vfz(V2), Mfy(M3), Cmy, Vfy(V3),
@@ -225,5 +225,61 @@ describe('collectGroupScoFiles — the flat list fed to the batch run', () => {
   it('refuses EC2 before producing any file', () => {
     expect(() => collectGroupScoFiles([group('g', 'G', ['b1'])], [beam('b1', 'B1')], 'EN1992-1-1'))
       .toThrow(/No confirmed S-Concrete/);
+  });
+});
+
+describe('EC2 crack-width (SLS) — the second set of forces', () => {
+  const ec2 = (over: Partial<Project> = {}): Project => ({
+    id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: '2026-06-28',
+    members: [], ...over,
+  });
+
+  it('extracts the selected SLS quasi-permanent combo from station forces (Mfy, Vfy)', () => {
+    const m: Member = {
+      ...beam('b1', 'B1'),
+      stationForces: [{ combo: 'SLS-QP', stations: [
+        { x: 0, V: 12, M: -40 }, { x: 10, V: 5, M: 80 },
+      ] }],
+    };
+    const slc = crackWidthScoLoadCase(m, ec2({ slsCombo: 'SLS-QP' }))!;
+    expect(slc).not.toBeNull();
+    expect(slc.M3).toBe(80);   // max(|+80|, |-40|) — quasi-permanent moment
+    expect(slc.V3).toBe(12);   // SLS combo shear envelope
+    expect(slc.P).toBe(0);
+    expect(slc.name).toBe('SLS-QP');
+    expect(slc.comment).toMatch(/crack width/i);
+  });
+
+  it('falls back to the legacy per-member SLS load case id', () => {
+    const m: Member = {
+      ...beam('b1', 'B1', [
+        lc({ id: 'uls', label: 'ULS', Mu_pos: 200, Vu: 60 }),
+        lc({ id: 'sls1', label: 'SLS', Mu_pos: 30, Mu_neg: -50, Vu: 10 }),
+      ]),
+      crackParams: { wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4, slsLoadCaseId: 'sls1' },
+    };
+    const slc = crackWidthScoLoadCase(m, ec2())!;
+    expect(slc.M3).toBe(50);   // max(|30|, |-50|)
+    expect(slc.name).toBe('sls1');
+  });
+
+  it('returns null when EC2 has no SLS combo selected', () => {
+    expect(crackWidthScoLoadCase(beam('b1', 'B1'), ec2())).toBeNull();
+  });
+
+  it('returns null for non-EC2 codes (crack width is EC2-only)', () => {
+    const proj: Project = { id: 'p', name: 'P', code: 'ACI318-19', description: '', engineer: 'E', date: 'd', members: [] };
+    expect(crackWidthScoLoadCase(beam('b1', 'B1'), proj)).toBeNull();
+  });
+
+  it('buildCrackWidthScoFiles returns [] for non-EC2 codes', () => {
+    const proj: Project = { id: 'p', name: 'P', code: 'ACI318-19', description: '', engineer: 'E', date: 'd', members: [] };
+    expect(buildCrackWidthScoFiles([beam('b1', 'B1')], proj)).toEqual([]);
+  });
+
+  it('buildCrackWidthScoFiles is blocked until the EC2 header is configured', () => {
+    const m: Member = { ...beam('b1', 'B1'), stationForces: [{ combo: 'SLS-QP', stations: [{ x: 0, V: 8, M: 60 }] }] };
+    expect(() => buildCrackWidthScoFiles([m], ec2({ slsCombo: 'SLS-QP' })))
+      .toThrow(/crack-width \(SLS\)|cannot be emitted/);
   });
 });

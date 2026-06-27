@@ -21,7 +21,9 @@
  */
 import { buildBeamScoText, buildColumnScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
 import { parseScrs, type ScrsResult } from './scrsParser';
-import type { Member, DesignCode, DesignGroup } from '../../types';
+import { resolveCrack } from '../resolveCrack';
+import { signedMomentEnvelope } from '../autoGroup';
+import type { Member, DesignCode, DesignGroup, Project } from '../../types';
 
 export interface ScoFile {
   fileName: string;
@@ -71,6 +73,33 @@ function columnLoadCases(m: Member): ScoLoadCase[] {
 }
 
 /**
+ * The SLS quasi-permanent load case for a beam's EC2 crack-width check — the
+ * combo the user selected (project.slsCombo, or the legacy per-member
+ * slsLoadCaseId). Crack width (EN 1992-1-1 §7.3.4) is verified at the quasi-
+ * permanent SLS combination, NOT the ULS combos used for strength, so an EC2
+ * S-Concrete run needs this as a SEPARATE set of forces. Mapped to a Sectional
+ * Loads row: Mfy = max(|Mqp_pos|, |Mqp_neg|), Vfy = the SLS combo shear.
+ *
+ * Returns null when the code is not EC2 or no SLS combo resolves.
+ */
+export function crackWidthScoLoadCase(member: Member, project: Project): ScoLoadCase | null {
+  if (project.code !== 'EN1992-1-1') return null;
+  const cp = resolveCrack(member, project.code, project.slsCombo);
+  if (cp?.Mqp_pos == null && cp?.Mqp_neg == null) return null;
+  const M3 = Math.max(Math.abs(cp.Mqp_pos ?? 0), Math.abs(cp.Mqp_neg ?? 0));
+  let V3 = 0;
+  if (project.slsCombo && member.stationForces?.length) {
+    const sf = member.stationForces.filter((c) => c.combo === project.slsCombo);
+    if (sf.length) V3 = signedMomentEnvelope(sf).maxV;
+  }
+  return {
+    name: project.slsCombo || cp.slsLoadCaseId || 'SLS-QP',
+    P: 0, M3, V3, M2: 0, V2: 0, T: 0,
+    comment: 'SLS quasi-permanent (EC2 crack width §7.3.4)',
+  };
+}
+
+/**
  * S-Concrete per-face bar counts from the app's column rebar layout — the same
  * inverse mapping the biaxial engine uses (ny = top-face bars, nz = side/2 + 2),
  * so the exported geometry matches what was analysed.
@@ -91,6 +120,10 @@ function colFaceCounts(m: Member): { nz: number; ny: number } {
  * Throws when the selected design code has no confirmed S-Concrete header
  * mapping (e.g. EC2) so a wrong-code file is never emitted — surface this to the
  * user as "configure the code first".
+ *
+ * NOTE (EC2): this builds the ULS strength files only. An EN 1992-1-1 run also
+ * needs a SECOND set for the crack-width SLS quasi-permanent combo — see
+ * buildCrackWidthScoFiles — which is likewise gated on the EC2 header.
  */
 export function buildGroupScoFiles(members: Member[], code: DesignCode): ScoFile[] {
   const hdr = designCodeToScoHeader(code);
@@ -150,6 +183,51 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode): ScoFile
     // other member types (walls) are not S-Concrete sections — skipped
   }
   return files;
+}
+
+/**
+ * The SECOND set of .SCO files an EC2 run needs: one crack-width (SLS quasi-
+ * permanent) file per beam, named `<label>_SLS.SCO` so it sits alongside the ULS
+ * strength file `<label>.SCO`. Each carries the crack-width combo's forces (see
+ * crackWidthScoLoadCase).
+ *
+ * Gated on a confirmed S-Concrete header — for EN 1992-1-1 that mapping is not
+ * known yet (designCodeToScoHeader returns null), so this throws for EC2 until
+ * the header is configured from the EC2 sample, exactly like the ULS path. For
+ * non-EC2 codes it returns [] (crack width is an EC2-only check).
+ */
+export function buildCrackWidthScoFiles(members: Member[], project: Project): ScoFile[] {
+  if (project.code !== 'EN1992-1-1') return [];
+  const hdr = designCodeToScoHeader(project.code);
+  if (!hdr) {
+    throw new Error(
+      `No confirmed S-Concrete .SCO mapping for "${project.code}" — the EC2 crack-width (SLS) ` +
+      `files cannot be emitted until the S-Concrete code header is configured.`,
+    );
+  }
+  const out: ScoFile[] = [];
+  for (const m of members) {
+    if (m.memberType !== 'beam') continue;
+    const slc = crackWidthScoLoadCase(m, project);
+    if (!slc) continue;
+    const text = buildBeamScoText({
+      memberName: `${m.label} (SLS)`,
+      bIn: m.section.bw ?? m.section.b,
+      hIn: m.section.h,
+      fcKsi: m.material.fc / 1000,
+      fyKsi: m.material.fy / 1000,
+      coverIn: m.section.coverClear,
+      stirrupBar: m.rebar.ties ? `#${m.rebar.ties.barSize}` : `#${m.section.stirrupDia}`,
+      stirrupSpacingIn: m.rebar.ties?.spacing ?? 12,
+      topBar: m.rebar.topBars[0] ? `#${m.rebar.topBars[0].barSize}` : '#8',
+      loadCases: [slc],
+      codeNumber: hdr.codeNumber,
+      units: hdr.units,
+      barType: hdr.barType,
+    });
+    out.push({ fileName: `${sanitize(m.label)}_SLS.SCO`, text, memberId: m.id });
+  }
+  return out;
 }
 
 /**
