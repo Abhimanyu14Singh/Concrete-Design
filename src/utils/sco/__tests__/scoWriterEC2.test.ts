@@ -4,7 +4,7 @@
  * Sectional Loads (forces) — including the SLS quasi-permanent crack row.
  */
 import { describe, it, expect } from 'vitest';
-import { buildEc2BeamSco, barIndex2026, memberToEc2BeamParams } from '../scoWriterEC2';
+import { buildEc2BeamSco, buildEc2ColumnSco, barIndex2026, memberToEc2BeamParams } from '../scoWriterEC2';
 import type { Member, Project } from '../../../types';
 
 const project = (over: Partial<Project> = {}): Project => ({
@@ -39,7 +39,7 @@ function loadRows(text: string) {
   const end = text.indexOf('@EndTable@', start);
   return text.slice(start, end).split('\n')
     .filter(l => /^\s*\d+\t/.test(l))
-    .map(l => { const c = l.split('\t').map(s => s.trim()); return { Nf: +c[1], Tf: +c[2], Vfz: +c[3], Mfy: +c[4], sust: +c[14] }; });
+    .map(l => { const c = l.split('\t').map(s => s.trim()); return { Nf: +c[1], Tf: +c[2], Vfz: +c[3], Mfy: +c[4], Mfz: +c[7], sust: +c[14] }; });
 }
 
 describe('barIndex2026', () => {
@@ -118,5 +118,57 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(params.webMm).toBeCloseTo(14 * 25.4, 3);
     expect(params.flangeWidthMm).toBeCloseTo(60 * 25.4, 3);
     expect(params.ignoreFlange).toBe(false);
+  });
+});
+
+function column(): Member {
+  return {
+    id: 'C1', label: 'C1', memberType: 'column',
+    material: { fc: 4641, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1 },
+    section: { type: 'rectangular_column', b: 20, h: 24, coverClear: 1.5, stirrupDia: 4 },
+    rebar: {
+      topBars: [{ numBars: 3, barSize: 9 }], botBars: [{ numBars: 3, barSize: 9 }],
+      sideBars: [{ numBars: 4, barSize: 9 }], ties: { barSize: 4, spacing: 12, legs: 2 }, tieType: 'tied',
+    },
+    loads: [{ id: 'LC1', label: '1.35G+1.5Q', Mu_pos: 0, Mu_neg: 0, Vu: 40, Tu: 10, Pu: 600, Mux: 200, Muy: 120 }],
+    span: 12,
+  };
+}
+
+describe('buildEc2ColumnSco — app inputs reflected (Member Type 3)', () => {
+  const t = buildEc2ColumnSco(column());
+
+  it('writes the EC2 column header', () => {
+    expect(param(t, 'Codes')).toBe('14');
+    expect(param(t, 'Member Type')).toBe('3');   // column in the 2026 format
+    expect(param(t, 'Units')).toBe('1');
+  });
+
+  it('reflects the column section (Cm bcol/hcol/Cover, in → mm)', () => {
+    expect(+param(t, 'Cm bcol')!).toBe(508);   // 20 in
+    expect(+param(t, 'Cm hcol')!).toBe(610);   // 24 in
+    expect(+param(t, 'Cm Cover')!).toBe(38);   // 1.5 in
+  });
+
+  it('reflects the cage: Nzcol/Nycol, bar + tie indices, legs, spacing', () => {
+    expect(param(t, 'Cm Nycol')).toBe('3');    // top-face bars
+    expect(param(t, 'Cm Nzcol')).toBe('4');    // side/2 + 2
+    expect(param(t, 'Cm DVert')).toBe('8');    // #9
+    expect(param(t, 'Cm DHorz')).toBe('3');    // #4 tie
+    expect(param(t, 'Cm NClegsZ')).toBe('2');
+    expect(+param(t, 'Cm Stie')!).toBe(305);   // 12 in ≈ 304.8
+  });
+
+  it('forces the short-column check (Slender 0 — app supplies amplified forces)', () => {
+    expect(param(t, 'Slender')).toBe('0');
+  });
+
+  it('transfers biaxial forces (Nf=-Pu, Mfy=Mux, Mfz=Muy, SustFactor 0.6)', () => {
+    const rows = loadRows(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Nf).toBeCloseTo(-600 * 4.448222, 1);
+    expect(rows[0].Mfy).toBeCloseTo(200 * 1.355818, 1);   // Mux → major
+    expect(rows[0].Mfz).toBeCloseTo(120 * 1.355818, 1);   // Muy → minor
+    expect(rows[0].sust).toBeCloseTo(0.6, 6);
   });
 });

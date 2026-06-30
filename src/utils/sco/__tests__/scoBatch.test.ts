@@ -113,9 +113,18 @@ describe('buildGroupScoFiles — columns', () => {
     expect(byId.c1.includes('Member Type\t 3')).toBe(true);
   });
 
-  it('skips EC2 columns (no EC2 column sample to template from yet)', () => {
+  it('routes EC2 rectangular columns to the EC2 column writer (Member Type 3)', () => {
     const proj = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
-    expect(buildGroupScoFiles([col('c1', 'C1')], 'EN1992-1-1', proj)).toEqual([]);
+    const files = buildGroupScoFiles([col('c1', 'C1')], 'EN1992-1-1', proj);
+    expect(files).toHaveLength(1);
+    expect(files[0].text).toContain('Member Type\t 3');
+    expect(files[0].text).toContain('Codes\t 14');
+  });
+
+  it('still skips EC2 circular columns (no EC2 circular sample yet)', () => {
+    const proj = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
+    const circ = col('c2', 'C2', { type: 'circular_column', diameter: 24, b: 24, h: 24 });
+    expect(buildGroupScoFiles([circ], 'EN1992-1-1', proj)).toEqual([]);
   });
 });
 

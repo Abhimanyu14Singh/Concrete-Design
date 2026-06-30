@@ -22,6 +22,7 @@
  * output is trusted for design (the same boundary as the column repo's writers).
  */
 import ec2BeamTemplate from './templates/ec2Beam.sco?raw';
+import ec2ColumnTemplate from './templates/ec2Column.sco?raw';
 import type { Member, Project } from '../../types';
 import { getBarDiam } from '../concreteDesign';
 import { resolveCrack } from '../resolveCrack';
@@ -73,9 +74,12 @@ function setParam(text: string, key: string, value: string | number): string {
 const SO_HEADER =
   'LC\tNf\tTf\tVfz\tMfy\tCmy\tVfy\tMfz\tCmz\tPdistr\tCheckLC\tLoad Type\tComment\tAutoGen\tSustFactor\tServLdFactor';
 
-/** One Sectional Loads row (Table 16). */
-function ec2LoadRow(i: number, nf: number, tf: number, vfz: number, mfy: number, sust = 1, comment = '--'): string {
-  return ` ${i}\t${sp(nf)}\t${sp(tf)}\t${sp(vfz)}\t${sp(mfy)}\t 1\t 0\t 0\t 1\t 0\t1\t 1\t${comment}\t0\t ${sp(sust).trimStart()}\t 1`;
+interface RowOpts { vfy?: number; mfz?: number; sust?: number; comment?: string }
+/** One Sectional Loads row (Table 16). Columns are biaxial, so Vfy/Mfz are
+ *  populated; beams leave them 0. */
+function ec2LoadRow(i: number, nf: number, tf: number, vfz: number, mfy: number, opts: RowOpts = {}): string {
+  const { vfy = 0, mfz = 0, sust = 1, comment = '--' } = opts;
+  return ` ${i}\t${sp(nf)}\t${sp(tf)}\t${sp(vfz)}\t${sp(mfy)}\t 1\t${sp(vfy)}\t${sp(mfz)}\t 1\t 0\t1\t 1\t${comment}\t0\t ${sp(sust).trimStart()}\t 1`;
 }
 
 function replaceSectionalLoads(text: string, rows: string[]): string {
@@ -162,8 +166,8 @@ export function ec2BeamLoadRows(member: Member, project: Project): string[] {
     const vfz = (lc.Vu ?? 0) * KIP_TO_KN;
     const mPos = (lc.Mu_pos ?? 0) * KIPFT_TO_KNM;
     const mNeg = (lc.Mu_neg ?? 0) * KIPFT_TO_KNM;
-    rows.push(ec2LoadRow(i++, nf, tf, vfz, mPos, 1, lc.label || `LC${i}`));
-    if (Math.abs(mNeg) > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, mNeg, 1, `${lc.label || 'LC'} (hog)`));
+    rows.push(ec2LoadRow(i++, nf, tf, vfz, mPos, { comment: lc.label || `LC${i}` }));
+    if (Math.abs(mNeg) > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, mNeg, { comment: `${lc.label || 'LC'} (hog)` }));
   }
   // SLS quasi-permanent (crack width) — the combo the user selected.
   const cp = resolveCrack(member, project.code, project.slsCombo);
@@ -174,7 +178,7 @@ export function ec2BeamLoadRows(member: Member, project: Project): string[] {
       const sf = member.stationForces.filter((c) => c.combo === project.slsCombo);
       if (sf.length) vqp = signedMomentEnvelope(sf).maxV * KIP_TO_KN;
     }
-    rows.push(ec2LoadRow(i, 0, 0, vqp, mqp, cp.qpFactor ?? 0.6, 'SLS quasi-perm (crack)'));
+    rows.push(ec2LoadRow(i, 0, 0, vqp, mqp, { sust: cp.qpFactor ?? 0.6, comment: 'SLS quasi-perm (crack)' }));
   }
   if (!rows.length) rows.push(ec2LoadRow(1, 0, 0, 0, 0));
   return rows;
@@ -215,4 +219,115 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
 /** Full EC2 beam .SCO text for an app member. */
 export function buildEc2BeamSco(member: Member, project: Project): string {
   return buildBeamScoTextEC2(memberToEc2BeamParams(member, project));
+}
+
+// ── EC2 columns (S-Concrete 2026, Member Type 3) ──────────────────────────────
+// Same template machinery as the beam writer, but the active section is the
+// `Cm …` (column) parameter group and the loads carry biaxial moments. From the
+// EC2 column sample: Nzcol/Nycol are the per-face bar counts, DVert/DHorz the
+// longitudinal/tie bar-table indices, NClegsZ/Y the tie legs, Stie the tie
+// spacing (mm). Slender is forced OFF — the app's column engine is a short-column
+// (cross-section) check on already-amplified forces, so leaving S-Concrete's
+// slenderness on would double-count the moment magnification.
+
+export interface Ec2ColumnScoParams {
+  memberName: string;
+  bcolMm: number; hcolMm: number; diameterMm: number;
+  coverMm: number;
+  fyMpa: number; fcuMpa: number; esMpa: number;
+  nzcol: number; nycol: number;
+  vertBarIdx: number; tieBarIdx: number;
+  tieLegs: number; tieSpacingMm: number;
+  rows: string[];
+}
+
+/** Inject EC2 column parameters into the column sample template. */
+export function buildColumnScoTextEC2(p: Ec2ColumnScoParams): string {
+  let t = ec2ColumnTemplate;
+  // Header — Member Type 3 (column)
+  t = setParam(t, 'Codes', 14);
+  t = setParam(t, 'Units', 1);
+  t = setParam(t, 'Bar Type', 8);
+  t = setParam(t, 'Member Type', 3);
+  t = setParam(t, 'Member Name', p.memberName);
+  // Section (Cm …)
+  t = setParam(t, 'Cm bcol', Math.round(p.bcolMm));
+  t = setParam(t, 'Cm hcol', Math.round(p.hcolMm));
+  t = setParam(t, 'Cm D', Math.round(p.diameterMm));
+  t = setParam(t, 'Cm Cover', Math.round(p.coverMm));
+  t = setParam(t, 'Cm CoverInside', Math.round(p.coverMm));
+  // Materials
+  t = setParam(t, 'fy', r3(p.fyMpa));
+  t = setParam(t, 'fy2', r3(p.fyMpa));
+  t = setParam(t, 'fy3', r3(p.fyMpa));
+  t = setParam(t, 'fcu', r3(p.fcuMpa));
+  t = setParam(t, 'Es', r3(p.esMpa));
+  // Longitudinal cage + ties
+  t = setParam(t, 'Cm Nzcol', p.nzcol);
+  t = setParam(t, 'Cm Nycol', p.nycol);
+  t = setParam(t, 'Cm Nface1', 0);   // perimeter cage only — no extra face bars
+  t = setParam(t, 'Cm Nface2', 0);
+  t = setParam(t, 'Cm DVert', p.vertBarIdx);
+  t = setParam(t, 'Cm DVert2', p.vertBarIdx);
+  t = setParam(t, 'Cm DHorz', p.tieBarIdx);
+  t = setParam(t, 'Cm DHorz2', p.tieBarIdx);
+  t = setParam(t, 'Cm NClegsZ', p.tieLegs);
+  t = setParam(t, 'Cm NClegsY', p.tieLegs);
+  t = setParam(t, 'Cm Stie', Math.round(p.tieSpacingMm));
+  t = setParam(t, 'Cm Stie2', Math.round(p.tieSpacingMm));
+  // Short-column check (app supplies amplified forces)
+  t = setParam(t, 'Slender', 0);
+  // Forces
+  t = replaceSectionalLoads(t, p.rows);
+  return t;
+}
+
+/** Sectional Loads rows for a column: one per load case, biaxial.
+ *  Nf=-Pu, Tf=Tu, Vfz=Vu, Mfy=Mux (major), Mfz=Muy (minor); SustFactor 0.6
+ *  (the sustained-load ratio S-Concrete uses for creep, per the sample). */
+export function ec2ColumnLoadRows(member: Member): string[] {
+  const rows: string[] = [];
+  let i = 1;
+  for (const lc of member.loads) {
+    const nf = -(lc.Pu ?? 0) * KIP_TO_KN;
+    const tf = (lc.Tu ?? 0) * KIPFT_TO_KNM;
+    const vfz = (lc.Vu ?? 0) * KIP_TO_KN;
+    const mfy = (lc.Mux ?? lc.Mu_pos ?? 0) * KIPFT_TO_KNM;
+    const mfz = (lc.Muy ?? 0) * KIPFT_TO_KNM;
+    rows.push(ec2LoadRow(i++, nf, tf, vfz, mfy, { mfz, sust: 0.6, comment: lc.label || `LC${i}` }));
+  }
+  if (!rows.length) rows.push(ec2LoadRow(1, 0, 0, 0, 0, { sust: 0.6 }));
+  return rows;
+}
+
+/** Convert an app rectangular column Member into EC2 .SCO parameters. */
+export function memberToEc2ColumnParams(member: Member): Ec2ColumnScoParams {
+  const s = member.section;
+  const D = s.diameter ?? s.b;
+  // Per-face counts — the same inverse mapping the biaxial engine uses.
+  const ny = member.rebar.topBars.reduce((sum, g) => sum + g.numBars, 0);
+  const side = (member.rebar.sideBars ?? []).reduce((sum, g) => sum + g.numBars, 0);
+  const nz = Math.floor(side / 2) + 2;
+  return {
+    memberName: member.label,
+    bcolMm: s.b * IN_TO_MM,
+    hcolMm: (s.h ?? s.b) * IN_TO_MM,
+    diameterMm: D * IN_TO_MM,
+    coverMm: s.coverClear * IN_TO_MM,
+    fyMpa: member.material.fy * PSI_TO_MPA,
+    fcuMpa: fcPsiToFcuMpa(member.material.fc),
+    esMpa: member.material.Es * PSI_TO_MPA,
+    nzcol: Math.max(2, nz),
+    nycol: Math.max(2, ny),
+    vertBarIdx: barIndex2026(member.rebar.topBars[0]?.barSize ?? 8),
+    tieBarIdx: barIndex2026(member.rebar.ties?.barSize ?? s.stirrupDia),
+    tieLegs: member.rebar.ties?.legs ?? 2,
+    tieSpacingMm: (member.rebar.ties?.spacing ?? 12) * IN_TO_MM,
+    rows: ec2ColumnLoadRows(member),
+  };
+}
+
+/** Full EC2 column .SCO text for an app member (rectangular columns). */
+export function buildEc2ColumnSco(member: Member): string {
+  return buildColumnScoTextEC2(memberToEc2ColumnParams(member));
 }

@@ -86,14 +86,20 @@ pull per-member results from the `.SCRS`.
   repo's — write `.SCO`s → `python run_batch_reporter.py <dir> --title --engineer`
   → read `SConcreteResults.SCRS` — and additionally waits for exit and returns the
   parsed results. Commits `a33a83c`, `3a7e00e`, `e4bf49f`, `68ae69c`.
-- **EC2 beams** (`src/utils/sco/scoWriterEC2.ts`): the EC2 file is the richer
-  S-Concrete **2026** format (SI; `Codes 14`, `Bar Type 8`, `Member Type 2`). The
-  writer injects the app's inputs (section, materials, cover, stirrups,
-  longitudinal bars, crack-width limit, forces) into a real sample template
-  (`templates/ec2Beam.sco`, imported via Vite `?raw`, CRLF preserved). Forces map
-  Nf=−Pu, Tf=Tu, Vfz=Vu, Mfy=moment (sagging + hogging rows); crack width
-  (EN 1992-1-1 §7.3.4) is handled in-file with the SLS quasi-permanent combo the
-  user selected emitted as a `SustFactor`-weighted load row. Commit `99382c8`.
+- **EC2 beams & columns** (`src/utils/sco/scoWriterEC2.ts`): the EC2 file is the
+  richer S-Concrete **2026** format (SI; `Codes 14`, `Bar Type 8`). The writer
+  injects the app's inputs into real sample templates (`templates/ec2Beam.sco`
+  and `templates/ec2Column.sco`, imported via Vite `?raw`, CRLF preserved).
+  - **Beams** (`Member Type 2`): section/materials/cover/stirrups/longitudinal
+    bars/crack-width limit/forces. Forces map Nf=−Pu, Tf=Tu, Vfz=Vu, Mfy=moment
+    (sagging + hogging rows); crack width (EN 1992-1-1 §7.3.4) is handled in-file
+    with the SLS quasi-permanent combo the user selected as a `SustFactor`-
+    weighted load row. Commit `99382c8`.
+  - **Columns** (`Member Type 3`, rectangular): `Cm bcol/hcol/Cover`, the
+    `Nzcol/Nycol` cage, `DVert/DHorz` bar indices, `NClegsZ/Y` + `Stie`, and
+    biaxial forces (Nf=−Pu, Mfy=Mux, Mfz=Muy, Vfz=Vu). `Slender` is forced 0
+    because the app supplies already-amplified design forces (short-column
+    check). Circular columns are deferred (no EC2 circular sample).
 - Status: writers and orchestration are unit-tested (forces verified by parsing
   the emitted files). The `.SCO`/`.SCRS` round-trip and the EC2 field mapping
   (derived from a single sample) **need Windows S-Concrete confirmation**.

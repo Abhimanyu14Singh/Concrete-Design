@@ -14,7 +14,8 @@
  *  • EC2 beams   → buildEc2BeamSco (S-Concrete 2026 template; see scoWriterEC2).
  *    Crack width is handled in-file (the EC2 file enables the crack check and
  *    carries the SLS quasi-permanent combo as a load row), so no separate set.
- *  • EC2 columns → not supported yet (no EC2 column sample to template from).
+ *  • EC2 columns → buildEc2ColumnSco (Member Type 3, biaxial loads); rectangular
+ *    only (no EC2 circular-column sample yet).
  *
  * ACI force conventions (matching the column repo's sco_writer.py `_lc_row`):
  *  • Column: P is compression-NEGATIVE (app Pu is +compression, so negated);
@@ -24,7 +25,7 @@
  *  • Beam: Mfy (M3) = governing factored moment, Vfy (V3) = Vu, Tf = Tu, Nf = Pu.
  */
 import { buildBeamScoText, buildColumnScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
-import { buildEc2BeamSco } from './scoWriterEC2';
+import { buildEc2BeamSco, buildEc2ColumnSco } from './scoWriterEC2';
 import { parseScrs, type ScrsResult } from './scrsParser';
 import type { Member, DesignCode, DesignGroup, Project } from '../../types';
 
@@ -115,8 +116,11 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode, project?
   const files: ScoFile[] = [];
   for (const m of members) {
     if (isColumnSection(m)) {
-      if (ec2) continue;                                  // EC2 column .SCO not supported yet
       if (m.section.type === 'circular_column') continue; // rectangular template only
+      if (ec2) {
+        files.push({ fileName: `${sanitize(m.label)}.SCO`, text: buildEc2ColumnSco(m), memberId: m.id });
+        continue;
+      }
       const { nz, ny } = colFaceCounts(m);
       const longBar = barName(m.rebar.topBars[0] ? m.rebar.topBars[0].barSize : 8);
       const tieBar = barName(m.rebar.ties ? m.rebar.ties.barSize : m.section.stirrupDia);
