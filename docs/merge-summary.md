@@ -27,6 +27,13 @@ Bresler reciprocal method remains the fallback for layouts that don't map.
   0.02 across the 10 calibration cases).
 - Commits: `1d8a6fd` (port the solver), `05080cf` (wire into `designColumnACI` +
   tighten parity).
+- Follow-up gap closure (`84fe351`): column **torsion** (axial-dependent φTcr +
+  closed-hoop φTn + V&T utilisation, ACI §22.7) and **slenderness** flag (Euler
+  Ncr, `|Pu| > 0.75·Ncr`, ACI §6.6.4.4.2), plus the §25.2.3 clear-spacing
+  detailing warning — all in `src/engines/aci/aciColumn.ts`, ported from
+  design_engine.py and unit-tested. Audited gaps deliberately NOT ported: column
+  import FROM ETABS (live table reads are Windows-only) and circular-column .SCO
+  (needs a Member-Type-4 circular sample).
 
 ## Automatic column design
 
