@@ -1,8 +1,8 @@
 # S-Concrete
 
-A structural reinforced concrete design web application built with **React + TypeScript + Vite** — beams, columns, and special structural shear walls.
+A structural reinforced concrete design web application built with **React + TypeScript + Vite** — beams and columns.
 
-Supports **ACI 318-19**, **ACI 318-25** (shear walls), and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
+Supports **ACI 318-19**, **ACI 318-14**, and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
 
 > **Important:** All calculations must be independently verified by a licensed engineer before use in any real project.
 
@@ -22,7 +22,6 @@ S-Concrete provides a complete beam design workflow — from geometry and materi
 |------|---------|-------|---------|-----------|-------------|
 | ACI 318-19 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
 | ACI 318-14 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
-| ACI 318-25 (walls) | §18.10.5 P-M | §18.10.4 | — | §11.6, §18.10.2.2, §18.10.6 | — |
 | EN 1992-1-1 (EC2) | §6.1 M_Rd | §6.2 V_Rd,c/s/max | §6.3 T_Rd | §9.2 | §7.3.4 |
 
 **ACI 318-19 beam design**
@@ -45,17 +44,22 @@ S-Concrete provides a complete beam design workflow — from geometry and materi
 - Biaxial bending (Bresler / EC2 §5.8.9 exponent method), tied and spiral configurations
 - Column shear including axial-load enhancement; tie spacing detailing checks
 
-**ACI 318-25 special structural wall design**
-- Distributed vertical/horizontal web reinforcement, 1 or 2 curtains
-- Minimum reinforcement ratios ρl, ρt (§11.6) and bar spacing limits (§18.10.2.2)
-- In-plane shear Vn = Acv(αc·λ·√f'c + ρt·fyt) with hw/lw-dependent αc and the 10·Acv·√f'c cap (§18.10.4)
-- P-M interaction by strain compatibility over distributed web steel + boundary bars (§18.10.5)
-- Special boundary zone (SBZ) triggers: strain-based c-limit (§18.10.6.2) and 0.2f'c stress check (§18.10.6.3)
-- SBZ design: zone length lbe, confinement Ash, tie spacing ≤ min(6db, 6") (§18.10.6.4)
-- Plan-view SVG graphics showing web bars, SBZ zones, and confinement ties
+### Column design — merged from Column_Design_DW
+The column workflow gained a full design-and-detailing pipeline ported from the standalone **Column_Design_DW** Python tool and merged into this app. Everything below is implemented today.
+
+- **Rotating neutral-axis biaxial solver** (`src/engines/aci/aciColumnBiaxial.ts`) — the primary P-M method for rectangular biaxial columns. Given a factored axial load Pu and a resultant-moment direction θ = atan2(|M2|, |M3|), nested bisection (outer on neutral-axis depth c, inner on the NA angle) returns the design resultant-moment capacity φMr on the interaction surface, capturing the M3↔M2 coupling Bresler cannot. Ported 1:1 from the Python tool's `_biaxial_phi_mrtht` and validated against golden vectors; the **Bresler reciprocal** load method (`aciBiaxialCheck`) remains the fallback. Wired into `designColumnACI`.
+- **Column auto-design** (`src/utils/suggestColumnRebar.ts`) — the **✨ Suggest** button now sizes columns too: it picks the lightest symmetric cage (longitudinal bars + ties) meeting the group's worst demand at the target DCR while holding ρg inside the 1–8% band (ACI §10.6.1). The search is decoupled — lightest longitudinal cage passing P-M / axial, then lightest ties passing shear — and every candidate is re-verified through the engine.
+- **Auto-size section recommendation** (`src/utils/autoSizeColumn.ts`) — when no cage fits the current section, recommends a minimum gross section from the ACI §22.4.2 short-column axial capacity (φPn = φ·α·[0.85·f'c·(Ag − Ast) + fy·Ast]), rounded up to even inches. An axial-demand starting size that the caller enlarges when the design is P-M-governed.
+- **Lap / development splice length** (`src/utils/spliceLength.ts`) — ACI §25.5 compression laps (§25.5.5.1) and tension laps (§25.5.2.1, with ld per the §25.4.2.3 simplified expression, Class A / B), shown in the column calc sheet.
+- **Multi-story column stacks** (`src/utils/columnStack.ts`) + a **Stacks** tab in the Map view — groups columns by plan location into vertical stacks and reports, per story, Pu / ρ / φPn / DCR, plus capacity-vs-elevation data (axial demand against φPn,max at reference steel ratios). Stacks are derived on the fly from the members, so older project files are unaffected.
+- **Quantity takeoffs** (`src/utils/takeoff.ts`) + a **Takeoff** tab — gross concrete volume (yd³), rebar tonnage, and per-GFA intensities (lb steel per yd³, psf), rolled up for beams and columns. Reuses the savings report's steel-weight model so takeoff and savings never disagree.
+- **Formula-traceable Excel export** (`src/utils/export/excelExport.ts`) — the per-member worksheets write **live spreadsheet formulas** for the axial / geometry chain (Ag, ρg, φPn,max, the per-load-case axial DCR), so those cells recompute when an input is edited. P-M, flexure, shear, and torsion capacities come from the engine and are written as labelled values.
+- **ETABS group push-back** (`src/adapters/etabs/pushGroups.ts`, `tools/EtabsHelper`) — push the app's design groups back into ETABS as named groups with their member frames assigned. The pure mapping/summary helpers build the `{name, frameNames}[]` payload from `project.modelMap`; the live transport runs through the .NET sidecar.
+- **S-Concrete .SCO / .SCRS batch** (`src/utils/sco/`) — generate S-Concrete `.SCO` files for the design groups (beams as **Member Type 1**, rectangular columns through the byte-validated **Type 3** writer, ported 1:1 from `Column_Design_DW/sco_writer.py`), run the **BatchReporter** from the Electron main process, and pull per-member pass/fail and utilisations from the `.SCRS` report. ACI is wired; **EC2 beams** use a separate S-Concrete-2026-format writer (`src/utils/sco/scoWriterEC2.ts`) that injects the app's inputs (section, materials, cover, stirrups, longitudinal bars, crack-width limit, forces) into a real sample template, with crack width (EN 1992-1-1 §7.3.4) handled in-file via the SLS quasi-permanent load row.
+  - **Validation boundary** — the `.SCO` / `.SCRS` round-trip and the EC2 field mapping are by inspection of reference files and must be confirmed against a real S-Concrete run on Windows. The rotating-NA biaxial engine is golden-vector validated independently of this.
 
 ### Design Code Selector
-Switch between ACI 318-19, ACI 318-14, ACI 318-25 (walls), and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the header without losing project data.
+Switch between ACI 318-19, ACI 318-14, and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the header without losing project data.
 
 ### Step-by-Step Calculation Sheet
 "Show Calculations" opens a modal with every check displayed as:
@@ -240,10 +244,8 @@ src/
     etabs/                  # ETABS import: CSI OAPI client, .xlsx parser, demo model,
                             #   rebar seeding, member/group mapping
   utils/
-    wallDesign.ts           # ACI 318-25 shear wall engine (shear, P-M, SBZ)
     calcBreakdown.ts        # ACI step-by-step calculation sheet generator
     calcBreakdownEC2.ts     # EC2 step-by-step calculation sheet generator
-    calcBreakdownWall.ts    # ACI 318-25 wall calculation sheet generator
     units.ts                # SI / imperial conversion utilities
     rebar.ts                # Bar designation helpers (US customary + metric)
     autoGroup.ts            # Pure functions: familyKey, extractDemands, jenksBreaks,
@@ -256,7 +258,7 @@ src/
                             #   envelope (falls back to per-member SLS case, then M_qp/Mu ratio)
   contexts/
     UnitsContext.tsx         # React context for active unit system
-  types/                    # TypeScript interfaces (beam, column, wall, common)
+  types/                    # TypeScript interfaces (beam, column, common)
   components/
     Dashboard/              # Project overview, member table, DCR chart
     ModelMap/               # Map tab: SVG plan canvas (MapCanvas), group panel,
@@ -265,7 +267,7 @@ src/
                             #   (continuous hotspot ramp; ModelMapView composes them)
     EtabsImport/            # 4-step ETABS import wizard
     Results/                # Per-member DCR bars, summary table, calc modal
-    Detailing/              # SVG section, elevation, wall plan, P-M diagram views
+    Detailing/              # SVG section, elevation, P-M diagram, interaction views
     SectionInput/           # Member editor (geometry, materials, loads)
   App.tsx                   # Layout, state, code-selector
 electron/
@@ -284,7 +286,7 @@ The renderer's `ComConnection` (and the shared `TableConnection` base in `src/ad
 The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidecar with `dotnet publish` (framework-dependent, .NET 6 `RollForward LatestMajor` — the runtime ships with ETABS 21+) and verifies it exists both in `build-helper/` and inside the packaged `resources/etabs-helper/`.
 
 ### Plugin-Ready Design
-`src/engines/` and `src/adapters/` are structured to accept additional design engines and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines. Beam, column, and shear wall engines are implemented today.
+`src/engines/` and `src/adapters/` are structured to accept additional design engines and import adapters (ETABS, SAP2000) without modifying the core UI or existing engines. Beam and column engines are implemented today.
 
 ---
 
@@ -292,5 +294,4 @@ The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidec
 
 - **ACI 318-19** — Building Code Requirements for Structural Concrete (beams, columns)
 - **ACI 318-14** — Previous edition (same clause structure)
-- **ACI 318-25** — Special structural walls (§11.6, §18.10)
 - **EN 1992-1-1:2004 (Eurocode 2)** — Design of Concrete Structures, Part 1-1 (beams, columns)
