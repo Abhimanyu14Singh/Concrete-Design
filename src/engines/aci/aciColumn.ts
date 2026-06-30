@@ -273,6 +273,80 @@ export function aciColumnShear(
   return { Vc, Vs, phi_Vn, DCR_shear: phi_Vn > 0 ? Vu / phi_Vn : (Vu > 0 ? Infinity : 0) };
 }
 
+/**
+ * Column torsion per ACI §22.7, calibrated to S-Concrete (ported from
+ * Column_Design_DW design_engine._phi_tcr / _phi_Tn). φTcr is the axial-dependent
+ * elastic cracking-torsion threshold; φTn the closed-hoop capacity. Below
+ * 0.25·φTcr torsion is negligible (ACI threshold). Imperial in/out (kip-ft).
+ */
+export function aciColumnTorsion(
+  section: SectionDimensions, material: MaterialProps, rebar: RebarLayout,
+  Tu: number, Pu: number,
+): { phi_Tcr: number; Tu_threshold: number; phi_Tn: number; DCR_T: number; torsionActive: boolean } {
+  const { fc, fyt } = material;
+  const isCircular = section.type === 'circular_column';
+  const D = section.diameter ?? section.b;
+  const b = section.b, h = isCircular ? D : (section.h ?? section.b);
+  const tieD = getBarDiam(section.stirrupDia);
+  const cover = section.coverClear;
+  const Ag = grossArea(isCircular, b, h, D);
+  const pcp = isCircular ? Math.PI * D : 2 * (b + h);
+
+  const sqEff = Math.sqrt(Math.min(fc, 10000));
+  const sigma = (Math.max(Pu, 0) * 1000) / Ag; // psi, compression positive
+  const phi_Tcr = (0.75 * sqEff * Ag * Ag) / pcp / 3000 * Math.sqrt(Math.max(0, 1 + sigma / (4 * sqEff)));
+  const Tu_threshold = 0.25 * phi_Tcr;
+
+  let phi_Tn = 0;
+  if (rebar.ties) {
+    const AbTie = getBarArea(rebar.ties.barSize);
+    const Aoh = isCircular
+      ? Math.PI * Math.pow(D / 2 - (cover + tieD / 2), 2)
+      : Math.max(0, (b - 2 * (cover + tieD / 2)) * (h - 2 * (cover + tieD / 2)));
+    phi_Tn = (0.75 * 2 * 0.85 * Aoh * (AbTie / Math.max(rebar.ties.spacing, 0.5)) * (fyt / 1000)) / 12;
+  }
+  const torsionActive = Tu > Tu_threshold;
+  const DCR_T = torsionActive && phi_Tn > 0 ? Tu / phi_Tn : 0;
+  return { phi_Tcr, Tu_threshold, phi_Tn, DCR_T, torsionActive };
+}
+
+/**
+ * Slenderness / stability check per ACI §6.6.4.4.2 (ported from
+ * Column_Design_DW). Euler critical load Ncr = π²·EI/(k·Lu)² with the §6.6.4.4.4
+ * stiffness EI = (0.2·Ec·Ig + Es·Ise)/(1+βdns), k = 1, βdns = 0.6. The column is
+ * flagged slender when |Pu| > 0.75·Ncr — the engine designs the cross-section
+ * for the supplied (assumed amplified) forces and does NOT add second-order
+ * moments, so this is a warning to supply magnified demands. luIn = unbraced
+ * length (in); pass 0/undefined to skip.
+ */
+export function aciColumnSlenderness(
+  section: SectionDimensions, material: MaterialProps, rebar: RebarLayout,
+  Pu: number, luIn: number,
+): { Ncr: number; slender: boolean } {
+  const { fc, Es } = material;
+  if (!luIn || luIn <= 0) return { Ncr: Infinity, slender: false };
+  const isCircular = section.type === 'circular_column';
+  const D = section.diameter ?? section.b;
+  const b = section.b, h = isCircular ? D : (section.h ?? section.b);
+  const Ast = totalAst(rebar);
+  const Ec = 57000 * Math.sqrt(fc);
+  const betaD = 0.6;
+  const edge = section.coverClear + getBarDiam(section.stirrupDia) + getBarDiam(rebar.topBars[0]?.barSize ?? 8) / 2;
+
+  const ncrFor = (Ig: number, di: number): number => {
+    const Ise = Ast * di * di;
+    const EI = (0.2 * Ec * Ig + Es * Ise) / (1 + betaD);
+    return (Math.PI * Math.PI * EI) / (luIn * luIn) / 1000; // kips
+  };
+  const Ncr = isCircular
+    ? ncrFor(Math.PI * Math.pow(D, 4) / 64, D / 2 - edge)
+    : Math.min(
+        ncrFor((b * Math.pow(h, 3)) / 12, Math.abs(b / 2 - edge)),
+        ncrFor((h * Math.pow(b, 3)) / 12, Math.abs(h / 2 - edge)),
+      );
+  return { Ncr, slender: Math.abs(Pu) > 0.75 * Ncr };
+}
+
 /** Longitudinal + tie detailing checks per ACI §10.6/§10.7/§25.7. */
 export function aciColumnDetailing(
   section: SectionDimensions, rebar: RebarLayout,
@@ -317,6 +391,25 @@ export function aciColumnDetailing(
     warnings.push({ code: 'ACI §10.7.6', message: 'No transverse reinforcement (ties/spiral) defined', severity: 'error' });
   }
 
+  // §25.2.3 clear spacing / single-layer fit (rectangular) — ported from
+  // Column_Design_DW clear_spacing_min_col / needs_two_layers.
+  if (!isCircular) {
+    const tieD = getBarDiam(section.stirrupDia);
+    const longD = getBarDiam(rebar.topBars[0]?.barSize ?? 8);
+    const clearMin = Math.max(1.5, 1.5 * longD); // ACI §25.2.3
+    const nFace = rebar.topBars.reduce((s, b) => s + b.numBars, 0);
+    if (nFace > 1) {
+      const span = section.b - 2 * (section.coverClear + tieD + longD / 2); // centreline span
+      const clear = span / (nFace - 1) - longD;
+      if (clear < clearMin - 1e-6)
+        warnings.push({
+          code: 'ACI §25.2.3',
+          message: `Clear bar spacing ${clear.toFixed(2)}" < ${clearMin.toFixed(2)}" min — bars won't fit one layer; use a second layer or larger section`,
+          severity: 'warning',
+        });
+    }
+  }
+
   return warnings;
 }
 
@@ -326,9 +419,9 @@ export function designColumnACI(
   material: MaterialProps,
   rebar: RebarLayout,
   load: LoadCase,
+  span?: number,
 ): DesignResults {
   const isCircular = section.type === 'circular_column';
-  const spiral = rebar.tieType === 'spiral';
   const Pu = load.Pu;
   const Mux = load.Mux ?? load.Mu_pos ?? 0;
   const Muy = load.Muy ?? 0;
@@ -341,7 +434,13 @@ export function designColumnACI(
   const phiPnMax = Math.max(...curveX.map(p => p.phiPn));
   const biax = aciBiaxialCheck(curveX, curveY, Pu, Mux, Muy, isCircular);
   const shear = aciColumnShear(section, material, rebar, load.Vu, Pu);
+  const tors = aciColumnTorsion(section, material, rebar, load.Tu ?? 0, Pu);
+  const slen = aciColumnSlenderness(section, material, rebar, Pu, (span ?? 0) * 12);
   const warnings = aciColumnDetailing(section, rebar);
+
+  // Combined shear + torsion (single Vu): VT_util = DCR_shear + DCR_torsion
+  // (the dz+dt form of the S-Concrete V&T interaction for one shear direction).
+  const VT_util = shear.DCR_shear + tors.DCR_T;
 
   // Prefer the rotating-NA resultant-moment method (calibrated vs S-Concrete) for
   // the rectangular biaxial path; fall back to Bresler (aciBiaxialCheck) if the
@@ -369,8 +468,12 @@ export function designColumnACI(
     warnings.push({ code: 'ACI §22.5', message: `Shear NG: DCR = ${shear.DCR_shear.toFixed(2)}`, severity: 'error' });
   if (DCR_axial > 1)
     warnings.push({ code: 'ACI §22.4.2', message: `Axial NG: Pu = ${Pu} kips > φPn,max = ${phiPnMax.toFixed(0)} kips`, severity: 'error' });
+  if (VT_util > 1)
+    warnings.push({ code: 'ACI §22.7', message: `Shear+torsion NG: V&T util = ${VT_util.toFixed(2)} (DCR_T = ${tors.DCR_T.toFixed(2)})`, severity: 'error' });
+  if (slen.slender)
+    warnings.push({ code: 'ACI §6.6.4.4.2', message: `Column is slender (|Pu| = ${Math.abs(Pu).toFixed(0)} k > 0.75·Ncr = ${(0.75 * slen.Ncr).toFixed(0)} k) — supply moment-magnified demands; the engine checks the cross-section only`, severity: 'warning' });
 
-  const maxDCR = Math.max(DCR_PM, shear.DCR_shear, DCR_axial);
+  const maxDCR = Math.max(DCR_PM, shear.DCR_shear, DCR_axial, VT_util);
   const hasError = warnings.some(w => w.severity === 'error');
   const status: DesignResults['status'] = maxDCR > 1 ? 'NG' : (maxDCR > 0.9 || hasError) ? 'Warning' : 'OK';
 
@@ -380,7 +483,8 @@ export function designColumnACI(
     Mn_pos: 0, Mn_neg: 0, phi_Mn_pos: 0, phi_Mn_neg: 0,
     DCR_flex_pos: 0, DCR_flex_neg: 0,
     Vc: shear.Vc, Vs: shear.Vs, phi_Vn: shear.phi_Vn, DCR_shear: shear.DCR_shear,
-    Tcr: 0, Tu_threshold: 0, phi_Tn: 0, DCR_torsion: 0,
+    Tcr: tors.phi_Tcr, Tu_threshold: tors.Tu_threshold, phi_Tn: tors.phi_Tn, DCR_torsion: tors.DCR_T,
+    phi_Tcr: tors.phi_Tcr, VT_util,
     As_req_pos: 0, As_req_neg: 0,
     As_min: 0.01 * grossArea(isCircular, section.b, section.h ?? section.b, section.diameter ?? section.b),
     As_max: 0.08 * grossArea(isCircular, section.b, section.h ?? section.b, section.diameter ?? section.b),

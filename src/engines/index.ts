@@ -43,7 +43,7 @@ export function runDesign(
   if (isColumn) {
     return code === 'EN1992-1-1'
       ? designColumnEC2(section, material, rebar, load)
-      : designColumnACI(section, material, rebar, load);
+      : designColumnACI(section, material, rebar, load, span);
   }
   if (code === 'EN1992-1-1') {
     return designMemberEC2(section, material, rebar, load, span, crack);
