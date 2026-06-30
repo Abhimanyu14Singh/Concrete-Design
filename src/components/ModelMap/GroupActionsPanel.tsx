@@ -74,7 +74,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   async function pushToEtabs() {
-    setErr(null); setMsg(null); setResults(null); setBusy('etabs');
+    setErr(null); setMsg(null); setWarn(null); setResults(null); setBusy('etabs');
     try {
       const payload = buildGroupPushPayload(groups, frameByMemberId);
       if (!payload.length) throw new Error('No groups with ETABS-linked frames. Import members from ETABS first.');
@@ -118,14 +118,18 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       if (groups.length) {
         const env = buildGroupEnvelopeScoFiles(groups, members, code, project);
         files = env;
-        const totalMembers = env.reduce((s, f) => s + f.memberCount, 0);
+        // One .SCO per (group × member-type), plus a separate crack-width file for
+        // EC2 beam groups — so file count can exceed group count. Member/LC counts
+        // are de-duplicated (a member appears in a ULS and a crack file) by using
+        // the panel's deduped runCount and unique excluded ids.
+        const groupsWithFiles = new Set(env.map((f) => f.groupId)).size;
         const totalLCs = env.reduce((s, f) => s + f.loadCaseCount, 0);
-        ranLabel = `Ran ${env.length} group file(s) (${totalMembers} members, ${totalLCs} load cases)`;
-        const mixed = env.filter((f) => f.mixedSections).map((f) => f.groupLabel);
-        const dropped = env.filter((f) => f.excludedMemberIds.length);
+        ranLabel = `Ran ${env.length} .SCO file(s) for ${groupsWithFiles} group(s) · ${runCount} member(s), ${totalLCs} load rows`;
+        const mixed = [...new Set(env.filter((f) => f.mixedSections).map((f) => f.groupLabel))];
+        const excludedIds = new Set(env.flatMap((f) => f.excludedMemberIds));
         const notes: string[] = [];
         if (mixed.length) notes.push(`mixed sections in ${mixed.join(', ')} — used the most common section per group`);
-        if (dropped.length) notes.push(`${dropped.reduce((s, f) => s + f.excludedMemberIds.length, 0)} off-type member(s) excluded`);
+        if (excludedIds.size) notes.push(`${excludedIds.size} unsupported member(s) skipped (e.g. circular columns)`);
         if (notes.length) setWarn(notes.join('; '));
       } else {
         files = collectGroupScoFiles(groups, members, code, project);
@@ -181,7 +185,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           disabled={!!busy || !desktop}
           title={desktop
             ? (groups.length
-              ? 'Write one .SCO per group (each carrying every member\'s forces), run the S-Concrete batch, pull the governing result per group'
+              ? 'Write one .SCO per group (each carrying every member\'s forces; EC2 adds a separate crack-width file), run the S-Concrete batch, pull the governing result per group'
               : 'Write one .SCO per member, run the S-Concrete batch, pull results')
             : 'S-Concrete batch requires the Windows desktop app'}
           onClick={runBatch}
@@ -189,7 +193,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           {busy === 'sco'
             ? 'Running…'
             : groups.length
-              ? `⚙ Batch · ${groups.length} group file${groups.length !== 1 ? 's' : ''} (${runCount} member${runCount !== 1 ? 's' : ''})`
+              ? `⚙ Batch · ${groups.length} group${groups.length !== 1 ? 's' : ''} (${runCount} member${runCount !== 1 ? 's' : ''})`
               : `⚙ Batch · ${runCount} member file${runCount !== 1 ? 's' : ''}`}
         </button>
 

@@ -78,12 +78,15 @@ export default function Map3DCanvas({
 
   // Model centre (for centring the orbit) and plan X-Y extent (for story quads).
   const { center, planBox } = useMemo(() => {
-    const pts = visibleFrames.flatMap(f => [f.pt1, f.pt2]);
-    if (!pts.length) return { center: { x: 0, y: 0, z: 0 }, planBox: { minX: 0, maxX: 1, minY: 0, maxY: 1 } };
-    const xs = pts.map(p => p.x), ys = pts.map(p => p.y), zs = pts.map(p => p.z);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    if (!visibleFrames.length) return { center: { x: 0, y: 0, z: 0 }, planBox: { minX: 0, maxX: 1, minY: 0, maxY: 1 } };
+    // Reduce (not Math.min(...spread)) so very large models can't overflow the stack.
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    const see = (p: Point3D) => {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+    };
+    for (const f of visibleFrames) { see(f.pt1); see(f.pt2); }
     return {
       center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: (minZ + maxZ) / 2 },
       planBox: { minX, maxX, minY, maxY },
@@ -117,8 +120,10 @@ export default function Map3DCanvas({
     };
   }, [center, view.yaw, view.pitch]);
 
-  // Project everything once, then a single fit transform (scale+offset) to the box.
-  const scene = useMemo(() => {
+  // Project everything once — independent of zoom — and keep the fit bounds + base
+  // scale. Orbit changes `project` (re-projects); zoom does NOT, so it stays out of
+  // these deps and the heavy per-frame projection / Math.min spreads don't re-run on scroll.
+  const projected = useMemo(() => {
     const projFrames = visibleFrames.map(f => {
       const a = project(f.pt1), b = project(f.pt2);
       return { f, a, b, depth: (a.depth + b.depth) / 2 };
@@ -132,19 +137,26 @@ export default function Map3DCanvas({
       ];
       return { story: pl.story, corners: c, depth: c.reduce((s, p) => s + p.depth, 0) / 4 };
     });
-
-    const allPx = [...projFrames.flatMap(p => [p.a.px, p.b.px]), ...planes.flatMap(p => p.corners.map(c => c.px))];
-    const allPy = [...projFrames.flatMap(p => [p.a.py, p.b.py]), ...planes.flatMap(p => p.corners.map(c => c.py))];
-    const minPx = allPx.length ? Math.min(...allPx) : 0, maxPx = allPx.length ? Math.max(...allPx) : 1;
-    const minPy = allPy.length ? Math.min(...allPy) : 0, maxPy = allPy.length ? Math.max(...allPy) : 1;
+    // Reduce (not spread) so very large models don't overflow the call stack.
+    let minPx = Infinity, maxPx = -Infinity, minPy = Infinity, maxPy = -Infinity;
+    const see = (px: number, py: number) => {
+      if (px < minPx) minPx = px; if (px > maxPx) maxPx = px;
+      if (py < minPy) minPy = py; if (py > maxPy) maxPy = py;
+    };
+    for (const p of projFrames) { see(p.a.px, p.a.py); see(p.b.px, p.b.py); }
+    for (const pl of planes) for (const c of pl.corners) see(c.px, c.py);
+    if (!Number.isFinite(minPx)) { minPx = 0; maxPx = 1; minPy = 0; maxPy = 1; }
     const base = Math.min((width - 2 * PAD) / Math.max(maxPx - minPx, 1e-6), (height - 2 * PAD) / Math.max(maxPy - minPy, 1e-6));
-    const scale = base * view.zoom;
-    const offX = width / 2 - ((minPx + maxPx) / 2) * scale;
-    const offY = height / 2 - ((minPy + maxPy) / 2) * scale;
-    const sx = (px: number) => px * scale + offX;
-    const sy = (py: number) => py * scale + offY;
-    return { projFrames, planes, sx, sy };
-  }, [visibleFrames, storyPlanes, planBox, project, width, height, view.zoom]);
+    return { projFrames, planes, minPx, maxPx, minPy, maxPy, base };
+  }, [visibleFrames, storyPlanes, planBox, project, width, height]);
+
+  // Zoom-only transform (O(1)): scale the already-projected bounds and centre.
+  const { sx, sy } = useMemo(() => {
+    const scale = projected.base * view.zoom;
+    const offX = width / 2 - ((projected.minPx + projected.maxPx) / 2) * scale;
+    const offY = height / 2 - ((projected.minPy + projected.maxPy) / 2) * scale;
+    return { sx: (px: number) => px * scale + offX, sy: (py: number) => py * scale + offY };
+  }, [projected, view.zoom, width, height]);
 
   const groupColorMap = useMemo(() => buildGroupColorMap(designGroups), [designGroups]);
   const autoGroupColorMap = useMemo(() => buildAutoGroupColorMap(autoGroupOverlay), [autoGroupOverlay]);
@@ -196,9 +208,9 @@ export default function Map3DCanvas({
   const hoveredFrame = hover ? visibleFrames.find(x => x.frameName === hover) : null;
 
   // Far-to-near so nearer members overlay; planes always behind the members.
-  const sortedFrames = [...scene.projFrames].sort((p, q) => q.depth - p.depth);
-  const sortedPlanes = [...scene.planes].sort((p, q) => q.depth - p.depth);
-  const { sx, sy } = scene;
+  // Memoised on the projection so hover/zoom re-renders don't re-sort.
+  const sortedFrames = useMemo(() => [...projected.projFrames].sort((p, q) => q.depth - p.depth), [projected.projFrames]);
+  const sortedPlanes = useMemo(() => [...projected.planes].sort((p, q) => q.depth - p.depth), [projected.planes]);
 
   return (
     <div style={{ position: 'relative', userSelect: 'none' }}>

@@ -118,17 +118,28 @@ matching the "filter → group → design → extract groups as individual files
 the batch → read the summary" workflow:
 
 - **One .SCO per group (envelope)** — `buildGroupEnvelopeScoFiles` in
-  `src/utils/sco/scoBatch.ts`. Each design group becomes a SINGLE `.SCO` carrying
-  the group's representative section/rebar and EVERY member's load cases pooled
-  into the Sectional Loads table (each row tagged with its source member in the
-  Comment column, so the governing case is traceable). S-Concrete checks the one
-  group section against the group's full force envelope and the batch summary
-  reports the governing case per group — the "8 groups → 8 files" workflow. The
-  representative is the group's **modal section**; a geometrically mixed group is
-  flagged in the UI, off-type members are dropped and reported, and the group's
-  `rebar` template (when set) overrides the member rebar. Falls back to one file
-  per member when no groups are defined. This replaces the old one-file-per-member
-  default for grouped runs.
+  `src/utils/sco/scoBatch.ts`. Each design group becomes a `.SCO` carrying the
+  group's representative section/rebar and EVERY member's load cases pooled into
+  the Sectional Loads table (each row tagged with its source member in the Comment
+  column, so the governing case is traceable). S-Concrete checks the one group
+  section against the group's full force envelope and the batch summary reports the
+  governing case per group — the "8 groups → 8 files" workflow. The representative
+  is the group's **modal section** (its signature normalises optional dims so two
+  members that emit an identical `.SCO` never read as different); a geometrically
+  mixed group is flagged in the UI, and the group's `rebar` template (when set)
+  overrides the member rebar. A mixed beam+column group **sub-groups by member
+  type** — a beam envelope AND a column envelope — so no eligible member is ever
+  silently dropped (only truly-unsupported sections, e.g. circular columns, are
+  skipped and reported). Falls back to one file per member when no groups are
+  defined.
+- **EC2 → two sets** — for EC2 (EN 1992-1-1) beam groups the envelope emits a
+  **ULS set** (`<Group>.SCO`, crack check OFF, all members' ULS rows) and a
+  **separate crack-width set** (`<Group>_crack.SCO`, crack check ON) that pools
+  **every** member's SLS quasi-permanent row — so crack control envelopes the whole
+  group, not just the representative. (ACI and EC2 columns stay single-file; the
+  ungrouped per-member fallback keeps the combined ULS+in-file-crack file.) The
+  EC2 beam row builder is split into `ec2BeamUlsRows` / `ec2BeamCrackRows` with a
+  `checkCracks` toggle on the writer.
 - **Re-run an existing folder** — `rerun` handler in `electron/sconcreteBridge.cjs`
   + `rerunScoBatch` client + the **↻ Re-run existing folder** button. Re-runs
   BatchReporter on the `.SCO` files already in the output folder WITHOUT

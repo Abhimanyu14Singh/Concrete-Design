@@ -25,7 +25,9 @@
  *  • Beam: Mfy (M3) = governing factored moment, Vfy (V3) = Vu, Tf = Tu, Nf = Pu.
  */
 import { buildBeamScoText, buildColumnScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
-import { buildEc2BeamSco, buildEc2ColumnSco } from './scoWriterEC2';
+import {
+  buildEc2BeamSco, buildEc2ColumnSco, buildEc2BeamScoExplicit, ec2BeamUlsRows, ec2BeamCrackRows,
+} from './scoWriterEC2';
 import { parseScrs, type ScrsResult } from './scrsParser';
 import type { Member, DesignCode, DesignGroup, Project, LoadCase } from '../../types';
 
@@ -246,10 +248,12 @@ export interface GroupEnvelopeScoFile extends ScoFile {
 }
 
 /** Stable signature of a member's section + materials, used to find the most
- *  common ("representative") section within a design group. */
+ *  common ("representative") section within a design group. Optional dims are
+ *  normalised to what the writers actually emit (bw → b, hf → 0, diameter → 0)
+ *  so two members that produce an identical .SCO never get different signatures. */
 function sectionSignature(m: Member): string {
   const s = m.section;
-  return [s.type, s.b, s.h, s.bw ?? '', s.hf ?? '', s.diameter ?? '', s.coverClear,
+  return [s.type, s.b, s.h, s.bw ?? s.b, s.hf ?? 0, s.diameter ?? 0, s.coverClear,
     m.material.fc, m.material.fy].join('|');
 }
 
@@ -290,38 +294,17 @@ function poolLoads(ms: Member[]): LoadCase[] {
 export function buildGroupEnvelopeScoFiles(
   groups: DesignGroup[], members: Member[], code: DesignCode, project?: Project,
 ): GroupEnvelopeScoFile[] {
+  const ec2 = isEc2(code);
+  if (ec2 && !project) {
+    throw new Error('EC2 .SCO export needs the project (for the crack-width combo). Pass the project.');
+  }
   const byId = new Map(members.map((m) => [m.id, m]));
   const usedNames = new Set<string>();
   const out: GroupEnvelopeScoFile[] = [];
 
-  for (const g of groups) {
-    const eligible = g.memberIds
-      .map((id) => byId.get(id))
-      .filter((m): m is Member => m != null && isScoEligible(m));
-    if (!eligible.length) continue; // nothing S-Concrete can check → no file
-
-    const rep = pickRepresentative(eligible);
-    // Only pool members of the representative's type (a beam file cannot carry a
-    // column's biaxial forces); record any that were left out.
-    const pooled = eligible.filter((m) => m.memberType === rep.memberType);
-    const excludedMemberIds = eligible
-      .filter((m) => m.memberType !== rep.memberType)
-      .map((m) => m.id);
-    const mixedSections = new Set(pooled.map(sectionSignature)).size > 1;
-
-    // One synthetic member = representative section/rebar + every pooled combo.
-    const synth: Member = {
-      ...rep,
-      label: g.label,
-      rebar: g.rebar ?? rep.rebar,
-      loads: poolLoads(pooled),
-    };
-    const built = buildGroupScoFiles([synth], code, project);
-    if (!built.length) continue; // representative not emittable (shouldn't happen)
-    const file = built[0];
-
-    // Guarantee a unique on-disk name even if two groups share a label.
-    let name = file.fileName;
+  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; excludedMemberIds: string[]; kind: string };
+  const pushFile = (fileBase: string, text: string, g: DesignGroup, meta: Meta) => {
+    let name = `${sanitize(fileBase)}.SCO`;
     if (usedNames.has(name)) {
       const base = name.replace(/\.SCO$/i, '');
       let n = 2;
@@ -329,18 +312,55 @@ export function buildGroupEnvelopeScoFiles(
       name = `${base}_${n}.SCO`;
     }
     usedNames.add(name);
-
     out.push({
-      fileName: name,
-      text: file.text,
-      memberId: `group:${g.id}`,
-      groupId: g.id,
-      groupLabel: g.label,
-      memberCount: pooled.length,
-      loadCaseCount: synth.loads.length,
-      mixedSections,
-      excludedMemberIds,
+      fileName: name, text, memberId: `group:${g.id}:${meta.kind}`,
+      groupId: g.id, groupLabel: g.label,
+      memberCount: meta.memberCount, loadCaseCount: meta.loadCaseCount,
+      mixedSections: meta.mixedSections, excludedMemberIds: meta.excludedMemberIds,
     });
+  };
+
+  for (const g of groups) {
+    const groupMembers = g.memberIds.map((id) => byId.get(id)).filter((m): m is Member => m != null);
+    const eligible = groupMembers.filter(isScoEligible);
+    if (!eligible.length) continue; // nothing S-Concrete can check → no file
+    // Members S-Concrete can't check at all (e.g. circular columns) — reported, not pooled.
+    const excludedMemberIds = groupMembers.filter((m) => !isScoEligible(m)).map((m) => m.id);
+
+    // Sub-group by member type so a mixed beam+column group yields a beam
+    // envelope AND a column envelope — no eligible member is silently dropped.
+    const types = [...new Set(eligible.map((m) => m.memberType))];
+    const multiType = types.length > 1;
+    for (const type of types) {
+      const sub = eligible.filter((m) => m.memberType === type);
+      const rep = pickRepresentative(sub);
+      const mixedSections = new Set(sub.map(sectionSignature)).size > 1;
+      const baseLabel = `${g.label}${multiType ? (type === 'beam' ? '_beam' : '_col') : ''}`;
+      const synth: Member = { ...rep, label: baseLabel, rebar: g.rebar ?? rep.rebar, loads: poolLoads(sub) };
+
+      if (ec2 && type === 'beam') {
+        // TWO SETS: a ULS file (crack check OFF) and a separate crack-width file
+        // (crack check ON) that pools EVERY member's SLS quasi-permanent row — so
+        // the group's crack control envelopes all members, not just the representative.
+        const ulsRows = ec2BeamUlsRows(synth, 1);
+        const ulsText = buildEc2BeamScoExplicit(synth, project!, { rows: ulsRows, checkCracks: false, memberName: baseLabel });
+        pushFile(baseLabel, ulsText, g, { memberCount: sub.length, loadCaseCount: ulsRows.length || 1, mixedSections, excludedMemberIds, kind: 'uls' });
+
+        let ci = 1;
+        const crackRows: string[] = [];
+        for (const m of sub) { const r = ec2BeamCrackRows(m, project!, ci); crackRows.push(...r); ci += r.length; }
+        if (crackRows.length) {
+          const crackText = buildEc2BeamScoExplicit(synth, project!, { rows: crackRows, checkCracks: true, memberName: `${baseLabel} (crack)` });
+          pushFile(`${baseLabel}_crack`, crackText, g, { memberCount: sub.length, loadCaseCount: crackRows.length, mixedSections, excludedMemberIds, kind: 'crack' });
+        }
+        continue;
+      }
+
+      // Single envelope file (ACI beams/columns, EC2 columns) via the generic path.
+      const built = buildGroupScoFiles([synth], code, project);
+      if (!built.length) continue;
+      pushFile(baseLabel, built[0].text, g, { memberCount: sub.length, loadCaseCount: synth.loads.length || 1, mixedSections, excludedMemberIds, kind: 'single' });
+    }
   }
   return out;
 }

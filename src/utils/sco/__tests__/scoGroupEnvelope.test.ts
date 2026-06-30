@@ -159,15 +159,26 @@ describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
     expect(buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'])], members, 'ACI318-19')[0].mixedSections).toBe(false);
   });
 
-  it('drops a stray off-type member and records it (a column inside a beam group)', () => {
+  it('sub-groups a mixed beam+column group into a beam file AND a column file (nobody dropped)', () => {
     const members = [
       beam('b1', 'B1', [lc({ Mu_pos: 100 })]), beam('b2', 'B2', [lc({ Mu_pos: 120 })]),
       col('c1', 'C1', [lc({ Pu: 600, Mux: 120 })]),
     ];
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2', 'c1'])], members, 'ACI318-19');
-    expect(file.memberCount).toBe(2);                 // only the two beams pooled
-    expect(file.excludedMemberIds).toEqual(['c1']);
-    expect(file.text).toContain('Member Type\t 1');   // a beam file
+    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2', 'c1'])], members, 'ACI318-19');
+    expect(files).toHaveLength(2);
+    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
+    expect(byName['G_beam.SCO'].memberCount).toBe(2);
+    expect(byName['G_beam.SCO'].text).toContain('Member Type\t 1');
+    expect(byName['G_col.SCO'].memberCount).toBe(1);
+    expect(byName['G_col.SCO'].text).toContain('Member Type\t 3');
+    for (const f of files) expect(f.excludedMemberIds).toEqual([]);   // every eligible member covered
+  });
+
+  it('records a truly-unsupported member (circular column) as excluded, not dropped silently', () => {
+    const members = [beam('b1', 'B1', [lc({ Mu_pos: 100 })]), circ('c1', 'C1')];
+    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'ACI318-19');
+    expect(file.memberCount).toBe(1);                 // beam only
+    expect(file.excludedMemberIds).toEqual(['c1']);   // circular column reported
   });
 
   it('skips circular columns when picking eligible members', () => {
@@ -209,14 +220,38 @@ describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
 describe('buildGroupEnvelopeScoFiles — EC2 routing', () => {
   const proj: Project = { id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: 'd', members: [] };
 
-  it('routes an EC2 beam group to the 2026 writer, named for the group', () => {
+  it('routes an EC2 beam group to the 2026 writer; with no crack combo it is a single ULS file', () => {
     const members = [beam('b1', 'B1', [lc({ Mu_pos: 120 })]), beam('b2', 'B2', [lc({ Mu_pos: 90 })])];
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'EC2 Grp', ['b1', 'b2'])], members, 'EN1992-1-1', proj);
+    const files = buildGroupEnvelopeScoFiles([group('g', 'EC2 Grp', ['b1', 'b2'])], members, 'EN1992-1-1', proj);
+    expect(files).toHaveLength(1);                     // no SLS combo → no crack file
+    const file = files[0];
     expect(file.text).toContain('Codes\t 14');        // EN 1992-1-1
     expect(file.text).toContain('Member Type\t 2');   // beam (2026 format)
     expect(file.text).toContain('Member Name\t EC2 Grp');   // 2026 setParam adds a leading space
+    expect(file.text).toContain('Bm CheckCracks\t 0');      // ULS file: crack check OFF
     expect(file.fileName).toBe('EC2_Grp.SCO');
     expect(file.memberCount).toBe(2);
+  });
+
+  it('splits an EC2 beam group into a ULS set + a crack set that pools EVERY member\'s SLS row', () => {
+    const cp = { wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4 };
+    const m1: Member = { ...beam('b1', 'B1', [lc({ Mu_pos: 200 })]), crackParams: cp,
+      stationForces: [{ combo: 'QP', stations: [{ x: 0, V: 15, M: 120 }] }] };
+    const m2: Member = { ...beam('b2', 'B2', [lc({ Mu_pos: 150 })]), crackParams: cp,
+      stationForces: [{ combo: 'QP', stations: [{ x: 0, V: 25, M: 180 }] }] };
+    const files = buildGroupEnvelopeScoFiles([group('g', 'EC2', ['b1', 'b2'])], [m1, m2], 'EN1992-1-1', { ...proj, slsCombo: 'QP' });
+
+    expect(files.map(f => f.fileName).sort()).toEqual(['EC2.SCO', 'EC2_crack.SCO']);
+    const uls = files.find(f => f.fileName === 'EC2.SCO')!;
+    const crack = files.find(f => f.fileName === 'EC2_crack.SCO')!;
+    expect(uls.text).toContain('Bm CheckCracks\t 0');     // ULS set: crack OFF
+    expect(crack.text).toContain('Bm CheckCracks\t 1');   // crack set: crack ON
+    expect(uls.text).toContain('Member Name\t EC2');
+    expect(crack.text).toContain('Member Name\t EC2 (crack)');
+    // The ULS set carries both members' ULS rows; the crack set carries both
+    // members' SLS rows (NOT just the representative's).
+    expect(rowsOf(uls.text)).toHaveLength(2);
+    expect(rowsOf(crack.text)).toHaveLength(2);
   });
 
   it('throws for EC2 without the project (crack-width combo needed)', () => {

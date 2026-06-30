@@ -101,6 +101,7 @@ export interface Ec2BeamScoParams {
   faceCount: number; faceBarIdx: number;
   stirrupBarIdx: number; stirrupSpacingMm: number; stirrupLegs: number;
   crackWidthLimitMm: number;
+  checkCracks: boolean; // emit the crack-width check (Bm CheckCracks 1/0)
   rows: string[]; // pre-built Sectional Loads rows
 }
 
@@ -146,7 +147,7 @@ export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
   t = setParam(t, 'Bm NlegsZ', p.stirrupLegs);
   t = setParam(t, 'Bm NlegsY', p.stirrupLegs);
   // Crack width
-  t = setParam(t, 'Bm CheckCracks', 1);
+  t = setParam(t, 'Bm CheckCracks', p.checkCracks ? 1 : 0);
   t = setParam(t, 'Bm CrkWdthLmt', r3(p.crackWidthLimitMm));
   // Forces
   t = replaceSectionalLoads(t, p.rows);
@@ -155,11 +156,10 @@ export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
 
 const sumBars = (gs: { numBars: number }[]) => gs.reduce((s, g) => s + g.numBars, 0);
 
-/** Build the Sectional Loads rows for a beam: ULS sagging + hogging per load
- *  case, then the SLS quasi-permanent crack-width row when one resolves. */
-export function ec2BeamLoadRows(member: Member, project: Project): string[] {
+/** ULS sagging + hogging Sectional Loads rows for a beam, numbered from `start`. */
+export function ec2BeamUlsRows(member: Member, start = 1): string[] {
   const rows: string[] = [];
-  let i = 1;
+  let i = start;
   for (const lc of member.loads) {
     const nf = -(lc.Pu ?? 0) * KIP_TO_KN;
     const tf = (lc.Tu ?? 0) * KIPFT_TO_KNM;
@@ -169,17 +169,30 @@ export function ec2BeamLoadRows(member: Member, project: Project): string[] {
     rows.push(ec2LoadRow(i++, nf, tf, vfz, mPos, { comment: lc.label || `LC${i}` }));
     if (Math.abs(mNeg) > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, mNeg, { comment: `${lc.label || 'LC'} (hog)` }));
   }
-  // SLS quasi-permanent (crack width) — the combo the user selected.
+  return rows;
+}
+
+/** The SLS quasi-permanent crack-width row for a beam (the combo the user
+ *  selected), numbered from `start` — empty when no crack combo resolves. Each
+ *  row is tagged with the member so a pooled crack set stays traceable. */
+export function ec2BeamCrackRows(member: Member, project: Project, start = 1): string[] {
   const cp = resolveCrack(member, project.code, project.slsCombo);
-  if (cp && (cp.Mqp_pos != null || cp.Mqp_neg != null)) {
-    const mqp = Math.max(Math.abs(cp.Mqp_pos ?? 0), Math.abs(cp.Mqp_neg ?? 0)) * KIPFT_TO_KNM;
-    let vqp = 0;
-    if (project.slsCombo && member.stationForces?.length) {
-      const sf = member.stationForces.filter((c) => c.combo === project.slsCombo);
-      if (sf.length) vqp = signedMomentEnvelope(sf).maxV * KIP_TO_KN;
-    }
-    rows.push(ec2LoadRow(i, 0, 0, vqp, mqp, { sust: cp.qpFactor ?? 0.6, comment: 'SLS quasi-perm (crack)' }));
+  if (!cp || (cp.Mqp_pos == null && cp.Mqp_neg == null)) return [];
+  const mqp = Math.max(Math.abs(cp.Mqp_pos ?? 0), Math.abs(cp.Mqp_neg ?? 0)) * KIPFT_TO_KNM;
+  let vqp = 0;
+  if (project.slsCombo && member.stationForces?.length) {
+    const sf = member.stationForces.filter((c) => c.combo === project.slsCombo);
+    if (sf.length) vqp = signedMomentEnvelope(sf).maxV * KIP_TO_KN;
   }
+  return [ec2LoadRow(start, 0, 0, vqp, mqp, { sust: cp.qpFactor ?? 0.6, comment: `${member.label}: SLS quasi-perm (crack)` })];
+}
+
+/** Build the Sectional Loads rows for a single-file beam: ULS sagging + hogging
+ *  per load case, then the SLS quasi-permanent crack-width row when one resolves. */
+export function ec2BeamLoadRows(member: Member, project: Project): string[] {
+  const uls = ec2BeamUlsRows(member, 1);
+  const crack = ec2BeamCrackRows(member, project, uls.length + 1);
+  const rows = [...uls, ...crack];
   if (!rows.length) rows.push(ec2LoadRow(1, 0, 0, 0, 0));
   return rows;
 }
@@ -212,13 +225,32 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
     stirrupSpacingMm: (member.rebar.ties?.spacing ?? 8) * IN_TO_MM,
     stirrupLegs: member.rebar.ties?.legs ?? 2,
     crackWidthLimitMm: member.crackParams?.wLimitBot ?? 0.3,
+    checkCracks: true,
     rows: ec2BeamLoadRows(member, project),
   };
 }
 
-/** Full EC2 beam .SCO text for an app member. */
+/** Full EC2 beam .SCO text for an app member (single file: ULS + in-file crack). */
 export function buildEc2BeamSco(member: Member, project: Project): string {
   return buildBeamScoTextEC2(memberToEc2BeamParams(member, project));
+}
+
+/**
+ * EC2 beam .SCO with explicit Sectional Loads rows and crack-check flag — used by
+ * the per-group envelope to emit a ULS set (checkCracks off) and a separate
+ * crack-width set (checkCracks on) from pooled rows, instead of one combined file.
+ * The section/material/rebar come from `member`; only the load rows and the
+ * member name are overridden.
+ */
+export function buildEc2BeamScoExplicit(
+  member: Member, project: Project, opts: { rows: string[]; checkCracks: boolean; memberName?: string },
+): string {
+  const params = memberToEc2BeamParams(member, project);
+  const rows = opts.rows.length ? opts.rows : [ec2LoadRow(1, 0, 0, 0, 0)];
+  return buildBeamScoTextEC2({
+    ...params, rows, checkCracks: opts.checkCracks,
+    ...(opts.memberName ? { memberName: opts.memberName } : {}),
+  });
 }
 
 // ── EC2 columns (S-Concrete 2026, Member Type 3) ──────────────────────────────
