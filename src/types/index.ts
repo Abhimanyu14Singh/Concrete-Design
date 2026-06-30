@@ -1,6 +1,6 @@
-export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column' | 'shear_wall';
-export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'ACI318-25' | 'EN1992-1-1';
-export type MemberType = 'beam' | 'column' | 'wall';
+export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column';
+export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1';
+export type MemberType = 'beam' | 'column';
 export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
 
 export interface DesignWarning {
@@ -19,32 +19,13 @@ export interface MaterialProps {
 
 export interface SectionDimensions {
   type: SectionType;
-  b: number;        // Width (in); for walls = lw (wall length)
-  h: number;        // Total height/depth (in); for walls = tw (wall thickness)
+  b: number;        // Width (in)
+  h: number;        // Total height/depth (in)
   bw?: number;      // Web width for T/L beam (in)
   hf?: number;      // Flange thickness (in)
   diameter?: number; // Circular section diameter (in)
   coverClear: number; // Clear cover to stirrups (in)
   stirrupDia: number; // Stirrup bar diameter (in)
-  // Wall-specific
-  lw?: number;      // Wall length (in) — alias for b on shear_wall
-  hw?: number;      // Wall height (in)
-  tw?: number;      // Wall thickness (in) — alias for h on shear_wall
-}
-
-// Wall reinforcement layout (separate from beam/column RebarLayout)
-export interface WallRebarLayout {
-  vertBarSize: number;     // #bar size for distributed vertical bars
-  vertSpacing: number;     // spacing of vert bars in each curtain (in)
-  horizBarSize: number;    // #bar size for distributed horizontal bars
-  horizSpacing: number;    // spacing of horiz bars in each curtain (in)
-  numCurtains: 1 | 2;     // single or double curtain
-  sbzBarSize?: number;     // SBZ boundary longitudinal bar size
-  sbzNumBars?: number;     // number of SBZ bars per boundary (each end)
-  sbzTieBarSize?: number;  // SBZ confinement tie bar size
-  sbzTieSpacing?: number;  // SBZ confinement tie spacing (in)
-  sbzTieLegs?: number;     // SBZ tie legs per set
-  driftRatio?: number;     // δu/hw design drift ratio (default 0.015)
 }
 
 export interface RebarLayout {
@@ -230,20 +211,6 @@ export interface DesignResults {
   wk_top?: number;      // crack width at top face (mm)
   wk_face?: number;     // crack width at side face (mm)
   DCR_crack?: number;   // governing crack-width DCR = wk / w_limit (SLS)
-  // Wall-specific results (ACI 318-25)
-  phi_Vn_wall?: number;
-  phi_Mn_wall?: number;
-  DCR_shear_wall?: number;
-  DCR_flex_wall?: number;
-  rhoL?: number;
-  rhoT?: number;
-  sbzRequired?: boolean;
-  sbzLength?: number;
-  sbzAshRequired?: number;
-  sbzAshProvided?: number;
-  DCR_sbzAsh?: number;
-  alphaC?: number;
-  wallVnMax?: number;
   warnings: DesignWarning[];
   status: 'OK' | 'NG' | 'Warning';
 }
@@ -317,7 +284,6 @@ export interface Member {
   material: MaterialProps;
   section: SectionDimensions;
   rebar: RebarLayout;
-  wallRebar?: WallRebarLayout;  // used when memberType === 'wall'
   loads: LoadCase[];
   results?: DesignResults[];
   span?: number;  // ft

@@ -2,7 +2,6 @@ import { useState, type Dispatch, type SetStateAction } from 'react';
 import type { Project, Member, DesignResults, DesignCode, RebarLayout } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
-import { designWallACI } from '../../utils/wallDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import { dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
@@ -38,15 +37,12 @@ function worstOf(r: DesignResults): number {
   return Math.max(
     r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
     r.DCR_PM ?? 0, r.DCR_axial ?? 0,
-    r.DCR_shear_wall ?? 0, r.DCR_flex_wall ?? 0, r.DCR_sbzAsh ?? 0,
   );
 }
 
 function summarize(m: Member, code: DesignCode, slsCombo?: string): MemberSummary {
-  const isWall = m.memberType === 'wall' && !!m.wallRebar;
-  const results = m.loads.map(l => isWall
-    ? designWallACI(m.section, m.material, m.wallRebar!, l)
-    : runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo)));
+  const results = m.loads.map(l =>
+    runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo)));
   const maxDCR = Math.max(...results.map(worstOf));
   const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
   return { member: m, worstResult, maxDCR };
@@ -307,7 +303,6 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
     { key: 'Shear',   fill: '#f59e0b' },
     { key: 'Torsion', fill: '#10b981' },
     { key: 'P-M',     fill: '#ec4899' },
-    { key: 'SBZ Ash', fill: '#ef4444' },
   ] as const;
   const shownSeries = dcrSeriesFilter === '__all__'
     ? DCR_SERIES
@@ -315,18 +310,14 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
 
   const barData = dcrSummaries.map(s => {
     const r = s.worstResult;
-    const isWall   = s.member.memberType === 'wall';
     const isColumn = s.member.memberType === 'column';
     return {
       name: s.member.label.length > 12 ? s.member.label.slice(0, 12) + '…' : s.member.label,
-      'Flex+':   isWall   ? 0 : parseFloat(r.DCR_flex_pos.toFixed(3)),
-      'Flex-':   isWall   ? 0 : parseFloat(r.DCR_flex_neg.toFixed(3)),
-      Shear:     isWall   ? parseFloat((r.DCR_shear_wall ?? r.DCR_shear).toFixed(3))
-                           : parseFloat(r.DCR_shear.toFixed(3)),
-      Torsion:   isWall || isColumn ? 0 : parseFloat(r.DCR_torsion.toFixed(3)),
-      'P-M':     isWall   ? parseFloat((r.DCR_flex_wall ?? 0).toFixed(3))
-                           : parseFloat((r.DCR_PM ?? 0).toFixed(3)),
-      'SBZ Ash': isWall   ? parseFloat((r.DCR_sbzAsh ?? 0).toFixed(3)) : 0,
+      'Flex+':   parseFloat(r.DCR_flex_pos.toFixed(3)),
+      'Flex-':   parseFloat(r.DCR_flex_neg.toFixed(3)),
+      Shear:     parseFloat(r.DCR_shear.toFixed(3)),
+      Torsion:   isColumn ? 0 : parseFloat(r.DCR_torsion.toFixed(3)),
+      'P-M':     parseFloat((r.DCR_PM ?? 0).toFixed(3)),
     };
   });
 

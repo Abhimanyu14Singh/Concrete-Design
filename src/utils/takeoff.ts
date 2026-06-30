@@ -4,7 +4,7 @@
  *
  * Ported from Column_Design_DW's takeoff display (concrete yd³, rebar tons,
  * per-GFA intensities). Works for every member type now that columns are
- * first-class: beams, columns and walls all contribute.
+ * first-class: beams and columns both contribute.
  *
  * Steel weight reuses the same intensity model as the savings report
  * (steelWeightPerFt: Σ As × 3.4 lb/ft·in² longitudinal + closed-hoop ties), so
@@ -63,11 +63,6 @@ export function sectionAreaIn2(s: SectionDimensions): number {
       const hf = s.hf ?? 0;
       return s.b * hf + bw * Math.max(0, s.h - hf);
     }
-    case 'shear_wall': {
-      const lw = s.lw ?? s.b;
-      const tw = s.tw ?? s.h;
-      return lw * tw;
-    }
     default: // rectangular beam / column
       return s.b * (s.h ?? s.b);
   }
@@ -75,8 +70,8 @@ export function sectionAreaIn2(s: SectionDimensions): number {
 
 /**
  * Member length in feet. Prefers the true ETABS frame length (I→J node
- * distance), then the explicit span, then a type default (columns 10 ft, walls
- * from hw, beams 20 ft).
+ * distance), then the explicit span, then a type default (columns 10 ft,
+ * beams 20 ft).
  */
 export function memberLengthFt(m: Member): number {
   const e = m.etabs;
@@ -84,7 +79,6 @@ export function memberLengthFt(m: Member): number {
     return Math.hypot(e.pt2.x - e.pt1.x, e.pt2.y - e.pt1.y, e.pt2.z - e.pt1.z);
   }
   if (m.span && m.span > 0) return m.span;
-  if (m.section.type === 'shear_wall') return (m.section.hw ?? m.section.b * 2) / 12; // hw stored in inches
   return m.memberType === 'column' ? 10 : 20;
 }
 
@@ -111,7 +105,6 @@ function emptyByType(): Record<MemberType, TakeoffByType> {
   return {
     beam: { count: 0, concreteFt3: 0, steelLb: 0 },
     column: { count: 0, concreteFt3: 0, steelLb: 0 },
-    wall: { count: 0, concreteFt3: 0, steelLb: 0 },
   };
 }
 

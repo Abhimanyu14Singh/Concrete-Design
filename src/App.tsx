@@ -590,7 +590,7 @@ export default function App() {
 
         {sidebarOpen && (
           <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb' }}>
-            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column], ['Wall', MEMBER_COLOR.wall]].map(([t, c]) => (
+            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
               <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
                 <span style={{ fontSize: 10, color: '#9ca3af' }}>{t}</span>
@@ -803,7 +803,7 @@ export default function App() {
           <div style={{ fontSize: 11, color: '#6b7280' }}>{project.name}</div>
           <Dropdown
             value={project.code}
-            options={(['ACI318-19', 'ACI318-14', 'ACI318-25', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => ({ value: c, label: c }))}
+            options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => ({ value: c, label: c }))}
             onChange={v => {
               const newCode = v as import('./types').DesignCode;
               if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');

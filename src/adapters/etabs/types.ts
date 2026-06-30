@@ -8,7 +8,7 @@
  * To implement the ETABS adapter:
  *  1. Fill in any missing fields below as needed.
  *  2. Create src/adapters/etabs/index.ts implementing ModelAdapter.
- *  3. Map EtabsFrame → BeamMember / ColumnMember / WallMember based on FrameType.
+ *  3. Map EtabsFrame → BeamMember / ColumnMember based on FrameType.
  *  4. Map EtabsLoadCombination + EtabsFrameForces → BeamLoadCase / ColumnLoadCase.
  *  5. Register the adapter in src/adapters/index.ts.
  */

@@ -42,10 +42,12 @@ function beam(id: string, label: string, loads: LC[] = [lc({ Mu_pos: 180, Mu_neg
     loads, span: 20,
   };
 }
-function wall(id: string, label: string): Member {
+// A circular column — NOT S-Concrete-eligible (the writer emits rectangular
+// templates only), so it stands in for "a member the batch must skip".
+function circ(id: string, label: string): Member {
   return {
-    ...beam(id, label), memberType: 'wall',
-    section: { type: 'shear_wall', b: 120, h: 12, lw: 120, tw: 12, hw: 180, coverClear: 1.5, stirrupDia: 4 },
+    ...beam(id, label), memberType: 'column',
+    section: { type: 'circular_column', b: 24, h: 24, diameter: 24, coverClear: 1.5, stirrupDia: 4 },
   };
 }
 const group = (id: string, label: string, memberIds: string[]): DesignGroup => ({ id, label, memberIds });
@@ -150,14 +152,14 @@ describe('edge cases', () => {
     for (const v of Object.values(rows[0])) expect(Number.isNaN(v)).toBe(false);
   });
 
-  it('a mixed group exports the beams and skips non-S-Concrete sections (walls)', () => {
-    const members = [beam('b1', 'B1'), wall('w1', 'W1'), beam('b2', 'B2')];
-    const files = buildScoFilesByGroup([group('g', 'G', ['b1', 'w1', 'b2'])], members, 'ACI318-19')[0].files;
-    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);  // wall dropped
+  it('a mixed group exports the beams and skips non-S-Concrete sections (circular columns)', () => {
+    const members = [beam('b1', 'B1'), circ('c1', 'C1'), beam('b2', 'B2')];
+    const files = buildScoFilesByGroup([group('g', 'G', ['b1', 'c1', 'b2'])], members, 'ACI318-19')[0].files;
+    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);  // circular column dropped
   });
 
   it('a group of only non-beam members yields no files', () => {
-    const files = buildScoFilesByGroup([group('g', 'G', ['w1'])], [wall('w1', 'W1')], 'ACI318-19')[0].files;
+    const files = buildScoFilesByGroup([group('g', 'G', ['w1'])], [circ('c1', 'C1')], 'ACI318-19')[0].files;
     expect(files).toHaveLength(0);
   });
 
@@ -220,13 +222,13 @@ describe('collectGroupScoFiles — the flat list fed to the batch run', () => {
   });
 
   it('falls back to ALL eligible members when no groups are defined', () => {
-    const members = [beam('b1', 'B1'), beam('b2', 'B2'), wall('w', 'W')];
+    const members = [beam('b1', 'B1'), beam('b2', 'B2'), circ('c', 'C')];
     const files = collectGroupScoFiles([], members, 'ACI318-19');
-    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);   // wall excluded
+    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);   // circular column excluded
   });
 
   it('returns nothing when the groups contain no eligible members', () => {
-    const files = collectGroupScoFiles([group('g', 'G', ['w'])], [wall('w', 'W')], 'ACI318-19');
+    const files = collectGroupScoFiles([group('g', 'G', ['w'])], [circ('c', 'C')], 'ACI318-19');
     expect(files).toEqual([]);
   });
 

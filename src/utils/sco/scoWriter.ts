@@ -442,8 +442,8 @@ export function designCodeToScoHeader(
     case 'ACI318-19':
       return { codeNumber: 18, units: 0, barType: 2 };
     default:
-      // ACI318-14 / ACI318-25 / EN1992-1-1: unknown S-Concrete enum — must be
-      // configured/confirmed against S-Concrete before emitting a .SCO.
+      // ACI318-14: unknown S-Concrete enum — confirm before emitting. (EC2 has
+      // its own writer, scoWriterEC2, and does not use this header.)
       return null;
   }
 }

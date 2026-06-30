@@ -4,7 +4,6 @@ import { generateBreakdown } from '../../utils/calcBreakdown';
 import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
 import { generateColumnBreakdown } from '../../utils/calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
-import { generateWallBreakdown } from '../../utils/calcBreakdownWall';
 import { zoneShearDemands } from '../../adapters/etabs';
 import { resolveCrack } from '../../utils/resolveCrack';
 import type { CalcSection } from '../../utils/calcBreakdown';
@@ -22,15 +21,12 @@ interface Props {
 export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, onClose }: Props) {
   const { fmt } = useUnits();
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
-  const isWall = member.memberType === 'wall' && !!member.wallRebar;
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
   const isEC2 = code === 'EN1992-1-1';
   // Resolve crack params so the §7.3.4 sheet uses the selected SLS combo's
   // moments (Mqp_pos/Mqp_neg) — same resolution the on-screen design path uses.
   const crackParams = isEC2 ? resolveCrack(member, code, slsCombo) : member.crackParams;
-  const sections: CalcSection[] = isWall
-    ? generateWallBreakdown(member.section, member.material, member.wallRebar!, load)
-    : isColumn
+  const sections: CalcSection[] = isColumn
     ? (isEC2
         ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
         : generateColumnBreakdown(member.section, member.material, member.rebar, load))
@@ -84,7 +80,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
               Calculation Breakdown
             </h2>
             <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280' }}>
-              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; {isWall ? 'ACI 318-25 Shear Wall' : isEC2 ? 'EN 1992-1-1' : code}
+              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; {isEC2 ? 'EN 1992-1-1' : code}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -121,13 +117,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
             borderRadius: 10, padding: '12px 16px', marginBottom: 16,
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8,
           }}>
-            {isWall ? (
-              <>
-                <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
-                <LoadItem label="Mu" value={fmt(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg, 'moment')} />
-                <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
-              </>
-            ) : isColumn ? (
+            {isColumn ? (
               <>
                 <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
                 <LoadItem label="Mux" value={fmt(load.Mux ?? 0, 'moment')} />

@@ -1,7 +1,7 @@
 /**
  * TakeoffPanel — read-only quantity takeoff for the whole model: gross concrete
  * volume, reinforcement weight, and (when a gross floor area is entered) per-GFA
- * intensities. Beams, columns and walls all contribute.
+ * intensities. Beams and columns both contribute.
  *
  * Imperial-native (yd³, tons) like the source tool, with SI display (m³, tonnes)
  * when the project is in SI. GFA is a local input — it is not persisted.
@@ -56,10 +56,9 @@ export default function TakeoffPanel({ members }: Props) {
   const wtBig = (lb: number) => si ? `${num(lb * LB_TO_KG / 1000, 2)} t` : `${num(lb / 2000, 2)} ton`;
   const volUnit = si ? 'm³' : 'yd³';
 
-  const rows: { key: 'beam' | 'column' | 'wall'; label: string }[] = [
+  const rows: { key: 'beam' | 'column'; label: string }[] = [
     { key: 'beam', label: 'Beams' },
     { key: 'column', label: 'Columns' },
-    { key: 'wall', label: 'Walls' },
   ];
 
   return (

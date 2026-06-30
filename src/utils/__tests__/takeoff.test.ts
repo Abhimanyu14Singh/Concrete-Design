@@ -47,10 +47,6 @@ describe('sectionAreaIn2', () => {
     // 36×6 flange + 12×18 web = 216 + 216 = 432
     expect(sectionAreaIn2(s)).toBe(432);
   });
-  it('shear wall = lw·tw', () => {
-    const s: SectionDimensions = { type: 'shear_wall', b: 120, h: 12, lw: 120, tw: 12, hw: 180, coverClear: 1.5, stirrupDia: 4 };
-    expect(sectionAreaIn2(s)).toBe(1440);
-  });
 });
 
 describe('memberLengthFt', () => {

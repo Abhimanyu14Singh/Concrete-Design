@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Member, SectionType, MemberType, WallRebarLayout, BarGroup } from '../../types';
+import type { Member, SectionType, MemberType, BarGroup } from '../../types';
 import LoadCaseTable from './LoadCaseTable';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
@@ -16,7 +16,6 @@ const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'L_beam',           label: 'L-Beam' },
   { value: 'rectangular_column', label: 'Rect. Column' },
   { value: 'circular_column',  label: 'Circ. Column' },
-  { value: 'shear_wall',       label: 'Shear Wall (ACI 318-25)' },
 ];
 
 // ── Module-level sub-components — NEVER defined inside a render function ──────
@@ -113,18 +112,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
 
   // Unit-aware default bar sizes (negative = metric Ø mm, positive = US #).
   const dLong = units === 'si' ? -16 : 8;   // longitudinal
-  const dWeb  = units === 'si' ? -12 : 5;   // distributed wall steel
   const dStir = units === 'si' ? -10 : 4;   // stirrups / ties
-  const dSbz  = units === 'si' ? -25 : 8;   // SBZ vertical
-
-  // Unit-aware wall-rebar defaults so SI projects never seed imperial bar sizes.
-  function defaultWallRebar(): WallRebarLayout {
-    return {
-      vertBarSize: dWeb, vertSpacing: 12, horizBarSize: dWeb, horizSpacing: 12,
-      numCurtains: 2, sbzBarSize: dSbz, sbzNumBars: 8,
-      sbzTieBarSize: dStir, sbzTieSpacing: 4, sbzTieLegs: 4, driftRatio: 0.015,
-    };
-  }
 
   function update(patch: Partial<Member>) {
     const updated = { ...m, ...patch };
@@ -153,30 +141,18 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
     update({ crackParams: { ...crackP, ...p } });
 
   const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
-  const isWall = m.section.type === 'shear_wall';
   const sideBar = (p: Partial<Member['rebar']['topBars'][0]>) =>
     update({ rebar: { ...m.rebar, sideBars: [{ ...(m.rebar.sideBars?.[0] ?? { numBars: 0, barSize: dLong }), ...p }] } });
-
-  function updateWallRebar(patch: Partial<WallRebarLayout>) {
-    update({ wallRebar: { ...(m.wallRebar ?? defaultWallRebar()), ...patch } });
-  }
 
   /** Switching section type to/from a column syncs memberType and seeds sensible defaults. */
   function changeSectionType(v: SectionType) {
     const toColumn = v.endsWith('_column');
-    const toWall = v === 'shear_wall';
     const wasColumn = isColumn;
     const patch: Partial<Member> = { section: { ...m.section, type: v } };
     if (v === 'circular_column' && !m.section.diameter) {
       patch.section = { ...patch.section!, diameter: 20, b: 20, h: 20 };
     }
-    if (toWall) {
-      patch.memberType = 'wall';
-      patch.section = { ...patch.section!, b: 120, h: 12, lw: 120, tw: 12, hw: 180 };
-      if (!m.wallRebar) {
-        patch.wallRebar = defaultWallRebar();
-      }
-    } else if (toColumn && !wasColumn) {
+    if (toColumn && !wasColumn) {
       patch.memberType = 'column';
       patch.rebar = {
         topBars: [{ numBars: 3, barSize: dLong }],
@@ -185,9 +161,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         ties: { barSize: dStir, spacing: 12, legs: 2 },
         tieType: 'tied',
       };
-    } else if (!toColumn && !toWall && wasColumn) {
-      patch.memberType = 'beam';
-    } else if (!toColumn && !toWall && isWall) {
+    } else if (!toColumn && wasColumn) {
       patch.memberType = 'beam';
     }
     update(patch);
@@ -231,7 +205,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         <InputRow label="Label" value={m.label} type="text" onChange={v => update({ label: v })} />
         <UnitInputRow label="Span" value={m.span ?? 20} quantity="spanLength" onChange={v => update({ span: v })} />
         <SelectRow label="Member type" value={m.memberType}
-          options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }, { value: 'wall', label: 'Wall' }]}
+          options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }]}
           onChange={v => update({ memberType: v as MemberType })} />
       </div>
 
@@ -249,16 +223,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         <div style={headingStyle}>Section Dimensions</div>
         <SelectRow label="Section type" value={m.section.type} options={SECTION_TYPES}
           onChange={v => changeSectionType(v as SectionType)} />
-        {m.section.type === 'shear_wall' ? (
-          <>
-            <UnitInputRow label="Wall length lw" value={m.section.lw ?? m.section.b} quantity="length"
-              onChange={v => sec({ b: v, lw: v })} />
-            <UnitInputRow label="Wall thickness tw" value={m.section.tw ?? m.section.h} quantity="length"
-              onChange={v => sec({ h: v, tw: v })} />
-            <UnitInputRow label="Wall height hw" value={m.section.hw ?? (m.section.b * 2)} quantity="length"
-              onChange={v => sec({ hw: v })} />
-          </>
-        ) : m.section.type === 'circular_column' ? (
+        {m.section.type === 'circular_column' ? (
           <UnitInputRow label="Diameter" value={m.section.diameter ?? 20} quantity="length"
             onChange={v => sec({ diameter: v, b: v, h: v })} />
         ) : (
@@ -276,88 +241,12 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           </>
         )}
         <UnitInputRow label="Clear cover" value={m.section.coverClear} quantity="length" onChange={v => sec({ coverClear: v })} />
-        {!isWall && (
-          <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
-            options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
-            onChange={v => sec({ stirrupDia: +v })} />
-        )}
+        <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
+          options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
+          onChange={v => sec({ stirrupDia: +v })} />
       </div>
 
-      {/* Wall Reinforcement */}
-      {isWall && (
-        <>
-          <div style={cardStyle}>
-            <div style={headingStyle}>Distributed Web Reinforcement</div>
-            <div style={{ background: '#eff6ff', borderRadius: 6, padding: '8px', marginBottom: 8 }}>
-              <p style={{ fontSize: 11, color: '#2563eb', fontWeight: 600, margin: '0 0 6px' }}>Vertical (Longitudinal) Bars §11.6</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <SelectRow label="Bar size" value={m.wallRebar?.vertBarSize ?? dWeb}
-                    options={barSizeOptions(units, m.wallRebar?.vertBarSize ?? dWeb).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                    onChange={v => updateWallRebar({ vertBarSize: +v })} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <UnitInputRow label="Spacing sv" value={m.wallRebar?.vertSpacing ?? 12} quantity="length"
-                    onChange={v => updateWallRebar({ vertSpacing: v })} />
-                </div>
-              </div>
-            </div>
-            <div style={{ background: '#f0fdf4', borderRadius: 6, padding: '8px', marginBottom: 8 }}>
-              <p style={{ fontSize: 11, color: '#16a34a', fontWeight: 600, margin: '0 0 6px' }}>Horizontal (Transverse) Bars §11.6</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <SelectRow label="Bar size" value={m.wallRebar?.horizBarSize ?? dWeb}
-                    options={barSizeOptions(units, m.wallRebar?.horizBarSize ?? dWeb).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                    onChange={v => updateWallRebar({ horizBarSize: +v })} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <UnitInputRow label="Spacing sh" value={m.wallRebar?.horizSpacing ?? 12} quantity="length"
-                    onChange={v => updateWallRebar({ horizSpacing: v })} />
-                </div>
-              </div>
-            </div>
-            <SelectRow label="Curtains" value={m.wallRebar?.numCurtains ?? 2}
-              options={[{ value: 1, label: 'Single curtain' }, { value: 2, label: 'Double curtain' }]}
-              onChange={v => updateWallRebar({ numCurtains: +v as 1 | 2 })} />
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ ...headingStyle, color: '#d97706' }}>Special Boundary Zone (SBZ) §18.10.6</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <div style={{ flex: 1 }}>
-                <SelectRow label="SBZ bar size" value={m.wallRebar?.sbzBarSize ?? dSbz}
-                  options={barSizeOptions(units, m.wallRebar?.sbzBarSize ?? dSbz).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                  onChange={v => updateWallRebar({ sbzBarSize: +v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <InputRow label="# SBZ bars" value={m.wallRebar?.sbzNumBars ?? 8} min={2}
-                  onChange={v => updateWallRebar({ sbzNumBars: +v })} />
-              </div>
-            </div>
-            <p style={{ fontSize: 11, color: '#9ca3af', margin: '4px 0 6px' }}>SBZ Confinement Ties §18.10.6.4</p>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <div style={{ flex: 1 }}>
-                <SelectRow label="Tie size" value={m.wallRebar?.sbzTieBarSize ?? dStir}
-                  options={barSizeOptions(units, m.wallRebar?.sbzTieBarSize ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                  onChange={v => updateWallRebar({ sbzTieBarSize: +v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <UnitInputRow label="Tie spacing" value={m.wallRebar?.sbzTieSpacing ?? 4} quantity="length"
-                  onChange={v => updateWallRebar({ sbzTieSpacing: v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <InputRow label="Legs" value={m.wallRebar?.sbzTieLegs ?? 4} min={2}
-                  onChange={v => updateWallRebar({ sbzTieLegs: +v })} />
-              </div>
-            </div>
-            <InputRow label="Drift δu/hw" value={m.wallRebar?.driftRatio ?? 0.015} step={0.005}
-              onChange={v => updateWallRebar({ driftRatio: +v })} />
-          </div>
-        </>
-      )}
-
       {/* Beam/Column Reinforcement */}
-      {!isWall && (<>
       <div style={cardStyle}>
         <div style={headingStyle}>Reinforcement</div>
         {(!isColumn ? (['topBars', 'botBars'] as const) : []).map(face => (
@@ -567,7 +456,6 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           onChange={v => crack({ kt: +v })} />
       </div>
       )}
-      </>) } {/* end !isWall */}
 
       {/* Load Cases */}
       <div style={cardStyle}>

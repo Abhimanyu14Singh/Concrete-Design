@@ -1,6 +1,6 @@
 /**
  * PDF export: Unicode font rendering + full-project smoke test (beam, circular
- * column, and wall — including labels/warnings with Greek/math characters).
+ * column — including labels/warnings with Greek/math characters).
  * DejaVu Sans is embedded so Greek/subscript/superscript render natively;
  * winAnsiSafe now only strips C0/C1 control chars.
  */
@@ -64,22 +64,10 @@ function makeProject(): Project {
     loads: [{ id: 'lc1', label: 'G+Q', Mu_pos: 0, Mu_neg: 0, Vu: 30, Tu: 0, Pu: 400, Mux: 120, Muy: 60 }],
     span: 12,
   };
-  const wall: Member = {
-    id: 'W1', label: 'Core wall', memberType: 'wall',
-    material: { fc: 6000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 },
-    section: { type: 'shear_wall', b: 120, h: 12, lw: 120, tw: 12, hw: 180, coverClear: 0.75, stirrupDia: 4 },
-    rebar: { topBars: [], botBars: [] },
-    wallRebar: {
-      vertBarSize: 5, vertSpacing: 12, horizBarSize: 5, horizSpacing: 12, numCurtains: 2,
-      sbzBarSize: 8, sbzNumBars: 8, sbzTieBarSize: 4, sbzTieSpacing: 4, sbzTieLegs: 4, driftRatio: 0.01,
-    },
-    loads: [{ id: 'lc1', label: 'EQ', Mu_pos: 1500, Mu_neg: 0, Vu: 200, Tu: 0, Pu: 500 }],
-    span: 15,
-  };
   return {
     id: 'p1', name: 'Smoke φ Project', code: 'ACI318-19',
     description: '', engineer: 'QA', date: '2026-06-11',
-    members: [beam, col, wall],
+    members: [beam, col],
   };
 }
 
@@ -102,7 +90,7 @@ describe('exportPDF smoke test', () => {
     });
   });
 
-  it('resolves without throwing for beam + circular column + wall with φ in labels', async () => {
+  it('resolves without throwing for beam + circular column with φ in labels', async () => {
     await expect(exportPDF(makeProject())).resolves.toBeUndefined();
     // allow the captured arrayBuffer microtask to settle
     await new Promise(r => setTimeout(r, 0));

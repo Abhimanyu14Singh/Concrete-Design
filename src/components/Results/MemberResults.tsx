@@ -7,7 +7,6 @@ import {
 } from '../../utils/overrides';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
-import { designWallACI, wallInteractionCurve, wallNeutralAxisAtP } from '../../utils/wallDesign';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { capacityLabels } from '../../utils/units';
@@ -17,7 +16,6 @@ import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import ForceDiagram from '../Detailing/ForceDiagram';
 import InteractionDiagram from '../Detailing/InteractionDiagram';
-import WallSectionView from '../Detailing/WallSectionView';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import InfoTooltip from '../common/InfoTooltip';
@@ -68,10 +66,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   const cap = capacityLabels(code);
 
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const isWall = member.memberType === 'wall' && !!member.wallRebar;
-  const result: DesignResults = isWall
-    ? designWallACI(member.section, member.material, member.wallRebar!, load)
-    : runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
+  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
@@ -89,36 +84,17 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         )
     : [];
 
-  // Neutral axis depth at Pn = Pu (§18.10.6.2) for the wall SBZ graphics
-  const wallC = isWall
-    ? wallNeutralAxisAtP(
-        wallInteractionCurve(
-          member.section.lw ?? member.section.b,
-          member.section.tw ?? member.section.h ?? 12,
-          member.material.fc, member.material.fy, member.material.Es,
-          member.wallRebar!,
-        ),
-        load.Pu,
-      )
-    : 0;
-
-  // C1: compute all-LC results to find governing cases (walls use the wall engine)
+  // C1: compute all-LC results to find governing cases
   const allResults = member.loads.map(l => ({
     id: l.id, label: l.label,
-    r: isWall
-      ? designWallACI(member.section, member.material, member.wallRebar!, l)
-      : runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo)),
+    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo)),
   }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
   const govShear    = allResults.reduce((a, b) => b.r.DCR_shear     > a.r.DCR_shear     ? b : a).id;
   const govTorsion  = allResults.reduce((a, b) => b.r.DCR_torsion   > a.r.DCR_torsion   ? b : a).id;
   const govPM       = allResults.reduce((a, b) => (b.r.DCR_PM ?? 0) > (a.r.DCR_PM ?? 0) ? b : a).id;
-  const govWallShear = allResults.reduce((a, b) => (b.r.DCR_shear_wall ?? 0) > (a.r.DCR_shear_wall ?? 0) ? b : a).id;
-  const govWallFlex  = allResults.reduce((a, b) => (b.r.DCR_flex_wall ?? 0) > (a.r.DCR_flex_wall ?? 0) ? b : a).id;
-  const govSet      = isWall
-    ? new Set([govWallShear, govWallFlex])
-    : isColumn
+  const govSet      = isColumn
     ? new Set([govPM, govShear])
     : new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
 
@@ -232,7 +208,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          {onRebarChange && !isColumn && !isWall && (
+          {onRebarChange && !isColumn && (
             <button
               onClick={handleOptimize}
               style={{ padding: '5px 10px', border: '1px solid #d97706', borderRadius: 6, background: '#fffbeb', fontSize: 11, cursor: 'pointer', color: '#d97706', fontWeight: 600 }}
@@ -290,28 +266,14 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
 
         {/* Center: Section diagram */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          {isWall && member.wallRebar ? (
-            <WallSectionView
-              section={member.section}
-              wallRebar={member.wallRebar}
-              Pu={load.Pu}
-              Mu={Math.abs(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg)}
-              c_demand={wallC}
-              fc={member.material.fc}
-              fyt={member.material.fyt}
-              width={420}
-              height={180}
-            />
-          ) : (
-            <SectionView
-              section={member.section}
-              rebar={member.rebar}
-              result={result}
-              width={300}
-              height={250}
-              onRebarChange={onRebarChange ? handleRebarChange : undefined}
-            />
-          )}
+          <SectionView
+            section={member.section}
+            rebar={member.rebar}
+            result={result}
+            width={300}
+            height={250}
+            onRebarChange={onRebarChange ? handleRebarChange : undefined}
+          />
           {member.memberType === 'beam' && (
             <div style={{ width: '100%', maxWidth: 560 }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 2 }}>
@@ -341,36 +303,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
 
         {/* Right: design results */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
-          {isWall ? (
-            <>
-              <SectionLabel title="In-Plane Shear §18.10.4" />
-              <KV k="αc" v={(result.alphaC ?? 0).toFixed(2)} />
-              <KV k="φVn" v={fmt(result.phi_Vn_wall ?? 0, 'force')} />
-              <KV k="Vn,max" v={fmt(result.wallVnMax ?? 0, 'force')} />
-              <KV k="  DCR" v={(result.DCR_shear_wall ?? 0).toFixed(3)} dcr={result.DCR_shear_wall ?? 0} />
-
-              <SectionLabel title="P-M §18.10.5" />
-              <KV k="φMn,wall" v={fmt(result.phi_Mn_wall ?? 0, 'moment')} />
-              <KV k="  DCR" v={(result.DCR_flex_wall ?? 0).toFixed(3)} dcr={result.DCR_flex_wall ?? 0} />
-
-              <SectionLabel title="Min. Reinf. §11.6" />
-              <KV k="ρl" v={`${((result.rhoL ?? 0) * 100).toFixed(4)}%`}
-                dcr={(result.rhoL ?? 0) < 0.0025 ? 1.5 : 0} />
-              <KV k="ρt" v={`${((result.rhoT ?? 0) * 100).toFixed(4)}%`}
-                dcr={(result.rhoT ?? 0) < 0.0025 ? 1.5 : 0} />
-
-              <SectionLabel title="SBZ §18.10.6" />
-              <KV k="Required" v={result.sbzRequired ? '⚠ YES' : '✓ No'} />
-              {result.sbzRequired && (
-                <>
-                  <KV k="lbe" v={fmt(result.sbzLength ?? 0, 'length')} />
-                  <KV k="Ash,req" v={fmt(result.sbzAshRequired ?? 0, 'area', 3)} />
-                  <KV k="Ash,prov" v={fmt(result.sbzAshProvided ?? 0, 'area', 3)} />
-                  <KV k="  DCR" v={(result.DCR_sbzAsh ?? 0).toFixed(3)} dcr={result.DCR_sbzAsh ?? 0} />
-                </>
-              )}
-            </>
-          ) : isColumn ? (
+          {isColumn ? (
             <>
               <SectionLabel title="Axial" />
               <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
@@ -514,9 +447,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
               <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f9fafb' }}>
-                    {(isWall
-                      ? ['Load Case', 'Shear DCR', 'P-M DCR', 'SBZ Ash DCR', 'Status']
-                      : isColumn
+                    {(isColumn
                       ? ['Load Case', 'P-M DCR', 'Axial DCR', 'Shear DCR', 'Status']
                       : ['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status']
                     ).map(h => (
@@ -535,13 +466,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                         {govSet.has(id) && <span style={{ color: '#d97706', marginRight: 4 }}>★</span>}
                         {label}
                       </td>
-                      {isWall ? (
-                        <>
-                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear_wall ?? 0)}>{(r.DCR_shear_wall ?? 0).toFixed(3)}</span></td>
-                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_wall ?? 0)}>{(r.DCR_flex_wall ?? 0).toFixed(3)}</span></td>
-                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_sbzAsh ?? 0)}>{(r.DCR_sbzAsh ?? 0).toFixed(3)}</span></td>
-                        </>
-                      ) : isColumn ? (
+                      {isColumn ? (
                         <>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_PM ?? 0)}>{(r.DCR_PM ?? 0).toFixed(3)}</span></td>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_axial ?? 0)}>{(r.DCR_axial ?? 0).toFixed(3)}</span></td>

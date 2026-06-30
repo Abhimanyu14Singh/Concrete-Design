@@ -37,7 +37,6 @@ export function dcrBg(d: number): string {
 export const MEMBER_COLOR: Record<string, string> = {
   beam: '#2563eb',
   column: '#7c3aed',
-  wall: '#059669',
 };
 
 export const BARS = {
