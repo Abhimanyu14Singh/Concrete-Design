@@ -10,6 +10,7 @@ import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
+import Map3DCanvas from './Map3DCanvas';
 import GroupPanel from './GroupPanel';
 import GroupActionsPanel from './GroupActionsPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -79,6 +80,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [flexFace, setFlexFace] = useState<FlexFace>('bot');
   const [story, setStory] = useState<string>('All');
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [rightTab, setRightTab] = useState<RightTab>('groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
@@ -474,6 +476,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}
           />
 
+          {/* 2D plan / 3D orbit toggle */}
+          <div style={{ display: 'flex', gap: 2 }}>
+            {(['2d', '3d'] as const).map(vm => (
+              <button key={vm} onClick={() => setViewMode(vm)}
+                style={{ padding: '5px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: viewMode === vm ? '#0f766e' : 'white', color: viewMode === vm ? 'white' : '#374151' }}
+                title={vm === '3d' ? 'Rotatable 3D view (drag to orbit, wheel to zoom)' : 'Plan view'}>
+                {vm.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
           {/* Color mode buttons */}
           <div style={{ display: 'flex', gap: 2 }}>
             {(['dcr', 'group', 'section'] as ColorMode[]).map(mode => (
@@ -592,6 +605,26 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
         {/* Map canvas */}
         <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+          {viewMode === '3d' ? (
+            <Map3DCanvas
+              frames={frames}
+              dcrById={dcrById}
+              infoById={infoById}
+              designGroups={groups}
+              story={story}
+              colorMode={colorMode}
+              onDoubleClick={onPickMember}
+              width={canvasSize.w}
+              height={canvasSize.h}
+              metricById={metricById}
+              metricRange={effectiveMetricRange}
+              autoGroupOverlay={autoGroupOverlay}
+              hiddenMemberIds={hiddenMemberIds}
+              hiddenStories={hiddenStories}
+              showErrors={showErrors}
+              errorMemberIds={errorMemberIds}
+            />
+          ) : (
           <MapCanvas
             frames={frames}
             dcrById={dcrById}
@@ -624,9 +657,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             showErrors={showErrors}
             errorMemberIds={errorMemberIds}
           />
+          )}
 
           {/* Beam inspect card */}
-          {inspectMode && inspectedMember && (
+          {viewMode === '2d' && inspectMode && inspectedMember && (
             <BeamInspectCard
               member={inspectedMember}
               designResults={designResultsById[inspectedMember.id]}

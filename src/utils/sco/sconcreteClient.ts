@@ -45,3 +45,12 @@ export async function generateScoFiles(files: ScoFile[], outDir: string): Promis
 export async function runScoBatch(files: ScoFile[], cfg: SconcreteRunConfig): Promise<SconcreteRunResult> {
   return await ipc()('run', { ...cfg, files }) as SconcreteRunResult;
 }
+
+/**
+ * Re-run BatchReporter on the .SCO files ALREADY in cfg.outDir, without writing
+ * anything — so manual tweaks the user made to those files (in S-Concrete or a
+ * text editor) are preserved. Reads the freshly produced .SCRS back.
+ */
+export async function rerunScoBatch(cfg: SconcreteRunConfig): Promise<SconcreteRunResult> {
+  return await ipc()('rerun', { ...cfg }) as SconcreteRunResult;
+}

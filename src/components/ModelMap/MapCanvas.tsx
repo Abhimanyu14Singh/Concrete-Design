@@ -6,10 +6,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
-import { valueToRampColor, rampStops } from './colorRamp';
-import { groupColor } from './groupColors';
+import { rampStops } from './colorRamp';
+import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type ColorMode } from './frameColor';
 
-export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight' | 'autoGroup';
+export type { ColorMode };
 export type DiagramMode = 'off' | 'moment' | 'shear';
 
 /** Rich per-member info shown in the tooltip. */
@@ -115,52 +115,12 @@ export default function MapCanvas({
   const tx = (x: number) => pad + (x - minX) * scale;
   const ty = (y: number) => height - pad - (y - minY) * scale;
 
-  // Group color lookup (by memberId)
-  const groupColorMap = new Map<string, string>();
-  designGroups.forEach((g, i) => {
-    const color = groupColor(g.color, i);
-    g.memberIds.forEach(mid => groupColorMap.set(mid, color));
-  });
-
-  // Auto-group overlay color lookup
-  const autoGroupColorMap = new Map<string, string>();
-  autoGroupOverlay.forEach(bin => {
-    bin.memberIds.forEach(mid => autoGroupColorMap.set(mid, bin.color));
-  });
-
-  function frameColor(f: MapFrame): string {
-    if (colorMode === 'autoGroup') {
-      if (f.memberId) {
-        const c = autoGroupColorMap.get(f.memberId);
-        if (c) return c;
-      }
-      return '#9ca3af';
-    }
-    if (colorMode === 'group') {
-      if (f.memberId) {
-        const c = groupColorMap.get(f.memberId);
-        if (c) return c;
-      }
-      return '#9ca3af';
-    }
-    if ((colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && f.memberId) {
-      const v = metricById[f.memberId];
-      if (v !== undefined && metricRange) {
-        return valueToRampColor(v, metricRange.min, metricRange.max);
-      }
-      return '#d1d5db';
-    }
-    if (colorMode === 'section') {
-      let h = 0;
-      for (const ch of f.sectionName) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
-      return `hsl(${(h * 137) % 360},60%,45%)`;
-    }
-    if (f.memberId) {
-      const dcr = dcrById[f.memberId] ?? 0;
-      return dcrToColor(dcr);
-    }
-    return '#d1d5db';
-  }
+  // Shared coloring (identical in the 3D view): group / auto-group lookups + the
+  // per-frame color for the active mode.
+  const groupColorMap = buildGroupColorMap(designGroups);
+  const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
+  const frameColor = (f: MapFrame): string =>
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange });
 
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();

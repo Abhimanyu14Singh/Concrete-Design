@@ -7,7 +7,7 @@
  * the bridge is mocked and we assert the wiring around it.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { hasSconcrete, generateScoFiles, runScoBatch } from '../sconcreteClient';
+import { hasSconcrete, generateScoFiles, runScoBatch, rerunScoBatch } from '../sconcreteClient';
 import { collectGroupScoFiles, parseBatchResults } from '../scoBatch';
 import type { Member, DesignGroup } from '../../../types';
 
@@ -93,6 +93,34 @@ describe('runScoBatch — the group .SCO files reach the batch run', () => {
   it('throws a helpful error when the desktop bridge is absent', async () => {
     (globalThis as { window?: unknown }).window = {};  // no electronAPI
     await expect(runScoBatch([], { pythonExe: '', batchReporter: '', outDir: '' }))
+      .rejects.toThrow(/Windows desktop app/);
+  });
+});
+
+describe('rerunScoBatch — re-run an existing folder (edits preserved)', () => {
+  it('calls the "rerun" method with the config and NO files payload', async () => {
+    installBridge(() => ({ exitCode: 0, scoCount: 3, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: '', stderr: '' }));
+    await rerunScoBatch({ pythonExe: 'py', batchReporter: 'r.py', outDir: '/scos', title: 'T', engineer: 'EOR' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('rerun');
+    const args = calls[0].args as { files?: unknown; outDir: string; pythonExe: string };
+    expect(args.files).toBeUndefined();   // nothing is re-written — the folder is used as-is
+    expect(args.outDir).toBe('/scos');
+    expect(args.pythonExe).toBe('py');
+  });
+
+  it('returns the bridge result and the fresh .SCRS parses back', async () => {
+    const scrs = ['File: Perimeter.SCO', '  OK', '  N vs M Util ...... 0.71'].join('\n');
+    installBridge(() => ({ exitCode: 0, scoCount: 1, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: scrs, stderr: '' }));
+    const out = await rerunScoBatch({ pythonExe: 'py', batchReporter: 'r.py', outDir: '/scos' });
+    expect(out.scoCount).toBe(1);
+    expect(parseBatchResults(out.scrsText!).Perimeter.status).toBe('OK');
+  });
+
+  it('throws when the desktop bridge is absent', async () => {
+    (globalThis as { window?: unknown }).window = {};
+    await expect(rerunScoBatch({ pythonExe: '', batchReporter: '', outDir: '' }))
       .rejects.toThrow(/Windows desktop app/);
   });
 });

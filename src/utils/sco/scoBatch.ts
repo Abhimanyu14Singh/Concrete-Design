@@ -27,7 +27,7 @@
 import { buildBeamScoText, buildColumnScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
 import { buildEc2BeamSco, buildEc2ColumnSco } from './scoWriterEC2';
 import { parseScrs, type ScrsResult } from './scrsParser';
-import type { Member, DesignCode, DesignGroup, Project } from '../../types';
+import type { Member, DesignCode, DesignGroup, Project, LoadCase } from '../../types';
 
 const isEc2 = (code: DesignCode): boolean => code === 'EN1992-1-1';
 
@@ -49,10 +49,19 @@ const sanitize = (s: string): string => s.replace(/[^A-Za-z0-9_.-]+/g, '_');
 const isColumnSection = (m: Member): boolean =>
   m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
 
-/** Map a beam member's load cases onto S-Concrete Sectional Loads rows. */
+/** S-Concrete can check beams and rectangular columns; circular columns use a
+ *  template the writers don't emit yet, so they are not eligible for a .SCO. */
+const isScoEligible = (m: Member): boolean =>
+  m.memberType === 'beam' || m.section.type === 'rectangular_column';
+
+/** Map a beam member's load cases onto S-Concrete Sectional Loads rows. The load
+ *  label is also written to the row's Comment column so the governing case stays
+ *  traceable — important for the per-group envelope file, where the rows pool
+ *  every member's combos. */
 function beamLoadCases(m: Member): ScoLoadCase[] {
   return m.loads.map((lc, i) => ({
     name: lc.label || `LC${i + 1}`,
+    comment: lc.label || `LC${i + 1}`,
     P: lc.Pu ?? 0,
     M3: Math.max(Math.abs(lc.Mu_pos ?? 0), Math.abs(lc.Mu_neg ?? 0)),
     V3: lc.Vu ?? 0,
@@ -69,6 +78,7 @@ function beamLoadCases(m: Member): ScoLoadCase[] {
 function columnLoadCases(m: Member): ScoLoadCase[] {
   return m.loads.map((lc, i) => ({
     name: lc.label || `LC${i + 1}`,
+    comment: lc.label || `LC${i + 1}`,
     P: -(lc.Pu ?? 0),
     M3: lc.Mux ?? lc.Mu_pos ?? 0,
     M2: lc.Muy ?? 0,
@@ -208,6 +218,129 @@ export function collectGroupScoFiles(
       seen.add(f.memberId);
       out.push(f);
     }
+  }
+  return out;
+}
+
+// ── Per-group ENVELOPE files (one .SCO per design group) ──────────────────────
+// The default path (collectGroupScoFiles) emits one .SCO per member. The envelope
+// path emits ONE .SCO per group instead: the group's representative section/rebar
+// carrying EVERY member's load cases pooled into the Sectional Loads table, so
+// S-Concrete checks the single group section against the group's full force
+// envelope and the batch summary reports the governing case per group. This is
+// the "8 groups → 8 files" extraction workflow.
+
+export interface GroupEnvelopeScoFile extends ScoFile {
+  groupId: string;
+  groupLabel: string;
+  /** Number of members pooled into this single file. */
+  memberCount: number;
+  /** Number of Sectional Loads rows written (union of the pooled members' combos). */
+  loadCaseCount: number;
+  /** True when the pooled members did not all share one section — the most common
+   *  section was used as the representative; the app should surface this. */
+  mixedSections: boolean;
+  /** Members dropped because their type differed from the representative (e.g. a
+   *  stray column in a beam group). Usually empty. */
+  excludedMemberIds: string[];
+}
+
+/** Stable signature of a member's section + materials, used to find the most
+ *  common ("representative") section within a design group. */
+function sectionSignature(m: Member): string {
+  const s = m.section;
+  return [s.type, s.b, s.h, s.bw ?? '', s.hf ?? '', s.diameter ?? '', s.coverClear,
+    m.material.fc, m.material.fy].join('|');
+}
+
+/** Pick the modal-section member of a list as the group's representative (the
+ *  section shared by the most members; ties resolve to first appearance). */
+function pickRepresentative(ms: Member[]): Member {
+  const buckets = new Map<string, Member[]>();
+  for (const m of ms) {
+    const k = sectionSignature(m);
+    const b = buckets.get(k);
+    if (b) b.push(m); else buckets.set(k, [m]);
+  }
+  let best = ms.slice(0, 1);
+  for (const b of buckets.values()) if (b.length > best.length) best = b;
+  return best[0];
+}
+
+/** Concatenate every member's load cases into one list, qualifying each label
+ *  with its source member so the governing row stays traceable in the report. */
+function poolLoads(ms: Member[]): LoadCase[] {
+  const out: LoadCase[] = [];
+  for (const m of ms) {
+    for (const lc of m.loads) {
+      out.push({ ...lc, label: `${m.label} / ${lc.label || lc.id}` });
+    }
+  }
+  return out;
+}
+
+/**
+ * Build ONE .SCO per design group: the representative section/rebar with the
+ * union of every member's load cases. Groups with no S-Concrete-eligible members
+ * are skipped. The synthetic member is run through `buildGroupScoFiles` so the
+ * writer selection (ACI/EC2, beam/column) and the force mapping are byte-identical
+ * to the per-member path — only the file is named for the group and the load rows
+ * are pooled. Pass `project` so EC2 beams resolve their crack-width combo.
+ */
+export function buildGroupEnvelopeScoFiles(
+  groups: DesignGroup[], members: Member[], code: DesignCode, project?: Project,
+): GroupEnvelopeScoFile[] {
+  const byId = new Map(members.map((m) => [m.id, m]));
+  const usedNames = new Set<string>();
+  const out: GroupEnvelopeScoFile[] = [];
+
+  for (const g of groups) {
+    const eligible = g.memberIds
+      .map((id) => byId.get(id))
+      .filter((m): m is Member => m != null && isScoEligible(m));
+    if (!eligible.length) continue; // nothing S-Concrete can check → no file
+
+    const rep = pickRepresentative(eligible);
+    // Only pool members of the representative's type (a beam file cannot carry a
+    // column's biaxial forces); record any that were left out.
+    const pooled = eligible.filter((m) => m.memberType === rep.memberType);
+    const excludedMemberIds = eligible
+      .filter((m) => m.memberType !== rep.memberType)
+      .map((m) => m.id);
+    const mixedSections = new Set(pooled.map(sectionSignature)).size > 1;
+
+    // One synthetic member = representative section/rebar + every pooled combo.
+    const synth: Member = {
+      ...rep,
+      label: g.label,
+      rebar: g.rebar ?? rep.rebar,
+      loads: poolLoads(pooled),
+    };
+    const built = buildGroupScoFiles([synth], code, project);
+    if (!built.length) continue; // representative not emittable (shouldn't happen)
+    const file = built[0];
+
+    // Guarantee a unique on-disk name even if two groups share a label.
+    let name = file.fileName;
+    if (usedNames.has(name)) {
+      const base = name.replace(/\.SCO$/i, '');
+      let n = 2;
+      while (usedNames.has(`${base}_${n}.SCO`)) n += 1;
+      name = `${base}_${n}.SCO`;
+    }
+    usedNames.add(name);
+
+    out.push({
+      fileName: name,
+      text: file.text,
+      memberId: `group:${g.id}`,
+      groupId: g.id,
+      groupLabel: g.label,
+      memberCount: pooled.length,
+      loadCaseCount: synth.loads.length,
+      mixedSections,
+      excludedMemberIds,
+    });
   }
   return out;
 }

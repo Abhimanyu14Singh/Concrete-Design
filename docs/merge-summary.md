@@ -111,6 +111,49 @@ pull per-member results from the `.SCRS`.
   the emitted files). The `.SCO`/`.SCRS` round-trip and the EC2 field mapping
   (derived from a single sample) **need Windows S-Concrete confirmation**.
 
+## Per-group .SCO envelope + re-run loop
+
+Two extraction modes now back the Map → Groups **S-Concrete batch** action,
+matching the "filter → group → design → extract groups as individual files → run
+the batch → read the summary" workflow:
+
+- **One .SCO per group (envelope)** — `buildGroupEnvelopeScoFiles` in
+  `src/utils/sco/scoBatch.ts`. Each design group becomes a SINGLE `.SCO` carrying
+  the group's representative section/rebar and EVERY member's load cases pooled
+  into the Sectional Loads table (each row tagged with its source member in the
+  Comment column, so the governing case is traceable). S-Concrete checks the one
+  group section against the group's full force envelope and the batch summary
+  reports the governing case per group — the "8 groups → 8 files" workflow. The
+  representative is the group's **modal section**; a geometrically mixed group is
+  flagged in the UI, off-type members are dropped and reported, and the group's
+  `rebar` template (when set) overrides the member rebar. Falls back to one file
+  per member when no groups are defined. This replaces the old one-file-per-member
+  default for grouped runs.
+- **Re-run an existing folder** — `rerun` handler in `electron/sconcreteBridge.cjs`
+  + `rerunScoBatch` client + the **↻ Re-run existing folder** button. Re-runs
+  BatchReporter on the `.SCO` files already in the output folder WITHOUT
+  regenerating them, so manual tweaks the user made (in S-Concrete or a text
+  editor) are preserved, then reads the fresh `.SCRS` back. Closes the
+  tweak → re-run → read loop.
+- Status: pure logic unit-tested (`scoGroupEnvelope.test.ts`,
+  `sconcreteClient.test.ts` — forces verified by parsing the emitted files); the
+  live round-trip needs Windows S-Concrete as before.
+
+## 3D model view
+
+The Map tab has a **2D / 3D** toggle. The 3D view (`Map3DCanvas.tsx`) projects the
+ETABS node coordinates — every frame's `pt1`/`pt2` carry a real elevation `z` — with
+a plain orthographic camera: **drag to orbit, wheel to zoom**, plus Iso / Top /
+Front / Side presets. Members render as lines colored exactly like the plan canvas
+(DCR / group / section / metric / auto-group), and translucent quads mark each
+story's floor elevation so columns read as the vertical members between them. The
+coloring is shared with the 2D canvas via `frameColor.ts` (extracted from MapCanvas
+and unit-tested), so the two views cannot drift. No WebGL / new dependencies — just
+SVG, reusing the existing canvas stack.
+
+- Status: shared color logic unit-tested (`frameColor.test.ts`); rendering is the
+  existing SVG path. Works for beams and columns (any imported 3D frame).
+
 ## Shear-wall removal
 
 The app no longer designs shear walls; the feature was removed end to end.
