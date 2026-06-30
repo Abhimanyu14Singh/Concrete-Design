@@ -10,7 +10,7 @@
  * unit-tested; the runtime round-trips can only be exercised on Windows.
  */
 import { useState } from 'react';
-import type { Member, DesignGroup, DesignCode } from '../../types';
+import type { Member, DesignGroup, Project } from '../../types';
 import { collectGroupScoFiles, parseBatchResults } from '../../utils/sco/scoBatch';
 import { runScoBatch, hasSconcrete, type SconcreteRunConfig } from '../../utils/sco/sconcreteClient';
 import type { ScrsResult } from '../../utils/sco/scrsParser';
@@ -20,7 +20,7 @@ import { ComConnection } from '../../adapters/etabs/comClient';
 interface Props {
   groups: DesignGroup[];
   members: Member[];
-  code: DesignCode;
+  project: Project;
   /** member id → ETABS frame name, from project.modelMap. */
   frameByMemberId: Map<string, string>;
 }
@@ -45,7 +45,8 @@ const input: React.CSSProperties = {
 };
 const label: React.CSSProperties = { fontSize: 10, color: '#94a3b8', display: 'block', marginTop: 6 };
 
-export default function GroupActionsPanel({ groups, members, code, frameByMemberId }: Props) {
+export default function GroupActionsPanel({ groups, members, project, frameByMemberId }: Props) {
+  const code = project.code;
   const [busy, setBusy] = useState<'etabs' | 'sco' | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -90,7 +91,7 @@ export default function GroupActionsPanel({ groups, members, code, frameByMember
   async function runBatch() {
     setErr(null); setMsg(null); setResults(null); setBusy('sco');
     try {
-      const files = collectGroupScoFiles(groups, members, code);
+      const files = collectGroupScoFiles(groups, members, code, project);
       if (!files.length) {
         throw new Error(groups.length
           ? 'No S-Concrete-eligible members in the design groups. Add beams/rectangular columns to a group first.'

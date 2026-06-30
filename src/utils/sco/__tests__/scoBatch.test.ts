@@ -51,8 +51,15 @@ describe('buildGroupScoFiles', () => {
     expect(files[0].fileName).toBe('B_2_A.SCO');
   });
 
-  it('throws for a design code without a confirmed S-Concrete mapping (EC2)', () => {
-    expect(() => buildGroupScoFiles([beam('b1', 'B1')], 'EN1992-1-1')).toThrow(/No confirmed S-Concrete/);
+  it('EC2 needs the project (for the crack-width combo)', () => {
+    expect(() => buildGroupScoFiles([beam('b1', 'B1')], 'EN1992-1-1')).toThrow(/needs the project/);
+  });
+
+  it('EC2 beams route to the EC2 writer when the project is supplied', () => {
+    const proj = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
+    const files = buildGroupScoFiles([beam('b1', 'B1')], 'EN1992-1-1', proj);
+    expect(files).toHaveLength(1);
+    expect(files[0].text).toContain('Codes\t 14');   // EN 1992-1-1 header
   });
 });
 
@@ -106,8 +113,9 @@ describe('buildGroupScoFiles — columns', () => {
     expect(byId.c1.includes('Member Type\t 3')).toBe(true);
   });
 
-  it('still throws for EC2 on a column group (no confirmed mapping)', () => {
-    expect(() => buildGroupScoFiles([col('c1', 'C1')], 'EN1992-1-1')).toThrow(/No confirmed S-Concrete/);
+  it('skips EC2 columns (no EC2 column sample to template from yet)', () => {
+    const proj = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
+    expect(buildGroupScoFiles([col('c1', 'C1')], 'EN1992-1-1', proj)).toEqual([]);
   });
 });
 

@@ -687,7 +687,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               <GroupActionsPanel
                 groups={groups}
                 members={members}
-                code={project.code}
+                project={project}
                 frameByMemberId={frameByMemberId}
               />
               {activeGroup && (
