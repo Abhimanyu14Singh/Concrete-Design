@@ -11,7 +11,8 @@ export interface SconcreteRunConfig {
   outDir: string;        // directory to write .SCO files and read the .SCRS
   title?: string;
   engineer?: string;
-  makePdf?: boolean;     // also produce a PDF report (default true)
+  makePdf?: boolean;     // ALSO produce a PDF report — opt-in (default off): it's
+                         // slow, and the .SCRS already carries every result the app uses.
 }
 
 export interface SconcreteRunResult {

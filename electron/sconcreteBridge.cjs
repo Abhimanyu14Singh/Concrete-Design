@@ -137,7 +137,10 @@ async function detect() {
 async function driveBatch(scoCount, { outDir, title, engineer, makePdf }, onProgress) {
   const exe = requireHelper();
   const args = [outDir, '--title', title || 'S-Concrete Batch', '--engineer', engineer || ''];
-  if (makePdf === false) args.push('--no-pdf');
+  // PDF is OPT-IN: the .SCRS carries all the results the app reads, and generating
+  // the full BatchReporter PDF is slow (it renders every section and the sidecar
+  // waits up to ReportTimeout for it). Only make it when explicitly requested.
+  if (makePdf !== true) args.push('--no-pdf');
   const r = await spawnHelper(exe, args, BATCH_TIMEOUT_MS, onProgress);
   if (!r.json || !r.json.ok) {
     const why = (r.json && r.json.error) || r.stderr || `exit code ${r.exitCode}`;

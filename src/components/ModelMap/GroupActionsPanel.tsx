@@ -34,7 +34,7 @@ const LS_KEY = 'sconcrete.runConfig';
 function loadConfig(): SconcreteRunConfig {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_KEY) ?? '{}');
-    return { outDir: saved.outDir ?? '', title: saved.title, engineer: saved.engineer, makePdf: saved.makePdf };
+    return { outDir: saved.outDir ?? '', title: saved.title, engineer: saved.engineer, makePdf: saved.makePdf ?? false };
   } catch {
     return { outDir: '' };
   }
@@ -59,7 +59,7 @@ function friendlyStep(line: string): string {
   if (l.includes('run batch') || l.includes('waiting for batch')) return 'Running the batch designer…';
   if (l.includes('status:')) return `Running — ${line.split('Status:').pop()?.trim() || ''}`;
   if (l.includes('batch done')) return 'Reading results…';
-  if (l.includes('creating pdf')) return 'Writing the PDF report…';
+  if (l.includes('creating pdf')) return 'Writing the optional PDF report… (BatchReporter renders every section — this can take a minute)';
   return line;
 }
 const desktopApi = (): DesktopAPI | undefined =>
@@ -420,6 +420,20 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>
             The batch runs via the bundled S-Concrete helper — no Python or scripts. Defaults to your Documents folder.
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: '#cbd5e1', marginTop: 8, cursor: 'pointer' }}
+            title="The pass/fail, DCR and warnings all come from the .SCRS, which is written before this step. The full PDF is only worth the wait when you need the printable report.">
+            <input type="checkbox" checked={!!cfg.makePdf} onChange={(e) => setCfg({ ...cfg, makePdf: e.target.checked })} />
+            Also generate a PDF report
+            <span style={{ color: '#64748b' }}>(off by default — slow)</span>
+          </label>
+          {cfg.makePdf && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <input style={{ ...input, marginTop: 0 }} placeholder="Report title" value={cfg.title ?? ''}
+                onChange={(e) => setCfg({ ...cfg, title: e.target.value })} />
+              <input style={{ ...input, marginTop: 0 }} placeholder="Engineer" value={cfg.engineer ?? ''}
+                onChange={(e) => setCfg({ ...cfg, engineer: e.target.value })} />
+            </div>
+          )}
           {!canPick && <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>Type or paste a full Windows path (file pickers are in the desktop app).</div>}
         </div>
       )}

@@ -158,11 +158,17 @@ internal static class Program
                     Log("Creating PDF report...");
                     var before = File.Exists(pdf) ? File.GetLastWriteTimeUtc(pdf).Ticks : 0;
                     Invoke(createBtn);
-                    var deadline = DateTime.UtcNow.AddSeconds(ReportTimeout);
+                    var start = DateTime.UtcNow;
+                    var deadline = start.AddSeconds(ReportTimeout);
+                    var lastLogged = 0;
                     while (DateTime.UtcNow < deadline)
                     {
                         Thread.Sleep(1000);
                         if (File.Exists(pdf) && File.GetLastWriteTimeUtc(pdf).Ticks > before) break;
+                        // Heartbeat so the UI shows the PDF step is alive, not frozen —
+                        // BatchReporter renders every section and can take a while.
+                        var elapsed = (int)(DateTime.UtcNow - start).TotalSeconds;
+                        if (elapsed >= lastLogged + 10) { lastLogged = elapsed; Log($"Still writing the PDF report... ({elapsed}s)"); }
                     }
                     if (!File.Exists(pdf)) pdf = "";
                 }
