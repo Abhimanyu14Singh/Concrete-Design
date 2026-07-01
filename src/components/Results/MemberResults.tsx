@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride } from '../../types';
+import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride, SconcreteResult } from '../../types';
+import { memberScoSummary, scoAgreesWithApp } from '../../utils/sconcreteMemberResult';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import {
   OVERRIDE_KEY_LABEL, failingKeys, isOverridden, effectiveStatus,
@@ -30,6 +31,10 @@ interface Props {
   slsCombo?: string;
   /** Project engineer name — pre-fills the "Reviewed by" field on overrides. */
   engineer?: string;
+  /** Persisted S-Concrete batch results (for the verification card). */
+  sconcreteResults?: SconcreteResult[];
+  /** ISO timestamp of the last S-Concrete batch run. */
+  sconcreteRanAt?: string;
   onRebarChange?: (updated: Member) => void;
 }
 
@@ -56,7 +61,10 @@ function dcrStyle(dcr: number): React.CSSProperties {
   return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, onRebarChange }: Props) {
+const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
+const utilColor = (v: number | null): string => (v == null ? '#9ca3af' : themeDcrColor(v));
+
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -69,6 +77,24 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
+
+  // S-Concrete verification: the persisted .SCRS result for THIS member, next to
+  // the app's own governing DCR (worst across all its load cases) so the engineer
+  // can see whether the two tools agree.
+  const scoSummary = memberScoSummary(sconcreteResults, member.id);
+  const appGovDCR = (() => {
+    let worst = 0;
+    for (const l of member.loads) {
+      const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo));
+      const g = isColumn
+        ? Math.max(r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0)
+        : Math.max(r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.DCR_crack ?? 0);
+      if (g > worst) worst = g;
+    }
+    return worst;
+  })();
+  const scoAgree = scoAgreesWithApp(scoSummary?.status ?? null, appGovDCR);
+  const scoEligible = member.memberType === 'beam' || member.section.type === 'rectangular_column';
 
   // Per-zone shear DCRs for beams with zoned stirrups + station forces
   const zoneResults = member.memberType === 'beam' && member.rebar.tieZones && member.stationForces?.length
@@ -225,6 +251,45 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           </button>
         </div>
       </div>
+
+      {/* S-Concrete verification card — the external .SCRS result for this member
+          alongside the app's own governing DCR (closes the design ↔ verify loop). */}
+      {(scoSummary || scoEligible) && (
+        <div style={{ marginBottom: 10, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
+          background: scoSummary ? (scoSummary.status === 'OK' ? '#f0fdf4' : '#fef2f2') : '#f9fafb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280' }}>S-Concrete verification</span>
+            {scoSummary ? (
+              <>
+                <span style={{ fontSize: 11, fontWeight: 700, color: scoSummary.status === 'OK' ? '#16a34a' : '#dc2626' }}>
+                  {scoSummary.status === 'OK' ? '✓ OK' : '✗ Overstressed'}
+                </span>
+                {scoSummary.groupLabel && <span style={{ fontSize: 10, color: '#6b7280' }}>group “{scoSummary.groupLabel}”</span>}
+                {sconcreteRanAt && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#9ca3af' }}>ran {new Date(sconcreteRanAt).toLocaleString()}</span>}
+              </>
+            ) : (
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>not run for this member — run the S-Concrete batch in Map → Verify</span>
+            )}
+          </div>
+          {scoSummary && (
+            <div style={{ display: 'flex', gap: 16, marginTop: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 11, color: '#374151' }}>
+              <span>N-M <b style={{ fontFamily: 'monospace', color: utilColor(scoSummary.nmUtil) }}>{fmtUtil(scoSummary.nmUtil)}</b></span>
+              <span>V&amp;T <b style={{ fontFamily: 'monospace', color: utilColor(scoSummary.vtUtil) }}>{fmtUtil(scoSummary.vtUtil)}</b></span>
+              {scoSummary.crackStatus && (
+                <span>crack <b style={{ color: scoSummary.crackStatus === 'OK' ? '#16a34a' : '#dc2626' }}>{scoSummary.crackStatus}</b></span>
+              )}
+              <span style={{ marginLeft: 'auto', color: '#6b7280' }}>
+                app DCR <b style={{ fontFamily: 'monospace', color: themeDcrColor(appGovDCR) }}>{appGovDCR.toFixed(2)}</b>
+                {scoAgree != null && (
+                  <span style={{ marginLeft: 6, fontWeight: 700, color: scoAgree ? '#16a34a' : '#d97706' }}>
+                    {scoAgree ? '· agree' : '· differ ⚠'}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 3-column layout: properties | section SVG | results */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>

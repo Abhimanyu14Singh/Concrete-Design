@@ -158,7 +158,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }
     return out;
   }, [project.sconcreteResults]);
-  const hasScoResults = (project.sconcreteResults?.length ?? 0) > 0;
 
   // Live frame→member linkage
   const enrichedFrames = useMemo(() => {
@@ -486,16 +485,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
       {/* Canvas area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
-        {/* Toolbar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
-          <Dropdown
-            value={story}
-            options={storyDropdownOptions.map(s => ({ value: s, label: s }))}
-            onChange={setStory}
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}
-          />
-
-          {/* 2D plan / 3D orbit toggle */}
+        {/* Toolbar — clustered: View · Colour · Overlay · Model */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
+          {/* View: 2D/3D + story */}
           <div style={{ display: 'flex', gap: 2 }}>
             {(['2d', '3d'] as const).map(vm => (
               <button key={vm} onClick={() => setViewMode(vm)}
@@ -505,90 +497,71 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               </button>
             ))}
           </div>
+          <Dropdown
+            value={story}
+            options={storyDropdownOptions.map(s => ({ value: s, label: s }))}
+            onChange={setStory}
+            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}
+          />
 
-          {/* Color mode buttons */}
+          <div style={toolSep} />
+
+          {/* Colour by: one dropdown replaces the 8 mode buttons */}
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Colour</span>
+          <Dropdown
+            value={colorMode}
+            options={[
+              { value: 'dcr', label: 'DCR' },
+              { value: 'group', label: 'Design group' },
+              { value: 'section', label: 'Section' },
+              { value: 'flexSteel', label: 'Steel % (ρ)' },
+              { value: 'stirrups', label: `Stirrups (${label('areaPerLength')})` },
+              { value: 'weight', label: `Steel weight (${label('steelWeightPerLength')})` },
+              { value: 'autoGroup', label: 'Auto-group overlay' },
+              { value: 'sconcrete', label: 'S-Concrete pass/fail' },
+            ]}
+            onChange={v => setColorMode(v as ColorMode)}
+            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white', minWidth: 120 }}
+          />
+          {colorMode === 'flexSteel' && (
+            <button onClick={() => setFlexFace(f => f === 'bot' ? 'top' : 'bot')}
+              style={{ padding: '5px 10px', border: '1px solid #0891b2', borderRadius: 6, fontSize: 11, cursor: 'pointer', background: '#e0f2fe', color: '#0369a1' }}
+              title="Toggle the reinforcement face used for the ratio">
+              {flexFace === 'bot' ? 'Bot ↕' : 'Top ↕'}
+            </button>
+          )}
+
+          <div style={toolSep} />
+
+          {/* Overlay: diagram + inspect + errors */}
           <div style={{ display: 'flex', gap: 2 }}>
-            {(['dcr', 'group', 'section'] as ColorMode[]).map(mode => (
-              <button key={mode} onClick={() => setColorMode(mode)}
-                style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === mode ? '#2563eb' : 'white', color: colorMode === mode ? 'white' : '#374151' }}>
-                {mode === 'dcr' ? 'DCR' : mode.charAt(0).toUpperCase() + mode.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {/* Hotspot modes */}
-          <div style={{ display: 'flex', gap: 2 }}>
-            <button
-              onClick={() => setColorMode(colorMode === 'flexSteel' ? 'dcr' : 'flexSteel')}
-              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'flexSteel' ? '#0891b2' : 'white', color: colorMode === 'flexSteel' ? 'white' : '#374151' }}
-              title="Longitudinal reinforcement ratio ρ (top or bottom face)">
-              Steel %
-            </button>
-            {colorMode === 'flexSteel' && (
-              <button onClick={() => setFlexFace(f => f === 'bot' ? 'top' : 'bot')}
-                style={{ padding: '5px 10px', border: '1px solid #0891b2', borderRadius: 6, fontSize: 11, cursor: 'pointer', background: '#e0f2fe', color: '#0369a1' }}>
-                {flexFace === 'bot' ? 'Bot ↕' : 'Top ↕'}
-              </button>
-            )}
-            <button
-              onClick={() => setColorMode(colorMode === 'stirrups' ? 'dcr' : 'stirrups')}
-              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'stirrups' ? '#0891b2' : 'white', color: colorMode === 'stirrups' ? 'white' : '#374151' }}
-              title={`Stirrup area per unit length Av/s (${label('areaPerLength')})`}>
-              Stirrups
-            </button>
-            <button
-              onClick={() => setColorMode(colorMode === 'weight' ? 'dcr' : 'weight')}
-              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'weight' ? '#0891b2' : 'white', color: colorMode === 'weight' ? 'white' : '#374151' }}
-              title={`Total steel weight intensity, longitudinal + stirrups (${label('steelWeightPerLength')} of beam)`}>
-              {label('steelWeightPerLength')}
-            </button>
-            <button
-              onClick={() => setColorMode(colorMode === 'autoGroup' ? 'dcr' : 'autoGroup')}
-              style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'autoGroup' ? '#f59e0b' : 'white', color: colorMode === 'autoGroup' ? 'white' : '#374151' }}
-              title="Auto-group reference overlay (from Auto-Group tab)">
-              Auto-G
-            </button>
-            {hasScoResults && (
-              <button
-                onClick={() => setColorMode(colorMode === 'sconcrete' ? 'dcr' : 'sconcrete')}
-                style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'sconcrete' ? '#16a34a' : 'white', color: colorMode === 'sconcrete' ? 'white' : '#374151' }}
-                title="Colour members by the last S-Concrete batch pass/fail">
-                S-Conc
-              </button>
-            )}
-          </div>
-
-          {/* Diagram toggle */}
-          <div style={{ display: 'flex', gap: 2, marginLeft: 4 }}>
             {(['off', 'moment', 'shear'] as DiagramMode[]).map(m => (
               <button key={m} onClick={() => setDiagramMode(m)}
-                style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: diagramMode === m ? '#7c3aed' : 'white', color: diagramMode === m ? 'white' : '#374151' }}>
-                {m === 'off' ? 'Diag Off' : m === 'moment' ? 'M' : 'V'}
+                style={{ padding: '5px 9px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: diagramMode === m ? '#7c3aed' : 'white', color: diagramMode === m ? 'white' : '#374151' }}
+                title={m === 'off' ? 'No force-diagram overlay' : m === 'moment' ? 'Moment envelope overlay' : 'Shear envelope overlay'}>
+                {m === 'off' ? 'Diag' : m === 'moment' ? 'M' : 'V'}
               </button>
             ))}
           </div>
-
-          {/* Inspect mode toggle */}
           <button
             onClick={() => { setInspectMode(m => !m); setInspectedMemberId(null); }}
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: inspectMode ? '#7c3aed' : 'white', color: inspectMode ? 'white' : '#374151' }}
-            title="Click a beam to inspect section sketch and V/M diagrams">
-            🔍 Inspect
+            style={{ padding: '5px 9px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: inspectMode ? '#7c3aed' : 'white', color: inspectMode ? 'white' : '#374151' }}
+            title="Inspect: click a beam to see its section sketch and V/M diagrams">
+            🔍
           </button>
-
-          {/* Error highlight toggle */}
           <button
             onClick={() => setShowErrors(s => !s)}
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: showErrors ? '#dc2626' : 'white', color: showErrors ? 'white' : '#374151' }}
-            title="Highlight beams with design errors or warnings">
-            ⚠ Errors
+            style={{ padding: '5px 9px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: showErrors ? '#dc2626' : 'white', color: showErrors ? 'white' : '#374151' }}
+            title="Highlight members with design errors or warnings">
+            ⚠
           </button>
 
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 11, color: '#9ca3af' }}>
-            {map.modelName} · {frames.length} frames · {new Date(map.importedAt).toLocaleDateString()}
+            {map.modelName} · {frames.length} frames
           </span>
           <button onClick={onOpenEtabsImport}
+            title="Re-import / re-sync from ETABS"
             style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: '#374151', fontWeight: 600 }}>
             ↻ Re-sync
           </button>
@@ -920,6 +893,8 @@ function MetricLegendPanel({
     </div>
   );
 }
+
+const toolSep: React.CSSProperties = { width: 1, height: 20, background: '#e5e7eb', margin: '0 2px', flexShrink: 0 };
 
 const presetBtn: React.CSSProperties = {
   padding: '2px 7px', border: '1px solid #d1d5db', borderRadius: 5,

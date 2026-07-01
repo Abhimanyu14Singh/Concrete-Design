@@ -510,7 +510,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                 </div>
                 {/* Right: live DCR / diagrams */}
                 <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '12px 14px' }}>
-                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} engineer={project.engineer} onRebarChange={handleMemberUpdate} />
+                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate} />
                 </div>
               </div>
             </>

@@ -890,6 +890,8 @@ export default function App() {
                       code={project.code}
                       slsCombo={project.slsCombo}
                       engineer={project.engineer}
+                      sconcreteResults={project.sconcreteResults}
+                      sconcreteRanAt={project.sconcreteRanAt}
                       onRebarChange={handleUpdateMember}
                     />
                   </ErrorBoundary>
