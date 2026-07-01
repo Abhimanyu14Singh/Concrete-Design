@@ -427,13 +427,19 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, color: '#6b7280' }}>
         <div style={{ fontSize: 48 }}>🗺️</div>
         <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>No model map yet</div>
-        <div style={{ fontSize: 13 }}>Connect to ETABS or open a tables file to import the connectivity map.</div>
+        <div style={{ fontSize: 13 }}>Connect to ETABS or open a tables file to import beams (and columns).</div>
         <button
           onClick={onOpenEtabsImport}
           style={{ padding: '10px 24px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
         >
           Connect to ETABS / Import tables
         </button>
+        <div style={{ fontSize: 12, color: '#9ca3af', maxWidth: 380, textAlign: 'center', lineHeight: 1.6 }}>
+          Then: <strong style={{ color: '#6b7280' }}>①</strong> group members (Groups tab) ·
+          <strong style={{ color: '#6b7280' }}> ②</strong> design (✨ Suggest) ·
+          <strong style={{ color: '#6b7280' }}> ③</strong> run the S-Concrete batch ·
+          <strong style={{ color: '#6b7280' }}> ④</strong> read results back on the map.
+        </div>
       </div>
     );
   }
@@ -714,18 +720,27 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
       {/* Right panel */}
       <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
-        {/* Tab bar */}
+        {/* Tab bar — Groups is the workflow step (→ S-Concrete); the rest are
+            read-only analytics. Tooltips spell that out. */}
         <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
-          <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}>Groups</button>
-          <button style={tabStyle(rightTab === 'autogroup')} onClick={() => setRightTab('autogroup')}>Auto-Group</button>
-          <button style={tabStyle(rightTab === 'savings')} onClick={() => setRightTab('savings')}>Savings</button>
-          <button style={tabStyle(rightTab === 'takeoff')} onClick={() => setRightTab('takeoff')}>Takeoff</button>
-          <button style={tabStyle(rightTab === 'stacks')} onClick={() => setRightTab('stacks')}>Stacks</button>
+          <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}
+            title="Workflow: create design groups, design them, and run the S-Concrete batch (below)">Groups</button>
+          <button style={tabStyle(rightTab === 'autogroup')} onClick={() => setRightTab('autogroup')}
+            title="Analytics: suggested groupings that cut section/rebar variety">Auto-Group</button>
+          <button style={tabStyle(rightTab === 'savings')} onClick={() => setRightTab('savings')}
+            title="Analytics: material savings at the target DCR">Savings</button>
+          <button style={tabStyle(rightTab === 'takeoff')} onClick={() => setRightTab('takeoff')}
+            title="Analytics: concrete & steel quantities">Takeoff</button>
+          <button style={tabStyle(rightTab === 'stacks')} onClick={() => setRightTab('stacks')}
+            title="Analytics: multi-story column stacks">Stacks</button>
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {rightTab === 'groups' && (
             <>
+              <div style={{ fontSize: 10, color: '#6b7280', padding: '6px 10px', background: '#f9fafb', borderBottom: '1px solid #eef2f7', lineHeight: 1.6 }}>
+                <strong style={{ color: '#374151' }}>Workflow:</strong> ① group members (pick a group, click frames on the map) · ② design (✨ Suggest) · ③ run the S-Concrete batch (below)
+              </div>
               <GroupPanel
                 groups={groups}
                 frames={frames}

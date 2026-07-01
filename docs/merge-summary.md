@@ -165,6 +165,37 @@ SVG, reusing the existing canvas stack.
 - Status: shared color logic unit-tested (`frameColor.test.ts`); rendering is the
   existing SVG path. Works for beams and columns (any imported 3D frame).
 
+## Workflow UX pass (ETABS → design → S-Concrete)
+
+A round of friction fixes so the import → group → design → S-Concrete → results
+loop is discoverable and closed end to end:
+
+- **Columns are first-class** — the ETABS adapter gained `getColumns()` (Mock +
+  File "Columns" sheet), `buildColumnMembers` maps them to `rectangular_column`
+  members (geometry + section + starter cage), and the import wizard has an "Also
+  import columns" toggle. Columns show on the map (2D square markers, 3D vertical
+  lines between story planes) and are groupable. Column design forces start at
+  zero (entered after import); the live-ETABS column-force read is the remaining
+  Windows-validated piece.
+- **Results feed back** — S-Concrete `.SCRS` results persist on the project
+  (`Project.sconcreteResults`, with member linkage + a ULS/crack tag), survive
+  tab switches, show a last-run time, and drive a **`sconcrete` map colour mode**
+  (green pass / red overstressed / grey un-run) on both canvases.
+- **S-Concrete handoff** — native file/folder pickers + an "Open folder" button
+  (Electron `pick-path` / `open-path` IPC) so the tweak-.SCO → re-run loop stays
+  in-app; a web banner explains the desktop-only steps; EC2 result rows are tagged
+  ULS vs crack.
+- **Design integrity** — the envelope flags `mixedRebar` (a group whose members
+  were designed with different bars and no unified template), and the EC2 SLS
+  crack combo is now settable in-panel (not only at import) with a warning when
+  EC2 runs with none.
+- **Discoverability** — the empty state and the Groups tab show the ①②③④ step
+  sequence; the Map right-panel tabs carry tooltips distinguishing the workflow
+  step (Groups) from the analytics tabs.
+- Status: adapter + mappers + colour logic unit-tested (`columnImport.test.ts`,
+  `frameColor.test.ts`, `scoGroupEnvelope.test.ts`); the live ETABS/S-Concrete
+  round-trips remain Windows-confirmed as before.
+
 ## Shear-wall removal
 
 The app no longer designs shear walls; the feature was removed end to end.
