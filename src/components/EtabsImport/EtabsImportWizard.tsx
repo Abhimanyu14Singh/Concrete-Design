@@ -58,7 +58,7 @@ function worstDCR(m: Member, code: DesignCode): number {
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
-  const { units, fmt, fmtVal, label } = useUnits();
+  const { units, fmt } = useUnits();
   const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -113,6 +113,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       skinBarSize: u === 'si' ? -12 : 5,
     }));
   }
+
+  // Section dimensions in the wizard follow the WIZARD's units (which default to
+  // the model's unit system on connect), so the sizes shown next to each section
+  // read in the units the user selects here — independent of the app's global
+  // toggle. Section widths/depths are stored in inches.
+  const wLen = (inches: number) => wizardUnits === 'si' ? Math.round(inches * IN_TO_MM) : +inches.toFixed(1);
+  const wLenUnit = wizardUnits === 'si' ? 'mm' : 'in';
 
   const [applyToProject, setApplyToProject] = useState(true);
 
@@ -460,6 +467,16 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 {!hasColumns
                   ? <span style={{ fontSize: 10, color: '#9ca3af' }}>This source doesn't expose columns.</span>
                   : includeColumns && <span style={{ fontSize: 10, color: '#6b7280' }}>Columns import with geometry + section; enter design forces after import.</span>}
+                <div style={{ flex: 1 }} />
+                {/* Units for the section sizes shown below — defaults to the model's
+                    unit system; switch to see the sections in mm or in. */}
+                <div style={{ ...lbl, marginBottom: 0 }}>Units</div>
+                {(['si', 'imperial'] as const).map(u => (
+                  <button key={u} onClick={() => handleWizardUnitsChange(u)}
+                    style={{ ...btn(wizardUnits === u), padding: '5px 12px', fontSize: 12 }}>
+                    {u === 'si' ? 'SI · mm' : 'Imperial · in'}
+                  </button>
+                ))}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -484,7 +501,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     {sections.map(s => (
                       <span key={s.name} style={chip(selSections.has(s.name))}
                         onClick={() => { setSelSections(prev => { const n = new Set(prev); if (n.has(s.name)) n.delete(s.name); else n.add(s.name); return n; }); setMatchCount(null); }}>
-                        {s.name} <span style={{ opacity: 0.7 }}>({fmtVal(s.width, 'length')}×{fmtVal(s.depth, 'length')} {label('length')})</span>
+                        {s.name} <span style={{ opacity: 0.7 }}>({wLen(s.width)}×{wLen(s.depth)} {wLenUnit})</span>
                       </span>
                     ))}
                   </div>
