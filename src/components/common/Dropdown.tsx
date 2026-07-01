@@ -36,7 +36,7 @@ interface Props {
 }
 
 /** Rect of the trigger button, updated on open. */
-interface ListPos { top: number; bottom: number; left: number; width: number; viewH: number }
+interface ListPos { top: number; bottom: number; left: number; width: number; viewH: number; viewW: number }
 
 export default function Dropdown({
   value, options, onChange, style, disabled, title, ariaLabel, openUp,
@@ -52,7 +52,7 @@ export default function Dropdown({
     if (disabled) return;
     const rect = ref.current?.getBoundingClientRect();
     if (rect) {
-      setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight });
+      setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight, viewW: window.innerWidth });
     }
     setOpen(o => !o);
   }, [disabled]);
@@ -62,7 +62,7 @@ export default function Dropdown({
     if (!open) return;
     function reposition() {
       const rect = ref.current?.getBoundingClientRect();
-      if (rect) setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight });
+      if (rect) setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight, viewW: window.innerWidth });
     }
     window.addEventListener('scroll', reposition, true);
     window.addEventListener('resize', reposition);
@@ -120,12 +120,18 @@ export default function Dropdown({
   const goUp = listPos
     ? (openUp || (listPos.viewH - listPos.top < 200 && listPos.bottom > 200))
     : !!openUp;
+  // Flip horizontally (right-align to the trigger) when the trigger sits too
+  // close to the right edge for the menu to open rightward without clipping —
+  // the list is content-width (nowrap) and can be wider than the trigger.
+  const goLeft = listPos ? (listPos.viewW - listPos.left < 220) : false;
   const LIST: React.CSSProperties = listPos ? {
     position: 'fixed',
     top: goUp ? undefined : listPos.top + 2,
     bottom: goUp ? (listPos.viewH - listPos.bottom + 2) : undefined,
-    left: listPos.left,
+    left: goLeft ? undefined : listPos.left,
+    right: goLeft ? Math.max(8, listPos.viewW - (listPos.left + listPos.width)) : undefined,
     minWidth: listPos.width,
+    maxWidth: listPos.viewW - 16,
     maxHeight: 220,
     overflowY: 'auto',
     background: 'white',
