@@ -52,6 +52,14 @@ jobs:
           }
           Write-Host "Helper: $((Get-Item build-helper/EtabsHelper.exe).FullName)"
 
+      - name: Verify S-Concrete helper exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build-helper-sconcrete/SConcreteHelper.exe")) {
+            Write-Error "SConcreteHelper.exe not produced by dotnet publish"; exit 1
+          }
+          Write-Host "S-Concrete helper: $((Get-Item build-helper-sconcrete/SConcreteHelper.exe).FullName)"
+
       - name: Build web assets (Vite)
         run: npm run build
 
@@ -71,6 +79,16 @@ jobs:
             exit 1
           }
           Write-Host "Packaged helper: $((Get-Item $exe).FullName)"
+
+      - name: Verify S-Concrete helper is packaged
+        shell: pwsh
+        run: |
+          $exe = "release\win-unpacked\resources\sconcrete-helper\SConcreteHelper.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "SConcreteHelper.exe not found in packaged resources at: $exe"
+            exit 1
+          }
+          Write-Host "Packaged S-Concrete helper: $((Get-Item $exe).FullName)"
 
       - name: Find installer path
         id: find_exe

@@ -1,29 +1,41 @@
 /**
- * Electron main-process bridge for the S-Concrete batch workflow (merged from
- * Column_Design_DW/callbacks_batch.py). Writes the .SCO files the renderer
- * generated, launches S-Concrete's BatchReporter, and returns the resulting
- * SConcreteResults.SCRS text for the renderer to parse (src/utils/sco/scrsParser).
+ * Electron main-process bridge for the S-Concrete batch workflow.
  *
- * BatchReporter and its Python host are S-Concrete-install-specific paths
- * (the column repo hardcodes them), so they are passed in from app settings:
- *   python.exe  run_batch_reporter.py  <scoDir>  --title <t>  --engineer <e>
- * The batch writes <scoDir>/SConcreteResults.SCRS.
+ * Writes the .SCO files the renderer generated into an output folder, then drives
+ * S-Concrete's BatchReporter through the bundled native sidecar
+ * (SConcreteHelper.exe — Windows UI Automation, NO Python / pywinauto), and reads
+ * the resulting SConcreteResults.SCRS back for the renderer to parse.
  *
- * Two run modes:
+ * The sidecar replaced the old `python run_batch_reporter.py …` shell-out, so the
+ * user no longer configures a Python interpreter or a script path — only an output
+ * folder. S-Concrete (S-FRAME Product Suite) must still be installed; the sidecar
+ * auto-detects it under C:\Program Files (x86)\S-FRAME Software\.
+ *
+ * Run modes:
  *   • `run`   — write the app-generated .SCO files into <outDir>, then report.
- *   • `rerun` — DON'T write anything; report on the .SCO files already in
- *               <outDir>. This is the "tweak a .SCO by hand (in S-Concrete or a
- *               text editor), then re-run the batch and read the new results"
- *               loop — the user's edits are preserved because nothing is
- *               regenerated.
+ *   • `rerun` — DON'T write anything; report on the .SCO files already in <outDir>
+ *               (the "tweak a .SCO by hand, then re-run" loop — edits preserved).
+ *   • `detect`— report whether S-Concrete/BatchReporter is installed.
  *
- * This only runs on Windows with S-Concrete installed; elsewhere the run rejects.
+ * Windows + S-Concrete only; elsewhere the run rejects with a clear message.
  */
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
 const SCRS_NAME = 'SConcreteResults.SCRS';
+const BATCH_TIMEOUT_MS = 1_800_000; // 30 min — matches the sidecar's batch budget
+
+/** Locate the bundled sidecar (packaged resources first, dev publish fallback). */
+function helperPath() {
+  if (process.resourcesPath) {
+    const packaged = path.join(process.resourcesPath, 'sconcrete-helper', 'SConcreteHelper.exe');
+    if (fs.existsSync(packaged)) return packaged;
+  }
+  const dev = path.join(__dirname, '..', 'build-helper-sconcrete', 'SConcreteHelper.exe');
+  if (fs.existsSync(dev)) return dev;
+  return null;
+}
 
 function writeScoFiles(outDir, files) {
   if (!outDir) throw new Error('outDir is required');
@@ -42,41 +54,87 @@ function countScoFiles(outDir) {
   return fs.readdirSync(outDir).filter((f) => /\.sco$/i.test(f)).length;
 }
 
+function requireHelper() {
+  if (process.platform !== 'win32') {
+    throw new Error(
+      'The S-Concrete batch runner is only available in the Windows desktop app with S-Concrete installed.',
+    );
+  }
+  const exe = helperPath();
+  if (!exe) {
+    throw new Error(
+      'The S-Concrete helper (SConcreteHelper.exe) is missing from this build. Reinstall the app from a current build' +
+      (process.resourcesPath ? '' : ', or run "npm run build:helper" in development') + '.',
+    );
+  }
+  return exe;
+}
+
 /**
- * Launch BatchReporter against an existing <outDir> and resolve with the parsed
- * .SCRS text. Shared by both `run` (after writing files) and `rerun` (folder as-is).
+ * Spawn the sidecar and resolve with { exitCode, json, stderr }. The sidecar
+ * prints progress on stderr and a single JSON summary line on stdout.
  */
-function spawnReporter({ outDir, pythonExe, batchReporter, title, engineer, timeoutMs }) {
+function spawnHelper(exe, args, timeoutMs) {
   return new Promise((resolve, reject) => {
-    if (!pythonExe || !batchReporter) {
-      reject(new Error(
-        'S-Concrete BatchReporter is not configured. Set the Python executable and ' +
-        'run_batch_reporter.py paths in settings before running a batch.',
-      ));
-      return;
-    }
-    const cliArgs = [
-      batchReporter,
-      outDir,
-      '--title', title || 'S-Concrete Batch',
-      '--engineer', engineer || '',
-    ];
-    const proc = spawn(pythonExe, cliArgs, { windowsHide: true });
+    const proc = spawn(exe, args, { windowsHide: true });
+    let stdout = '';
     let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (d) => { stdout += d; });
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (d) => { stderr += d; });
     const timer = setTimeout(() => {
-      proc.kill();
-      reject(new Error('BatchReporter timed out'));
-    }, timeoutMs || 600000);
-    proc.on('error', (e) => { clearTimeout(timer); reject(e); });
+      try { proc.kill(); } catch { /* already gone */ }
+      reject(new Error('S-Concrete BatchReporter timed out.'));
+    }, timeoutMs || BATCH_TIMEOUT_MS);
+    proc.on('error', (e) => {
+      clearTimeout(timer);
+      reject(new Error(
+        `Could not start SConcreteHelper.exe: ${e.message}. ` +
+        'If a runtime is reported missing, install the free .NET Desktop Runtime 6 (x64).',
+      ));
+    });
     proc.on('exit', (code) => {
       clearTimeout(timer);
-      const scrsPath = path.join(outDir, SCRS_NAME);
-      let scrsText = null;
-      try { scrsText = fs.readFileSync(scrsPath, 'utf8'); } catch { /* missing if the run failed */ }
-      resolve({ exitCode: code, scrsPath, scrsText, stderr: stderr.slice(0, 4000) });
+      // The last parseable stdout line is the JSON result.
+      const lines = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      let json = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try { json = JSON.parse(lines[i]); break; } catch { /* not JSON */ }
+      }
+      resolve({ exitCode: code, json, stderr: stderr.slice(-4000) });
     });
   });
+}
+
+/** Is S-Concrete / BatchReporter installed? (drives the UI's availability hint). */
+async function detect() {
+  if (process.platform !== 'win32') return { found: false, reason: 'not-windows' };
+  const exe = helperPath();
+  if (!exe) return { found: false, reason: 'helper-missing' };
+  try {
+    const r = await spawnHelper(exe, ['--detect'], 30000);
+    if (r.json && r.json.found) return { found: true, reporter: r.json.reporter, sconcrete: r.json.sconcrete };
+    return { found: false, reason: 'sconcrete-not-installed' };
+  } catch (e) {
+    return { found: false, reason: e.message };
+  }
+}
+
+/** Drive BatchReporter over <outDir> and read the .SCRS back. */
+async function driveBatch(scoCount, { outDir, title, engineer, makePdf }) {
+  const exe = requireHelper();
+  const args = [outDir, '--title', title || 'S-Concrete Batch', '--engineer', engineer || ''];
+  if (makePdf === false) args.push('--no-pdf');
+  const r = await spawnHelper(exe, args, BATCH_TIMEOUT_MS);
+  if (!r.json || !r.json.ok) {
+    const why = (r.json && r.json.error) || r.stderr || `exit code ${r.exitCode}`;
+    throw new Error(`S-Concrete batch did not complete: ${why}`);
+  }
+  const scrsPath = path.join(outDir, SCRS_NAME);
+  let scrsText = null;
+  try { scrsText = fs.readFileSync(scrsPath, 'utf8'); } catch { /* missing if the run produced nothing */ }
+  return { exitCode: r.exitCode, scoCount, scrsPath, scrsText, stderr: r.stderr, pdf: r.json.pdf || '', status: r.json.status || '' };
 }
 
 /** Write the app's .SCO files, then run the reporter. */
@@ -84,14 +142,10 @@ async function runBatch(args) {
   const { outDir, files } = args || {};
   if (!outDir) throw new Error('outDir is required');
   const scoCount = writeScoFiles(outDir, files);
-  const r = await spawnReporter(args || {});
-  return { ...r, scoCount };
+  return driveBatch(scoCount, args);
 }
 
-/**
- * Re-run the reporter on the .SCO files ALREADY in <outDir> — no writing, so any
- * manual edits the user made to those files are preserved.
- */
+/** Re-run on the .SCO files ALREADY in <outDir> — no writing, so manual edits survive. */
 async function rerunBatch(args) {
   const { outDir } = args || {};
   if (!outDir) throw new Error('outDir is required');
@@ -104,17 +158,18 @@ async function rerunBatch(args) {
   if (!scoCount) {
     throw new Error(`No .SCO files found in "${outDir}". Generate or place .SCO files there first.`);
   }
-  const r = await spawnReporter(args || {});
-  return { ...r, scoCount };
+  return driveBatch(scoCount, args);
 }
 
 const handlers = {
   // Write .SCO files only (no run) — useful for "export .SCO files".
   generate: ({ outDir, files }) => ({ outDir, scoCount: writeScoFiles(outDir, files) }),
-  // Write + launch BatchReporter + read the .SCRS report.
+  // Write + drive BatchReporter (native sidecar) + read the .SCRS report.
   run: (args) => runBatch(args),
   // Re-run BatchReporter on the .SCO files already in the folder (edits preserved).
   rerun: (args) => rerunBatch(args),
+  // Report whether S-Concrete is installed (no run).
+  detect: () => detect(),
   // Re-read an existing .SCRS (e.g. after the user ran S-Concrete manually).
   readScrs: ({ scrsPath }) => ({ scrsText: fs.readFileSync(scrsPath, 'utf8') }),
 };

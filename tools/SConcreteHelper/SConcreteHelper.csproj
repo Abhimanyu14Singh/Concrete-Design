@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- UI Automation (System.Windows.Automation) lives in the Windows Desktop
+         framework, so this targets net*-windows and pulls it in via UseWPF.
+         RollForward LatestMajor lets it run on whatever .NET the machine has. -->
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SConcreteHelper</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

@@ -51,10 +51,12 @@ src/
 > **Note — the S-Concrete "Verify" flow is external, not an engine.** The Map view's
 > ② Verify panel (`components/ModelMap/GroupActionsPanel.tsx`) generates `.SCO`
 > files for the design groups, and the Electron main process
-> (`electron/sconcreteBridge.cjs`) runs S-Concrete's BatchReporter and reads the
-> `.SCRS` back. This is a *verification* round-trip against a separate desktop tool
-> — it does **not** feed `runDesign` and is desktop-only. Results are persisted on
-> the project (`sconcreteResults` / `sconcreteRanAt`) and only displayed. Columns
+> (`electron/sconcreteBridge.cjs`) drives S-Concrete's BatchReporter through a
+> bundled native sidecar (`tools/SConcreteHelper/` → `SConcreteHelper.exe`, Windows
+> UI Automation — **no Python**) and reads the `.SCRS` back. This is a *verification*
+> round-trip against a separate desktop tool — it does **not** feed `runDesign` and
+> is desktop-only. Results are persisted on the project (`sconcreteResults` /
+> `sconcreteRanAt`) and only displayed. Columns
 > import from ETABS as first-class members (`memberType: 'column'`,
 > `rectangular_column`); their design forces are entered post-import via
 > `components/ModelMap/ColumnForceGrid.tsx`, not by the engine.

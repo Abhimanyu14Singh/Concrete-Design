@@ -2,7 +2,7 @@
  * Confirms the renderer → main IPC boundary: the .SCO files extracted for the
  * design groups are the exact payload handed to the S-Concrete batch RUN, and
  * the parsed .SCRS comes back. The real run (electron/sconcreteBridge.cjs:
- * write files → spawn `python run_batch_reporter.py <dir> --title --engineer` →
+ * write files → drive BatchReporter via the bundled SConcreteHelper.exe →
  * read SConcreteResults.SCRS) only executes on Windows with S-Concrete, so here
  * the bridge is mocked and we assert the wiring around it.
  */
@@ -53,18 +53,17 @@ describe('runScoBatch — the group .SCO files reach the batch run', () => {
     installBridge();
     const members = [beam('b1', 'B1'), beam('b2', 'B2')];
     const files = collectGroupScoFiles([group('g', 'Perimeter', ['b1', 'b2'])], members, 'ACI318-19');
-    const cfg = { pythonExe: 'py', batchReporter: 'run_batch_reporter.py', outDir: '/scos', title: 'T', engineer: 'EOR' };
+    const cfg = { outDir: '/scos', title: 'T', engineer: 'EOR' };
 
     await runScoBatch(files, cfg);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].method).toBe('run');
-    const args = calls[0].args as { files: typeof files; pythonExe: string; outDir: string };
+    const args = calls[0].args as { files: typeof files; outDir: string };
     // The SAME .SCO files (text + names) the group produced are what the run consumes.
     expect(args.files.map(f => f.fileName)).toEqual(['B1.SCO', 'B2.SCO']);
     expect(args.files.map(f => f.text)).toEqual(files.map(f => f.text));
     expect(args.files[0].text).toContain('@Object@S-CONCRETE Sectional Loads@');  // forces table present
-    expect(args.pythonExe).toBe('py');
     expect(args.outDir).toBe('/scos');
   });
 
@@ -74,7 +73,7 @@ describe('runScoBatch — the group .SCO files reach the batch run', () => {
     installBridge(() => ({ exitCode: 0, scoCount: 2, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: scrs, stderr: '' }));
 
     const files = collectGroupScoFiles([group('g', 'G', ['b1', 'b2'])], [beam('b1', 'B1'), beam('b2', 'B2')], 'ACI318-19');
-    const out = await runScoBatch(files, { pythonExe: 'py', batchReporter: 'r.py', outDir: '/scos' });
+    const out = await runScoBatch(files, { outDir: '/scos' });
 
     expect(out.scoCount).toBe(2);
     const byName = parseBatchResults(out.scrsText!);
@@ -92,7 +91,7 @@ describe('runScoBatch — the group .SCO files reach the batch run', () => {
 
   it('throws a helpful error when the desktop bridge is absent', async () => {
     (globalThis as { window?: unknown }).window = {};  // no electronAPI
-    await expect(runScoBatch([], { pythonExe: '', batchReporter: '', outDir: '' }))
+    await expect(runScoBatch([], { outDir: '' }))
       .rejects.toThrow(/Windows desktop app/);
   });
 });
@@ -100,27 +99,26 @@ describe('runScoBatch — the group .SCO files reach the batch run', () => {
 describe('rerunScoBatch — re-run an existing folder (edits preserved)', () => {
   it('calls the "rerun" method with the config and NO files payload', async () => {
     installBridge(() => ({ exitCode: 0, scoCount: 3, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: '', stderr: '' }));
-    await rerunScoBatch({ pythonExe: 'py', batchReporter: 'r.py', outDir: '/scos', title: 'T', engineer: 'EOR' });
+    await rerunScoBatch({ outDir: '/scos', title: 'T', engineer: 'EOR' });
 
     expect(calls).toHaveLength(1);
     expect(calls[0].method).toBe('rerun');
-    const args = calls[0].args as { files?: unknown; outDir: string; pythonExe: string };
+    const args = calls[0].args as { files?: unknown; outDir: string };
     expect(args.files).toBeUndefined();   // nothing is re-written — the folder is used as-is
     expect(args.outDir).toBe('/scos');
-    expect(args.pythonExe).toBe('py');
   });
 
   it('returns the bridge result and the fresh .SCRS parses back', async () => {
     const scrs = ['File: Perimeter.SCO', '  OK', '  N vs M Util ...... 0.71'].join('\n');
     installBridge(() => ({ exitCode: 0, scoCount: 1, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: scrs, stderr: '' }));
-    const out = await rerunScoBatch({ pythonExe: 'py', batchReporter: 'r.py', outDir: '/scos' });
+    const out = await rerunScoBatch({ outDir: '/scos' });
     expect(out.scoCount).toBe(1);
     expect(parseBatchResults(out.scrsText!).Perimeter.status).toBe('OK');
   });
 
   it('throws when the desktop bridge is absent', async () => {
     (globalThis as { window?: unknown }).window = {};
-    await expect(rerunScoBatch({ pythonExe: '', batchReporter: '', outDir: '' }))
+    await expect(rerunScoBatch({ outDir: '' }))
       .rejects.toThrow(/Windows desktop app/);
   });
 });

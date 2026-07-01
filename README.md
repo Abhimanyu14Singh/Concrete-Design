@@ -55,7 +55,7 @@ The column workflow gained a full design-and-detailing pipeline ported from the 
 - **Quantity takeoffs** (`src/utils/takeoff.ts`) — the Map view's **Analyze ▾ → Takeoff** view reports gross concrete volume (yd³), rebar tonnage, and per-GFA intensities (lb steel per yd³, psf), rolled up for beams and columns. Reuses the savings report's steel-weight model so takeoff and savings never disagree.
 - **Formula-traceable Excel export** (`src/utils/export/excelExport.ts`) — the per-member worksheets write **live spreadsheet formulas** for the axial / geometry chain (Ag, ρg, φPn,max, the per-load-case axial DCR), so those cells recompute when an input is edited. P-M, flexure, shear, and torsion capacities come from the engine and are written as labelled values.
 - **ETABS group push-back** (`src/adapters/etabs/pushGroups.ts`, `tools/EtabsHelper`) — push the app's design groups back into ETABS as named groups with their member frames assigned. The pure mapping/summary helpers build the `{name, frameNames}[]` payload from `project.modelMap`; the live transport runs through the .NET sidecar.
-- **S-Concrete .SCO / .SCRS batch** (`src/utils/sco/`) — generate S-Concrete `.SCO` files for the design groups (beams as **Member Type 1**, rectangular columns through the byte-validated **Type 3** writer, ported 1:1 from `Column_Design_DW/sco_writer.py`), run the **BatchReporter** from the Electron main process, and pull per-member pass/fail and utilisations from the `.SCRS` report. ACI is wired; **EC2** uses a separate S-Concrete-2026-format writer (`src/utils/sco/scoWriterEC2.ts`) for both **beams** (Member Type 2) and rectangular **columns** (Member Type 3), injecting the app's inputs (section, materials, cover, stirrups, longitudinal cage, forces) into real sample templates. For beams, crack width (EN 1992-1-1 §7.3.4) is handled in-file via the SLS quasi-permanent load row; columns carry biaxial loads (Nf / Mfy / Mfz) and force the short-column check (Slender 0, since the app supplies amplified forces).
+- **S-Concrete .SCO / .SCRS batch** (`src/utils/sco/`) — generate S-Concrete `.SCO` files for the design groups (beams as **Member Type 1**, rectangular columns through the byte-validated **Type 3** writer, ported 1:1 from `Column_Design_DW/sco_writer.py`), drive **BatchReporter** via a bundled native sidecar (`SConcreteHelper.exe` — Windows UI Automation, **no Python**) from the Electron main process, and pull per-member pass/fail and utilisations from the `.SCRS` report. ACI is wired; **EC2** uses a separate S-Concrete-2026-format writer (`src/utils/sco/scoWriterEC2.ts`) for both **beams** (Member Type 2) and rectangular **columns** (Member Type 3), injecting the app's inputs (section, materials, cover, stirrups, longitudinal cage, forces) into real sample templates. For beams, crack width (EN 1992-1-1 §7.3.4) is handled in-file via the SLS quasi-permanent load row; columns carry biaxial loads (Nf / Mfy / Mfz) and force the short-column check (Slender 0, since the app supplies amplified forces).
   - **Per-group envelope** — a batch run emits **one `.SCO` per (design group × member type)**: the group's representative section/rebar carrying every member's load cases pooled into the Sectional Loads table, so S-Concrete checks each group section against its full force envelope. For **EC2 beams two files** are written per group — a ULS `<Group>.SCO` and a crack-width `<Group>_crack.SCO` (SLS quasi-permanent) — while ACI beams and all columns emit a single file. See `src/utils/sco/scoBatch.ts` (`buildGroupEnvelopeScoFiles`).
   - **Verify loop** — results are persisted on the project and surfaced both as a map colour mode and on each member's results view (see **S-Concrete Verification** under Features).
   - **Validation boundary** — the `.SCO` / `.SCRS` round-trip and the EC2 field mapping are by inspection of reference files and must be confirmed against a real S-Concrete run on Windows. The rotating-NA biaxial engine is golden-vector validated independently of this.
@@ -175,12 +175,12 @@ The **② Verify (S-Concrete)** panel in the Map view closes the design → veri
 
 - **Verification card on the member** — each member's results view shows an **"S-Concrete verification"** card: the persisted `.SCRS` result for that member (status, N-M utilisation, V&T utilisation, and crack for EC2 beam groups) next to the app's own governing DCR, with an **agree / differ** cue and the last-run time. Members that S-Concrete can check are beams and rectangular columns.
 
-- **One configured output folder (no per-run Save dialog)** — the `.SCO` files and the resulting `SConcreteResults.SCRS` are all written into **one** output folder that you configure once — together with the **Python executable** and **`run_batch_reporter.py`** paths — in the ② Verify panel's paths config (persisted in `localStorage`). There is no per-run Save dialog: the output folder is typed/pasted or chosen with a native folder picker (**Browse…** → Electron `showOpenDialog` with `openDirectory`), and reused on every run. The three paths are **guarded before any run** — a run with a blank path opens the config panel and refuses.
-  - **Run** writes the `.SCO` files into the folder, then launches BatchReporter, which writes the `.SCRS` back into the same folder.
+- **No Python — a bundled native helper drives BatchReporter** — the batch is run by `SConcreteHelper.exe`, a small .NET sidecar shipped with the app (`tools/SConcreteHelper/`) that drives S-Concrete's **BatchReporter** GUI by Windows UI Automation. There is **no** Python, `pywinauto`, or `run_batch_reporter.py` to install or configure (the old Python path was replaced). The app **auto-detects** S-Concrete under `C:\Program Files (x86)\S-FRAME Software\…\S-CONCRETE\BatchReporter.exe`, and the only setting left is the **output folder**, which auto-defaults to `Documents\S-Concrete Batches` (overridable). No per-run Save dialog.
+  - **Run** writes the `.SCO` files into the folder, then the helper drives BatchReporter (set folder → Run Batch → wait for results → optional PDF), which writes the `.SCRS` back into the same folder.
   - **Re-run existing folder** reports on the `.SCO` files already in the folder *without* rewriting them, so hand edits (made in S-Concrete or a text editor) survive.
   - **Open folder** reveals the output folder in the OS file manager.
 
-- **Desktop-only** — all S-Concrete steps require the **Windows desktop app with S-Concrete installed** (they launch S-Concrete locally); in the browser the panel shows a notice that grouping and design work but the batch does not.
+- **Desktop-only** — all S-Concrete steps require the **Windows desktop app with S-Concrete (S-FRAME Product Suite) installed** (the helper launches BatchReporter locally); in the browser the panel shows a notice that grouping and design work but the batch does not.
 
 - **Validation boundary** — as noted above, the `.SCO` / `.SCRS` round-trip must be confirmed against a real S-Concrete run on Windows.
 
@@ -325,10 +325,12 @@ src/
 electron/
   main.cjs                  # Electron main process (native dialogs, folder picker)
   etabsBridge.cjs           # spawns the .NET sidecar, JSON-lines over stdio
-  sconcreteBridge.cjs       # writes .SCO files + runs S-Concrete BatchReporter, reads .SCRS
+  sconcreteBridge.cjs       # writes .SCO files, drives SConcreteHelper.exe, reads .SCRS
 tools/
   EtabsHelper/              # C# sidecar: attaches to running ETABS via the
                             #   .NET API (ETABSv1.dll by reflection, no COM)
+  SConcreteHelper/          # C# sidecar: drives S-Concrete's BatchReporter by
+                            #   Windows UI Automation (no Python / pywinauto)
 ```
 
 ### ETABS Connection Architecture

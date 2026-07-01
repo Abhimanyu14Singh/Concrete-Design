@@ -12,7 +12,7 @@
 import { useState, useEffect } from 'react';
 import type { Member, DesignGroup, Project, SconcreteResult } from '../../types';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from '../../utils/sco/scoBatch';
-import { runScoBatch, rerunScoBatch, hasSconcrete, type SconcreteRunConfig, type SconcreteRunResult } from '../../utils/sco/sconcreteClient';
+import { runScoBatch, rerunScoBatch, hasSconcrete, detectSconcrete, type SconcreteRunConfig, type SconcreteRunResult, type SconcreteDetect } from '../../utils/sco/sconcreteClient';
 import { buildGroupPushPayload, summarizePushResults } from '../../adapters/etabs/pushGroups';
 import { ComConnection } from '../../adapters/etabs/comClient';
 
@@ -30,9 +30,10 @@ const LS_KEY = 'sconcrete.runConfig';
 
 function loadConfig(): SconcreteRunConfig {
   try {
-    return { pythonExe: '', batchReporter: '', outDir: '', ...JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') };
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) ?? '{}');
+    return { outDir: saved.outDir ?? '', title: saved.title, engineer: saved.engineer, makePdf: saved.makePdf };
   } catch {
-    return { pythonExe: '', batchReporter: '', outDir: '' };
+    return { outDir: '' };
   }
 }
 
@@ -41,7 +42,7 @@ function loadConfig(): SconcreteRunConfig {
 type DesktopAPI = {
   pickPath?: (opts: { mode: 'file' | 'folder' }) => Promise<{ path: string; exists?: boolean } | { error: string } | null>;
   openPath?: (target: string) => Promise<{ success: boolean; error?: string }>;
-  sconcreteAutodetect?: () => Promise<{ pythonExe: string; batchReporter: string; outDir: string }>;
+  sconcreteAutodetect?: () => Promise<{ outDir: string }>;
 };
 const desktopApi = (): DesktopAPI | undefined =>
   (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
@@ -71,30 +72,28 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   const shownResults = project.sconcreteResults ?? localResults;
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
-  const [autodetected, setAutodetected] = useState(false);
+  const [detect, setDetect] = useState<SconcreteDetect | null>(null);
   const canPick = !!desktopApi()?.pickPath;
 
-  // Desktop: auto-detect the S-Concrete batch paths once on mount so the user
-  // rarely has to enter them. Only fills fields left blank — a value the user
-  // already set is never overwritten — and everything stays editable below.
+  // Desktop: default a blank output folder + detect whether S-Concrete is
+  // installed, once on mount. The batch needs NO Python — the bundled
+  // SConcreteHelper.exe drives BatchReporter directly — so an output folder is
+  // the only setting left, and even that is auto-defaulted.
   useEffect(() => {
     const api = desktopApi();
-    if (!api?.sconcreteAutodetect) return;
-    if (cfg.pythonExe && cfg.batchReporter && cfg.outDir) return; // nothing blank to fill
     let cancelled = false;
-    api.sconcreteAutodetect().then(found => {
-      if (cancelled || !found) return;
-      const next: SconcreteRunConfig = {
-        ...cfg,
-        pythonExe: cfg.pythonExe || found.pythonExe || '',
-        batchReporter: cfg.batchReporter || found.batchReporter || '',
-        outDir: cfg.outDir || found.outDir || '',
-      };
-      if (next.pythonExe === cfg.pythonExe && next.batchReporter === cfg.batchReporter && next.outDir === cfg.outDir) return;
-      setCfgState(next);
-      localStorage.setItem(LS_KEY, JSON.stringify(next));
-      setAutodetected(true);
-    }).catch(() => { /* best effort */ });
+    if (api?.sconcreteAutodetect && !cfg.outDir) {
+      api.sconcreteAutodetect().then(found => {
+        if (cancelled || !found?.outDir) return;
+        setCfgState(prev => {
+          if (prev.outDir) return prev;
+          const next = { ...prev, outDir: found.outDir };
+          localStorage.setItem(LS_KEY, JSON.stringify(next));
+          return next;
+        });
+      }).catch(() => { /* best effort */ });
+    }
+    detectSconcrete().then(d => { if (!cancelled) setDetect(d); }).catch(() => { /* best effort */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -159,11 +158,11 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
     }
   }
 
-  /** Guard the three S-Concrete paths; opens the config panel and throws if unset. */
+  /** Guard the output folder; opens the config panel and throws if unset. */
   function requirePaths() {
-    if (!cfg.pythonExe || !cfg.batchReporter || !cfg.outDir) {
+    if (!cfg.outDir) {
       setShowCfg(true);
-      throw new Error('Set the S-Concrete paths (Python, BatchReporter, output folder) below first.');
+      throw new Error('Set the S-Concrete output folder below first.');
     }
   }
 
@@ -347,24 +346,22 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
         )}
 
         <button style={{ ...btn, background: '#374151' }} onClick={() => setShowCfg((s) => !s)} disabled={!!busy}>
-          {showCfg ? 'Hide paths' : 'S-Concrete paths'}
+          {showCfg ? 'Hide settings' : '⚙ Output folder'}
         </button>
       </div>
 
       {showCfg && (
         <div style={{ background: '#0b1220', border: '1px solid #1f2937', borderRadius: 6, padding: 8 }}>
-          {autodetected && (
-            <div style={{ fontSize: 9.5, color: '#34d399', marginBottom: 6 }}>
-              ✓ Auto-detected these paths — edit any to override.
-            </div>
+          {detect && (detect.found
+            ? <div style={{ fontSize: 9.5, color: '#34d399', marginBottom: 6 }}>✓ S-Concrete detected — no Python needed.</div>
+            : desktop && <div style={{ fontSize: 9.5, color: '#fbbf24', marginBottom: 6 }}>⚠ S-Concrete not found under C:\\Program Files (x86)\\S-FRAME Software\\ — install the S-FRAME Product Suite to run the batch.</div>
           )}
-          <PathField label="Python executable" placeholder="C:\\…\\python.exe" value={cfg.pythonExe}
-            onChange={(v) => setCfg({ ...cfg, pythonExe: v })} onBrowse={canPick ? () => browse('pythonExe') : undefined} />
-          <PathField label="run_batch_reporter.py" placeholder="C:\\…\\run_batch_reporter.py" value={cfg.batchReporter}
-            onChange={(v) => setCfg({ ...cfg, batchReporter: v })} onBrowse={canPick ? () => browse('batchReporter') : undefined} />
           <PathField label="Output folder (.SCO + .SCRS)" placeholder="C:\\…\\scos" value={cfg.outDir}
             onChange={(v) => setCfg({ ...cfg, outDir: v })} onBrowse={canPick ? () => browse('outDir') : undefined} />
-          {!canPick && <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>Type or paste full Windows paths (file pickers are available in the desktop app).</div>}
+          <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>
+            The batch runs via the bundled S-Concrete helper — no Python or scripts. Defaults to your Documents folder.
+          </div>
+          {!canPick && <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>Type or paste a full Windows path (file pickers are in the desktop app).</div>}
         </div>
       )}
 

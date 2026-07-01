@@ -137,54 +137,18 @@ ipcMain.handle('path-exists', async (_event, { paths } = {}) => {
   return out;
 });
 
-// Best-effort auto-detect of the S-Concrete batch paths so the user rarely has
-// to enter them by hand. Returns { pythonExe, batchReporter, outDir } — empty
-// strings for anything not found. The renderer only fills fields left blank, and
-// every value stays overridable, so a wrong guess is harmless.
+// Auto-fill a default S-Concrete output folder so the user doesn't have to pick
+// one. The batch runs via the bundled SConcreteHelper.exe (no Python), so the
+// output folder is the only setting — a stable per-user path under Documents,
+// created on demand. Returned as { outDir }; the renderer only fills it if blank.
 ipcMain.handle('sconcrete-autodetect', async () => {
-  const exists = (p) => { try { return !!p && fs.existsSync(p); } catch { return false; } };
-  const firstExisting = (cands) => cands.find(exists) || '';
-  const found = { pythonExe: '', batchReporter: '', outDir: '' };
-
-  // Python: PATH first, then common Windows install locations, then the column
-  // tool's known sandbox path.
-  const pyCandidates = [];
-  try {
-    const { execFileSync } = require('child_process');
-    const cmd = process.platform === 'win32' ? 'where' : 'which';
-    for (const name of ['python', 'python3', 'py']) {
-      try {
-        const lines = execFileSync(cmd, [name], { encoding: 'utf8', timeout: 4000 }).split(/\r?\n/);
-        for (const line of lines) { const t = line.trim(); if (t) pyCandidates.push(t); }
-      } catch { /* not on PATH */ }
-    }
-  } catch { /* child_process unavailable */ }
-  try {
-    const la = process.env.LOCALAPPDATA;
-    if (la && fs.existsSync(path.join(la, 'Programs', 'Python'))) {
-      for (const d of fs.readdirSync(path.join(la, 'Programs', 'Python'))) {
-        pyCandidates.push(path.join(la, 'Programs', 'Python', d, 'python.exe'));
-      }
-    }
-  } catch { /* ignore */ }
-  pyCandidates.push('C:\\Claude_Sandbox\\Python\\python.exe');
-  found.pythonExe = firstExisting(pyCandidates);
-
-  // BatchReporter script: a bundled copy (if we ship one) beats the sandbox path.
-  found.batchReporter = firstExisting([
-    path.join(process.resourcesPath || '', 'run_batch_reporter.py'),
-    path.join(__dirname, '..', 'run_batch_reporter.py'),
-    'C:\\Claude_Sandbox\\run_batch_reporter.py',
-  ]);
-
-  // Output folder: a stable per-user default under Documents, created on demand.
   try {
     const dir = path.join(app.getPath('documents'), 'S-Concrete Batches');
     fs.mkdirSync(dir, { recursive: true });
-    found.outDir = dir;
-  } catch { /* leave blank; the user can still pick one */ }
-
-  return found;
+    return { outDir: dir };
+  } catch {
+    return { outDir: '' };
+  }
 });
 
 // ── IPC: ETABS CSI OAPI bridge (Windows + ETABS running; errors elsewhere) ───

@@ -1,16 +1,17 @@
 /**
  * Renderer-side client for the S-Concrete batch bridge (electron/sconcreteBridge.cjs).
  * Thin typed wrappers over window.electronAPI.sconcrete. Only available in the
- * Windows desktop app with S-Concrete installed.
+ * Windows desktop app with S-Concrete installed. The batch is driven by the
+ * bundled native sidecar (SConcreteHelper.exe) — no Python — so the config is
+ * just an output folder.
  */
 import type { ScoFile } from './scoBatch';
 
 export interface SconcreteRunConfig {
-  pythonExe: string;     // path to the S-Concrete Python host (python.exe)
-  batchReporter: string; // path to run_batch_reporter.py
   outDir: string;        // directory to write .SCO files and read the .SCRS
   title?: string;
   engineer?: string;
+  makePdf?: boolean;     // also produce a PDF report (default true)
 }
 
 export interface SconcreteRunResult {
@@ -19,6 +20,16 @@ export interface SconcreteRunResult {
   scrsPath: string;
   scrsText: string | null;
   stderr: string;
+  pdf?: string;          // path to the produced PDF report, if any
+  status?: string;       // final BatchReporter status line
+}
+
+/** Whether S-Concrete / BatchReporter is installed on this machine. */
+export interface SconcreteDetect {
+  found: boolean;
+  reporter?: string;     // path to BatchReporter.exe
+  sconcrete?: string;    // path to Sconcrete.exe
+  reason?: string;
 }
 
 type Ipc = (method: string, args?: unknown) => Promise<unknown>;
@@ -34,6 +45,12 @@ function ipc(): Ipc {
 /** True when the S-Concrete bridge is present (desktop app). */
 export function hasSconcrete(): boolean {
   return !!(window as Window & { electronAPI?: { sconcrete?: unknown } }).electronAPI?.sconcrete;
+}
+
+/** Is S-Concrete / BatchReporter installed on this machine? (desktop only). */
+export async function detectSconcrete(): Promise<SconcreteDetect> {
+  if (!hasSconcrete()) return { found: false, reason: 'not-desktop' };
+  return await ipc()('detect') as SconcreteDetect;
 }
 
 /** Write .SCO files only (no run). */
