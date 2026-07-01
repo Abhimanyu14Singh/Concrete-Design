@@ -64,3 +64,35 @@ describe('TableConnection units — SI model', () => {
     expect(s.width).toBeGreaterThan(10);
   });
 });
+
+// Imperial model (kip, ft). A 12×24 in beam is 1.0 ft × 2.0 ft in the section table.
+const IMP_TABLES: Record<string, Row[]> = {
+  'Program Control': [{ CurrUnits: 'Kip, ft, F' }],
+  'Beam Object Connectivity': [
+    { UniqueName: 'B1', Story: 'L1', UniquePtI: 'P1', UniquePtJ: 'P2', Length: 20 }, // 20 ft
+  ],
+  'Point Object Connectivity': [
+    { UniqueName: 'P1', X: 0, Y: 0, Z: 0 },
+    { UniqueName: 'P2', X: 20, Y: 0, Z: 0 },
+  ],
+  'Frame Assignments - Section Properties': [
+    { UniqueName: 'B1', SectProp: '12X24' },
+  ],
+  'Frame Section Property Definitions - Concrete Rectangular': [
+    { Name: '12X24', Material: '4000Psi', t2: 1.0, t3: 2.0 }, // 12 in × 24 in
+  ],
+  'Group Assignments': [],
+};
+
+describe('TableConnection units — imperial model', () => {
+  it('imports a 12×24 in section at true size (kip-ft model)', async () => {
+    mockHttp(IMP_TABLES);
+    const conn = new BridgeConnection();
+    const info = await conn.connect();
+    expect(info.units).toBe('kip-ft');
+
+    const s = (await conn.getFrameSections()).find(x => x.name === '12X24')!;
+    expect(s.width).toBeCloseTo(12, 4);  // 1.0 ft → 12 in
+    expect(s.depth).toBeCloseTo(24, 4);  // 2.0 ft → 24 in
+  });
+});
