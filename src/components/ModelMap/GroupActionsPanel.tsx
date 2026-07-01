@@ -12,6 +12,8 @@
 import { useState, useEffect, Fragment } from 'react';
 import type { Member, DesignGroup, Project, SconcreteResult } from '../../types';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from '../../utils/sco/scoBatch';
+import type { ScrsResult } from '../../utils/sco/scrsParser';
+import { governingDcr, statusView, summarize, dcrTone, type StatusTone } from '../../utils/sco/resultStatus';
 import { runScoBatch, rerunScoBatch, hasSconcrete, detectSconcrete, type SconcreteRunConfig, type SconcreteRunResult, type SconcreteDetect } from '../../utils/sco/sconcreteClient';
 import { buildGroupPushPayload, summarizePushResults } from '../../adapters/etabs/pushGroups';
 import { ComConnection } from '../../adapters/etabs/comClient';
@@ -75,6 +77,10 @@ const input: React.CSSProperties = {
 };
 const label: React.CSSProperties = { fontSize: 10, color: '#94a3b8', display: 'block', marginTop: 6 };
 
+// Status tone → colour for the results table (logic lives in resultStatus.ts).
+const TONE: Record<StatusTone, string> = { ok: '#34d399', warn: '#fbbf24', ng: '#f87171', none: '#94a3b8' };
+const dcrColor = (dcr: number | null): string => TONE[dcrTone(dcr)];
+
 export default function GroupActionsPanel({ groups, members, project, frameByMemberId, onProjectChange }: Props) {
   const code = project.code;
   const [busy, setBusy] = useState<'etabs' | 'sco' | 'rerun' | null>(null);
@@ -85,6 +91,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   // Local state is only a fallback when the panel has no onProjectChange.
   const [localResults, setLocalResults] = useState<SconcreteResult[] | null>(null);
   const shownResults = project.sconcreteResults ?? localResults;
+  const resultSummary = shownResults?.length ? summarize(shownResults) : null;
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
   const [progress, setProgress] = useState('');
@@ -130,14 +137,18 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   /** Turn parsed .SCRS into persisted results, linking each back to its members. */
-  function toScoResults(parsed: Record<string, { name: string; status: string | null; nmUtil: number | null; vtUtil: number | null }>, linkByStem?: Map<string, Link>): SconcreteResult[] {
+  function toScoResults(parsed: Record<string, ScrsResult>, linkByStem?: Map<string, Link>): SconcreteResult[] {
     return Object.values(parsed).map((r) => {
       const link = linkByStem?.get(r.name);
       const memberIds = link?.memberIds ?? [
         ...members.filter((m) => m.label === r.name).map((m) => m.id),
         ...groups.filter((g) => g.label === r.name).flatMap((g) => g.memberIds),
       ];
-      return { name: r.name, status: r.status, nmUtil: r.nmUtil, vtUtil: r.vtUtil, kind: link?.kind, groupLabel: link?.groupLabel, memberIds };
+      return {
+        name: r.name, status: r.status, nmUtil: r.nmUtil, vtUtil: r.vtUtil,
+        kind: link?.kind, groupLabel: link?.groupLabel, memberIds,
+        warnings: r.msgs?.length ? r.msgs : undefined,
+      };
     });
   }
 
@@ -402,22 +413,32 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
 
       {shownResults && shownResults.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 9.5, color: '#64748b' }}>
               {project.sconcreteRanAt ? `Last run ${new Date(project.sconcreteRanAt).toLocaleString()}` : 'S-Concrete results'}
               {' · colour the map by S-Concrete'}
             </span>
-            <button onClick={() => saveResults(null)}
-              style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 9.5, cursor: 'pointer', padding: 0 }}>Clear</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {resultSummary && (
+                <span style={{ display: 'flex', gap: 8, fontSize: 10, fontWeight: 700 }} title="Governing status across all groups">
+                  {resultSummary.ng > 0 && <span style={{ color: TONE.ng }}>{resultSummary.ng} NG</span>}
+                  {resultSummary.warn > 0 && <span style={{ color: TONE.warn }}>{resultSummary.warn} near</span>}
+                  {resultSummary.ok > 0 && <span style={{ color: TONE.ok }}>{resultSummary.ok} OK</span>}
+                  {resultSummary.none > 0 && <span style={{ color: TONE.none }}>{resultSummary.none} —</span>}
+                </span>
+              )}
+              <button onClick={() => saveResults(null)}
+                style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 9.5, cursor: 'pointer', padding: 0 }}>Clear</button>
+            </div>
           </div>
-          <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid #1f2937', borderRadius: 6 }}>
+          <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #1f2937', borderRadius: 6 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
                 <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
                   <th style={{ padding: '4px 6px' }}>{groups.length ? 'Group' : 'Member'}</th>
                   <th style={{ padding: '4px 6px' }}>Status</th>
-                  <th style={{ padding: '4px 6px' }}>N-M</th>
-                  <th style={{ padding: '4px 6px' }}>V&amp;T</th>
+                  <th style={{ padding: '4px 6px' }} title="Governing demand/capacity ratio — the worse of N-M and shear+torsion (>1 = over capacity)">DCR</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'center' }} title="S-Concrete messages / warnings for this run">⚠</th>
                 </tr>
               </thead>
               <tbody>
@@ -428,6 +449,9 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                   const overN = (r.nmUtil ?? 0) > 1;
                   const overV = (r.vtUtil ?? 0) > 1;
                   const failing = [overN ? 'N-M' : null, overV ? 'V&T' : null].filter(Boolean).join(' & ');
+                  const sv = statusView(r);
+                  const { dcr, by } = governingDcr(r);
+                  const warns = r.warnings ?? [];
                   return (
                     <Fragment key={r.name}>
                       <tr style={{ color: '#e5e7eb', borderTop: '1px solid #111827', cursor: 'pointer' }}
@@ -437,22 +461,43 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                           {r.groupLabel ?? r.name}
                           {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
                         </td>
-                        <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
-                        <td style={{ padding: '4px 6px', color: overN ? '#f87171' : '#e5e7eb' }}>{r.nmUtil ?? '—'}</td>
-                        <td style={{ padding: '4px 6px', color: overV ? '#f87171' : '#e5e7eb' }}>{r.vtUtil ?? '—'}</td>
+                        <td style={{ padding: '4px 6px', color: TONE[sv.tone], fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          {sv.text}
+                          {sv.derived && <span style={{ color: '#64748b', fontWeight: 400 }} title="No status line in the report — derived from the governing DCR">&nbsp;*</span>}
+                        </td>
+                        <td style={{ padding: '4px 6px', color: dcrColor(dcr), fontWeight: 700, whiteSpace: 'nowrap' }}
+                          title={by ? `Governed by ${by} utilization` : undefined}>
+                          {dcr != null ? dcr.toFixed(2) : '—'}
+                          {by && <span style={{ color: '#64748b', fontWeight: 400, fontSize: 9, marginLeft: 3 }}>{by}</span>}
+                        </td>
+                        <td style={{ padding: '4px 6px', textAlign: 'center', color: warns.length ? TONE.warn : '#334155', fontWeight: warns.length ? 700 : 400 }}
+                          title={warns.length ? `${warns.length} message(s)` : 'no messages'}>
+                          {warns.length || '—'}
+                        </td>
                       </tr>
                       {isOpen && (
                         <tr style={{ background: '#0b1220' }}>
                           <td colSpan={4} style={{ padding: '6px 10px', fontSize: 10.5, color: '#cbd5e1' }}>
                             <div style={{ marginBottom: 4 }}>
-                              <b style={{ color: r.status === 'OK' ? '#34d399' : '#f87171' }}>{r.status ?? 'no result'}</b>
+                              <b style={{ color: TONE[sv.tone] }}>{sv.text === '—' ? 'no result' : sv.text}</b>
+                              {sv.derived && <span style={{ color: '#64748b' }}> (derived from DCR — no status line in the report)</span>}
                               {r.kind && <span style={{ color: '#64748b' }}> · {r.kind === 'crack' ? 'crack-width (SLS)' : r.kind === 'uls' ? 'strength (ULS)' : 'strength'} check</span>}
                             </div>
                             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+                              <span>Governing DCR <b style={{ color: dcrColor(dcr) }}>{dcr != null ? dcr.toFixed(2) : '—'}</b>{by && <span style={{ color: '#64748b' }}> ({by})</span>}</span>
                               <span>N-M util <b style={{ color: overN ? '#f87171' : '#34d399' }}>{r.nmUtil ?? '—'}</b></span>
                               <span>V&amp;T util <b style={{ color: overV ? '#f87171' : '#34d399' }}>{r.vtUtil ?? '—'}</b></span>
                             </div>
                             {failing && <div style={{ color: '#f87171', marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
+                            {warns.length > 0 && (
+                              <div style={{ marginBottom: 4 }}>
+                                <div style={{ color: TONE.warn, marginBottom: 2 }}>⚠ {warns.length} S-Concrete message{warns.length !== 1 ? 's' : ''}:</div>
+                                <ul style={{ margin: 0, paddingLeft: 16, color: '#fcd34d' }}>
+                                  {warns.slice(0, 8).map((w, i) => <li key={i} style={{ marginBottom: 1 }}>{w}</li>)}
+                                </ul>
+                                {warns.length > 8 && <div style={{ color: '#64748b' }}>+{warns.length - 8} more…</div>}
+                              </div>
+                            )}
                             {memberLabels.length > 0 && (
                               <div style={{ color: '#94a3b8' }}>
                                 {memberLabels.length} member{memberLabels.length !== 1 ? 's' : ''}: {memberLabels.slice(0, 12).join(', ')}{memberLabels.length > 12 ? '…' : ''}
