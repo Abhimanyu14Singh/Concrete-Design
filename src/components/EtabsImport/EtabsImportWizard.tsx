@@ -38,6 +38,20 @@ type SourceKind = 'com' | 'mock';
 
 const STEPS = ['Connect', 'Filter', 'Rebar Defaults', 'Review & Import'];
 
+/** "All" / "None" quick-select buttons for a multi-select category header. */
+function AllNone({ onAll, onNone }: { onAll: () => void; onNone: () => void }) {
+  const s: React.CSSProperties = {
+    fontSize: 11, color: '#2563eb', background: 'none', border: 'none',
+    cursor: 'pointer', fontWeight: 600, padding: '0 4px',
+  };
+  return (
+    <>
+      <button type="button" onClick={onAll} style={s}>All</button>
+      <button type="button" onClick={onNone} style={s}>None</button>
+    </>
+  );
+}
+
 function worstDCR(m: Member, code: DesignCode): number {
   const r = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span, code);
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
@@ -456,6 +470,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     {(selSections.size > 0 || selGroups.size > 0) && (
                       <span style={{ fontSize: 10, color: '#6b7280' }}>sections ∪ groups — members matching either are imported</span>
                     )}
+                    <div style={{ flex: 1 }} />
+                    {sections.length > 0 && <AllNone
+                      onAll={() => { setSelSections(new Set(sections.map(s => s.name))); setMatchCount(null); }}
+                      onNone={() => { setSelSections(new Set()); setMatchCount(null); }} />}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {sections.map(s => (
@@ -467,7 +485,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </div>
                 </div>
                 <div style={card}>
-                  <div style={lbl}>ETABS groups (empty = all)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>ETABS groups (empty = all)</div>
+                    <div style={{ flex: 1 }} />
+                    {groups.length > 0 && <AllNone
+                      onAll={() => { setSelGroups(new Set(groups)); setMatchCount(null); }}
+                      onNone={() => { setSelGroups(new Set()); setMatchCount(null); }} />}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {groups.map(g => (
                       <span key={g} style={chip(selGroups.has(g))}
@@ -479,7 +503,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </div>
                 </div>
                 <div style={card}>
-                  <div style={lbl}>Design groups from ETABS (empty = story · section)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Design groups from ETABS (empty = story · section)</div>
+                    <div style={{ flex: 1 }} />
+                    {groups.length > 0 && <AllNone
+                      onAll={() => setMirrorGroups(new Set(groups))}
+                      onNone={() => setMirrorGroups(new Set())} />}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {groups.map(g => (
                       <span key={g} style={chip(mirrorGroups.has(g))}
