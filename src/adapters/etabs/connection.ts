@@ -67,6 +67,16 @@ export interface BeamFilter {
   groups?: string[];    // beam must belong to at least one
 }
 
+/** A column's design forces for one combo, enveloped over the member's stations.
+ *  ETABS sign convention: axial compression is NEGATIVE. Units: kip, kip-ft. */
+export interface ColumnComboForce {
+  combo: string;
+  P: number;            // axial (compression negative)
+  V2: number; V3: number;
+  M2: number; M3: number;
+  T: number;
+}
+
 export interface EtabsConnection {
   readonly kind: 'com' | 'file' | 'mock' | 'bridge';
   connect(): Promise<EtabsConnectInfo>;
@@ -81,6 +91,9 @@ export interface EtabsConnection {
   getColumns?(filter: BeamFilter): Promise<EtabsColumnGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
   getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
+  /** Column design forces per frame for the selected combos, enveloped per combo
+   *  (optional — sources without a column force table omit it). Key = frame name. */
+  getColumnForces?(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ColumnComboForce[]>>;
   /** Push design groups back to the ETABS model: create each named group and
    *  assign its member frames. Only the live COM connection supports this
    *  (optional — file/mock sources omit it). */

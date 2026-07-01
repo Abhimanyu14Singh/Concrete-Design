@@ -22,7 +22,7 @@
 import type { ComboForces, StationForce } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, EtabsColumnGeom, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -453,6 +453,55 @@ export abstract class TableConnection implements EtabsConnection {
       }
       out[frame] = cfs;
     }
+    for (const f of frameNames) if (!out[f]) out[f] = [];
+    return out;
+  }
+
+  /**
+   * Column design forces per frame for the selected combos, enveloped over the
+   * member's stations (most-compressive P; max |V2|,|V3|,|M2|,|M3|,|T|). Reads the
+   * "… Forces - Columns" table — a pure read, no SetLoad*SelectedForDisplay — so it
+   * never unlocks the model (mirrors the beam force convention). Values in kip /
+   * kip-ft with ETABS's compression-negative axial sign.
+   */
+  async getColumnForces(
+    frameNames: string[], combos: string[], sourceGroup?: string,
+  ): Promise<Record<string, ColumnComboForce[]>> {
+    let rows = await this.fetchTable('Design Forces - Columns', sourceGroup);
+    if (!rows.length) rows = await this.fetchTable('Element Forces - Columns', sourceGroup);
+
+    const wanted = new Set(frameNames);
+    const comboSet = new Set(combos);
+    const ff = this.units.forceToKip;
+    const mf = ff * this.units.lengthToFt; // moment → kip-ft
+
+    const byFrame = new Map<string, Map<string, ColumnComboForce>>();
+    for (const r of rows) {
+      const frame = str(r, 'UniqueName');
+      if (!wanted.has(frame)) continue;
+      const rawCombo = str(r, 'Combo', 'OutputCase', 'Case');
+      const baseCombo = rawCombo.replace(/-\d+$/, ''); // strip "Env-1"/"Env-2" step suffixes
+      if (!comboSet.has(rawCombo) && !comboSet.has(baseCombo)) continue;
+
+      const P = num(r, 'P') * ff;
+      const V2 = Math.abs(num(r, 'V2') * ff), V3 = Math.abs(num(r, 'V3') * ff);
+      const M2 = Math.abs(num(r, 'M2') * mf), M3 = Math.abs(num(r, 'M3') * mf);
+      const T = Math.abs(num(r, 'T') * mf);
+
+      let fm = byFrame.get(frame);
+      if (!fm) { fm = new Map(); byFrame.set(frame, fm); }
+      const cur = fm.get(baseCombo);
+      if (!cur) fm.set(baseCombo, { combo: baseCombo, P, V2, V3, M2, M3, T });
+      else {
+        if (P < cur.P) cur.P = P;             // most compressive (ETABS: compression negative)
+        cur.V2 = Math.max(cur.V2, V2); cur.V3 = Math.max(cur.V3, V3);
+        cur.M2 = Math.max(cur.M2, M2); cur.M3 = Math.max(cur.M3, M3);
+        cur.T = Math.max(cur.T, T);
+      }
+    }
+
+    const out: Record<string, ColumnComboForce[]> = {};
+    for (const [frame, fm] of byFrame) out[frame] = [...fm.values()];
     for (const f of frameNames) if (!out[f]) out[f] = [];
     return out;
   }

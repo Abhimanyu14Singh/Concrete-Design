@@ -6,7 +6,7 @@
 import type { ComboForces } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, EtabsColumnGeom, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -150,6 +150,25 @@ export class MockConnection implements EtabsConnection {
       const beam = BEAMS.find(b => b.name === name);
       if (!beam) continue;
       out[name] = combos.map(c => forcePattern(beam, c));
+    }
+    return out;
+  }
+
+  async getColumnForces(frameNames: string[], combos: string[]): Promise<Record<string, ColumnComboForce[]>> {
+    // Deterministic demo forces: lower stories carry more axial. Compression is
+    // NEGATIVE (ETABS convention) so the app maps Pu = −P > 0.
+    const out: Record<string, ColumnComboForce[]> = {};
+    for (const name of frameNames) {
+      const col = COLUMNS.find(c => c.name === name);
+      if (!col) continue;
+      const lower = col.story === STORIES[0];
+      out[name] = combos.map((combo, i) => ({
+        combo,
+        P: -(lower ? 780 : 420) - i * 30,
+        V2: 18 + i * 2, V3: 12 + i,
+        M2: 55 + i * 4, M3: 70 + i * 5,
+        T: 3,
+      }));
     }
     return out;
   }

@@ -198,7 +198,30 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       if (includeColumns && conn.getColumns) {
         allColumns = await conn.getColumns({});
         const filteredCols = await conn.getColumns(filter);
-        built = [...built, ...buildColumnMembers(filteredCols, sections, materials, seed)];
+        let colMembers = buildColumnMembers(filteredCols, sections, materials, seed);
+        // Import column design forces (read-only, enveloped per combo) so columns
+        // don't land at zero. Maps ETABS → app: Pu = −P (compression positive),
+        // Mux = M3, Muy = M2, Vu = max(|V2|,|V3|), Tu = T. Falls back to the zero
+        // placeholder (entered later in the force grid) if the source has no column
+        // force table or the analysis wasn't run.
+        if (conn.getColumnForces && filteredCols.length) {
+          try {
+            const colForces = await conn.getColumnForces(filteredCols.map((c) => c.name), [...forceCombos], sourceGroup);
+            colMembers = colMembers.map((m) => {
+              const cfs = colForces[m.id];
+              if (!cfs || !cfs.length) return m;
+              return {
+                ...m,
+                loads: cfs.map((cf, i) => ({
+                  id: cf.combo || `LC${i + 1}`, label: cf.combo || `LC${i + 1}`,
+                  Pu: -cf.P, Mux: cf.M3, Muy: cf.M2, Vu: Math.max(cf.V2, cf.V3), Tu: cf.T,
+                  Mu_pos: 0, Mu_neg: 0,
+                })),
+              };
+            });
+          } catch { /* leave columns at zero — the user can enter forces in the grid */ }
+        }
+        built = [...built, ...colMembers];
       }
       if (!built.length) throw new Error('No members match the current filter.');
       // Apply global material overrides if the user enabled them.

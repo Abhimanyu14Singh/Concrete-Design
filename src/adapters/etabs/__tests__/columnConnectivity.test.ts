@@ -35,6 +35,12 @@ const TABLES: Record<string, Row[]> = {
     { GroupName: 'Cols', ObjectType: 'Column', ObjectUniqueName: 'C1' },
     { GroupName: 'Cols', ObjectType: 'Column', ObjectUniqueName: 'C2' },
   ],
+  // kip-ft column forces (compression negative). Two stations per combo → envelope.
+  'Element Forces - Columns': [
+    { UniqueName: 'C1', OutputCase: '1.2D+1.6L', Station: 0, P: -800, V2: 20, V3: 10, T: 3, M2: 40, M3: 60 },
+    { UniqueName: 'C1', OutputCase: '1.2D+1.6L', Station: 12, P: -790, V2: -25, V3: 8, T: 2, M2: 30, M3: 75 },
+    { UniqueName: 'C2', OutputCase: '1.2D+1.6L', Station: 0, P: -500, V2: 12, V3: 6, T: 1, M2: 20, M3: 30 },
+  ],
 };
 
 function mockHttp(tables: Record<string, Row[]>) {
@@ -89,6 +95,22 @@ describe('TableConnection.getColumns (live column import)', () => {
     const conn = new BridgeConnection();
     await conn.connect();
     expect(await conn.getColumns!({})).toEqual([]);
+  });
+
+  it('imports column forces enveloped per combo (compression-negative axial)', async () => {
+    mockHttp(TABLES);
+    const conn = new BridgeConnection();
+    await conn.connect();
+    const forces = await conn.getColumnForces!(['C1', 'C2'], ['1.2D+1.6L']);
+
+    const c1 = forces.C1;
+    expect(c1).toHaveLength(1);
+    expect(c1[0].combo).toBe('1.2D+1.6L');
+    expect(c1[0].P).toBeCloseTo(-800, 6);   // most-compressive of -800 / -790
+    expect(c1[0].V2).toBeCloseTo(25, 6);    // max |V2| = |−25|
+    expect(c1[0].M3).toBeCloseTo(75, 6);    // max |M3| across stations
+    expect(c1[0].M2).toBeCloseTo(40, 6);
+    expect(forces.C2[0].P).toBeCloseTo(-500, 6);
   });
 
   it('still reads beams alongside columns (no regression)', async () => {
