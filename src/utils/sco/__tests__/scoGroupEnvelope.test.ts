@@ -307,44 +307,47 @@ describe('buildGroupEnvelopeScoFiles — EC2 routing', () => {
   });
 });
 
-describe('buildGroupEnvelopeScoFiles — longitudinal bar size reaches the .SCO', () => {
+describe('buildGroupEnvelopeScoFiles — metric bar size reaches the EC2 .SCO (European table)', () => {
   const proj: Project = { id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: 'd', members: [] };
-  // S-Concrete 2026 "American Alternate Bars" template: index 7 = No 8 (25.4 mm),
-  // index 9 = No 10 (32.26 mm). #10 (US 1.27") and Ø32 both map to index 9.
+  // EC2 files resolve bars by their POSITION in S-Concrete's European table:
+  // Ø8 → 2, Ø10 → 3, Ø12 → 4, Ø16 → 5, Ø32 → 8. (Mapping metric bars to the
+  // American "Alternate Bars" table instead undersized each by one: Ø12 → Ø10.)
   const dt = (sco: string) => sco.match(/Bm DT\(1,1\)\t\s*(\d+)/)?.[1];
   const db = (sco: string) => sco.match(/Bm DB\(1,1\)\t\s*(\d+)/)?.[1];
   const withRebar = (m: Member, rebar: RebarLayout): Member => ({ ...m, rebar });
-  const r10: RebarLayout = { topBars: [{ numBars: 3, barSize: 10 }], botBars: [{ numBars: 3, barSize: 10 }], ties: { barSize: 4, spacing: 6, legs: 2 } };
-  const r32: RebarLayout = { topBars: [{ numBars: 3, barSize: -32 }], botBars: [{ numBars: 3, barSize: -32 }], ties: { barSize: -8, spacing: 6, legs: 2 } };
+  const metric = (d: number): RebarLayout =>
+    ({ topBars: [{ numBars: 3, barSize: -d }], botBars: [{ numBars: 3, barSize: -d }], ties: { barSize: -8, spacing: 6, legs: 2 } });
 
-  it('a #10 GROUP template writes bar index 9 (No 10), NOT the #8 fallback (the reported bug)', () => {
-    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], r10)], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
-    expect(dt(f.text)).toBe('9');
-    expect(db(f.text)).toBe('9');
+  it('a Ø12 GROUP template writes index 4 (Ø12), NOT index 3 (Ø10 — the reported bug)', () => {
+    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], metric(12))], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
+    expect(dt(f.text)).toBe('4');
+    expect(db(f.text)).toBe('4');
   });
 
-  it('a Ø32 group template also writes index 9 (No 10)', () => {
-    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], r32)], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
-    expect(dt(f.text)).toBe('9');
+  it('Ø10 → index 3 and Ø32 → index 8 (position in the European table)', () => {
+    const [a] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], metric(10))], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
+    expect(dt(a.text)).toBe('3');
+    const [b] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], metric(32))], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
+    expect(dt(b.text)).toBe('8');
   });
 
-  it('#10 on the MEMBER (no group template) reaches the .SCO too', () => {
-    const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]), r10);
+  it('Ø12 on the MEMBER (no group template) reaches the .SCO too', () => {
+    const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]), metric(12));
     const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
-    expect(dt(f.text)).toBe('9');
+    expect(dt(f.text)).toBe('4');
   });
 
-  it('an empty top face BORROWS the bottom face instead of silently defaulting to #8', () => {
+  it('an empty top face BORROWS the bottom face instead of a silent default', () => {
     const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]),
-      { topBars: [], botBars: [{ numBars: 3, barSize: 10 }], ties: { barSize: 4, spacing: 6, legs: 2 } });
+      { topBars: [], botBars: [{ numBars: 3, barSize: -12 }], ties: { barSize: -8, spacing: 6, legs: 2 } });
     const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
-    expect(dt(f.text)).toBe('9');   // borrowed the bottom #10, not the #8 default
+    expect(dt(f.text)).toBe('4');   // borrowed the bottom Ø12 (index 4)
   });
 
-  it('a truly bar-less cage still falls back to a valid index (index 7 = No 8)', () => {
+  it('a truly bar-less cage falls back to a metric default (Ø16 = index 5)', () => {
     const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]),
-      { topBars: [], botBars: [], ties: { barSize: 4, spacing: 6, legs: 2 } });
+      { topBars: [], botBars: [], ties: { barSize: -8, spacing: 6, legs: 2 } });
     const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
-    expect(dt(f.text)).toBe('7');   // no bars anywhere → documented #8 fallback
+    expect(dt(f.text)).toBe('5');
   });
 });

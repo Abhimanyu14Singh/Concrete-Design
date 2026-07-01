@@ -36,18 +36,27 @@ const KIPFT_TO_KNM = 1.355818;
 /** Cylinder strength (psi) → characteristic cube strength fcu (MPa). */
 const fcPsiToFcuMpa = (fcPsi: number): number => (fcPsi * PSI_TO_MPA) / 0.8;
 
-// S-Concrete 2026 "American Alternate Bars" table — index → bar diameter (mm).
-const BAR_IDX_DIAM_MM: Record<number, number> = {
-  1: 6.35, 2: 9.525, 3: 12.7, 4: 15.875, 5: 19.05, 6: 22.225,
-  7: 25.4, 8: 28.6512, 9: 32.258, 10: 35.814, 11: 43.0022, 12: 57.3278,
+// S-Concrete renders EN-1992 (metric) .SCO files against its EUROPEAN bar list —
+// NOT the "American Alternate Bars" set the sample template happens to embed — and
+// it resolves each bar by its INDEX (position) in that list. So a metric bar must
+// map to its position in the European table, index → Ø (mm) below. Mapping to the
+// American table instead undersized every bar by one European step (Ø10 showed as
+// Ø8, Ø12 as Ø10).
+//
+// VALIDATION: calibrated from a real S-Concrete 2026 EN run (user screenshots) —
+// Ø8 → index 2 (renders Ø8) and Ø12 → index 4 (index 3 was rendering Ø10). The
+// small/common bars are confirmed; Ø16+ follow the standard reduced European set
+// and should be re-checked against a Windows run before relying on them.
+const EC2_BAR_DIAM_MM: Record<number, number> = {
+  1: 6, 2: 8, 3: 10, 4: 12, 5: 16, 6: 20, 7: 25, 8: 32, 9: 40,
 };
 
 /** Map an app bar size (US # positive, metric Ø mm negative) to the nearest
- *  S-Concrete 2026 bar-table index by diameter. */
-export function barIndex2026(barSize: number): number {
+ *  S-Concrete 2026 EUROPEAN bar-table index by diameter (EN 1992-1-1 files). */
+export function barIndexEC2(barSize: number): number {
   const dMm = barSize < 0 ? -barSize : getBarDiam(barSize) * IN_TO_MM;
-  let best = 7, bestErr = Infinity; // default ≈ #8
-  for (const [idx, d] of Object.entries(BAR_IDX_DIAM_MM)) {
+  let best = 4, bestErr = Infinity; // default ≈ Ø12
+  for (const [idx, d] of Object.entries(EC2_BAR_DIAM_MM)) {
     const err = Math.abs(d - dMm);
     if (err < bestErr) { bestErr = err; best = +idx; }
   }
@@ -205,10 +214,10 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
   const bot = member.rebar.botBars;
   const side = member.rebar.sideBars ?? [];
   // Longitudinal bar size per face, borrowing the OPPOSITE face before falling
-  // back to a constant — so a one-sided cage never silently degrades to a #8 the
-  // user never chose (the "I picked #10 but the .SCO shows #8" surprise).
-  const topSize = top[0]?.barSize ?? bot[0]?.barSize ?? 8;
-  const botSize = bot[0]?.barSize ?? top[0]?.barSize ?? 8;
+  // back to a metric default — so a one-sided cage never silently degrades to a
+  // bar the user never chose (the "I picked Ø12 but the .SCO shows Ø10" surprise).
+  const topSize = top[0]?.barSize ?? bot[0]?.barSize ?? -16;
+  const botSize = bot[0]?.barSize ?? top[0]?.barSize ?? -16;
   return {
     memberName: member.label,
     webMm: (s.bw ?? s.b) * IN_TO_MM,
@@ -221,12 +230,12 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
     fcuMpa: fcPsiToFcuMpa(member.material.fc),
     esMpa: member.material.Es * PSI_TO_MPA,
     topCount: sumBars(top),
-    topBarIdx: barIndex2026(topSize),
+    topBarIdx: barIndexEC2(topSize),
     botCount: sumBars(bot),
-    botBarIdx: barIndex2026(botSize),
+    botBarIdx: barIndexEC2(botSize),
     faceCount: sumBars(side),
-    faceBarIdx: barIndex2026(side[0]?.barSize ?? 5),
-    stirrupBarIdx: barIndex2026(member.rebar.ties?.barSize ?? s.stirrupDia),
+    faceBarIdx: barIndexEC2(side[0]?.barSize ?? -12),
+    stirrupBarIdx: barIndexEC2(member.rebar.ties?.barSize ?? s.stirrupDia),
     stirrupSpacingMm: (member.rebar.ties?.spacing ?? 8) * IN_TO_MM,
     stirrupLegs: member.rebar.ties?.legs ?? 2,
     crackWidthLimitMm: member.crackParams?.wLimitBot ?? 0.3,
@@ -356,8 +365,8 @@ export function memberToEc2ColumnParams(member: Member): Ec2ColumnScoParams {
     esMpa: member.material.Es * PSI_TO_MPA,
     nzcol: Math.max(2, nz),
     nycol: Math.max(2, ny),
-    vertBarIdx: barIndex2026(member.rebar.topBars[0]?.barSize ?? 8),
-    tieBarIdx: barIndex2026(member.rebar.ties?.barSize ?? s.stirrupDia),
+    vertBarIdx: barIndexEC2(member.rebar.topBars[0]?.barSize ?? -16),
+    tieBarIdx: barIndexEC2(member.rebar.ties?.barSize ?? s.stirrupDia),
     tieLegs: member.rebar.ties?.legs ?? 2,
     tieSpacingMm: (member.rebar.ties?.spacing ?? 12) * IN_TO_MM,
     rows: ec2ColumnLoadRows(member),

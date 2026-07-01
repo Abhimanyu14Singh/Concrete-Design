@@ -4,7 +4,7 @@
  * Sectional Loads (forces) — including the SLS quasi-permanent crack row.
  */
 import { describe, it, expect } from 'vitest';
-import { buildEc2BeamSco, buildEc2ColumnSco, barIndex2026, memberToEc2BeamParams } from '../scoWriterEC2';
+import { buildEc2BeamSco, buildEc2ColumnSco, barIndexEC2, memberToEc2BeamParams } from '../scoWriterEC2';
 import type { Member, Project } from '../../../types';
 
 const project = (over: Partial<Project> = {}): Project => ({
@@ -42,11 +42,20 @@ function loadRows(text: string) {
     .map(l => { const c = l.split('\t').map(s => s.trim()); return { Nf: +c[1], Tf: +c[2], Vfz: +c[3], Mfy: +c[4], Mfz: +c[7], sust: +c[14] }; });
 }
 
-describe('barIndex2026', () => {
-  it('maps US bars to the 2026 metric bar table', () => {
-    expect(barIndex2026(4)).toBe(3);   // #4 ≈ 12.7 mm → index 3
-    expect(barIndex2026(9)).toBe(8);   // #9 ≈ 28.65 mm → index 8
-    expect(barIndex2026(-25)).toBe(7); // Ø25 mm → index 7 (25.4)
+describe('barIndexEC2', () => {
+  it('maps metric bars to their S-Concrete European bar-table index (position)', () => {
+    // Confirmed against a real S-Concrete 2026 EN run (user screenshots): the
+    // index is the bar's position in [Ø6, Ø8, Ø10, Ø12, Ø16, Ø20, Ø25, Ø32, Ø40].
+    expect(barIndexEC2(-8)).toBe(2);   // Ø8  → index 2 (renders Ø8)
+    expect(barIndexEC2(-10)).toBe(3);  // Ø10 → index 3
+    expect(barIndexEC2(-12)).toBe(4);  // Ø12 → index 4 (was 3 = Ø10: the reported bug)
+    expect(barIndexEC2(-16)).toBe(5);
+    expect(barIndexEC2(-25)).toBe(7);
+    expect(barIndexEC2(-32)).toBe(8);
+  });
+  it('maps US bars to the nearest European diameter', () => {
+    expect(barIndexEC2(4)).toBe(4);    // #4 ≈ 12.7 mm → Ø12
+    expect(barIndexEC2(8)).toBe(7);    // #8 ≈ 25.4 mm → Ø25
   });
 });
 
@@ -76,13 +85,13 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
   it('reflects the longitudinal bars (single position per face, rest zeroed)', () => {
     expect(param(t, 'Bm NT(1,1)')).toBe('3');
     expect(param(t, 'Bm NB(1,1)')).toBe('4');
-    expect(param(t, 'Bm DT(1,1)')).toBe('8');   // #9
+    expect(param(t, 'Bm DT(1,1)')).toBe('8');   // #9 ≈ 28.65 mm → Ø32 (index 8)
     expect(param(t, 'Bm NT(1,2)')).toBe('0');   // sample's 7 cleared
     expect(param(t, 'Bm NbmFace')).toBe('2');   // side bars
   });
 
   it('reflects the stirrups (size index, spacing mm, legs)', () => {
-    expect(param(t, 'Bm Dstir')).toBe('3');     // #4
+    expect(param(t, 'Bm Dstir')).toBe('4');     // #4 ≈ 12.7 mm → Ø12 (index 4)
     expect(+param(t, 'Bm Sstir')!).toBe(152);   // 6 in ≈ 152.4
     expect(param(t, 'Bm NlegsZ')).toBe('2');
   });
@@ -153,8 +162,8 @@ describe('buildEc2ColumnSco — app inputs reflected (Member Type 3)', () => {
   it('reflects the cage: Nzcol/Nycol, bar + tie indices, legs, spacing', () => {
     expect(param(t, 'Cm Nycol')).toBe('3');    // top-face bars
     expect(param(t, 'Cm Nzcol')).toBe('4');    // side/2 + 2
-    expect(param(t, 'Cm DVert')).toBe('8');    // #9
-    expect(param(t, 'Cm DHorz')).toBe('3');    // #4 tie
+    expect(param(t, 'Cm DVert')).toBe('8');    // #9 ≈ Ø32 (index 8)
+    expect(param(t, 'Cm DHorz')).toBe('4');    // #4 tie ≈ Ø12 (index 4)
     expect(param(t, 'Cm NClegsZ')).toBe('2');
     expect(+param(t, 'Cm Stie')!).toBe(305);   // 12 in ≈ 304.8
   });
