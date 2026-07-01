@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const { registerEtabsBridge, killHelper } = require('./etabsBridge.cjs');
@@ -99,6 +99,42 @@ ipcMain.handle('open-file', async (event) => {
   } catch (e) {
     return { error: e.message || String(e) };
   }
+});
+
+// Pick a file or a folder — for the S-Concrete path config (Python, BatchReporter,
+// output folder). mode: 'file' | 'folder'. Returns { path } or null when cancelled.
+ipcMain.handle('pick-path', async (event, { mode, filters } = {}) => {
+  try {
+    const win = windowFor(event);
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: [mode === 'folder' ? 'openDirectory' : 'openFile'],
+      ...(filters ? { filters } : {}),
+    });
+    if (canceled || !filePaths.length) return null;
+    return { path: filePaths[0], exists: fs.existsSync(filePaths[0]) };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
+});
+
+// Open a folder/file in the OS file manager (so the re-run / edit-.SCO loop stays
+// in-app: click, land in the output folder, tweak, come back and re-run).
+ipcMain.handle('open-path', async (_event, { target } = {}) => {
+  try {
+    if (!target) return { success: false, error: 'No path given' };
+    if (!fs.existsSync(target)) return { success: false, error: `Path does not exist: ${target}` };
+    const err = await shell.openPath(target);
+    return err ? { success: false, error: err } : { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+// Check whether paths exist (validate the S-Concrete config without running).
+ipcMain.handle('path-exists', async (_event, { paths } = {}) => {
+  const out = {};
+  for (const p of paths ?? []) out[p] = !!p && fs.existsSync(p);
+  return out;
 });
 
 // ── IPC: ETABS CSI OAPI bridge (Windows + ETABS running; errors elsewhere) ───

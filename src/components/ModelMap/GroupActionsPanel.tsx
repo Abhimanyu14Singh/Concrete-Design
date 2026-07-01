@@ -35,6 +35,18 @@ function loadConfig(): SconcreteRunConfig {
   }
 }
 
+// Desktop-only helpers (native file dialogs + open-in-file-manager) — see
+// electron/main.cjs. Undefined on web, so callers guard on their presence.
+type DesktopAPI = {
+  pickPath?: (opts: { mode: 'file' | 'folder' }) => Promise<{ path: string; exists?: boolean } | { error: string } | null>;
+  openPath?: (target: string) => Promise<{ success: boolean; error?: string }>;
+};
+const desktopApi = (): DesktopAPI | undefined =>
+  (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
+
+/** For labelling result rows: the file-name stem written by the envelope. */
+type FileMeta = Record<string, { group: string; kind: 'uls' | 'crack' | 'single' }>;
+
 const btn: React.CSSProperties = {
   padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
   fontWeight: 700, fontSize: 12, color: '#fff',
@@ -52,8 +64,10 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   const [err, setErr] = useState<string | null>(null);
   const [warn, setWarn] = useState<string | null>(null);
   const [results, setResults] = useState<ScrsResult[] | null>(null);
+  const [resultMeta, setResultMeta] = useState<FileMeta>({});
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
+  const canPick = !!desktopApi()?.pickPath;
 
   // S-Concrete sections: beams (Member Type 1) + rectangular columns (Type 3,
   // validated writer). Circular columns use a template the writer can't emit yet.
@@ -108,7 +122,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   async function runBatch() {
-    setErr(null); setMsg(null); setWarn(null); setResults(null); setBusy('sco');
+    setErr(null); setMsg(null); setWarn(null); setResults(null); setResultMeta({}); setBusy('sco');
     try {
       // One .SCO PER GROUP (envelope): the group's representative section/rebar
       // carrying every member's load cases. Falls back to one file per member
@@ -118,6 +132,11 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       if (groups.length) {
         const env = buildGroupEnvelopeScoFiles(groups, members, code, project);
         files = env;
+        // Map each file's .SCRS key (its name stem) → group + kind, so the results
+        // table can show the group name and an ULS / crack-width tag.
+        setResultMeta(Object.fromEntries(
+          env.map((f) => [f.fileName.replace(/\.SCO$/i, ''), { group: f.groupLabel, kind: f.kind }]),
+        ));
         // One .SCO per (group × member-type), plus a separate crack-width file for
         // EC2 beam groups — so file count can exceed group count. Member/LC counts
         // are de-duplicated (a member appears in a ULS and a crack file) by using
@@ -155,7 +174,8 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
    * are preserved — then read the fresh results back.
    */
   async function rerunExisting() {
-    setErr(null); setMsg(null); setWarn(null); setResults(null); setBusy('rerun');
+    // The folder is used as-is, so we can't attribute files to groups/kinds.
+    setErr(null); setMsg(null); setWarn(null); setResults(null); setResultMeta({}); setBusy('rerun');
     try {
       requirePaths();
       applyResult(await rerunScoBatch(cfg), 'Re-ran the existing folder');
@@ -166,9 +186,34 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
     }
   }
 
+  /** Native file/folder picker for a config path (desktop only). */
+  async function browse(field: keyof SconcreteRunConfig) {
+    const api = desktopApi();
+    if (!api?.pickPath) return;
+    const res = await api.pickPath({ mode: field === 'outDir' ? 'folder' : 'file' });
+    if (res && 'path' in res) setCfg({ ...cfg, [field]: res.path });
+  }
+
+  /** Open the output folder in the OS file manager (to tweak .SCO files, then re-run). */
+  async function openFolder() {
+    const api = desktopApi();
+    if (!api?.openPath) return;
+    if (!cfg.outDir) { setShowCfg(true); setErr('Set the output folder first.'); return; }
+    const res = await api.openPath(cfg.outDir);
+    if (res && !res.success) setErr(res.error ?? 'Could not open the folder.');
+  }
+
   return (
     <div style={{ borderTop: '1px solid #1f2937', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: '#cbd5e1', letterSpacing: 0.3 }}>EXTERNAL TOOLS</div>
+
+      {!desktop && (
+        <div style={{ fontSize: 10.5, color: '#93c5fd', background: '#0b1220', border: '1px solid #1e3a8a', borderRadius: 6, padding: '6px 8px', lineHeight: 1.5 }}>
+          You're in the browser. Grouping and design work here, but the <strong>S-Concrete batch</strong> and
+          <strong> live ETABS</strong> steps run only in the Windows desktop app (they launch S-Concrete / ETABS locally).
+          Create your groups now, then run the batch on desktop.
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button
@@ -208,6 +253,17 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           {busy === 'rerun' ? 'Re-running…' : '↻ Re-run existing folder'}
         </button>
 
+        {canPick && (
+          <button
+            style={{ ...btn, background: cfg.outDir ? '#475569' : '#374151' }}
+            disabled={!!busy}
+            title="Open the output folder to view or hand-edit the .SCO files, then use Re-run"
+            onClick={openFolder}
+          >
+            📂 Open folder
+          </button>
+        )}
+
         <button style={{ ...btn, background: '#374151' }} onClick={() => setShowCfg((s) => !s)} disabled={!!busy}>
           {showCfg ? 'Hide paths' : 'S-Concrete paths'}
         </button>
@@ -215,18 +271,13 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
 
       {showCfg && (
         <div style={{ background: '#0b1220', border: '1px solid #1f2937', borderRadius: 6, padding: 8 }}>
-          <label style={label}>Python executable
-            <input style={input} value={cfg.pythonExe} placeholder="C:\\…\\python.exe"
-              onChange={(e) => setCfg({ ...cfg, pythonExe: e.target.value })} />
-          </label>
-          <label style={label}>run_batch_reporter.py
-            <input style={input} value={cfg.batchReporter} placeholder="C:\\…\\run_batch_reporter.py"
-              onChange={(e) => setCfg({ ...cfg, batchReporter: e.target.value })} />
-          </label>
-          <label style={label}>Output folder (.SCO + .SCRS)
-            <input style={input} value={cfg.outDir} placeholder="C:\\…\\scos"
-              onChange={(e) => setCfg({ ...cfg, outDir: e.target.value })} />
-          </label>
+          <PathField label="Python executable" placeholder="C:\\…\\python.exe" value={cfg.pythonExe}
+            onChange={(v) => setCfg({ ...cfg, pythonExe: v })} onBrowse={canPick ? () => browse('pythonExe') : undefined} />
+          <PathField label="run_batch_reporter.py" placeholder="C:\\…\\run_batch_reporter.py" value={cfg.batchReporter}
+            onChange={(v) => setCfg({ ...cfg, batchReporter: v })} onBrowse={canPick ? () => browse('batchReporter') : undefined} />
+          <PathField label="Output folder (.SCO + .SCRS)" placeholder="C:\\…\\scos" value={cfg.outDir}
+            onChange={(v) => setCfg({ ...cfg, outDir: v })} onBrowse={canPick ? () => browse('outDir') : undefined} />
+          {!canPick && <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>Type or paste full Windows paths (file pickers are available in the desktop app).</div>}
         </div>
       )}
 
@@ -246,18 +297,45 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
               </tr>
             </thead>
             <tbody>
-              {results.map((r) => (
-                <tr key={r.name} style={{ color: '#e5e7eb', borderTop: '1px solid #111827' }}>
-                  <td style={{ padding: '4px 6px' }}>{r.name}</td>
-                  <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
-                  <td style={{ padding: '4px 6px' }}>{r.nmUtil ?? '—'}</td>
-                  <td style={{ padding: '4px 6px' }}>{r.vtUtil ?? '—'}</td>
-                </tr>
-              ))}
+              {results.map((r) => {
+                const meta = resultMeta[r.name];
+                const badge = meta?.kind === 'crack' ? { t: 'crack', c: '#a78bfa' } : meta?.kind === 'uls' ? { t: 'ULS', c: '#38bdf8' } : null;
+                return (
+                  <tr key={r.name} style={{ color: '#e5e7eb', borderTop: '1px solid #111827' }}>
+                    <td style={{ padding: '4px 6px' }}>
+                      {meta?.group ?? r.name}
+                      {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
+                    </td>
+                    <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
+                    <td style={{ padding: '4px 6px' }}>{r.nmUtil ?? '—'}</td>
+                    <td style={{ padding: '4px 6px' }}>{r.vtUtil ?? '—'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
     </div>
+  );
+}
+
+/** One labelled path input with an optional native Browse button (desktop). */
+function PathField({ label: text, placeholder, value, onChange, onBrowse }: {
+  label: string; placeholder: string; value: string; onChange: (v: string) => void; onBrowse?: () => void;
+}) {
+  return (
+    <label style={label}>{text}
+      <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
+        <input style={{ ...input, marginTop: 0 }} value={value} placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)} />
+        {onBrowse && (
+          <button type="button" onClick={onBrowse}
+            style={{ flexShrink: 0, background: '#334155', border: 'none', color: '#e5e7eb', borderRadius: 4, padding: '0 8px', fontSize: 10, cursor: 'pointer', fontWeight: 600 }}>
+            Browse…
+          </button>
+        )}
+      </div>
+    </label>
   );
 }

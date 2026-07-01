@@ -242,9 +242,11 @@ export interface GroupEnvelopeScoFile extends ScoFile {
   /** True when the pooled members did not all share one section — the most common
    *  section was used as the representative; the app should surface this. */
   mixedSections: boolean;
-  /** Members dropped because their type differed from the representative (e.g. a
-   *  stray column in a beam group). Usually empty. */
+  /** Members skipped as unsupported by the writers (e.g. circular columns). */
   excludedMemberIds: string[];
+  /** What the file checks: 'uls' (strength) / 'crack' (EC2 SLS crack width) /
+   *  'single' (combined ULS+in-file, ACI beams & all columns). */
+  kind: 'uls' | 'crack' | 'single';
 }
 
 /** Stable signature of a member's section + materials, used to find the most
@@ -302,7 +304,7 @@ export function buildGroupEnvelopeScoFiles(
   const usedNames = new Set<string>();
   const out: GroupEnvelopeScoFile[] = [];
 
-  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; excludedMemberIds: string[]; kind: string };
+  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; excludedMemberIds: string[]; kind: 'uls' | 'crack' | 'single' };
   const pushFile = (fileBase: string, text: string, g: DesignGroup, meta: Meta) => {
     let name = `${sanitize(fileBase)}.SCO`;
     if (usedNames.has(name)) {
@@ -316,7 +318,7 @@ export function buildGroupEnvelopeScoFiles(
       fileName: name, text, memberId: `group:${g.id}:${meta.kind}`,
       groupId: g.id, groupLabel: g.label,
       memberCount: meta.memberCount, loadCaseCount: meta.loadCaseCount,
-      mixedSections: meta.mixedSections, excludedMemberIds: meta.excludedMemberIds,
+      mixedSections: meta.mixedSections, excludedMemberIds: meta.excludedMemberIds, kind: meta.kind,
     });
   };
 
