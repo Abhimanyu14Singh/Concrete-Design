@@ -156,7 +156,25 @@ describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
 
   it('a homogeneous group is not flagged mixed', () => {
     const members = [beam('b1', 'B1', [lc({ Mu_pos: 100 })]), beam('b2', 'B2', [lc({ Mu_pos: 120 })])];
-    expect(buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'])], members, 'ACI318-19')[0].mixedSections).toBe(false);
+    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'])], members, 'ACI318-19');
+    expect(file.mixedSections).toBe(false);
+    expect(file.mixedRebar).toBe(false);
+  });
+
+  it('flags a group whose members carry DIFFERENT rebar and has no unified template', () => {
+    const b1 = beam('b1', 'B1', [lc({ Mu_pos: 100 })]);
+    const b2 = beam('b2', 'B2', [lc({ Mu_pos: 120 })]);
+    b2.rebar = { ...b2.rebar, botBars: [{ numBars: 5, barSize: 9 }] };   // designed differently per-member
+    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'])], [b1, b2], 'ACI318-19');
+    expect(file.mixedRebar).toBe(true);
+  });
+
+  it('does NOT flag mixed rebar when the group carries a unified rebar template', () => {
+    const b1 = beam('b1', 'B1', [lc({ Mu_pos: 100 })]);
+    const b2 = beam('b2', 'B2', [lc({ Mu_pos: 120 })]);
+    b2.rebar = { ...b2.rebar, botBars: [{ numBars: 5, barSize: 9 }] };
+    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'], b1.rebar)], [b1, b2], 'ACI318-19');
+    expect(file.mixedRebar).toBe(false);   // group.rebar set → the file used the template, not a member's cage
   });
 
   it('sub-groups a mixed beam+column group into a beam file AND a column file (nobody dropped)', () => {

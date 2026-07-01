@@ -23,6 +23,8 @@ interface Props {
   project: Project;
   /** member id → ETABS frame name, from project.modelMap. */
   frameByMemberId: Map<string, string>;
+  /** Lets the EC2 SLS-combo selector persist its choice (optional). */
+  onProjectChange?: (updater: (prev: Project) => Project) => void;
 }
 
 const LS_KEY = 'sconcrete.runConfig';
@@ -57,7 +59,7 @@ const input: React.CSSProperties = {
 };
 const label: React.CSSProperties = { fontSize: 10, color: '#94a3b8', display: 'block', marginTop: 6 };
 
-export default function GroupActionsPanel({ groups, members, project, frameByMemberId }: Props) {
+export default function GroupActionsPanel({ groups, members, project, frameByMemberId, onProjectChange }: Props) {
   const code = project.code;
   const [busy, setBusy] = useState<'etabs' | 'sco' | 'rerun' | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -81,6 +83,14 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   const runCount = groups.length ? eligibleInGroups.length : scoMembers.length;
   const desktop = hasSconcrete();
   const hasEtabs = !!(window as Window & { electronAPI?: { etabs?: unknown } }).electronAPI?.etabs;
+
+  // EC2 crack width needs an SLS quasi-permanent combo; offer the combos present
+  // in the imported forces so the user can set/change it here (not only at import).
+  const isEc2 = code === 'EN1992-1-1';
+  const slsCombos = isEc2
+    ? [...new Set(members.flatMap((m) => m.stationForces?.map((c) => c.combo) ?? []))].sort()
+    : [];
+  const ec2NoSls = isEc2 && !project.slsCombo;
 
   function setCfg(next: SconcreteRunConfig) {
     setCfgState(next);
@@ -145,10 +155,13 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
         const totalLCs = env.reduce((s, f) => s + f.loadCaseCount, 0);
         ranLabel = `Ran ${env.length} .SCO file(s) for ${groupsWithFiles} group(s) · ${runCount} member(s), ${totalLCs} load rows`;
         const mixed = [...new Set(env.filter((f) => f.mixedSections).map((f) => f.groupLabel))];
+        const mixedR = [...new Set(env.filter((f) => f.mixedRebar).map((f) => f.groupLabel))];
         const excludedIds = new Set(env.flatMap((f) => f.excludedMemberIds));
         const notes: string[] = [];
         if (mixed.length) notes.push(`mixed sections in ${mixed.join(', ')} — used the most common section per group`);
+        if (mixedR.length) notes.push(`members have different rebar in ${mixedR.join(', ')} — the file used one member's cage; apply a group rebar to unify`);
         if (excludedIds.size) notes.push(`${excludedIds.size} unsupported member(s) skipped (e.g. circular columns)`);
+        if (ec2NoSls) notes.push('EC2: no SLS crack combo set — no crack-width file was generated');
         if (notes.length) setWarn(notes.join('; '));
       } else {
         files = collectGroupScoFiles(groups, members, code, project);
@@ -212,6 +225,26 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           You're in the browser. Grouping and design work here, but the <strong>S-Concrete batch</strong> and
           <strong> live ETABS</strong> steps run only in the Windows desktop app (they launch S-Concrete / ETABS locally).
           Create your groups now, then run the batch on desktop.
+        </div>
+      )}
+
+      {isEc2 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 10.5, color: '#94a3b8' }}>
+          <span>EC2 SLS crack combo:</span>
+          {onProjectChange ? (
+            <select
+              value={project.slsCombo ?? ''}
+              onChange={(e) => onProjectChange((prev) => ({ ...prev, slsCombo: e.target.value || undefined }))}
+              style={{ background: '#0b1220', color: '#e5e7eb', border: '1px solid #1f2937', borderRadius: 4, fontSize: 10.5, padding: '2px 4px' }}
+            >
+              <option value="">— none (no crack file) —</option>
+              {slsCombos.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <span style={{ color: '#e5e7eb' }}>{project.slsCombo ?? '— none —'}</span>
+          )}
+          {ec2NoSls && <span style={{ color: '#fbbf24' }}>⚠ crack-width file will NOT be generated</span>}
+          {isEc2 && slsCombos.length === 0 && onProjectChange && <span style={{ color: '#64748b' }}>(no combos in imported forces)</span>}
         </div>
       )}
 

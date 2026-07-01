@@ -242,6 +242,10 @@ export interface GroupEnvelopeScoFile extends ScoFile {
   /** True when the pooled members did not all share one section — the most common
    *  section was used as the representative; the app should surface this. */
   mixedSections: boolean;
+  /** True when the pooled members carry DIFFERENT rebar and the group has no
+   *  unified `rebar` template — so the file used one member's bars for the whole
+   *  group (per-member design that was never applied group-wide). */
+  mixedRebar: boolean;
   /** Members skipped as unsupported by the writers (e.g. circular columns). */
   excludedMemberIds: string[];
   /** What the file checks: 'uls' (strength) / 'crack' (EC2 SLS crack width) /
@@ -271,6 +275,17 @@ function pickRepresentative(ms: Member[]): Member {
   let best = ms.slice(0, 1);
   for (const b of buckets.values()) if (b.length > best.length) best = b;
   return best[0];
+}
+
+/** Signature of a member's rebar layout — to detect a group whose members were
+ *  designed with DIFFERENT bars (so the envelope's single cage doesn't represent
+ *  them all). */
+function rebarSignature(m: Member): string {
+  const bars = (gs?: { numBars: number; barSize: number }[]) =>
+    (gs ?? []).map((g) => `${g.numBars}x${g.barSize}`).join(',');
+  const r = m.rebar;
+  const ties = r.ties ? `${r.ties.barSize}@${r.ties.spacing}x${r.ties.legs}` : '';
+  return [bars(r.topBars), bars(r.botBars), bars(r.sideBars), ties, r.tieType ?? ''].join('|');
 }
 
 /** Concatenate every member's load cases into one list, qualifying each label
@@ -304,7 +319,7 @@ export function buildGroupEnvelopeScoFiles(
   const usedNames = new Set<string>();
   const out: GroupEnvelopeScoFile[] = [];
 
-  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; excludedMemberIds: string[]; kind: 'uls' | 'crack' | 'single' };
+  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; mixedRebar: boolean; excludedMemberIds: string[]; kind: 'uls' | 'crack' | 'single' };
   const pushFile = (fileBase: string, text: string, g: DesignGroup, meta: Meta) => {
     let name = `${sanitize(fileBase)}.SCO`;
     if (usedNames.has(name)) {
@@ -318,7 +333,7 @@ export function buildGroupEnvelopeScoFiles(
       fileName: name, text, memberId: `group:${g.id}:${meta.kind}`,
       groupId: g.id, groupLabel: g.label,
       memberCount: meta.memberCount, loadCaseCount: meta.loadCaseCount,
-      mixedSections: meta.mixedSections, excludedMemberIds: meta.excludedMemberIds, kind: meta.kind,
+      mixedSections: meta.mixedSections, mixedRebar: meta.mixedRebar, excludedMemberIds: meta.excludedMemberIds, kind: meta.kind,
     });
   };
 
@@ -337,6 +352,9 @@ export function buildGroupEnvelopeScoFiles(
       const sub = eligible.filter((m) => m.memberType === type);
       const rep = pickRepresentative(sub);
       const mixedSections = new Set(sub.map(sectionSignature)).size > 1;
+      // Members carry different bars AND the group has no unified template → the
+      // file used one member's cage for all of them.
+      const mixedRebar = !g.rebar && new Set(sub.map(rebarSignature)).size > 1;
       const baseLabel = `${g.label}${multiType ? (type === 'beam' ? '_beam' : '_col') : ''}`;
       const synth: Member = { ...rep, label: baseLabel, rebar: g.rebar ?? rep.rebar, loads: poolLoads(sub) };
 
@@ -346,14 +364,14 @@ export function buildGroupEnvelopeScoFiles(
         // the group's crack control envelopes all members, not just the representative.
         const ulsRows = ec2BeamUlsRows(synth, 1);
         const ulsText = buildEc2BeamScoExplicit(synth, project!, { rows: ulsRows, checkCracks: false, memberName: baseLabel });
-        pushFile(baseLabel, ulsText, g, { memberCount: sub.length, loadCaseCount: ulsRows.length || 1, mixedSections, excludedMemberIds, kind: 'uls' });
+        pushFile(baseLabel, ulsText, g, { memberCount: sub.length, loadCaseCount: ulsRows.length || 1, mixedSections, mixedRebar, excludedMemberIds, kind: 'uls' });
 
         let ci = 1;
         const crackRows: string[] = [];
         for (const m of sub) { const r = ec2BeamCrackRows(m, project!, ci); crackRows.push(...r); ci += r.length; }
         if (crackRows.length) {
           const crackText = buildEc2BeamScoExplicit(synth, project!, { rows: crackRows, checkCracks: true, memberName: `${baseLabel} (crack)` });
-          pushFile(`${baseLabel}_crack`, crackText, g, { memberCount: sub.length, loadCaseCount: crackRows.length, mixedSections, excludedMemberIds, kind: 'crack' });
+          pushFile(`${baseLabel}_crack`, crackText, g, { memberCount: sub.length, loadCaseCount: crackRows.length, mixedSections, mixedRebar, excludedMemberIds, kind: 'crack' });
         }
         continue;
       }
@@ -361,7 +379,7 @@ export function buildGroupEnvelopeScoFiles(
       // Single envelope file (ACI beams/columns, EC2 columns) via the generic path.
       const built = buildGroupScoFiles([synth], code, project);
       if (!built.length) continue;
-      pushFile(baseLabel, built[0].text, g, { memberCount: sub.length, loadCaseCount: synth.loads.length || 1, mixedSections, excludedMemberIds, kind: 'single' });
+      pushFile(baseLabel, built[0].text, g, { memberCount: sub.length, loadCaseCount: synth.loads.length || 1, mixedSections, mixedRebar, excludedMemberIds, kind: 'single' });
     }
   }
   return out;

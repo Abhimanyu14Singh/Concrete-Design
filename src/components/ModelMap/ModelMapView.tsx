@@ -723,6 +723,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                 members={members}
                 project={project}
                 frameByMemberId={frameByMemberId}
+                onProjectChange={onProjectChange}
               />
               {activeGroup && (
                 <GroupRebarEditor
