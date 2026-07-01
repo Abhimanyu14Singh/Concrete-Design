@@ -9,7 +9,7 @@
  * outside it the buttons explain why they're unavailable. The .SCO/.SCRS logic is
  * unit-tested; the runtime round-trips can only be exercised on Windows.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import type { Member, DesignGroup, Project, SconcreteResult } from '../../types';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from '../../utils/sco/scoBatch';
 import { runScoBatch, rerunScoBatch, hasSconcrete, detectSconcrete, type SconcreteRunConfig, type SconcreteRunResult, type SconcreteDetect } from '../../utils/sco/sconcreteClient';
@@ -43,7 +43,22 @@ type DesktopAPI = {
   pickPath?: (opts: { mode: 'file' | 'folder' }) => Promise<{ path: string; exists?: boolean } | { error: string } | null>;
   openPath?: (target: string) => Promise<{ success: boolean; error?: string }>;
   sconcreteAutodetect?: () => Promise<{ outDir: string }>;
+  onSconcreteProgress?: (cb: (line: string) => void) => void;
+  offSconcreteProgress?: () => void;
 };
+
+/** Map a raw sidecar stderr line to a friendly batch step for the UI. */
+function friendlyStep(line: string): string {
+  const l = line.toLowerCase();
+  if (l.startsWith('writing')) return line;
+  if (l.includes('starting batchreporter') || l.includes('window ready')) return 'Launching S-Concrete BatchReporter…';
+  if (l.includes('folder loaded')) return 'Loading the .SCO folder…';
+  if (l.includes('run batch') || l.includes('waiting for batch')) return 'Running the batch designer…';
+  if (l.includes('status:')) return `Running — ${line.split('Status:').pop()?.trim() || ''}`;
+  if (l.includes('batch done')) return 'Reading results…';
+  if (l.includes('creating pdf')) return 'Writing the PDF report…';
+  return line;
+}
 const desktopApi = (): DesktopAPI | undefined =>
   (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
 
@@ -72,6 +87,8 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   const shownResults = project.sconcreteResults ?? localResults;
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [detect, setDetect] = useState<SconcreteDetect | null>(null);
   const canPick = !!desktopApi()?.pickPath;
 
@@ -96,6 +113,14 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
     detectSconcrete().then(d => { if (!cancelled) setDetect(d); }).catch(() => { /* best effort */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live batch progress: the sidecar streams its current step on stderr; show it.
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api?.onSconcreteProgress) return;
+    api.onSconcreteProgress((line) => { if (!line.startsWith('[watcher]')) setProgress(line); });
+    return () => { api.offSconcreteProgress?.(); };
   }, []);
 
   /** Persist results to the project (or keep local when there's no onProjectChange). */
@@ -155,6 +180,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setProgress('');
     }
   }
 
@@ -177,7 +203,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   async function runBatch() {
-    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('sco');
+    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('sco'); setProgress('Preparing…');
     try {
       // One .SCO PER GROUP (envelope): the group's representative section/rebar
       // carrying every member's load cases. Falls back to one file per member
@@ -225,6 +251,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setProgress('');
     }
   }
 
@@ -244,6 +271,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setProgress('');
     }
   }
 
@@ -365,6 +393,9 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
         </div>
       )}
 
+      {busy && progress && (
+        <div style={{ fontSize: 10.5, color: '#93c5fd' }}>⏳ {friendlyStep(progress)}</div>
+      )}
       {msg && <div style={{ fontSize: 11, color: '#34d399' }}>{msg}</div>}
       {warn && <div style={{ fontSize: 11, color: '#fbbf24' }}>⚠ {warn}</div>}
       {err && <div style={{ fontSize: 11, color: '#f87171' }}>{err}</div>}
@@ -392,16 +423,46 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
               <tbody>
                 {shownResults.map((r) => {
                   const badge = r.kind === 'crack' ? { t: 'crack', c: '#a78bfa' } : r.kind === 'uls' ? { t: 'ULS', c: '#38bdf8' } : null;
+                  const isOpen = expanded === r.name;
+                  const memberLabels = members.filter((m) => r.memberIds?.includes(m.id)).map((m) => m.label);
+                  const overN = (r.nmUtil ?? 0) > 1;
+                  const overV = (r.vtUtil ?? 0) > 1;
+                  const failing = [overN ? 'N-M' : null, overV ? 'V&T' : null].filter(Boolean).join(' & ');
                   return (
-                    <tr key={r.name} style={{ color: '#e5e7eb', borderTop: '1px solid #111827' }}>
-                      <td style={{ padding: '4px 6px' }}>
-                        {r.groupLabel ?? r.name}
-                        {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
-                      </td>
-                      <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
-                      <td style={{ padding: '4px 6px' }}>{r.nmUtil ?? '—'}</td>
-                      <td style={{ padding: '4px 6px' }}>{r.vtUtil ?? '—'}</td>
-                    </tr>
+                    <Fragment key={r.name}>
+                      <tr style={{ color: '#e5e7eb', borderTop: '1px solid #111827', cursor: 'pointer' }}
+                        onClick={() => setExpanded(isOpen ? null : r.name)} title="Click to see this group's checks">
+                        <td style={{ padding: '4px 6px' }}>
+                          <span style={{ color: '#64748b', marginRight: 3 }}>{isOpen ? '▾' : '▸'}</span>
+                          {r.groupLabel ?? r.name}
+                          {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
+                        </td>
+                        <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
+                        <td style={{ padding: '4px 6px', color: overN ? '#f87171' : '#e5e7eb' }}>{r.nmUtil ?? '—'}</td>
+                        <td style={{ padding: '4px 6px', color: overV ? '#f87171' : '#e5e7eb' }}>{r.vtUtil ?? '—'}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr style={{ background: '#0b1220' }}>
+                          <td colSpan={4} style={{ padding: '6px 10px', fontSize: 10.5, color: '#cbd5e1' }}>
+                            <div style={{ marginBottom: 4 }}>
+                              <b style={{ color: r.status === 'OK' ? '#34d399' : '#f87171' }}>{r.status ?? 'no result'}</b>
+                              {r.kind && <span style={{ color: '#64748b' }}> · {r.kind === 'crack' ? 'crack-width (SLS)' : r.kind === 'uls' ? 'strength (ULS)' : 'strength'} check</span>}
+                            </div>
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+                              <span>N-M util <b style={{ color: overN ? '#f87171' : '#34d399' }}>{r.nmUtil ?? '—'}</b></span>
+                              <span>V&amp;T util <b style={{ color: overV ? '#f87171' : '#34d399' }}>{r.vtUtil ?? '—'}</b></span>
+                            </div>
+                            {failing && <div style={{ color: '#f87171', marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
+                            {memberLabels.length > 0 && (
+                              <div style={{ color: '#94a3b8' }}>
+                                {memberLabels.length} member{memberLabels.length !== 1 ? 's' : ''}: {memberLabels.slice(0, 12).join(', ')}{memberLabels.length > 12 ? '…' : ''}
+                              </div>
+                            )}
+                            <div style={{ color: '#64748b', marginTop: 3 }}>Open a member to compare its app DCR with this S-Concrete result.</div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>

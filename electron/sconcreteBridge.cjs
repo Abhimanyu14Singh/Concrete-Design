@@ -74,15 +74,27 @@ function requireHelper() {
  * Spawn the sidecar and resolve with { exitCode, json, stderr }. The sidecar
  * prints progress on stderr and a single JSON summary line on stdout.
  */
-function spawnHelper(exe, args, timeoutMs) {
+function spawnHelper(exe, args, timeoutMs, onProgress) {
   return new Promise((resolve, reject) => {
     const proc = spawn(exe, args, { windowsHide: true });
     let stdout = '';
     let stderr = '';
+    let errLine = '';
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', (d) => { stdout += d; });
     proc.stderr.setEncoding('utf8');
-    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.stderr.on('data', (d) => {
+      stderr += d;
+      // Forward each complete stderr line as a live progress update.
+      if (!onProgress) return;
+      errLine += d;
+      let nl;
+      while ((nl = errLine.indexOf('\n')) >= 0) {
+        const line = errLine.slice(0, nl).trim();
+        errLine = errLine.slice(nl + 1);
+        if (line) { try { onProgress(line); } catch { /* ignore */ } }
+      }
+    });
     const timer = setTimeout(() => {
       try { proc.kill(); } catch { /* already gone */ }
       reject(new Error('S-Concrete BatchReporter timed out.'));
@@ -122,11 +134,11 @@ async function detect() {
 }
 
 /** Drive BatchReporter over <outDir> and read the .SCRS back. */
-async function driveBatch(scoCount, { outDir, title, engineer, makePdf }) {
+async function driveBatch(scoCount, { outDir, title, engineer, makePdf }, onProgress) {
   const exe = requireHelper();
   const args = [outDir, '--title', title || 'S-Concrete Batch', '--engineer', engineer || ''];
   if (makePdf === false) args.push('--no-pdf');
-  const r = await spawnHelper(exe, args, BATCH_TIMEOUT_MS);
+  const r = await spawnHelper(exe, args, BATCH_TIMEOUT_MS, onProgress);
   if (!r.json || !r.json.ok) {
     const why = (r.json && r.json.error) || r.stderr || `exit code ${r.exitCode}`;
     throw new Error(`S-Concrete batch did not complete: ${why}`);
@@ -138,15 +150,16 @@ async function driveBatch(scoCount, { outDir, title, engineer, makePdf }) {
 }
 
 /** Write the app's .SCO files, then run the reporter. */
-async function runBatch(args) {
+async function runBatch(args, onProgress) {
   const { outDir, files } = args || {};
   if (!outDir) throw new Error('outDir is required');
+  if (onProgress) onProgress(`Writing ${(files || []).length} .SCO file(s)…`);
   const scoCount = writeScoFiles(outDir, files);
-  return driveBatch(scoCount, args);
+  return driveBatch(scoCount, args, onProgress);
 }
 
 /** Re-run on the .SCO files ALREADY in <outDir> — no writing, so manual edits survive. */
-async function rerunBatch(args) {
+async function rerunBatch(args, onProgress) {
   const { outDir } = args || {};
   if (!outDir) throw new Error('outDir is required');
   let scoCount;
@@ -158,27 +171,22 @@ async function rerunBatch(args) {
   if (!scoCount) {
     throw new Error(`No .SCO files found in "${outDir}". Generate or place .SCO files there first.`);
   }
-  return driveBatch(scoCount, args);
+  return driveBatch(scoCount, args, onProgress);
 }
 
-const handlers = {
-  // Write .SCO files only (no run) — useful for "export .SCO files".
-  generate: ({ outDir, files }) => ({ outDir, scoCount: writeScoFiles(outDir, files) }),
-  // Write + drive BatchReporter (native sidecar) + read the .SCRS report.
-  run: (args) => runBatch(args),
-  // Re-run BatchReporter on the .SCO files already in the folder (edits preserved).
-  rerun: (args) => rerunBatch(args),
-  // Report whether S-Concrete is installed (no run).
-  detect: () => detect(),
-  // Re-read an existing .SCRS (e.g. after the user ran S-Concrete manually).
-  readScrs: ({ scrsPath }) => ({ scrsText: fs.readFileSync(scrsPath, 'utf8') }),
-};
-
 function registerSconcreteBridge(ipcMain) {
-  ipcMain.handle('sconcrete', async (_event, { method, args }) => {
-    const fn = handlers[method];
-    if (!fn) throw new Error(`Unknown sconcrete method: ${method}`);
-    return fn(args ?? {});
+  ipcMain.handle('sconcrete', async (event, { method, args }) => {
+    // Live progress: forward each sidecar stderr line to the renderer.
+    const onProgress = (line) => { try { event.sender.send('sconcrete-progress', line); } catch { /* window gone */ } };
+    const a = args ?? {};
+    switch (method) {
+      case 'generate': return { outDir: a.outDir, scoCount: writeScoFiles(a.outDir, a.files) };
+      case 'run': return runBatch(a, onProgress);
+      case 'rerun': return rerunBatch(a, onProgress);
+      case 'detect': return detect();
+      case 'readScrs': return { scrsText: fs.readFileSync(a.scrsPath, 'utf8') };
+      default: throw new Error(`Unknown sconcrete method: ${method}`);
+    }
   });
 }
 

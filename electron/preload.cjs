@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openPath:       (target) => ipcRenderer.invoke('open-path', { target }),
   pathExists:     (paths) => ipcRenderer.invoke('path-exists', { paths }),
   sconcreteAutodetect: () => ipcRenderer.invoke('sconcrete-autodetect'),
+  onSconcreteProgress: (cb) => { ipcRenderer.removeAllListeners('sconcrete-progress'); ipcRenderer.on('sconcrete-progress', (_e, line) => cb(line)); },
+  offSconcreteProgress: () => ipcRenderer.removeAllListeners('sconcrete-progress'),
   openFile:       ()     => ipcRenderer.invoke('open-file'),
   onTriggerSave:  (cb)   => setSingleListener('trigger-save', cb),
   onTriggerOpen:  (cb)   => setSingleListener('trigger-open', cb),
