@@ -6,7 +6,7 @@
 import type { ComboForces } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, BeamFilter,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -54,6 +54,32 @@ function buildBeams(): EtabsBeamGeom[] {
 
 const BEAMS = buildBeams();
 
+/** Columns at every grid intersection, rising through each story. */
+function buildColumns(): EtabsColumnGeom[] {
+  const cols: EtabsColumnGeom[] = [];
+  let n = 1;
+  for (const story of STORIES) {
+    const zTop = STORY_Z[story];
+    const zBase = zTop - 12; // 12-ft storey height
+    for (const x of GRID_X) {
+      for (const y of GRID_Y) {
+        cols.push({
+          name: `C${n++}`,
+          story,
+          section: 'C18X18',
+          pt1: { x, y, z: zBase },
+          pt2: { x, y, z: zTop },
+          groups: ['Columns', story === 'Level 2' ? 'L2-Cols' : 'L3-Cols'],
+          heightFt: 12,
+        });
+      }
+    }
+  }
+  return cols;
+}
+
+const COLUMNS = buildColumns();
+
 /**
  * Simply-supported-with-end-restraint force pattern: linear shear,
  * parabolic moment with hogging at the ends. Magnitude scales with span
@@ -87,13 +113,14 @@ export class MockConnection implements EtabsConnection {
   }
 
   async getGroups(): Promise<string[]> {
-    return ['Girders', 'Infill', 'L2-Beams', 'L3-Beams'];
+    return ['Girders', 'Infill', 'L2-Beams', 'L3-Beams', 'Columns', 'L2-Cols', 'L3-Cols'];
   }
 
   async getFrameSections(): Promise<EtabsSectionInfo[]> {
     return [
       { name: 'B12X24', material: '4000Psi', shape: 'Rectangular', depth: 24, width: 12 },
       { name: 'B14X28', material: '5000Psi', shape: 'Rectangular', depth: 28, width: 14 },
+      { name: 'C18X18', material: '5000Psi', shape: 'Rectangular', depth: 18, width: 18 },
     ];
   }
 
@@ -111,6 +138,10 @@ export class MockConnection implements EtabsConnection {
 
   async getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]> {
     return BEAMS.filter(b => matchesFilter(b, filter));
+  }
+
+  async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
+    return COLUMNS.filter(c => matchesFilter(c, filter));
   }
 
   async getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>> {

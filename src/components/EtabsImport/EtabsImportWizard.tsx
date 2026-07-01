@@ -11,7 +11,7 @@ import { DEFAULT_CRACK_PARAMS } from '../../types';
 import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
-import { buildMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
+import { buildMembers, buildColumnMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
@@ -74,6 +74,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [selCombos, setSelCombos] = useState<Set<string>>(new Set());
   const [slsComboId, setSlsComboId] = useState<string>('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  // Also bring in columns (geometry + section) so they show on the map and can be
+  // grouped/designed. Column design forces start at zero (entered after import).
+  const [includeColumns, setIncludeColumns] = useState(false);
+  const [hasColumns, setHasColumns] = useState(false); // connection supports getColumns
 
   // step 3 — stirrup size defaults to Ø10 in SI, #4 in imperial (display only;
   // spacings are stored in inches and converted for display when SI)
@@ -136,6 +140,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const info = await conn.connect();
       connRef.current = conn;
       setConnInfo(info);
+      setHasColumns(!!conn.getColumns);
       const [st, gr, sec, mat, cmb] = await Promise.all([
         conn.getStories(), conn.getGroups(), conn.getFrameSections(),
         conn.getMaterials(), conn.getCombos(),
@@ -177,6 +182,14 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       if (slsComboId) forceCombos.add(slsComboId);
       const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
       let built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
+      // Columns (optional): bring in geometry + section so they appear on the map
+      // and can be grouped/designed. Forces start at zero (entered after import).
+      let allColumns: import('../../adapters/etabs/connection').EtabsColumnGeom[] = [];
+      if (includeColumns && conn.getColumns) {
+        allColumns = await conn.getColumns({});
+        const filteredCols = await conn.getColumns(filter);
+        built = [...built, ...buildColumnMembers(filteredCols, sections, materials, seed)];
+      }
       // Apply global material overrides if the user enabled them.
       if (matOverride.enabled) {
         const PSI_PER_MPA = 145.038;
@@ -202,16 +215,18 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       }
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
-      // Build modelMap from all beams geometry
-      const uniqueStories = [...new Set(allBeams.map(b => b.story))].sort();
-      const frames: MapFrame[] = allBeams.map(b => ({
-        frameName: b.name,
-        story: b.story,
-        sectionName: b.section,
-        pt1: b.pt1,
-        pt2: b.pt2,
-        memberId: builtById.get(b.name),
-      }));
+      // Build modelMap from all beam + column geometry
+      const uniqueStories = [...new Set([...allBeams.map(b => b.story), ...allColumns.map(c => c.story)])].sort();
+      const frames: MapFrame[] = [
+        ...allBeams.map(b => ({
+          frameName: b.name, story: b.story, sectionName: b.section, pt1: b.pt1, pt2: b.pt2,
+          memberId: builtById.get(b.name),
+        })),
+        ...allColumns.map(c => ({
+          frameName: c.name, story: c.story, sectionName: c.section, pt1: c.pt1, pt2: c.pt2,
+          memberId: builtById.get(c.name),
+        })),
+      ];
       const modelMap: ModelMap = {
         source,
         modelName: connInfo?.modelName ?? 'ETABS model',
@@ -272,10 +287,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     // refresh envelope load labels with the chosen combos before handing off.
     // The SLS quasi-permanent combo is stored at PROJECT level (project.slsCombo)
     // and resolved per beam from stationForces at design time — no per-member id.
-    const labeled = members.map(m => ({
-      ...m,
-      loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)],
-    }));
+    const labeled = members.map(m => m.memberType === 'beam'
+      ? { ...m, loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)] }
+      : m); // columns keep their (user-entered / placeholder) loads
     onImport(
       labeled, designGroups, pickId, capturedModelMap ?? undefined,
       slsComboId || undefined,
@@ -502,6 +516,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </tbody>
                 </table>
               </div>
+              {hasColumns && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', padding: '2px 0' }}>
+                  <input type="checkbox" checked={includeColumns} onChange={e => setIncludeColumns(e.target.checked)} />
+                  Also import columns (geometry + section — shown on the map &amp; groupable; enter design forces after import)
+                </label>
+              )}
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <button style={btn()} onClick={() => setStep(0)}>← Back</button>
                 <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>

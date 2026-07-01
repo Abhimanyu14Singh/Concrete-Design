@@ -336,6 +336,10 @@ export default function MapCanvas({
           const color = frameColor(f);
           const linked = !!f.memberId;
           const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);
+          // A (near-)vertical member — a column — projects to a single point in
+          // plan; draw it as a square marker instead of a zero-length line.
+          const isColumn = Math.hypot(f.pt2.x - f.pt1.x, f.pt2.y - f.pt1.y) < 0.5;
+          const r = isHov ? 5 : 4;
           return (
             <g key={f.frameName}
               data-framename={f.frameName}
@@ -362,16 +366,29 @@ export default function MapCanvas({
               }}
               onDoubleClick={() => f.memberId && onDoubleClick?.(f.memberId)}
             >
-              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
-              {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#dc2626" strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
-              {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={9} opacity={0.35} strokeLinecap="round" />}
-              <line x1={x1} y1={y1} x2={x2} y2={y2}
-                stroke={color}
-                strokeWidth={isHov ? 5 : 3}
-                strokeLinecap="round"
-                strokeDasharray={linked ? undefined : '6 4'}
-                opacity={linked ? 1 : 0.6}
-              />
+              {isColumn ? (
+                <>
+                  <rect x={x1 - 7} y={y1 - 7} width={14} height={14} fill="transparent" />
+                  {flagged && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke="#dc2626" strokeWidth={2} opacity={0.5} />}
+                  {isSel && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke="#2563eb" strokeWidth={2} />}
+                  <rect x={x1 - r} y={y1 - r} width={2 * r} height={2 * r} rx={1.5}
+                    fill={color} stroke="#0b1220" strokeWidth={0.5}
+                    strokeDasharray={linked ? undefined : '3 2'} opacity={linked ? 1 : 0.6} />
+                </>
+              ) : (
+                <>
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
+                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#dc2626" strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
+                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={9} opacity={0.35} strokeLinecap="round" />}
+                  <line x1={x1} y1={y1} x2={x2} y2={y2}
+                    stroke={color}
+                    strokeWidth={isHov ? 5 : 3}
+                    strokeLinecap="round"
+                    strokeDasharray={linked ? undefined : '6 4'}
+                    opacity={linked ? 1 : 0.6}
+                  />
+                </>
+              )}
             </g>
           );
         })}

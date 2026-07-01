@@ -49,6 +49,18 @@ export interface EtabsBeamGeom {
   lengthFt: number;
 }
 
+/** A column frame — the same geometry shape as a beam, but (near-)vertical:
+ *  pt1 = base node, pt2 = top node, spanning the story it rises through. */
+export interface EtabsColumnGeom {
+  name: string;
+  story: string;
+  section: string;
+  pt1: Point3D;       // base, ft
+  pt2: Point3D;       // top, ft
+  groups: string[];
+  heightFt: number;
+}
+
 export interface BeamFilter {
   stories?: string[];   // empty/undefined = all
   sections?: string[];
@@ -64,6 +76,9 @@ export interface EtabsConnection {
   getMaterials(): Promise<EtabsMaterialInfo[]>;
   getCombos(): Promise<string[]>;
   getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]>;
+  /** Columns in the model (optional — sources without a column table omit it).
+   *  Used to show columns on the model map and, in future, design them. */
+  getColumns?(filter: BeamFilter): Promise<EtabsColumnGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
   getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
   /** Push design groups back to the ETABS model: create each named group and
@@ -72,7 +87,8 @@ export interface EtabsConnection {
   pushGroups?(groups: Array<{ name: string; frameNames: string[] }>): Promise<PushGroupResult[]>;
 }
 
-export function matchesFilter(beam: EtabsBeamGeom, filter: BeamFilter): boolean {
+/** Filter predicate shared by beams and columns (both carry story/section/groups). */
+export function matchesFilter(beam: { story: string; section: string; groups: string[] }, filter: BeamFilter): boolean {
   // Story is a hard scope — AND.
   if (filter.stories?.length && !filter.stories.includes(beam.story)) return false;
 

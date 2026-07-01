@@ -9,7 +9,7 @@ import type {
   Member, Project, LoadCase, ComboForces, DesignGroup, MaterialProps, DesignCode,
 } from '../../types';
 import type { ModelAdapter } from '../types';
-import type { EtabsBeamGeom, EtabsSectionInfo, EtabsMaterialInfo } from './connection';
+import type { EtabsBeamGeom, EtabsColumnGeom, EtabsSectionInfo, EtabsMaterialInfo } from './connection';
 import { seedRebar, type SeedOptions } from './rebarSeed';
 
 /** Envelope station forces from the selected combos into a single LoadCase. */
@@ -96,6 +96,56 @@ export function buildMembers(
         sectionName: beam.section,
       },
       stationForces: forces,
+    };
+  });
+}
+
+/**
+ * Build app Members from ETABS columns. Columns import with their geometry,
+ * section, material and a starter symmetric cage, ready to be grouped and
+ * exported to S-Concrete. Design forces (Pu/Mux/Muy) start at zero — the user
+ * enters them (or a future live-ETABS column-force read fills them in), so the
+ * member carries a single placeholder load case whose label prompts for that.
+ */
+export function buildColumnMembers(
+  columns: EtabsColumnGeom[],
+  sections: EtabsSectionInfo[],
+  materials: EtabsMaterialInfo[],
+  seed: SeedOptions,
+): Member[] {
+  return columns.map(col => {
+    const sec = sections.find(s => s.name === col.section);
+    const sectionDims = {
+      type: 'rectangular_column' as const,
+      b: sec?.width ?? 18,
+      h: sec?.depth ?? 18,
+      coverClear: seed.coverClear ?? 1.5,
+      stirrupDia: seed.stirrupBarSize ?? 4,
+    };
+    const tieBar = seed.stirrupBarSize ?? 4;
+    return {
+      id: col.name,
+      label: `${col.name} (${col.story} · ${col.section})`,
+      memberType: 'column' as const,
+      material: materialFor(col.section, sections, materials),
+      section: sectionDims,
+      rebar: {
+        topBars: [{ numBars: 3, barSize: 8 }],
+        botBars: [{ numBars: 3, barSize: 8 }],
+        sideBars: [{ numBars: 2, barSize: 8 }],
+        ties: { barSize: tieBar, spacing: 12, legs: 2 },
+        tieType: 'tied' as const,
+      },
+      loads: [{ id: 'LC1', label: 'ETABS (enter column forces)', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0, Mux: 0, Muy: 0 }],
+      span: +col.heightFt.toFixed(2),
+      etabs: {
+        frameName: col.name,
+        story: col.story,
+        groups: col.groups,
+        pt1: col.pt1,
+        pt2: col.pt2,
+        sectionName: col.section,
+      },
     };
   });
 }
