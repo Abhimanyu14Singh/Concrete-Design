@@ -149,23 +149,30 @@ export abstract class TableConnection implements EtabsConnection {
   async connect(): Promise<EtabsConnectInfo> {
     const { modelName } = await this.openSession();
 
-    // Primary: enum-based units from transport (deterministic, set by sidecar via SetPresentUnits)
-    let resolvedFromEnum = false;
+    // The model's CURRENT units scale every table we read (sections, forces,
+    // coordinates), so they must be right.
+    //
+    // PRIMARY: the "Program Control" CurrUnits string (e.g. "kN, m, C") — it
+    // always reflects the live display units. We used to trust the eUnits enum
+    // first, but that's only reliable when the sidecar's SetPresentUnits ran; on
+    // a LOCKED (analysed) model we deliberately skip that to avoid unlocking, and
+    // the enum read can then fall back to a default (kip-ft), which mis-scales an
+    // SI model's sections and forces (e.g. a 1000 mm beam shows as 305 mm).
+    // CurrUnits has no such failure mode.
+    let resolved = false;
     try {
-      const enumVal = await this.fetchUnitsEnum();
-      if (enumVal != null) {
-        const factors = eUnitsToFactors(enumVal);
-        if (factors) { this.units = factors; resolvedFromEnum = true; }
-      }
-    } catch { /* best effort */ }
+      const pc = await this.fetchTable('Program Control');
+      const cu = str(pc[0] ?? {}, 'CurrUnits', 'Curr Units');
+      const parsed = cu ? parseUnits(cu) : null;
+      if (parsed) { this.units = parsed; resolved = true; }
+    } catch { /* fall through to the enum */ }
 
-    // Fallback: parse the "Program Control" CurrUnits string
-    if (!resolvedFromEnum) {
+    // Fallback: the eUnits enum from the transport.
+    if (!resolved) {
       try {
-        const pc = await this.fetchTable('Program Control');
-        const cu = str(pc[0] ?? {}, 'CurrUnits', 'Curr Units');
-        const parsed = cu ? parseUnits(cu) : null;
-        if (parsed) this.units = parsed;
+        const enumVal = await this.fetchUnitsEnum();
+        const factors = enumVal != null ? eUnitsToFactors(enumVal) : null;
+        if (factors) this.units = factors;
       } catch { /* keep defaults */ }
     }
 

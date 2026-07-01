@@ -274,27 +274,22 @@ describe('ComConnection: selectCombos called before force table fetch', () => {
   });
 });
 
-describe('ComConnection: enum-based units override Program Control', () => {
-  it('uses kip-ft when getUnits returns 4, ignoring kN-m Program Control', async () => {
-    // Tables still report kN-m in Program Control, but getUnits returns 4 (kip-ft)
-    // because the sidecar called SetPresentUnits(4) — so table data is already in kip-ft.
-    const kipFtTables = {
-      ...TABLES,
-      // Section dims now in ft (since display units = kip-ft): 0.3m=0.984ft, 0.6m=1.969ft
-      'Frame Section Property Definitions - Concrete Rectangular': [
-        { Name: 'B300X600', Material: 'C30', t3: 0.3 / 0.3048, t2: 0.6 / (0.3048 * 2) },
-      ],
-    };
-    mockIpc(kipFtTables, 4); // getUnits returns 4 = kip-ft
+describe('ComConnection: units come from Program Control (not a forced enum)', () => {
+  it('uses the Program Control CurrUnits (kN-m) even when the enum hint says kip-ft', async () => {
+    // The sidecar no longer forces units to kip-ft, so the tables report in the
+    // model's OWN units. Program Control CurrUnits is the source of truth; a
+    // stale/fallback enum (4 = kip-ft) must NOT override an SI model.
+    mockIpc(TABLES, 4); // CurrUnits = kN-m, but getUnits returns 4 (kip-ft)
+    const conn = new ComConnection();
+    const info = await conn.connect();
+    expect(info.units).toBe('kn-m');
+  });
+
+  it('uses the enum only when Program Control has no CurrUnits', async () => {
+    const noCurr = { ...TABLES, 'Program Control': [{}] };
+    mockIpc(noCurr, 4); // no CurrUnits string → fall back to the enum (kip-ft)
     const conn = new ComConnection();
     const info = await conn.connect();
     expect(info.units).toBe('kip-ft');
-  });
-
-  it('falls back to Program Control when getUnits throws', async () => {
-    mockIpc(TABLES); // getUnits throws (no enum provided)
-    const conn = new ComConnection();
-    const info = await conn.connect();
-    expect(info.units).toBe('kn-m'); // parsed from Program Control CurrUnits
   });
 });

@@ -149,24 +149,12 @@ internal static class Program
         _getTableMethod = _iDbTablesInterface.GetMethod("GetTableForDisplayArray")
             ?? throw new InvalidOperationException("cDatabaseTables.GetTableForDisplayArray not found");
 
-        // Force display units to kip-ft so GetTableForDisplayArray returns consistent
-        // units — but ONLY on an unlocked model. SetPresentUnits modifies the model,
-        // which UNLOCKS it and discards analysis results; on a locked (analysed) model
-        // we skip it and let getUnits / Program Control resolve the conversion instead.
-        if (!ModelLocked())
-        {
-            try
-            {
-                var setPU = iSap.GetMethod("SetPresentUnits");
-                if (setPU != null)
-                {
-                    var eUnitsType = asm.GetType("ETABSv1.eUnits");
-                    var val = eUnitsType != null ? Enum.ToObject(eUnitsType, 4) : (object)4;
-                    setPU.Invoke(sap, new[] { val });
-                }
-            }
-            catch { /* best-effort — unit conversion will still work via string detection */ }
-        }
+        // We do NOT change the model's units. SetPresentUnits would modify the
+        // model (UNLOCKING an analysed one and discarding results) and force a unit
+        // system the user didn't choose. Instead we READ the model's current units
+        // — getUnits (GetPresentUnits) and the "Program Control" CurrUnits string —
+        // and the app converts every table from those. The model is left untouched
+        // and its SI/imperial unit system is respected.
 
         string modelName = "ETABS model";
         try
@@ -367,22 +355,25 @@ internal static class Program
         if (_sapModel == null || _iSapInterface == null)
             throw new InvalidOperationException("Not connected — call connect first.");
 
-        // Attempt to read back via GetPresentUnits(ref eUnits)
-        // Signature: int GetPresentUnits(ref eUnits units)
+        // ETABSv1: eUnits GetPresentUnits() — PARAMETERLESS, returns the active
+        // units enum. (The old code invoked it with a dummy argument, which never
+        // matched the zero-arg signature, so it always threw and fell back to a
+        // hardcoded kip-ft — mis-scaling SI models once we stopped forcing units.)
         try
         {
-            var method = _iSapInterface.GetMethod("GetPresentUnits");
+            var method = _iSapInterface.GetMethod("GetPresentUnits", Type.EmptyTypes);
             if (method != null)
             {
-                var args = new object?[] { 0 }; // ref eUnits — pass 0, read back
-                method.Invoke(_sapModel, args);
-                return JsonValue.Create(Convert.ToInt32(args[0]));
+                var result = method.Invoke(_sapModel, null);
+                if (result != null) return JsonValue.Create(Convert.ToInt32(result));
             }
         }
         catch { /* fall through */ }
 
-        // If reflection failed, return the value we set at connect (4 = kip_ft_F)
-        return JsonValue.Create(4);
+        // Could not read the enum — return -1 (not a valid eUnits) so the app
+        // resolves units from the "Program Control" CurrUnits string instead of
+        // assuming a default.
+        return JsonValue.Create(-1);
     }
 
     // ── getTable ──────────────────────────────────────────────────────────

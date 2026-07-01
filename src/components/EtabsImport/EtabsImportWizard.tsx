@@ -161,6 +161,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const info = await conn.connect();
       connRef.current = conn;
       setConnInfo(info);
+      // Adopt the model's unit SYSTEM so imported sizes read in the model's units
+      // (SI model → mm, imperial model → in), matching what ETABS shows. The units
+      // label is "force-length" (e.g. "kn-m", "kip-ft"); the length part decides.
+      const lenPart = info.units.split('-')[1]?.trim().toLowerCase() ?? '';
+      setWizardUnits(['mm', 'cm', 'm'].includes(lenPart) ? 'si' : 'imperial');
       setHasColumns(!!conn.getColumns);
       const [st, gr, sec, mat, cmb] = await Promise.all([
         conn.getStories(), conn.getGroups(), conn.getFrameSections(),
