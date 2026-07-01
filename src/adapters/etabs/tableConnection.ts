@@ -9,8 +9,9 @@
  * Tables consumed (model display units; converted here to ft/kip/psi):
  *   "Program Control"                                    → CurrUnits
  *   "Beam Object Connectivity"                           → beams + stories
+ *   "Column Object Connectivity"                         → columns (optional)
  *   "Point Object Connectivity"                          → joint coordinates
- *   "Frame Assignments - Section Properties"             → beam → section
+ *   "Frame Assignments - Section Properties"             → frame → section
  *   "Group Assignments"                                  → ETABS groups
  *   "Frame Section Property Definitions - Concrete Rectangular" → exact b×h
  *   "Frame Section Property Definitions - Summary"       → b×h fallback (Area/I33)
@@ -21,7 +22,7 @@
 import type { ComboForces, StationForce } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, BeamFilter,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -130,12 +131,20 @@ export abstract class TableConnection implements EtabsConnection {
 
   protected units: UnitFactors = DEFAULT_UNITS;
   private beamsCache: EtabsBeamGeom[] | null = null;
+  private columnsCache: EtabsColumnGeom[] | null = null;
   private sectionNamesUsed = new Set<string>();
   private storiesCache: string[] = [];
-  private groupsByBeam = new Map<string, string[]>();
   private groupNames: string[] = [];
   private forcesCache: TableRow[] | null = null;
   private forcesCacheKey = '';
+  // Model-wide joins (joint coords, frame → section, object → groups) shared by
+  // both the beam and column loaders — these tables aren't member-type-specific,
+  // so they load once.
+  private ctxCache: {
+    coords: Map<string, { x: number; y: number; z: number }>;
+    sectionByFrame: Map<string, string>;
+    groupsByObject: Map<string, string[]>;
+  } | null = null;
 
   async connect(): Promise<EtabsConnectInfo> {
     const { modelName } = await this.openSession();
@@ -173,20 +182,18 @@ export abstract class TableConnection implements EtabsConnection {
     return this.groupNames;
   }
 
-  private async loadBeams(): Promise<void> {
-    if (this.beamsCache) return;
-    const [connectivity, joints, assignments, groupRows] = await Promise.all([
-      this.fetchTable('Beam Object Connectivity'),
+  /**
+   * Load the model-wide joins shared by beams and columns: joint coordinates,
+   * per-frame section assignment, and ETABS group membership. Cached so repeated
+   * loaders (beams, columns) and the connect-time metadata calls read it once.
+   */
+  private async loadFrameContext() {
+    if (this.ctxCache) return this.ctxCache;
+    const [joints, assignments, groupRows] = await Promise.all([
       this.fetchTable('Point Object Connectivity'),
       this.fetchTable('Frame Assignments - Section Properties'),
       this.fetchTable('Group Assignments').catch(() => [] as TableRow[]),
     ]);
-    if (!connectivity.length) {
-      throw new Error(
-        'ETABS returned no beams ("Beam Object Connectivity" is empty) — ' +
-        'is a model open in ETABS?'
-      );
-    }
 
     const lf = this.units.lengthToFt;
     const coords = new Map<string, { x: number; y: number; z: number }>();
@@ -196,41 +203,58 @@ export abstract class TableConnection implements EtabsConnection {
       coords.set(name, { x: num(j, 'X') * lf, y: num(j, 'Y') * lf, z: num(j, 'Z') * lf });
     }
 
-    const sectionByBeam = new Map<string, string>();
+    const sectionByFrame = new Map<string, string>();
     for (const a of assignments) {
       const un = str(a, 'UniqueName');
       const sect = str(a, 'SectProp', 'SectionProperty', 'AnalysisSect');
-      if (un && sect) sectionByBeam.set(un, sect);
+      if (un && sect) sectionByFrame.set(un, sect);
     }
 
-    // ETABS groups: name list + per-object membership
-    this.groupsByBeam = new Map();
+    // ETABS groups: name list + per-object membership (all object types)
+    const groupsByObject = new Map<string, string[]>();
     const names = new Set<string>();
     for (const g of groupRows) {
       const group = str(g, 'GroupName', 'Group');
       const obj = str(g, 'ObjectUniqueName', 'UniqueName', 'ObjectName');
       if (!group || !obj) continue;
       names.add(group);
-      const list = this.groupsByBeam.get(obj) ?? [];
+      const list = groupsByObject.get(obj) ?? [];
       list.push(group);
-      this.groupsByBeam.set(obj, list);
+      groupsByObject.set(obj, list);
     }
     this.groupNames = [...names].sort();
 
-    this.sectionNamesUsed = new Set();
+    this.ctxCache = { coords, sectionByFrame, groupsByObject };
+    return this.ctxCache;
+  }
+
+  private async loadBeams(): Promise<void> {
+    if (this.beamsCache) return;
+    const [connectivity, ctx] = await Promise.all([
+      this.fetchTable('Beam Object Connectivity'),
+      this.loadFrameContext(),
+    ]);
+    if (!connectivity.length) {
+      throw new Error(
+        'ETABS returned no beams ("Beam Object Connectivity" is empty) — ' +
+        'is a model open in ETABS?'
+      );
+    }
+
+    const lf = this.units.lengthToFt;
     this.beamsCache = connectivity.map(row => {
       const un = str(row, 'UniqueName');
-      const section = sectionByBeam.get(un) ?? '';
+      const section = ctx.sectionByFrame.get(un) ?? '';
       if (section) this.sectionNamesUsed.add(section);
-      const pt1 = coords.get(str(row, 'UniquePtI', 'PtI')) ?? { x: 0, y: 0, z: 0 };
-      const pt2 = coords.get(str(row, 'UniquePtJ', 'PtJ')) ?? { x: 0, y: 0, z: 0 };
+      const pt1 = ctx.coords.get(str(row, 'UniquePtI', 'PtI')) ?? { x: 0, y: 0, z: 0 };
+      const pt2 = ctx.coords.get(str(row, 'UniquePtJ', 'PtJ')) ?? { x: 0, y: 0, z: 0 };
       const lengthRaw = num(row, 'Length');
       return {
         name: un,
         story: str(row, 'Story'),
         section,
         pt1, pt2,
-        groups: this.groupsByBeam.get(un) ?? [],
+        groups: ctx.groupsByObject.get(un) ?? [],
         lengthFt: lengthRaw > 0
           ? lengthRaw * lf
           : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
@@ -242,6 +266,46 @@ export abstract class TableConnection implements EtabsConnection {
   async getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]> {
     await this.loadBeams();
     return this.beamsCache!.filter(b => matchesFilter(b, filter));
+  }
+
+  /**
+   * Load column frames from "Column Object Connectivity" — the sibling of the
+   * beam table. Columns are (near-)vertical frames (pt1 = base, pt2 = top) and
+   * share the model-wide joint / section / group context. No forces are read:
+   * imported columns start at zero and get their design forces in the app. A
+   * model with no columns (or no such table) yields an empty list rather than
+   * throwing — the beam path owns the "is a model open?" check.
+   */
+  private async loadColumns(): Promise<void> {
+    if (this.columnsCache) return;
+    const [connectivity, ctx] = await Promise.all([
+      this.fetchTable('Column Object Connectivity').catch(() => [] as TableRow[]),
+      this.loadFrameContext(),
+    ]);
+    const lf = this.units.lengthToFt;
+    this.columnsCache = connectivity.map(row => {
+      const un = str(row, 'UniqueName');
+      const section = ctx.sectionByFrame.get(un) ?? '';
+      if (section) this.sectionNamesUsed.add(section);
+      const pt1 = ctx.coords.get(str(row, 'UniquePtI', 'PtI')) ?? { x: 0, y: 0, z: 0 };
+      const pt2 = ctx.coords.get(str(row, 'UniquePtJ', 'PtJ')) ?? { x: 0, y: 0, z: 0 };
+      const lengthRaw = num(row, 'Length');
+      return {
+        name: un,
+        story: str(row, 'Story'),
+        section,
+        pt1, pt2,
+        groups: ctx.groupsByObject.get(un) ?? [],
+        heightFt: lengthRaw > 0
+          ? lengthRaw * lf
+          : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
+      };
+    });
+  }
+
+  async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
+    await this.loadColumns();
+    return this.columnsCache!.filter(c => matchesFilter(c, filter));
   }
 
   async getFrameSections(): Promise<EtabsSectionInfo[]> {
