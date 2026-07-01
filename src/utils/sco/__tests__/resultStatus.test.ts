@@ -35,7 +35,15 @@ describe('statusView', () => {
   it('uses the reported .SCRS status when present (not derived)', () => {
     expect(statusView({ status: 'OK', nmUtil: 0.8, vtUtil: 0.2 })).toEqual({ text: 'OK', tone: 'ok', derived: false });
     expect(statusView({ status: 'OVERSTRESSED', nmUtil: 1.2, vtUtil: 0.2 })).toEqual({ text: 'OVERSTRESSED', tone: 'ng', derived: false });
-    expect(statusView({ status: 'WARNING', nmUtil: 0.5, vtUtil: 0.5 })).toEqual({ text: 'WARNING', tone: 'warn', derived: false });
+    expect(statusView({ status: 'WARNING', nmUtil: 0.5, vtUtil: 0.5 })).toEqual({ text: 'Warning', tone: 'warn', derived: false });
+  });
+
+  it('maps S-Concrete EN status words: Acceptable→OK, Warning→warn, Borderline→NG', () => {
+    // A "Warning" beam can pass capacity (DCR < 1) but still carry code warnings.
+    expect(statusView({ status: 'Acceptable', nmUtil: 0.70, vtUtil: 0.66 })).toEqual({ text: 'OK', tone: 'ok', derived: false });
+    expect(statusView({ status: 'Warning', nmUtil: 0.70, vtUtil: 0.66 })).toEqual({ text: 'Warning', tone: 'warn', derived: false });
+    // "Borderline" = utilization ≥ 1.0 → over capacity, red.
+    expect(statusView({ status: 'Borderline', nmUtil: 1.054, vtUtil: 0.61 })).toEqual({ text: 'Borderline', tone: 'ng', derived: false });
   });
 
   it('derives NG from the DCR when the report has no status line (the EC2 case)', () => {

@@ -90,7 +90,8 @@ const input: React.CSSProperties = {
 const label: React.CSSProperties = { fontSize: 10, color: '#94a3b8', display: 'block', marginTop: 6 };
 
 // Status tone → colour for the results table (logic lives in resultStatus.ts).
-const TONE: Record<StatusTone, string> = { ok: '#34d399', warn: '#fbbf24', ng: '#f87171', none: '#94a3b8' };
+// Darker shades so they read on the panel's WHITE background (light theme).
+const TONE: Record<StatusTone, string> = { ok: '#059669', warn: '#d97706', ng: '#dc2626', none: '#64748b' };
 const dcrColor = (dcr: number | null): string => TONE[dcrTone(dcr)];
 
 export default function GroupActionsPanel({ groups, members, project, frameByMemberId, onProjectChange }: Props) {
@@ -450,10 +451,10 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                 style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 9.5, cursor: 'pointer', padding: 0 }}>Clear</button>
             </div>
           </div>
-          <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #1f2937', borderRadius: 6 }}>
+          <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 6 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
-                <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
+                <tr style={{ color: '#475569', textAlign: 'left', background: '#f8fafc' }}>
                   <th style={{ padding: '4px 6px' }}>{groups.length ? 'Group' : 'Member'}</th>
                   <th style={{ padding: '4px 6px' }}>Status</th>
                   <th style={{ padding: '4px 6px' }} title="Governing demand/capacity ratio — the worse of N-M and shear+torsion (>1 = over capacity)">DCR</th>
@@ -473,10 +474,10 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                   const warns = r.warnings ?? [];
                   return (
                     <Fragment key={r.name}>
-                      <tr style={{ color: '#e5e7eb', borderTop: '1px solid #111827', cursor: 'pointer' }}
+                      <tr style={{ color: '#1e293b', borderTop: '1px solid #e5e7eb', cursor: 'pointer' }}
                         onClick={() => setExpanded(isOpen ? null : r.name)} title="Click to see this group's checks">
-                        <td style={{ padding: '4px 6px' }}>
-                          <span style={{ color: '#64748b', marginRight: 3 }}>{isOpen ? '▾' : '▸'}</span>
+                        <td style={{ padding: '4px 6px', fontWeight: 600 }}>
+                          <span style={{ color: '#94a3b8', marginRight: 3 }}>{isOpen ? '▾' : '▸'}</span>
                           {r.groupLabel ?? r.name}
                           {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
                         </td>
@@ -495,8 +496,8 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                         </td>
                       </tr>
                       {isOpen && (
-                        <tr style={{ background: '#0b1220' }}>
-                          <td colSpan={4} style={{ padding: '6px 10px', fontSize: 10.5, color: '#cbd5e1' }}>
+                        <tr style={{ background: '#f8fafc' }}>
+                          <td colSpan={4} style={{ padding: '6px 10px', fontSize: 10.5, color: '#334155' }}>
                             <div style={{ marginBottom: 4 }}>
                               <b style={{ color: TONE[sv.tone] }}>{sv.text === '—' ? 'no result' : sv.text}</b>
                               {sv.derived && <span style={{ color: '#64748b' }}> (derived from DCR — no status line in the report)</span>}
@@ -504,20 +505,20 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                             </div>
                             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
                               <span>Governing DCR <b style={{ color: dcrColor(dcr) }}>{dcr != null ? dcr.toFixed(2) : '—'}</b>{by && <span style={{ color: '#64748b' }}> ({by})</span>}</span>
-                              <span>N-M util <b style={{ color: overN ? '#f87171' : '#34d399' }}>{r.nmUtil ?? '—'}</b></span>
-                              <span>V&amp;T util <b style={{ color: overV ? '#f87171' : '#34d399' }}>{r.vtUtil ?? '—'}</b></span>
+                              <span>N-M util <b style={{ color: overN ? '#dc2626' : '#059669' }}>{r.nmUtil ?? '—'}</b></span>
+                              <span>V&amp;T util <b style={{ color: overV ? '#dc2626' : '#059669' }}>{r.vtUtil ?? '—'}</b></span>
                             </div>
-                            {failing && <div style={{ color: '#f87171', marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
+                            {failing && <div style={{ color: '#dc2626', marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
                             {r.cage && (
                               <div style={{ marginBottom: 4 }}>
-                                Cage used: <b style={{ fontFamily: 'monospace', color: '#e5e7eb' }}>{r.cage}</b>
+                                Cage used: <b style={{ fontFamily: 'monospace', color: '#1e293b' }}>{r.cage}</b>
                                 <span style={{ color: '#64748b' }}> — not the bars you picked? Set them in ① Design and click “Apply to N members”, then re-run.</span>
                               </div>
                             )}
                             {warns.length > 0 && (
                               <div style={{ marginBottom: 4 }}>
                                 <div style={{ color: TONE.warn, marginBottom: 2 }}>⚠ {warns.length} S-Concrete message{warns.length !== 1 ? 's' : ''}:</div>
-                                <ul style={{ margin: 0, paddingLeft: 16, color: '#fcd34d' }}>
+                                <ul style={{ margin: 0, paddingLeft: 16, color: '#b45309' }}>
                                   {warns.slice(0, 8).map((w, i) => <li key={i} style={{ marginBottom: 1 }}>{w}</li>)}
                                 </ul>
                                 {warns.length > 8 && <div style={{ color: '#64748b' }}>+{warns.length - 8} more…</div>}

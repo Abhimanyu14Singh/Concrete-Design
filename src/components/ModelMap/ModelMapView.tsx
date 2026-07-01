@@ -715,86 +715,172 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           />
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {rightTab === 'groups' && (
-            <>
-              {/* ① DESIGN — group members, then set/suggest the cage (the editor
-                  now sits directly under the active group, not below the batch). */}
-              <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span></div>
-              <GroupPanel
-                groups={groups}
-                frames={frames}
-                selected={selectedFrames}
-                activeGroupId={activeGroupId}
-                onGroupsChange={handleGroupsChange}
-                onActiveGroupChange={setActiveGroupId}
-                onSelectionChange={setSelectedFrames}
-                dcrById={dcrById}
-                designResultsById={designResultsById}
-                members={members}
-                onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
-                onSuggestAll={handleSuggestAllGroups}
-                suggestAllNote={suggestAllNote}
-              />
-              {activeGroup && (
-                <GroupRebarEditor
-                  group={activeGroup}
-                  members={members.filter(m => activeGroup.memberIds.includes(m.id))}
-                  onApply={handleApplyRebar}
-                  code={project.code}
+            /* ① Design and ② Verify are split by a draggable divider so the user
+               can grow the Verify results by dragging the boundary up. Each pane
+               scrolls independently; the split height is remembered. */
+            <VerticalSplit
+              storageKey="designVerifySplit"
+              top={
+                <>
+                  {/* ① DESIGN — group members, then set/suggest the cage (the editor
+                      sits directly under the active group, not below the batch). */}
+                  <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span></div>
+                  <GroupPanel
+                    groups={groups}
+                    frames={frames}
+                    selected={selectedFrames}
+                    activeGroupId={activeGroupId}
+                    onGroupsChange={handleGroupsChange}
+                    onActiveGroupChange={setActiveGroupId}
+                    onSelectionChange={setSelectedFrames}
+                    dcrById={dcrById}
+                    designResultsById={designResultsById}
+                    members={members}
+                    onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
+                    onSuggestAll={handleSuggestAllGroups}
+                    suggestAllNote={suggestAllNote}
+                  />
+                  {activeGroup && (
+                    <GroupRebarEditor
+                      group={activeGroup}
+                      members={members.filter(m => activeGroup.memberIds.includes(m.id))}
+                      onApply={handleApplyRebar}
+                      code={project.code}
+                      targetDCR={project.targetDCR ?? 0.9}
+                    />
+                  )}
+                  {/* Column groups: enter design forces group-wide (imported columns
+                      start at zero) so they can be verified in S-Concrete. */}
+                  {activeGroup && members.some(m => activeGroup.memberIds.includes(m.id) && m.memberType === 'column') && (
+                    <ColumnForceGrid
+                      members={members.filter(m => activeGroup.memberIds.includes(m.id))}
+                      onProjectChange={onProjectChange}
+                    />
+                  )}
+                </>
+              }
+              bottom={
+                <>
+                  {/* ② VERIFY — run S-Concrete on the designed groups. */}
+                  <div style={sectionHdr}>② Verify<span style={sectionHint}>run the S-Concrete batch · governing result per group</span></div>
+                  <GroupActionsPanel
+                    groups={groups}
+                    members={members}
+                    project={project}
+                    frameByMemberId={frameByMemberId}
+                    onProjectChange={onProjectChange}
+                  />
+                </>
+              }
+            />
+          )}
+
+          {rightTab !== 'groups' && (
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+              {rightTab === 'autogroup' && (
+                <AutoGroupPanel
+                  members={members}
+                  onHighlightChange={setHighlightedFrames}
+                  onApplySuggestion={handleAcceptSuggestion}
+                  onOverlayChange={handleOverlayChange}
+                />
+              )}
+
+              {rightTab === 'savings' && (
+                <SavingsPanel
+                  members={members}
+                  resultsById={designResultsById}
+                  designGroups={groups}
+                  onMergeGroups={handleMergeGroups}
                   targetDCR={project.targetDCR ?? 0.9}
-                />
-              )}
-              {/* Column groups: enter design forces group-wide (imported columns
-                  start at zero) so they can be verified in S-Concrete. */}
-              {activeGroup && members.some(m => activeGroup.memberIds.includes(m.id) && m.memberType === 'column') && (
-                <ColumnForceGrid
-                  members={members.filter(m => activeGroup.memberIds.includes(m.id))}
-                  onProjectChange={onProjectChange}
+                  onTargetDCRChange={v => onProjectChange(prev => ({ ...prev, targetDCR: v }))}
                 />
               )}
 
-              {/* ② VERIFY — run S-Concrete on the designed groups. */}
-              <div style={sectionHdr}>② Verify<span style={sectionHint}>run the S-Concrete batch · governing result per group</span></div>
-              <GroupActionsPanel
-                groups={groups}
-                members={members}
-                project={project}
-                frameByMemberId={frameByMemberId}
-                onProjectChange={onProjectChange}
-              />
-            </>
-          )}
+              {rightTab === 'takeoff' && (
+                <TakeoffPanel members={members} />
+              )}
 
-          {rightTab === 'autogroup' && (
-            <AutoGroupPanel
-              members={members}
-              onHighlightChange={setHighlightedFrames}
-              onApplySuggestion={handleAcceptSuggestion}
-              onOverlayChange={handleOverlayChange}
-            />
-          )}
-
-          {rightTab === 'savings' && (
-            <SavingsPanel
-              members={members}
-              resultsById={designResultsById}
-              designGroups={groups}
-              onMergeGroups={handleMergeGroups}
-              targetDCR={project.targetDCR ?? 0.9}
-              onTargetDCRChange={v => onProjectChange(prev => ({ ...prev, targetDCR: v }))}
-            />
-          )}
-
-          {rightTab === 'takeoff' && (
-            <TakeoffPanel members={members} />
-          )}
-
-          {rightTab === 'stacks' && (
-            <ColumnStacksPanel members={members} code={project.code} />
+              {rightTab === 'stacks' && (
+                <ColumnStacksPanel members={members} code={project.code} />
+              )}
+            </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * VerticalSplit — two stacked panes with a draggable divider between them. The
+ * top pane's height is user-adjustable (drag the grip) and remembered in
+ * localStorage; each pane scrolls independently. Used to let the ② Verify results
+ * be stretched by dragging the ① Design / ② Verify boundary.
+ */
+function VerticalSplit({ top, bottom, storageKey, initialTop = 360, minTop = 120, minBottom = 140 }: {
+  top: React.ReactNode; bottom: React.ReactNode; storageKey: string;
+  initialTop?: number; minTop?: number; minBottom?: number;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [topH, setTopH] = useState<number>(() => {
+    const v = Number(localStorage.getItem(storageKey));
+    return Number.isFinite(v) && v > 0 ? v : initialTop;
+  });
+  // Latest height, written only from the drag handler (never during render) so
+  // the mouseup persist reads a current value without a stale closure.
+  const topHRef = useRef(topH);
+  const dragging = useRef(false);
+
+  // Handlers live in useCallback (not the effect body) so the drag's setState is
+  // an event-handler update, not a synchronous-in-effect one.
+  const onMove = useCallback((e: MouseEvent) => {
+    const el = containerRef.current;
+    if (!dragging.current || !el) return;
+    const rect = el.getBoundingClientRect();
+    const h = Math.min(Math.max(minTop, e.clientY - rect.top), rect.height - minBottom);
+    topHRef.current = h;
+    setTopH(h);
+  }, [minTop, minBottom]);
+
+  const onUp = useCallback(() => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    localStorage.setItem(storageKey, String(Math.round(topHRef.current)));
+  }, [storageKey]);
+
+  useEffect(() => {
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, [onMove, onUp]);
+
+  function startDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    dragging.current = true;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+  }
+
+  return (
+    <div ref={containerRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ height: topH, minHeight: minTop, overflow: 'auto' }}>{top}</div>
+      <div
+        onMouseDown={startDrag}
+        title="Drag to resize ① Design / ② Verify"
+        style={{
+          height: 9, flexShrink: 0, cursor: 'row-resize', background: '#eef2f7',
+          borderTop: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <div style={{ width: 44, height: 3, borderRadius: 2, background: '#cbd5e1' }} />
+      </div>
+      <div style={{ flex: 1, minHeight: minBottom, overflow: 'auto' }}>{bottom}</div>
     </div>
   );
 }

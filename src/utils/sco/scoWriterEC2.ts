@@ -173,10 +173,14 @@ export function ec2BeamUlsRows(member: Member, start = 1): string[] {
     const nf = -(lc.Pu ?? 0) * KIP_TO_KN;
     const tf = (lc.Tu ?? 0) * KIPFT_TO_KNM;
     const vfz = (lc.Vu ?? 0) * KIP_TO_KN;
-    const mPos = (lc.Mu_pos ?? 0) * KIPFT_TO_KNM;
-    const mNeg = (lc.Mu_neg ?? 0) * KIPFT_TO_KNM;
-    rows.push(ec2LoadRow(i++, nf, tf, vfz, mPos, { comment: lc.label || `LC${i}` }));
-    if (Math.abs(mNeg) > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, mNeg, { comment: `${lc.label || 'LC'} (hog)` }));
+    // S-Concrete My sign: sagging (positive bending, tension on the BOTTOM face)
+    // is emitted as −My; hogging (tension TOP) as +My. Giving the two envelopes
+    // OPPOSITE signs makes S-Concrete check the correct face for each — essential
+    // once top and bottom bars differ (a same-sign pair only ever checks one face).
+    const mSag = Math.abs((lc.Mu_pos ?? 0) * KIPFT_TO_KNM);
+    const mHog = Math.abs((lc.Mu_neg ?? 0) * KIPFT_TO_KNM);
+    rows.push(ec2LoadRow(i++, nf, tf, vfz, -mSag, { comment: lc.label || `LC${i}` }));
+    if (mHog > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, mHog, { comment: `${lc.label || 'LC'} (hog)` }));
   }
   return rows;
 }
@@ -187,7 +191,12 @@ export function ec2BeamUlsRows(member: Member, start = 1): string[] {
 export function ec2BeamCrackRows(member: Member, project: Project, start = 1): string[] {
   const cp = resolveCrack(member, project.code, project.slsCombo);
   if (!cp || (cp.Mqp_pos == null && cp.Mqp_neg == null)) return [];
-  const mqp = Math.max(Math.abs(cp.Mqp_pos ?? 0), Math.abs(cp.Mqp_neg ?? 0)) * KIPFT_TO_KNM;
+  // Same My sign convention as the ULS rows: the governing SLS moment is emitted
+  // as −My when sagging (tension bottom) and +My when hogging (tension top), so
+  // the crack check runs on the correct face.
+  const mqpSag = Math.abs(cp.Mqp_pos ?? 0) * KIPFT_TO_KNM;
+  const mqpHog = Math.abs(cp.Mqp_neg ?? 0) * KIPFT_TO_KNM;
+  const mqp = mqpSag >= mqpHog ? -mqpSag : mqpHog;
   let vqp = 0;
   if (project.slsCombo && member.stationForces?.length) {
     const sf = member.stationForces.filter((c) => c.combo === project.slsCombo);

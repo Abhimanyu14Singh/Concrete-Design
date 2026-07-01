@@ -106,8 +106,8 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(rows).toHaveLength(2);                 // sagging + hogging, no SLS combo here
     expect(rows[0].Nf).toBeCloseTo(-17.79, 1);    // -Pu × 4.448
     expect(rows[0].Vfz).toBeCloseTo(756.2, 1);    // Vu × 4.448
-    expect(rows[0].Mfy).toBeCloseTo(813.49, 1);   // +Mu_pos × 1.3558 (sagging)
-    expect(rows[1].Mfy).toBeCloseTo(-406.75, 1);  // Mu_neg × 1.3558 (hogging)
+    expect(rows[0].Mfy).toBeCloseTo(-813.49, 1);  // sagging → −My (tension bottom)
+    expect(rows[1].Mfy).toBeCloseTo(406.75, 1);   // hogging → +My (tension top)
   });
 
   it('appends the SLS quasi-permanent crack row from the selected combo', () => {
@@ -115,7 +115,7 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     const rows = loadRows(buildEc2BeamSco(m, project({ slsCombo: 'QP' })));
     expect(rows).toHaveLength(3);                  // sagging + hogging + SLS
     const sls = rows[2];
-    expect(sls.Mfy).toBeCloseTo(150 * 1.355818, 1);
+    expect(sls.Mfy).toBeCloseTo(-150 * 1.355818, 1);   // sagging SLS moment → −My
     expect(sls.Vfz).toBeCloseTo(20 * 4.448222, 1);
     expect(sls.sust).toBeCloseTo(0.6, 6);          // quasi-permanent factor
   });

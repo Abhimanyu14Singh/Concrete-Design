@@ -48,8 +48,11 @@ export function statusView(r: UtilResult): { text: string; tone: StatusTone; der
   const raw = r.status?.trim();
   if (raw) {
     const up = raw.toUpperCase();
-    if (up.startsWith('OK') || up.startsWith('PASS')) return { text: 'OK', tone: 'ok', derived: false };
-    if (up.startsWith('WARN')) return { text: 'WARNING', tone: 'warn', derived: false };
+    // S-Concrete EN reports use Acceptable / Warning / Borderline; ACI uses OK /
+    // OVERSTRESSED. "Borderline" = utilization ≥ 1.0 (over capacity) → NG.
+    if (up.startsWith('OK') || up.startsWith('PASS') || up.startsWith('ACCEPT')) return { text: 'OK', tone: 'ok', derived: false };
+    if (up.startsWith('WARN')) return { text: 'Warning', tone: 'warn', derived: false };
+    if (up.startsWith('BORDER')) return { text: 'Borderline', tone: 'ng', derived: false };
     return { text: raw, tone: 'ng', derived: false }; // OVERSTRESSED / NG / FAIL / …
   }
   const { dcr } = governingDcr(r);

@@ -42,7 +42,7 @@ function newSection(name: string): ScrsResult {
 export function parseScrs(text: string): ScrsResult[] {
   const sections: ScrsResult[] = [];
   let cur: ScrsResult | null = null;
-  let inGovLc = false, inMaxMoment = false, inShear = false;
+  let inGovLc = false, inMaxMoment = false, inShear = false, inMessages = false;
 
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -53,15 +53,41 @@ export function parseScrs(text: string): ScrsResult[] {
       let name = (stripped.split('File:').pop() ?? '').trim();
       if (!name) name = i + 1 < lines.length ? lines[i + 1].trim() : '';
       cur = newSection(name.replace('.SCO', ''));
-      inGovLc = false; inMaxMoment = false; inShear = false;
+      inGovLc = false; inMaxMoment = false; inShear = false; inMessages = false;
       continue;
     }
     if (!cur) continue;
+
+    // "List of Messages:" — the authoritative warnings/errors block in a real
+    // S-Concrete report: "Message N <tab> Severity <tab> Text" plus a clause
+    // continuation line. Handled up-front so message lines aren't shadowed by an
+    // open util block. Ends at the next "#" section separator.
+    if (/^List of Messages\b/i.test(stripped)) {
+      inMessages = true; inGovLc = false; inMaxMoment = false; inShear = false;
+      continue;
+    }
+    if (inMessages) {
+      if (stripped.startsWith('#')) { inMessages = false; continue; }
+      if (/^Message\s+\d+/i.test(stripped)) {
+        const parts = stripped.split('\t').map((s) => s.trim()).filter(Boolean);
+        const sev = parts[1] ?? '';
+        const txt = parts.slice(2).join(' ');
+        cur.msgs.push([sev, txt].filter(Boolean).join(': '));
+      } else if (stripped && cur.msgs.length) {
+        const extra = stripped.split('\t').map((s) => s.trim()).filter(Boolean).join(' ');
+        if (extra) cur.msgs[cur.msgs.length - 1] += ` (${extra})`;
+      }
+      continue;
+    }
 
     if (stripped.includes('V & T Util')) {
       const m = stripped.match(TRAIL); if (m) cur.vtUtil = parseFloat(m[1]);
     } else if (stripped.includes('N vs M Util')) {
       const m = stripped.match(TRAIL); if (m && cur.nmUtil === null) cur.nmUtil = parseFloat(m[1]);
+    } else if (/^Status\b/.test(stripped) && stripped.includes('\t')) {
+      // Real S-Concrete Summary line: "Status <tab> Acceptable|Warning|Borderline".
+      // The first one (the summary) wins; per-check Status lines are ignored.
+      if (cur.status === null) cur.status = stripped.replace(/^Status\s+/, '').trim();
     } else if (/^(OK|OVERSTRESSED|WARNING)/.test(stripped)) {
       if (cur.status === null) cur.status = stripped;
     } else if (stripped.includes('Governing Load Case Utilizations:')) {

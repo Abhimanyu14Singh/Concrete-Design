@@ -77,3 +77,45 @@ describe('parseScrs', () => {
     expect(parseScrs('no sections here\njust text')).toEqual([]);
   });
 });
+
+// Real S-Concrete 2026 EN 1992 layout (tab-separated Summary + a "List of
+// Messages:" block), taken verbatim from an actual .SCRS batch report.
+const EC2_SAMPLE = [
+  '################################################################################',
+  'File:\tStory2_ConcBm1.SCO',
+  'Section Name:\tStory2 · ConcBm1',
+  'Summary:',
+  '\tStatus        \tBorderline',
+  '\tMaximum       \t1.000',
+  '\tV & T Util    \t0.612',
+  '\tN vs M Util   \t1.054',
+  '##############################',
+  'N vs M Results:',
+  '\tStatus     \tBorderline (Message 1)',   // per-check status must NOT override the summary
+  '\tUtilization\t1.054',
+  '##############################',
+  'List of Messages:',
+  '\tMessage 1      \tBorderline     \tAxial Load and Moment Utilization equals or exceeds Maximum.',
+  '\t               \t               \tClause 6.1 of EN 1992-1-1',
+  '\tMessage 2      \tWarning        \tArea of Steel provided does not meet the Minimum.',
+  '\t               \t               \tClause 9.2.1.1(1) of EN 1992-1-1',
+  '##############################',
+].join('\n');
+
+describe('parseScrs — real S-Concrete EN 1992 layout', () => {
+  const [r] = parseScrs(EC2_SAMPLE);
+
+  it('reads the Summary status and tab-separated utilizations', () => {
+    expect(r.name).toBe('Story2_ConcBm1');
+    expect(r.status).toBe('Borderline');           // the SUMMARY status, not a per-check one
+    expect(r.nmUtil).toBeCloseTo(1.054, 6);
+    expect(r.vtUtil).toBeCloseTo(0.612, 6);
+  });
+
+  it('extracts each List-of-Messages entry with its severity, text and clause', () => {
+    expect(r.msgs).toHaveLength(2);
+    expect(r.msgs[0]).toBe('Borderline: Axial Load and Moment Utilization equals or exceeds Maximum. (Clause 6.1 of EN 1992-1-1)');
+    expect(r.msgs[1]).toContain('Warning: Area of Steel provided does not meet the Minimum.');
+    expect(r.msgs[1]).toContain('Clause 9.2.1.1(1)');
+  });
+});
