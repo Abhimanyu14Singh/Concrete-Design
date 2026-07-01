@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickPath:       (opts) => ipcRenderer.invoke('pick-path', opts),
   openPath:       (target) => ipcRenderer.invoke('open-path', { target }),
   pathExists:     (paths) => ipcRenderer.invoke('path-exists', { paths }),
+  sconcreteAutodetect: () => ipcRenderer.invoke('sconcrete-autodetect'),
   openFile:       ()     => ipcRenderer.invoke('open-file'),
   onTriggerSave:  (cb)   => setSingleListener('trigger-save', cb),
   onTriggerOpen:  (cb)   => setSingleListener('trigger-open', cb),

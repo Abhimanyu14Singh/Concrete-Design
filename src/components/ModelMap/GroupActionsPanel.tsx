@@ -9,7 +9,7 @@
  * outside it the buttons explain why they're unavailable. The .SCO/.SCRS logic is
  * unit-tested; the runtime round-trips can only be exercised on Windows.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Member, DesignGroup, Project, SconcreteResult } from '../../types';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from '../../utils/sco/scoBatch';
 import { runScoBatch, rerunScoBatch, hasSconcrete, type SconcreteRunConfig, type SconcreteRunResult } from '../../utils/sco/sconcreteClient';
@@ -41,6 +41,7 @@ function loadConfig(): SconcreteRunConfig {
 type DesktopAPI = {
   pickPath?: (opts: { mode: 'file' | 'folder' }) => Promise<{ path: string; exists?: boolean } | { error: string } | null>;
   openPath?: (target: string) => Promise<{ success: boolean; error?: string }>;
+  sconcreteAutodetect?: () => Promise<{ pythonExe: string; batchReporter: string; outDir: string }>;
 };
 const desktopApi = (): DesktopAPI | undefined =>
   (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
@@ -70,7 +71,33 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   const shownResults = project.sconcreteResults ?? localResults;
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
+  const [autodetected, setAutodetected] = useState(false);
   const canPick = !!desktopApi()?.pickPath;
+
+  // Desktop: auto-detect the S-Concrete batch paths once on mount so the user
+  // rarely has to enter them. Only fills fields left blank — a value the user
+  // already set is never overwritten — and everything stays editable below.
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api?.sconcreteAutodetect) return;
+    if (cfg.pythonExe && cfg.batchReporter && cfg.outDir) return; // nothing blank to fill
+    let cancelled = false;
+    api.sconcreteAutodetect().then(found => {
+      if (cancelled || !found) return;
+      const next: SconcreteRunConfig = {
+        ...cfg,
+        pythonExe: cfg.pythonExe || found.pythonExe || '',
+        batchReporter: cfg.batchReporter || found.batchReporter || '',
+        outDir: cfg.outDir || found.outDir || '',
+      };
+      if (next.pythonExe === cfg.pythonExe && next.batchReporter === cfg.batchReporter && next.outDir === cfg.outDir) return;
+      setCfgState(next);
+      localStorage.setItem(LS_KEY, JSON.stringify(next));
+      setAutodetected(true);
+    }).catch(() => { /* best effort */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Persist results to the project (or keep local when there's no onProjectChange). */
   function saveResults(next: SconcreteResult[] | null) {
@@ -326,6 +353,11 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
 
       {showCfg && (
         <div style={{ background: '#0b1220', border: '1px solid #1f2937', borderRadius: 6, padding: 8 }}>
+          {autodetected && (
+            <div style={{ fontSize: 9.5, color: '#34d399', marginBottom: 6 }}>
+              ✓ Auto-detected these paths — edit any to override.
+            </div>
+          )}
           <PathField label="Python executable" placeholder="C:\\…\\python.exe" value={cfg.pythonExe}
             onChange={(v) => setCfg({ ...cfg, pythonExe: v })} onBrowse={canPick ? () => browse('pythonExe') : undefined} />
           <PathField label="run_batch_reporter.py" placeholder="C:\\…\\run_batch_reporter.py" value={cfg.batchReporter}
