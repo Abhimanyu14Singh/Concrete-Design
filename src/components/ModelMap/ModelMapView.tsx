@@ -14,6 +14,7 @@ import Map3DCanvas from './Map3DCanvas';
 import GroupPanel from './GroupPanel';
 import GroupActionsPanel from './GroupActionsPanel';
 import GroupRebarEditor from './GroupRebarEditor';
+import ColumnForceGrid from './ColumnForceGrid';
 import AutoGroupPanel from './AutoGroupPanel';
 import TopProgressBar from '../common/TopProgressBar';
 import HistogramPanel from './HistogramPanel';
@@ -693,27 +694,33 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
       {/* Right panel */}
       <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
-        {/* Tab bar — Groups is the workflow step (→ S-Concrete); the rest are
-            read-only analytics. Tooltips spell that out. */}
-        <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+        {/* Tab bar — the workflow (Design + Verify) is primary; read-only
+            analytics are tucked behind an "Analyze" picker. */}
+        <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #e5e7eb', background: '#f9fafb', paddingRight: 6 }}>
           <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}
-            title="Workflow: create design groups, design them, and run the S-Concrete batch (below)">Groups</button>
-          <button style={tabStyle(rightTab === 'autogroup')} onClick={() => setRightTab('autogroup')}
-            title="Analytics: suggested groupings that cut section/rebar variety">Auto-Group</button>
-          <button style={tabStyle(rightTab === 'savings')} onClick={() => setRightTab('savings')}
-            title="Analytics: material savings at the target DCR">Savings</button>
-          <button style={tabStyle(rightTab === 'takeoff')} onClick={() => setRightTab('takeoff')}
-            title="Analytics: concrete & steel quantities">Takeoff</button>
-          <button style={tabStyle(rightTab === 'stacks')} onClick={() => setRightTab('stacks')}
-            title="Analytics: multi-story column stacks">Stacks</button>
+            title="Group members, design their cage, and verify with S-Concrete">Design + Verify</button>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, color: '#9ca3af', marginRight: 4 }}>Analyze:</span>
+          <Dropdown
+            value={rightTab === 'groups' ? '' : rightTab}
+            options={[
+              { value: '', label: '—' },
+              { value: 'autogroup', label: 'Auto-group' },
+              { value: 'savings', label: 'Savings' },
+              { value: 'takeoff', label: 'Takeoff' },
+              { value: 'stacks', label: 'Column stacks' },
+            ]}
+            onChange={v => setRightTab((v || 'groups') as RightTab)}
+            style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, background: 'white', margin: '4px 0' }}
+          />
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {rightTab === 'groups' && (
             <>
-              <div style={{ fontSize: 10, color: '#6b7280', padding: '6px 10px', background: '#f9fafb', borderBottom: '1px solid #eef2f7', lineHeight: 1.6 }}>
-                <strong style={{ color: '#374151' }}>Workflow:</strong> ① group members (pick a group, click frames on the map) · ② design (✨ Suggest) · ③ run the S-Concrete batch (below)
-              </div>
+              {/* ① DESIGN — group members, then set/suggest the cage (the editor
+                  now sits directly under the active group, not below the batch). */}
+              <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span></div>
               <GroupPanel
                 groups={groups}
                 frames={frames}
@@ -729,13 +736,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                 onSuggestAll={handleSuggestAllGroups}
                 suggestAllNote={suggestAllNote}
               />
-              <GroupActionsPanel
-                groups={groups}
-                members={members}
-                project={project}
-                frameByMemberId={frameByMemberId}
-                onProjectChange={onProjectChange}
-              />
               {activeGroup && (
                 <GroupRebarEditor
                   group={activeGroup}
@@ -745,6 +745,24 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                   targetDCR={project.targetDCR ?? 0.9}
                 />
               )}
+              {/* Column groups: enter design forces group-wide (imported columns
+                  start at zero) so they can be verified in S-Concrete. */}
+              {activeGroup && members.some(m => activeGroup.memberIds.includes(m.id) && m.memberType === 'column') && (
+                <ColumnForceGrid
+                  members={members.filter(m => activeGroup.memberIds.includes(m.id))}
+                  onProjectChange={onProjectChange}
+                />
+              )}
+
+              {/* ② VERIFY — run S-Concrete on the designed groups. */}
+              <div style={sectionHdr}>② Verify<span style={sectionHint}>run the S-Concrete batch · governing result per group</span></div>
+              <GroupActionsPanel
+                groups={groups}
+                members={members}
+                project={project}
+                frameByMemberId={frameByMemberId}
+                onProjectChange={onProjectChange}
+              />
             </>
           )}
 
@@ -895,6 +913,8 @@ function MetricLegendPanel({
 }
 
 const toolSep: React.CSSProperties = { width: 1, height: 20, background: '#e5e7eb', margin: '0 2px', flexShrink: 0 };
+const sectionHdr: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#0f172a', padding: '8px 10px 4px', background: '#f9fafb', borderBottom: '1px solid #eef2f7', display: 'flex', alignItems: 'baseline', gap: 6, flexShrink: 0 };
+const sectionHint: React.CSSProperties = { fontSize: 9.5, fontWeight: 400, color: '#9ca3af' };
 
 const presetBtn: React.CSSProperties = {
   padding: '2px 7px', border: '1px solid #d1d5db', borderRadius: 5,
