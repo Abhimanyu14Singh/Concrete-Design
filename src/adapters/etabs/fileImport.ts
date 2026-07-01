@@ -32,9 +32,12 @@ function rekey(rows: Row[]): Row[] {
   });
 }
 
-/** Find the first sheet whose headers include all of `required` (normalized). */
-function findSheet(wb: XLSX.WorkBook, required: string[]): Row[] | null {
+/** Find the first sheet whose headers include all of `required` (normalized),
+ *  optionally skipping any sheet whose NAME contains `excludeNameSubstr` — used so
+ *  the beam parse never accidentally grabs the "Columns" sheet when it comes first. */
+function findSheet(wb: XLSX.WorkBook, required: string[], excludeNameSubstr?: string): Row[] | null {
   for (const name of wb.SheetNames) {
+    if (excludeNameSubstr && norm(name).includes(norm(excludeNameSubstr))) continue;
     const rows = XLSX.utils.sheet_to_json<Row>(wb.Sheets[name], { defval: null });
     if (!rows.length) continue;
     const headers = Object.keys(rows[0]).map(norm);
@@ -78,7 +81,10 @@ export class FileConnection implements EtabsConnection {
   async connect(): Promise<EtabsConnectInfo> {
     const wb = XLSX.read(this.data, { type: 'array' });
 
-    const beamRows = findSheet(wb, ['story', 'frame', 'section', 'x1', 'y1', 'z1', 'x2', 'y2', 'z2']);
+    const geomHeaders = ['story', 'frame', 'section', 'x1', 'y1', 'z1', 'x2', 'y2', 'z2'];
+    // Prefer an explicit "Beams" sheet; otherwise the first geometry sheet that
+    // ISN'T the columns sheet (so sheet order can't swap beams and columns).
+    const beamRows = findNamedSheet(wb, 'beam', geomHeaders) ?? findSheet(wb, geomHeaders, 'column');
     if (!beamRows) throw new Error('No "Beams" sheet found (needs Story, Frame, Section, X1..Z2 columns).');
     this.beams = beamRows.map(r => {
       const pt1 = { x: num(r.x1), y: num(r.y1), z: num(r.z1) };

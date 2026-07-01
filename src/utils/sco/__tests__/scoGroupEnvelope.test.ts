@@ -210,6 +210,17 @@ describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
     expect(files).toEqual([]);
   });
 
+  it('a column group whose members all have EMPTY loads still emits one valid zero row', () => {
+    const c1 = col('c1', 'C1', []);
+    const c2 = col('c2', 'C2', []);   // e.g. imported columns before forces are entered
+    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['c1', 'c2'])], [c1, c2], 'ACI318-19');
+    expect(file.loadCaseCount).toBe(1);            // fallback single zero row
+    const rows = rowsOf(file.text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ Nf: 0, Mfy: 0, Mfz: 0 });
+    for (const v of Object.values(rows[0])) expect(typeof v === 'number' ? Number.isNaN(v) : false).toBe(false);
+  });
+
   it('produces NO file for an empty group and skips unknown member ids', () => {
     const files = buildGroupEnvelopeScoFiles(
       [group('g1', 'Empty', []), group('g2', 'Ghosts', ['nope'])],
@@ -275,5 +286,23 @@ describe('buildGroupEnvelopeScoFiles — EC2 routing', () => {
   it('throws for EC2 without the project (crack-width combo needed)', () => {
     expect(() => buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1'))
       .toThrow(/needs the project/);
+  });
+
+  it('a mixed beam+column EC2 group yields beam-ULS + beam-crack + column files (full dispatch)', () => {
+    const cp = { wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4 };
+    const b1: Member = { ...beam('b1', 'B1', [lc({ Mu_pos: 200 })]), crackParams: cp,
+      stationForces: [{ combo: 'QP', stations: [{ x: 0, V: 15, M: 120 }] }] };
+    const c1 = col('c1', 'C1', [lc({ Pu: 600, Mux: 120, Muy: 80 })]);
+    const files = buildGroupEnvelopeScoFiles([group('g', 'Mix', ['b1', 'c1'])], [b1, c1], 'EN1992-1-1', { ...proj, slsCombo: 'QP' });
+
+    expect(files.map(f => f.fileName).sort()).toEqual(['Mix_beam.SCO', 'Mix_beam_crack.SCO', 'Mix_col.SCO']);
+    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
+    expect(byName['Mix_beam.SCO'].kind).toBe('uls');
+    expect(byName['Mix_beam.SCO'].text).toContain('Member Type\t 2');   // EC2 beam
+    expect(byName['Mix_beam_crack.SCO'].kind).toBe('crack');
+    expect(byName['Mix_beam_crack.SCO'].text).toContain('Bm CheckCracks\t 1');
+    expect(byName['Mix_col.SCO'].kind).toBe('single');
+    expect(byName['Mix_col.SCO'].text).toContain('Member Type\t 3');    // EC2 column
+    for (const f of files) expect(f.excludedMemberIds).toEqual([]);     // nobody dropped
   });
 });
