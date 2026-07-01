@@ -57,6 +57,28 @@ function SectionLabel({ title }: { title: string }) {
   return <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 4px' }}>{title}</div>;
 }
 
+/** A collapsible results check. The governing check (highest DCR) opens by
+ *  default; the rest collapse to a header + DCR chip so the column isn't a wall
+ *  of 15-20 numbers. */
+function CheckSection({ title, dcr, defaultOpen, children }: { title: string; dcr?: number; defaultOpen: boolean; children: React.ReactNode }) {
+  const [override, setOverride] = useState<boolean | null>(null);
+  const open = override ?? defaultOpen;
+  return (
+    <div>
+      <button
+        onClick={() => setOverride(!open)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 0 4px', margin: 0 }}
+      >
+        <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>
+          <span style={{ display: 'inline-block', width: 10, color: '#9ca3af' }}>{open ? '▾' : '▸'}</span>{title}
+        </span>
+        {dcr !== undefined && <span style={dcrStyle(dcr)}>{dcr.toFixed(2)}</span>}
+      </button>
+      {open && <div>{children}</div>}
+    </div>
+  );
+}
+
 function dcrStyle(dcr: number): React.CSSProperties {
   return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
@@ -95,6 +117,26 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   })();
   const scoAgree = scoAgreesWithApp(scoSummary?.status ?? null, appGovDCR);
   const scoEligible = member.memberType === 'beam' || member.section.type === 'rectangular_column';
+
+  // R6: per-section governing DCRs so the results column can collapse to the
+  // governing check (the highest-DCR section stays open; the rest fold to a chip).
+  const crackDcr = code === 'EN1992-1-1'
+    ? (result.DCR_crack ?? Math.max(
+        (result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3),
+        (result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3),
+        result.wk_face !== undefined ? result.wk_face / (member.crackParams?.wLimitFace ?? 0.3) : 0,
+      ))
+    : 0;
+  const secDcr: Record<string, number> = isColumn
+    ? { Axial: result.DCR_axial ?? 0, 'P-M Interaction': result.DCR_PM ?? 0, Shear: result.DCR_shear }
+    : {
+        Flexure: Math.max(result.DCR_flex_pos, result.DCR_flex_neg),
+        Shear: result.DCR_shear,
+        Torsion: result.DCR_torsion,
+        ...(code === 'EN1992-1-1' ? { 'Crack Width §7.3.4': crackDcr } : {}),
+      };
+  const maxSecDcr = Math.max(...Object.values(secDcr), 0);
+  const isGov = (title: string) => secDcr[title] === maxSecDcr && maxSecDcr > 0;
 
   // Per-zone shear DCRs for beams with zoned stirrups + station forces
   const zoneResults = member.memberType === 'beam' && member.rebar.tieZones && member.stationForces?.length
@@ -370,28 +412,32 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
           {isColumn ? (
             <>
-              <SectionLabel title="Axial" />
-              <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
-              <KV k="  DCR" v={(result.DCR_axial ?? 0).toFixed(3)} dcr={result.DCR_axial ?? 0} overridden={isOverridden(overrides, 'DCR_axial')} />
+              <CheckSection title="Axial" dcr={result.DCR_axial ?? 0} defaultOpen={isGov('Axial')}>
+                <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
+                <KV k="  DCR" v={(result.DCR_axial ?? 0).toFixed(3)} dcr={result.DCR_axial ?? 0} overridden={isOverridden(overrides, 'DCR_axial')} />
+              </CheckSection>
 
-              <SectionLabel title="P-M Interaction" />
-              <KV k={code === 'EN1992-1-1' ? 'M_Rd,x @NEd' : 'φMnx @Pu'} v={fmt(result.phi_Mnx ?? 0, 'moment')} />
-              <KV k={code === 'EN1992-1-1' ? 'M_Rd,y @NEd' : 'φMny @Pu'} v={fmt(result.phi_Mny ?? 0, 'moment')} />
-              <KV k="  DCR" v={(result.DCR_PM ?? 0).toFixed(3)} dcr={result.DCR_PM ?? 0} overridden={isOverridden(overrides, 'DCR_PM')} />
+              <CheckSection title="P-M Interaction" dcr={result.DCR_PM ?? 0} defaultOpen={isGov('P-M Interaction')}>
+                <KV k={code === 'EN1992-1-1' ? 'M_Rd,x @NEd' : 'φMnx @Pu'} v={fmt(result.phi_Mnx ?? 0, 'moment')} />
+                <KV k={code === 'EN1992-1-1' ? 'M_Rd,y @NEd' : 'φMny @Pu'} v={fmt(result.phi_Mny ?? 0, 'moment')} />
+                <KV k="  DCR" v={(result.DCR_PM ?? 0).toFixed(3)} dcr={result.DCR_PM ?? 0} overridden={isOverridden(overrides, 'DCR_PM')} />
+              </CheckSection>
 
-              <SectionLabel title="Shear" />
-              <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
-              <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
-              <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
-              <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')} />
+              <CheckSection title="Shear" dcr={result.DCR_shear} defaultOpen={isGov('Shear')}>
+                <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
+                <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
+                <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
+                <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')} />
+              </CheckSection>
 
-              <SectionLabel title="Steel Limits" />
-              <KV k="As min" v={fmt(result.As_min, 'area')} />
-              <KV k="As max" v={fmt(result.As_max, 'area')} />
+              <CheckSection title="Steel Limits" defaultOpen={false}>
+                <KV k="As min" v={fmt(result.As_min, 'area')} />
+                <KV k="As max" v={fmt(result.As_max, 'area')} />
+              </CheckSection>
             </>
           ) : (
             <>
-          <SectionLabel title="Flexure" />
+          <CheckSection title="Flexure" dcr={Math.max(result.DCR_flex_pos, result.DCR_flex_neg)} defaultOpen={isGov('Flexure')}>
           <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')}
             tip="Sagging (positive) flexural capacity after applying φ=0.9 (ACI) or 1/γ (EC2). Must exceed Mu+."
             formula={code === 'EN1992-1-1' ? 'M_Rd = As·fyd·z·(1 − λ·x/(2d))' : 'φMn = φ·As·fy·(d − a/2)'} />
@@ -413,8 +459,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             tip="Bottom steel ratio ρ = As,bot / (bw · d). Effective depth d measured to centroid of tension steel." />
           <KV k="ρ top" v={`${flexSteelRatioPct(member, 'top').toFixed(3)}%`}
             tip="Top steel ratio ρ = As,top / (bw · d)." />
+          </CheckSection>
 
-          <SectionLabel title="Shear" />
+          <CheckSection title="Shear" dcr={result.DCR_shear} defaultOpen={isGov('Shear')}>
           <KV k={cap.Vc} v={fmt(result.Vc, 'force')}
             tip={code === 'EN1992-1-1' ? 'Concrete shear resistance without links V_Rd,c (§6.2.2). Depends on ρl and fck.' : 'ACI concrete contribution Vc. Includes axial modification.'}
             formula={code === 'EN1992-1-1' ? 'V_Rd,c = [CRd,c·k·(100ρl·fck)^⅓]·bw·d' : undefined} />
@@ -433,8 +480,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             tip="Required shear steel area per unit length = Vu/(φ·fy·d)." />}
           {code !== 'EN1992-1-1' && <KV k="Av min/s" v={fmt(result.Av_min_per_s, 'areaPerLength')}
             tip="ACI §9.6.3 minimum transverse reinforcement: 0.75·√f'c/fyt·bw." />}
+          </CheckSection>
 
-          <SectionLabel title="Torsion" />
+          <CheckSection title="Torsion" dcr={result.DCR_torsion} defaultOpen={isGov('Torsion')}>
           <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')}
             tip="Cracking torsion threshold. Torsion design required when Tu > φTcr." />
           <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')}
@@ -443,10 +491,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             tip={code === 'EN1992-1-1'
               ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
               : 'Torsion DCR = Tu / φTn.'} />
+          </CheckSection>
 
           {code === 'EN1992-1-1' && (
-            <>
-              <SectionLabel title="Crack Width §7.3.4" />
+            <CheckSection title="Crack Width §7.3.4" dcr={crackDcr} defaultOpen={isGov('Crack Width §7.3.4')}>
               <KV k="wk bot" v={`${(result.wk_bot ?? 0).toFixed(3)} mm`}
                 dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                 tip="Characteristic crack width at bottom face under quasi-permanent load combination."
@@ -478,7 +526,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                   </div>
                 );
               })()}
-            </>
+            </CheckSection>
           )}
             </>
           )}

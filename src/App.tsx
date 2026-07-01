@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Project, Member, ModelMap, DesignGroup } from './types';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { Project, Member, ModelMap, DesignGroup, DesignCode } from './types';
 import { defaultProject } from './utils/sampleData';
+import { runDesign } from './engines';
+import { resolveCrack } from './utils/resolveCrack';
+import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
 import { exportExcel } from './utils/export/excelExport';
 import { buildSchedulePDF } from './utils/export/schedulePdfExport';
@@ -21,6 +24,19 @@ const hdrBtn: React.CSSProperties = {
   padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
   background: 'white', fontSize: 12, cursor: 'pointer', color: '#374151', fontWeight: 600,
 };
+
+/** Governing status for a member (respecting engineer overrides), used for the
+ *  sidebar group NG/warn badges. 'Warning' → near-capacity, 'NG' → inadequate. */
+function memberBadge(m: Member, code: DesignCode, slsCombo?: string): 'OK' | 'warn' | 'NG' {
+  let sawNG = false, sawWarn = false;
+  for (const l of m.loads) {
+    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo));
+    const st = effectiveStatus(r, m.overrides);
+    if (st === 'NG') sawNG = true;
+    else if (st !== 'OK') sawWarn = true;
+  }
+  return sawNG ? 'NG' : sawWarn ? 'warn' : 'OK';
+}
 
 export default function App() {
   // ── Core state ────────────────────────────────────────────────────────────
@@ -73,6 +89,19 @@ export default function App() {
   const splitStartPos = useRef(360);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
+
+  // Per-member governing status → sidebar group NG/warn badges (memoized so the
+  // design engine only re-runs when members / code / SLS combo actually change).
+  const badgeById = useMemo(() => {
+    const out: Record<string, 'OK' | 'warn' | 'NG'> = {};
+    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo);
+    return out;
+  }, [project.members, project.code, project.slsCombo]);
+
+  // Workflow progress for the ribbon: import → design → verify.
+  const hasImport = !!project.modelMap;
+  const hasGroups = (project.designGroups?.length ?? 0) > 0;
+  const hasVerify = (project.sconcreteResults?.length ?? 0) > 0;
 
   // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
   function setProject(p: Project | ((prev: Project) => Project)) {
@@ -467,6 +496,8 @@ export default function App() {
           )}
           {sidebarOpen ? buildSidebarSections().map(section => {
             const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
+            const ngCount = section.members.filter(m => badgeById[m.id] === 'NG').length;
+            const warnCount = section.members.filter(m => badgeById[m.id] === 'warn').length;
             return (
               <div key={section.groupId ?? '__ungrouped'}>
                 {/* Section header */}
@@ -497,6 +528,8 @@ export default function App() {
                       {section.label}
                     </span>
                   )}
+                  {ngCount > 0 && <span title={`${ngCount} inadequate`} style={{ fontSize: 9, fontWeight: 700, color: '#dc2626', background: '#fef2f2', borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{ngCount} NG</span>}
+                  {warnCount > 0 && <span title={`${warnCount} near capacity`} style={{ fontSize: 9, fontWeight: 700, color: '#d97706', background: '#fffbeb', borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{warnCount}⚠</span>}
                   <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>{section.members.length}</span>
                   {section.groupId && <span style={{ fontSize: 9, color: '#9ca3af' }}>{collapsed ? '▸' : '▾'}</span>}
                 </div>
@@ -558,11 +591,6 @@ export default function App() {
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam, margin: '0 auto' }} />
               </button>
             ))
-          )}
-          {sidebarOpen && (
-            <button onClick={addMember} style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', gap: 6 }}>
-              <span>+</span><span>Add Member</span>
-            </button>
           )}
         </div>
 
@@ -801,17 +829,56 @@ export default function App() {
 
           {/* Project info */}
           <div style={{ fontSize: 11, color: '#6b7280' }}>{project.name}</div>
+        </header>
+
+        {/* Workflow ribbon — Import → Design → Verify, always visible so the
+            S-Concrete verification step is reachable from any screen. The design
+            code lives here because it drives the .SCO handed to S-Concrete. */}
+        <div id="app-ribbon" style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb', padding: '5px 16px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+          {([
+            { key: 'import', num: '1', label: 'Import', hint: 'from ETABS', done: hasImport, onClick: () => setShowEtabsImport(true) },
+            { key: 'design', num: '2', label: 'Design', hint: 'group & rebar', done: hasGroups, onClick: () => setTab('map') },
+            { key: 'verify', num: '3', label: 'Verify', hint: '⚙ S-Concrete', done: hasVerify, onClick: () => setTab('map') },
+          ] as const).map((stage, i, arr) => {
+            // Current stage = the first not-yet-done step (all done ⇒ Verify).
+            const firstTodo = arr.find(s => !s.done)?.key ?? 'verify';
+            const current = stage.key === firstTodo;
+            return (
+              <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={stage.onClick}
+                  title={`${stage.label} — ${stage.hint}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 14, cursor: 'pointer',
+                    border: `1px solid ${current ? '#2563eb' : stage.done ? '#86efac' : '#e5e7eb'}`,
+                    background: current ? '#eff6ff' : stage.done ? '#f0fdf4' : 'white',
+                  }}
+                >
+                  <span style={{
+                    width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 9, fontWeight: 800, color: 'white',
+                    background: stage.done ? '#16a34a' : current ? '#2563eb' : '#9ca3af',
+                  }}>{stage.done ? '✓' : stage.num}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: current ? '#2563eb' : stage.done ? '#15803d' : '#6b7280' }}>{stage.label}</span>
+                  <span style={{ fontSize: 10, color: '#9ca3af' }}>{stage.hint}</span>
+                </button>
+                {i < arr.length - 1 && <span style={{ color: '#d1d5db', fontSize: 12 }}>→</span>}
+              </div>
+            );
+          })}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 }}>Design code</span>
           <Dropdown
             value={project.code}
-            options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => ({ value: c, label: c }))}
+            options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => ({ value: c, label: c }))}
             onChange={v => {
-              const newCode = v as import('./types').DesignCode;
+              const newCode = v as DesignCode;
               if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
               setProject(p => ({ ...p, code: newCode }));
             }}
             style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
           />
-        </header>
+        </div>
 
         {/* Content */}
         <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>

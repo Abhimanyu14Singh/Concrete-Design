@@ -7,7 +7,6 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import type { Member, DesignGroup, DesignCode, ModelMap, MapFrame } from '../../types';
-import { DEFAULT_CRACK_PARAMS } from '../../types';
 import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
@@ -74,10 +73,14 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [selCombos, setSelCombos] = useState<Set<string>>(new Set());
   const [slsComboId, setSlsComboId] = useState<string>('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
-  // Also bring in columns (geometry + section) so they show on the map and can be
-  // grouped/designed. Column design forces start at zero (entered after import).
-  const [includeColumns, setIncludeColumns] = useState(false);
+  // Member scope — the first decision in the filter step: beams (default),
+  // columns, or both. Columns need a connection that supports getColumns; the
+  // selector disables them and falls back to beams-only otherwise. Column design
+  // forces start at zero (entered after import).
+  const [scope, setScope] = useState<'beams' | 'columns' | 'both'>('beams');
   const [hasColumns, setHasColumns] = useState(false); // connection supports getColumns
+  const includeColumns = hasColumns && scope !== 'beams';
+  const includeBeams = !includeColumns || scope === 'both';
 
   // step 3 — stirrup size defaults to Ø10 in SI, #4 in imperial (display only;
   // spacings are stored in inches and converted for display when SI)
@@ -121,6 +124,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, wizardCode, dcrVersion]);
+
+  // Review-step tallies (members holds both beams + any imported columns).
+  const beamCount = members.filter(m => m.memberType === 'beam').length;
+  const colCount = members.filter(m => m.memberType === 'column').length;
 
   const filter = useMemo(() => ({
     stories: selStory ? [selStory] : undefined,
@@ -170,17 +177,20 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     const conn = connRef.current;
     if (!conn) return;
     const ok = await run(async () => {
-      // Get all beams (no filter) for the connectivity map snapshot
+      // Get all beams (no filter) for the connectivity map snapshot — always
+      // captured so the plan map shows the full model as context.
       const allBeams = await conn.getBeams({});
-      // Get filtered beams for design
-      const beams = await conn.getBeams(filter);
-      if (!beams.length) throw new Error('No beams match the current filter.');
+      // Get filtered beams for design (only when beams are in scope).
+      const beams = includeBeams ? await conn.getBeams(filter) : [];
+      if (includeBeams && !beams.length) throw new Error('No beams match the current filter.');
       const sourceGroup = selGroups.size === 1 ? [...selGroups][0] : undefined;
       // Always fetch the SLS combo's forces too, even if it wasn't selected for
       // ULS import, so per-beam crack-width resolution from stationForces works.
       const forceCombos = new Set(selCombos);
       if (slsComboId) forceCombos.add(slsComboId);
-      const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
+      const forces = beams.length
+        ? await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup)
+        : {};
       let built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
       // Columns (optional): bring in geometry + section so they appear on the map
       // and can be grouped/designed. Forces start at zero (entered after import).
@@ -190,6 +200,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
         const filteredCols = await conn.getColumns(filter);
         built = [...built, ...buildColumnMembers(filteredCols, sections, materials, seed)];
       }
+      if (!built.length) throw new Error('No members match the current filter.');
       // Apply global material overrides if the user enabled them.
       if (matOverride.enabled) {
         const PSI_PER_MPA = 145.038;
@@ -331,7 +342,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
         {/* Header with step progress */}
         <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb', borderRadius: '16px 16px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>Import Beams from ETABS</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>Import from ETABS</h2>
             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
               {STEPS.map((s, i) => (
                 <span key={s} style={{
@@ -389,6 +400,26 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>
                 ✓ Connected: {connInfo.modelName} <span style={{ color: '#9ca3af' }}>({connInfo.units})</span>
               </div>
+
+              {/* First decision: what to import. Columns are disabled when the
+                  source can't expose them (keeps the choice honest). */}
+              <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ ...lbl, marginBottom: 0 }}>Import</div>
+                {([
+                  ['beams', 'Beams', true],
+                  ['columns', 'Columns', hasColumns],
+                  ['both', 'Beams + Columns', hasColumns],
+                ] as [typeof scope, string, boolean][]).map(([val, text, enabled]) => (
+                  <button key={val} disabled={!enabled} onClick={() => setScope(val)}
+                    style={{ ...btn(scope === val), padding: '5px 16px', opacity: enabled ? 1 : 0.4, cursor: enabled ? 'pointer' : 'not-allowed' }}>
+                    {text}
+                  </button>
+                ))}
+                {!hasColumns
+                  ? <span style={{ fontSize: 10, color: '#9ca3af' }}>This source doesn't expose columns.</span>
+                  : includeColumns && <span style={{ fontSize: 10, color: '#6b7280' }}>Columns import with geometry + section; enter design forces after import.</span>}
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div style={card}>
                   <div style={lbl}>Story / floor</div>
@@ -398,9 +429,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
                 <div style={card}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <div style={lbl}>Beam sections</div>
+                    <div style={lbl}>{!includeBeams ? 'Column sections' : includeColumns ? 'Sections' : 'Beam sections'}</div>
                     {(selSections.size > 0 || selGroups.size > 0) && (
-                      <span style={{ fontSize: 10, color: '#6b7280' }}>sections ∪ groups — beams matching either are imported</span>
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>sections ∪ groups — members matching either are imported</span>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -439,7 +470,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     Selected ETABS groups become design groups with the same name; remaining beams group by story · section.
                   </div>
                 </div>
-                <div style={card}>
+                {includeBeams && <div style={card}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     <div style={lbl}>Load combinations to import</div>
                     <span style={{ fontSize: 10, color: '#9ca3af' }}>
@@ -500,11 +531,14 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       If selected, this combo's moments are used as M_qp for EC2 §7.3.4 crack width checks.
                     </div>
                   </div>
-                </div>
+                </div>}
               </div>
-              <div style={card}>
-                <div style={lbl}>Materials (imported with sections)</div>
-                <table style={{ fontSize: 11, borderCollapse: 'collapse' }}>
+              {/* Materials preview folded into Advanced to keep the filter step light. */}
+              <details style={card}>
+                <summary style={{ ...lbl, marginBottom: 0, cursor: 'pointer' }}>
+                  Advanced — materials imported with sections ({materials.length})
+                </summary>
+                <table style={{ fontSize: 11, borderCollapse: 'collapse', marginTop: 8 }}>
                   <tbody>
                     {materials.map(m => (
                       <tr key={m.name}>
@@ -515,19 +549,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     ))}
                   </tbody>
                 </table>
-              </div>
-              {hasColumns && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', padding: '2px 0' }}>
-                  <input type="checkbox" checked={includeColumns} onChange={e => setIncludeColumns(e.target.checked)} />
-                  Also import columns (geometry + section — shown on the map &amp; groupable; enter design forces after import)
-                </label>
-              )}
+              </details>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <button style={btn()} onClick={() => setStep(0)}>← Back</button>
-                <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>
-                {matchCount != null && <span style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>{matchCount} beams match</span>}
+                {includeBeams && <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>}
+                {includeBeams && matchCount != null && <span style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>{matchCount} beams match</span>}
                 <div style={{ flex: 1 }} />
-                <button style={btn(true)} disabled={busy || selCombos.size === 0} onClick={() => setStep(2)}>
+                <button style={btn(true)} disabled={busy || (includeBeams && selCombos.size === 0)} onClick={() => setStep(2)}>
                   Next: Rebar defaults →
                 </button>
               </div>
@@ -737,7 +765,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
-                    {members.length} beams · {selStory || 'all stories'}
+                    {beamCount} beams{colCount ? ` · ${colCount} columns` : ''} · {selStory || 'all stories'}
                   </span>
                   <div style={{ flex: 1 }} />
                   <label style={{ fontSize: 11, color: '#6b7280' }}>
@@ -788,12 +816,21 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* Next-steps summary — closes the wizard by naming the workflow. */}
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#1e40af', lineHeight: 1.5 }}>
+                    <b>Next:</b> group members → design rebar → run S-Concrete to verify.
+                    {colCount > 0 && (
+                      <div style={{ marginTop: 4, color: '#b45309' }}>
+                        ⚠ {colCount} column{colCount === 1 ? '' : 's'} imported with zero forces — enter Pu / Mux / Muy in Map → ① Design before running S-Concrete.
+                      </div>
+                    )}
+                  </div>
                   <button style={btn()} onClick={() => setStep(2)}>← Back to rebar</button>
                   <button style={btn(true)} onClick={() => commit()}>
-                    Import {members.length} beams into project
+                    Import {members.length} member{members.length === 1 ? '' : 's'} into project
                   </button>
                   <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>
-                    Double-click a beam to import everything and open that beam.
+                    Double-click a member to import everything and open it.
                   </p>
                 </div>
               </div>
