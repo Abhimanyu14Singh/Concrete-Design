@@ -59,6 +59,16 @@ describe('barIndexEC2', () => {
     expect(barIndexEC2(4)).toBe(4);    // #4 ≈ 12.7 mm → Ø12
     expect(barIndexEC2(8)).toBe(8);    // #8 ≈ 25.4 mm → Ø25
   });
+
+  it('maps EVERY app metric bar to its exact S-Concrete index (no rounding)', () => {
+    // The app's picker offers Ø8..Ø40 (utils/rebar METRIC_BAR_DIAMETERS); each is
+    // an exact row in the .SCRS European table, so it must land on that exact index
+    // — including the larger Ø25 → 8 and Ø32 → 10.
+    const expected: Record<number, number> = { 8: 2, 10: 3, 12: 4, 16: 6, 20: 7, 25: 8, 32: 10, 40: 11 };
+    for (const dia of Object.keys(expected).map(Number)) {
+      expect(barIndexEC2(-dia)).toBe(expected[dia]);
+    }
+  });
 });
 
 describe('buildEc2BeamSco — app inputs are reflected', () => {
