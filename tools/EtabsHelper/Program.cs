@@ -174,20 +174,30 @@ internal static class Program
         return new JsonObject { ["modelName"] = modelName, ["dll"] = dll };
     }
 
-    /// Resolve the c* OAPI interface that a live ETABS object implements. CSI
-    /// implements the API explicitly on the interfaces, so calls must go through
-    /// the interface type — but its exact assembly/namespace varies by ETABS
-    /// version (some interfaces live in a companion assembly, so looking them up
-    /// by fully-qualified name in ETABSv1.dll can miss). Discovering the interface
-    /// from the object's implemented interfaces is assembly-agnostic and robust.
-    private static Type IfaceOf(object obj, string ifaceName)
+    /// Find an OAPI method by name on whichever c* interface a live ETABS object
+    /// implements. CSI implements the API explicitly on the interfaces, and the
+    /// interface NAMES vary by ETABS version (e.g. SapModel.GroupDef is `cGroup`
+    /// on some builds, `cGroupDef` on others), so locating the method is far more
+    /// robust than hardcoding a type name. Tries the given names exactly first,
+    /// then any method starting with names[0] (to catch versioned overloads such
+    /// as SetGroup_1). The error lists what the object actually implements.
+    private static MethodInfo OapiMethod(object obj, params string[] names)
     {
         var ifaces = obj.GetType().GetInterfaces();
-        return ifaces.FirstOrDefault(i => i.Name == ifaceName)
-            ?? ifaces.FirstOrDefault(i => string.Equals(i.Name, ifaceName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidOperationException(
-                $"{ifaceName} interface not found (object implements: " +
-                $"{string.Join(", ", ifaces.Select(i => i.Name))})");
+        foreach (var name in names)
+            foreach (var iface in ifaces)
+            {
+                var m = iface.GetMethods().FirstOrDefault(x => x.Name == name);
+                if (m != null) return m;
+            }
+        foreach (var iface in ifaces)
+        {
+            var m = iface.GetMethods().FirstOrDefault(x => x.Name.StartsWith(names[0], StringComparison.Ordinal));
+            if (m != null) return m;
+        }
+        throw new InvalidOperationException(
+            $"{names[0]} method not found (object implements: " +
+            $"{string.Join(", ", ifaces.Select(i => i.Name))})");
     }
 
     // ── setGroupAssign: create an ETABS group and assign frame objects to it ──
@@ -211,9 +221,7 @@ internal static class Program
         // Ensure the group exists: SapModel.GroupDef.SetGroup(name, ...)
         var groupDef = iSap.GetProperty("GroupDef")?.GetValue(sap)
             ?? throw new InvalidOperationException("cSapModel.GroupDef not found");
-        var iGroupDef = IfaceOf(groupDef, "cGroupDef");
-        var setGroup = iGroupDef.GetMethods().FirstOrDefault(m => m.Name == "SetGroup")
-            ?? throw new InvalidOperationException("cGroupDef.SetGroup not found");
+        var setGroup = OapiMethod(groupDef, "SetGroup");
         {
             var pars = setGroup.GetParameters();
             var args = new object[pars.Length];
@@ -231,9 +239,7 @@ internal static class Program
         // Assign each frame: SapModel.FrameObj.SetGroupAssign(name, groupName, remove=false, itemType=Object)
         var frameObj = iSap.GetProperty("FrameObj")?.GetValue(sap)
             ?? throw new InvalidOperationException("cSapModel.FrameObj not found");
-        var iFrameObj = IfaceOf(frameObj, "cFrameObj");
-        var setGA = iFrameObj.GetMethods().FirstOrDefault(m => m.Name == "SetGroupAssign")
-            ?? throw new InvalidOperationException("cFrameObj.SetGroupAssign not found");
+        var setGA = OapiMethod(frameObj, "SetGroupAssign");
         var gaPars = setGA.GetParameters();
 
         int assigned = 0;
