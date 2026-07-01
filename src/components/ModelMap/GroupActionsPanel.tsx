@@ -10,7 +10,8 @@
  * unit-tested; the runtime round-trips can only be exercised on Windows.
  */
 import { useState, useEffect, Fragment } from 'react';
-import type { Member, DesignGroup, Project, SconcreteResult } from '../../types';
+import type { Member, DesignGroup, Project, SconcreteResult, RebarLayout } from '../../types';
+import { formatBarLabel } from '../../utils/rebar';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from '../../utils/sco/scoBatch';
 import type { ScrsResult } from '../../utils/sco/scrsParser';
 import { governingDcr, statusView, summarize, dcrTone, type StatusTone } from '../../utils/sco/resultStatus';
@@ -65,7 +66,18 @@ const desktopApi = (): DesktopAPI | undefined =>
   (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
 
 /** Linkage from a written .SCO's name stem back to its group + members. */
-type Link = { kind: 'uls' | 'crack' | 'single'; groupLabel: string; memberIds: string[] };
+type Link = { kind: 'uls' | 'crack' | 'single'; groupLabel: string; memberIds: string[]; cage?: string };
+
+/** One face's bars as "3-#10" / "3-Ø32" (US or metric), or "—" when empty. */
+const faceLabel = (bars: { numBars: number; barSize: number }[]): string =>
+  bars.length ? bars.map((b) => `${b.numBars}-${formatBarLabel(b.barSize)}`).join('+') : '—';
+
+/** The longitudinal cage a .SCO used, for showing beside the result so a wrong
+ *  bar size (e.g. the #8 fallback when a #10 template wasn't applied) is visible. */
+function cageLabel(rebar: RebarLayout | undefined): string | undefined {
+  if (!rebar) return undefined;
+  return `${faceLabel(rebar.topBars)} top / ${faceLabel(rebar.botBars)} bot`;
+}
 
 const btn: React.CSSProperties = {
   padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
@@ -147,7 +159,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       return {
         name: r.name, status: r.status, nmUtil: r.nmUtil, vtUtil: r.vtUtil,
         kind: link?.kind, groupLabel: link?.groupLabel, memberIds,
-        warnings: r.msgs?.length ? r.msgs : undefined,
+        warnings: r.msgs?.length ? r.msgs : undefined, cage: link?.cage,
       };
     });
   }
@@ -226,11 +238,18 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
         const env = buildGroupEnvelopeScoFiles(groups, members, code, project);
         files = env;
         // Link each file's .SCRS key (its name stem) → group + members, so results
-        // persist with a group name, a ULS/crack tag, and map linkage.
-        linkByStem = new Map(env.map((f) => [
-          f.fileName.replace(/\.SCO$/i, ''),
-          { kind: f.kind, groupLabel: f.groupLabel, memberIds: groups.find((g) => g.id === f.groupId)?.memberIds ?? [] },
-        ]));
+        // persist with a group name, a ULS/crack tag, map linkage, and the cage the
+        // .SCO actually used (group template, else the representative member's cage —
+        // the same resolution the envelope uses) so a wrong bar size is visible.
+        linkByStem = new Map(env.map((f) => {
+          const grp = groups.find((g) => g.id === f.groupId);
+          const memberIds = grp?.memberIds ?? [];
+          const repMember = members.find((m) => memberIds.includes(m.id) && isScoEligible(m));
+          return [
+            f.fileName.replace(/\.SCO$/i, ''),
+            { kind: f.kind, groupLabel: f.groupLabel, memberIds, cage: cageLabel(grp?.rebar ?? repMember?.rebar) },
+          ];
+        }));
         // One .SCO per (group × member-type), plus a separate crack-width file for
         // EC2 beam groups — so file count can exceed group count. Member/LC counts
         // are de-duplicated (a member appears in a ULS and a crack file) by using
@@ -489,6 +508,12 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                               <span>V&amp;T util <b style={{ color: overV ? '#f87171' : '#34d399' }}>{r.vtUtil ?? '—'}</b></span>
                             </div>
                             {failing && <div style={{ color: '#f87171', marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
+                            {r.cage && (
+                              <div style={{ marginBottom: 4 }}>
+                                Cage used: <b style={{ fontFamily: 'monospace', color: '#e5e7eb' }}>{r.cage}</b>
+                                <span style={{ color: '#64748b' }}> — not the bars you picked? Set them in ① Design and click “Apply to N members”, then re-run.</span>
+                              </div>
+                            )}
                             {warns.length > 0 && (
                               <div style={{ marginBottom: 4 }}>
                                 <div style={{ color: TONE.warn, marginBottom: 2 }}>⚠ {warns.length} S-Concrete message{warns.length !== 1 ? 's' : ''}:</div>

@@ -306,3 +306,45 @@ describe('buildGroupEnvelopeScoFiles — EC2 routing', () => {
     for (const f of files) expect(f.excludedMemberIds).toEqual([]);     // nobody dropped
   });
 });
+
+describe('buildGroupEnvelopeScoFiles — longitudinal bar size reaches the .SCO', () => {
+  const proj: Project = { id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: 'd', members: [] };
+  // S-Concrete 2026 "American Alternate Bars" template: index 7 = No 8 (25.4 mm),
+  // index 9 = No 10 (32.26 mm). #10 (US 1.27") and Ø32 both map to index 9.
+  const dt = (sco: string) => sco.match(/Bm DT\(1,1\)\t\s*(\d+)/)?.[1];
+  const db = (sco: string) => sco.match(/Bm DB\(1,1\)\t\s*(\d+)/)?.[1];
+  const withRebar = (m: Member, rebar: RebarLayout): Member => ({ ...m, rebar });
+  const r10: RebarLayout = { topBars: [{ numBars: 3, barSize: 10 }], botBars: [{ numBars: 3, barSize: 10 }], ties: { barSize: 4, spacing: 6, legs: 2 } };
+  const r32: RebarLayout = { topBars: [{ numBars: 3, barSize: -32 }], botBars: [{ numBars: 3, barSize: -32 }], ties: { barSize: -8, spacing: 6, legs: 2 } };
+
+  it('a #10 GROUP template writes bar index 9 (No 10), NOT the #8 fallback (the reported bug)', () => {
+    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], r10)], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
+    expect(dt(f.text)).toBe('9');
+    expect(db(f.text)).toBe('9');
+  });
+
+  it('a Ø32 group template also writes index 9 (No 10)', () => {
+    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], r32)], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
+    expect(dt(f.text)).toBe('9');
+  });
+
+  it('#10 on the MEMBER (no group template) reaches the .SCO too', () => {
+    const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]), r10);
+    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
+    expect(dt(f.text)).toBe('9');
+  });
+
+  it('an empty top face BORROWS the bottom face instead of silently defaulting to #8', () => {
+    const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]),
+      { topBars: [], botBars: [{ numBars: 3, barSize: 10 }], ties: { barSize: 4, spacing: 6, legs: 2 } });
+    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
+    expect(dt(f.text)).toBe('9');   // borrowed the bottom #10, not the #8 default
+  });
+
+  it('a truly bar-less cage still falls back to a valid index (index 7 = No 8)', () => {
+    const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]),
+      { topBars: [], botBars: [], ties: { barSize: 4, spacing: 6, legs: 2 } });
+    const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
+    expect(dt(f.text)).toBe('7');   // no bars anywhere → documented #8 fallback
+  });
+});

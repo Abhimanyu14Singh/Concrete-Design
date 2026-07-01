@@ -204,6 +204,11 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
   const top = member.rebar.topBars;
   const bot = member.rebar.botBars;
   const side = member.rebar.sideBars ?? [];
+  // Longitudinal bar size per face, borrowing the OPPOSITE face before falling
+  // back to a constant — so a one-sided cage never silently degrades to a #8 the
+  // user never chose (the "I picked #10 but the .SCO shows #8" surprise).
+  const topSize = top[0]?.barSize ?? bot[0]?.barSize ?? 8;
+  const botSize = bot[0]?.barSize ?? top[0]?.barSize ?? 8;
   return {
     memberName: member.label,
     webMm: (s.bw ?? s.b) * IN_TO_MM,
@@ -216,9 +221,9 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
     fcuMpa: fcPsiToFcuMpa(member.material.fc),
     esMpa: member.material.Es * PSI_TO_MPA,
     topCount: sumBars(top),
-    topBarIdx: barIndex2026(top[0]?.barSize ?? 8),
+    topBarIdx: barIndex2026(topSize),
     botCount: sumBars(bot),
-    botBarIdx: barIndex2026(bot[0]?.barSize ?? 8),
+    botBarIdx: barIndex2026(botSize),
     faceCount: sumBars(side),
     faceBarIdx: barIndex2026(side[0]?.barSize ?? 5),
     stirrupBarIdx: barIndex2026(member.rebar.ties?.barSize ?? s.stirrupDia),

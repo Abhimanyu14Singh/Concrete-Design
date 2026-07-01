@@ -264,6 +264,7 @@ export interface SconcreteResult {
   groupLabel?: string;
   memberIds: string[];     // members this result applies to
   warnings?: string[];     // S-Concrete "Msg" lines from the .SCRS (warnings/notes)
+  cage?: string;           // longitudinal cage the .SCO used (e.g. "3-#10 top / 3-#10 bot")
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */

@@ -134,7 +134,7 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode, project?
         continue;
       }
       const { nz, ny } = colFaceCounts(m);
-      const longBar = barName(m.rebar.topBars[0] ? m.rebar.topBars[0].barSize : 8);
+      const longBar = barName(m.rebar.topBars[0]?.barSize ?? m.rebar.botBars[0]?.barSize ?? m.rebar.sideBars?.[0]?.barSize ?? 8);
       const tieBar = barName(m.rebar.ties ? m.rebar.ties.barSize : m.section.stirrupDia);
       const text = buildColumnScoText({
         memberName: m.label,
@@ -168,7 +168,7 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode, project?
             coverIn: m.section.coverClear,
             stirrupBar: m.rebar.ties ? barName(m.rebar.ties.barSize) : barName(m.section.stirrupDia),
             stirrupSpacingIn: m.rebar.ties?.spacing ?? 12,
-            topBar: m.rebar.topBars[0] ? barName(m.rebar.topBars[0].barSize) : '#8',
+            topBar: barName(m.rebar.topBars[0]?.barSize ?? m.rebar.botBars[0]?.barSize ?? 8),
             loadCases: beamLoadCases(m),
             codeNumber: hdr!.codeNumber,
             units: hdr!.units,
