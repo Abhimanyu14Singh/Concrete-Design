@@ -147,6 +147,19 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const hiddenMemberIds = useMemo(() => new Set(project.hiddenMemberIds ?? []), [project.hiddenMemberIds]);
   const hiddenStories = useMemo(() => new Set(project.hiddenStories ?? []), [project.hiddenStories]);
 
+  // S-Concrete pass/fail per member, from the last persisted batch — colours the
+  // map so the "additional design" results feed back into the model view.
+  const scoStatusById = useMemo(() => {
+    const out: Record<string, 'OK' | 'NG'> = {};
+    for (const r of project.sconcreteResults ?? []) {
+      const util = Math.max(r.nmUtil ?? 0, r.vtUtil ?? 0);
+      const s: 'OK' | 'NG' = ((r.status != null && r.status !== 'OK') || util > 1) ? 'NG' : 'OK';
+      for (const mid of r.memberIds) if (out[mid] !== 'NG') out[mid] = s; // worst wins
+    }
+    return out;
+  }, [project.sconcreteResults]);
+  const hasScoResults = (project.sconcreteResults?.length ?? 0) > 0;
+
   // Live frame→member linkage
   const enrichedFrames = useMemo(() => {
     const byFrameName = new Map<string, string>();
@@ -529,6 +542,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               title="Auto-group reference overlay (from Auto-Group tab)">
               Auto-G
             </button>
+            {hasScoResults && (
+              <button
+                onClick={() => setColorMode(colorMode === 'sconcrete' ? 'dcr' : 'sconcrete')}
+                style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: colorMode === 'sconcrete' ? '#16a34a' : 'white', color: colorMode === 'sconcrete' ? 'white' : '#374151' }}
+                title="Colour members by the last S-Concrete batch pass/fail">
+                S-Conc
+              </button>
+            )}
           </div>
 
           {/* Diagram toggle */}
@@ -618,6 +639,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               height={canvasSize.h}
               metricById={metricById}
               metricRange={effectiveMetricRange}
+              scoStatusById={scoStatusById}
               autoGroupOverlay={autoGroupOverlay}
               hiddenMemberIds={hiddenMemberIds}
               hiddenStories={hiddenStories}
@@ -649,6 +671,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             metricById={metricById}
             metricRange={effectiveMetricRange}
             metricLabel={metricLabel}
+            scoStatusById={scoStatusById}
             autoGroupOverlay={autoGroupOverlay}
             hiddenMemberIds={hiddenMemberIds}
             hiddenStories={hiddenStories}

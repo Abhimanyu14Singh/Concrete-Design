@@ -30,6 +30,7 @@ interface Props {
   height?: number;
   metricById?: Record<string, number>;
   metricRange?: { min: number; max: number };
+  scoStatusById?: Record<string, 'OK' | 'NG'>;
   autoGroupOverlay?: AutoGroupBin[];
   hiddenMemberIds?: Set<string>;
   hiddenStories?: Set<string>;
@@ -61,7 +62,7 @@ function median(xs: number[]): number {
 export default function Map3DCanvas({
   frames, dcrById = {}, infoById = {}, designGroups = [], story = 'All',
   colorMode = 'dcr', onDoubleClick, width = 640, height = 480,
-  metricById = {}, metricRange, autoGroupOverlay = [],
+  metricById = {}, metricRange, scoStatusById = {}, autoGroupOverlay = [],
   hiddenMemberIds = new Set(), hiddenStories = new Set(),
   showErrors = false, errorMemberIds = new Set(),
 }: Props) {
@@ -161,7 +162,7 @@ export default function Map3DCanvas({
   const groupColorMap = useMemo(() => buildGroupColorMap(designGroups), [designGroups]);
   const autoGroupColorMap = useMemo(() => buildAutoGroupColorMap(autoGroupOverlay), [autoGroupOverlay]);
   const colorOf = (f: MapFrame) =>
-    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange });
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, scoStatusById });
 
   // Wheel zoom — native non-passive so we can preventDefault.
   useEffect(() => {

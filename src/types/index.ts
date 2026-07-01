@@ -244,6 +244,25 @@ export interface Project {
    * beam from stationForces. Chosen in the ETABS import wizard.
    */
   slsCombo?: string;
+  /** Last S-Concrete batch results, persisted so they survive tab switches and
+   *  colour the model map by pass/fail. */
+  sconcreteResults?: SconcreteResult[];
+  /** ISO timestamp of the last S-Concrete batch run. */
+  sconcreteRanAt?: string;
+}
+
+/**
+ * A persisted S-Concrete batch result, carrying the .SCRS values PLUS the linkage
+ * back to the app: which members it covers (for map colouring) and what it checks.
+ */
+export interface SconcreteResult {
+  name: string;            // .SCRS key (group label or member name)
+  status: string | null;   // 'OK' | 'OVERSTRESSED' | ...
+  nmUtil: number | null;   // N-M utilization
+  vtUtil: number | null;   // shear+torsion utilization
+  kind?: 'uls' | 'crack' | 'single';
+  groupLabel?: string;
+  memberIds: string[];     // members this result applies to
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */

@@ -53,6 +53,8 @@ interface Props {
   metricById?: Record<string, number>;
   metricRange?: { min: number; max: number };
   metricLabel?: string;
+  /** Persisted S-Concrete pass/fail per member (for 'sconcrete' color mode). */
+  scoStatusById?: Record<string, 'OK' | 'NG'>;
   /** Auto-group overlay bins for 'autoGroup' color mode. */
   autoGroupOverlay?: AutoGroupBin[];
   /** Member ids to hide from the canvas. */
@@ -75,7 +77,7 @@ export default function MapCanvas({
   onBeamInspect, onBeamContextMenu,
   width = 640, height = 480,
   diagramMode = 'off', diagramDataById = {},
-  metricById = {}, metricRange, metricLabel,
+  metricById = {}, metricRange, metricLabel, scoStatusById = {},
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
   showErrors = false, errorMemberIds = new Set(),
@@ -120,7 +122,7 @@ export default function MapCanvas({
   const groupColorMap = buildGroupColorMap(designGroups);
   const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
   const frameColor = (f: MapFrame): string =>
-    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange });
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, scoStatusById });
 
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -466,6 +468,18 @@ export default function MapCanvas({
       {colorMode === 'dcr' && (
         <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280' }}>
           {[['<0.70','#16a34a'],['0.70–0.90','#84cc16'],['0.90–1.00','#f59e0b'],['≥1.00','#dc2626'],['Unlinked','#d1d5db']].map(([l, c]) => (
+            <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
+              {l}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* S-Concrete pass/fail legend */}
+      {colorMode === 'sconcrete' && (
+        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280' }}>
+          {[['OK', '#16a34a'], ['Overstressed', '#dc2626'], ['Not run', '#6b7280']].map(([l, c]) => (
             <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
               {l}

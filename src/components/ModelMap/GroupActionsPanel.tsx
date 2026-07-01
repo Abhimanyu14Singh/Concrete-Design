@@ -10,10 +10,9 @@
  * unit-tested; the runtime round-trips can only be exercised on Windows.
  */
 import { useState } from 'react';
-import type { Member, DesignGroup, Project } from '../../types';
+import type { Member, DesignGroup, Project, SconcreteResult } from '../../types';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from '../../utils/sco/scoBatch';
 import { runScoBatch, rerunScoBatch, hasSconcrete, type SconcreteRunConfig, type SconcreteRunResult } from '../../utils/sco/sconcreteClient';
-import type { ScrsResult } from '../../utils/sco/scrsParser';
 import { buildGroupPushPayload, summarizePushResults } from '../../adapters/etabs/pushGroups';
 import { ComConnection } from '../../adapters/etabs/comClient';
 
@@ -46,8 +45,8 @@ type DesktopAPI = {
 const desktopApi = (): DesktopAPI | undefined =>
   (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
 
-/** For labelling result rows: the file-name stem written by the envelope. */
-type FileMeta = Record<string, { group: string; kind: 'uls' | 'crack' | 'single' }>;
+/** Linkage from a written .SCO's name stem back to its group + members. */
+type Link = { kind: 'uls' | 'crack' | 'single'; groupLabel: string; memberIds: string[] };
 
 const btn: React.CSSProperties = {
   padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
@@ -65,11 +64,31 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [warn, setWarn] = useState<string | null>(null);
-  const [results, setResults] = useState<ScrsResult[] | null>(null);
-  const [resultMeta, setResultMeta] = useState<FileMeta>({});
+  // Results are PERSISTED on the project (survive tab switches, colour the map).
+  // Local state is only a fallback when the panel has no onProjectChange.
+  const [localResults, setLocalResults] = useState<SconcreteResult[] | null>(null);
+  const shownResults = project.sconcreteResults ?? localResults;
   const [cfg, setCfgState] = useState<SconcreteRunConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
   const canPick = !!desktopApi()?.pickPath;
+
+  /** Persist results to the project (or keep local when there's no onProjectChange). */
+  function saveResults(next: SconcreteResult[] | null) {
+    if (onProjectChange) onProjectChange((prev) => ({ ...prev, sconcreteResults: next ?? undefined, sconcreteRanAt: next ? new Date().toISOString() : prev.sconcreteRanAt }));
+    else setLocalResults(next);
+  }
+
+  /** Turn parsed .SCRS into persisted results, linking each back to its members. */
+  function toScoResults(parsed: Record<string, { name: string; status: string | null; nmUtil: number | null; vtUtil: number | null }>, linkByStem?: Map<string, Link>): SconcreteResult[] {
+    return Object.values(parsed).map((r) => {
+      const link = linkByStem?.get(r.name);
+      const memberIds = link?.memberIds ?? [
+        ...members.filter((m) => m.label === r.name).map((m) => m.id),
+        ...groups.filter((g) => g.label === r.name).flatMap((g) => g.memberIds),
+      ];
+      return { name: r.name, status: r.status, nmUtil: r.nmUtil, vtUtil: r.vtUtil, kind: link?.kind, groupLabel: link?.groupLabel, memberIds };
+    });
+  }
 
   // S-Concrete sections: beams (Member Type 1) + rectangular columns (Type 3,
   // validated writer). Circular columns use a template the writer can't emit yet.
@@ -98,7 +117,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   async function pushToEtabs() {
-    setErr(null); setMsg(null); setWarn(null); setResults(null); setBusy('etabs');
+    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('etabs');
     try {
       const payload = buildGroupPushPayload(groups, frameByMemberId);
       if (!payload.length) throw new Error('No groups with ETABS-linked frames. Import members from ETABS first.');
@@ -121,10 +140,10 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
     }
   }
 
-  /** Parse a run/rerun result into the results table, or report why it produced nothing. */
-  function applyResult(out: SconcreteRunResult, ranLabel: string) {
+  /** Parse a run/rerun result into persisted results, or report why it produced nothing. */
+  function applyResult(out: SconcreteRunResult, ranLabel: string, linkByStem?: Map<string, Link>) {
     if (out.scrsText) {
-      setResults(Object.values(parseBatchResults(out.scrsText)));
+      saveResults(toScoResults(parseBatchResults(out.scrsText), linkByStem));
       setMsg(`${ranLabel} — ${out.scoCount} .SCO file(s).`);
     } else {
       setErr(`Ran ${out.scoCount} .SCO file(s) but no .SCRS was produced. ${out.stderr || ''}`.trim());
@@ -132,21 +151,23 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   async function runBatch() {
-    setErr(null); setMsg(null); setWarn(null); setResults(null); setResultMeta({}); setBusy('sco');
+    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('sco');
     try {
       // One .SCO PER GROUP (envelope): the group's representative section/rebar
       // carrying every member's load cases. Falls back to one file per member
       // when no groups are defined.
       let files: ScoFile[];
       let ranLabel: string;
+      let linkByStem: Map<string, Link> | undefined;
       if (groups.length) {
         const env = buildGroupEnvelopeScoFiles(groups, members, code, project);
         files = env;
-        // Map each file's .SCRS key (its name stem) → group + kind, so the results
-        // table can show the group name and an ULS / crack-width tag.
-        setResultMeta(Object.fromEntries(
-          env.map((f) => [f.fileName.replace(/\.SCO$/i, ''), { group: f.groupLabel, kind: f.kind }]),
-        ));
+        // Link each file's .SCRS key (its name stem) → group + members, so results
+        // persist with a group name, a ULS/crack tag, and map linkage.
+        linkByStem = new Map(env.map((f) => [
+          f.fileName.replace(/\.SCO$/i, ''),
+          { kind: f.kind, groupLabel: f.groupLabel, memberIds: groups.find((g) => g.id === f.groupId)?.memberIds ?? [] },
+        ]));
         // One .SCO per (group × member-type), plus a separate crack-width file for
         // EC2 beam groups — so file count can exceed group count. Member/LC counts
         // are de-duplicated (a member appears in a ULS and a crack file) by using
@@ -173,7 +194,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           : 'No beam or rectangular-column members to export.');
       }
       requirePaths();
-      applyResult(await runScoBatch(files, cfg), ranLabel);
+      applyResult(await runScoBatch(files, cfg), ranLabel, linkByStem);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -187,8 +208,9 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
    * are preserved — then read the fresh results back.
    */
   async function rerunExisting() {
-    // The folder is used as-is, so we can't attribute files to groups/kinds.
-    setErr(null); setMsg(null); setWarn(null); setResults(null); setResultMeta({}); setBusy('rerun');
+    // The folder is used as-is; results are linked back by matching file names to
+    // group/member labels (best effort).
+    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('rerun');
     try {
       requirePaths();
       applyResult(await rerunScoBatch(cfg), 'Re-ran the existing folder');
@@ -318,35 +340,44 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       {warn && <div style={{ fontSize: 11, color: '#fbbf24' }}>⚠ {warn}</div>}
       {err && <div style={{ fontSize: 11, color: '#f87171' }}>{err}</div>}
 
-      {results && results.length > 0 && (
-        <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid #1f2937', borderRadius: 6 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-            <thead>
-              <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
-                <th style={{ padding: '4px 6px' }}>{groups.length ? 'Group' : 'Member'}</th>
-                <th style={{ padding: '4px 6px' }}>Status</th>
-                <th style={{ padding: '4px 6px' }}>N-M</th>
-                <th style={{ padding: '4px 6px' }}>V&amp;T</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r) => {
-                const meta = resultMeta[r.name];
-                const badge = meta?.kind === 'crack' ? { t: 'crack', c: '#a78bfa' } : meta?.kind === 'uls' ? { t: 'ULS', c: '#38bdf8' } : null;
-                return (
-                  <tr key={r.name} style={{ color: '#e5e7eb', borderTop: '1px solid #111827' }}>
-                    <td style={{ padding: '4px 6px' }}>
-                      {meta?.group ?? r.name}
-                      {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
-                    </td>
-                    <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
-                    <td style={{ padding: '4px 6px' }}>{r.nmUtil ?? '—'}</td>
-                    <td style={{ padding: '4px 6px' }}>{r.vtUtil ?? '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {shownResults && shownResults.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 9.5, color: '#64748b' }}>
+              {project.sconcreteRanAt ? `Last run ${new Date(project.sconcreteRanAt).toLocaleString()}` : 'S-Concrete results'}
+              {' · colour the map by S-Concrete'}
+            </span>
+            <button onClick={() => saveResults(null)}
+              style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 9.5, cursor: 'pointer', padding: 0 }}>Clear</button>
+          </div>
+          <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid #1f2937', borderRadius: 6 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
+                  <th style={{ padding: '4px 6px' }}>{groups.length ? 'Group' : 'Member'}</th>
+                  <th style={{ padding: '4px 6px' }}>Status</th>
+                  <th style={{ padding: '4px 6px' }}>N-M</th>
+                  <th style={{ padding: '4px 6px' }}>V&amp;T</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shownResults.map((r) => {
+                  const badge = r.kind === 'crack' ? { t: 'crack', c: '#a78bfa' } : r.kind === 'uls' ? { t: 'ULS', c: '#38bdf8' } : null;
+                  return (
+                    <tr key={r.name} style={{ color: '#e5e7eb', borderTop: '1px solid #111827' }}>
+                      <td style={{ padding: '4px 6px' }}>
+                        {r.groupLabel ?? r.name}
+                        {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
+                      </td>
+                      <td style={{ padding: '4px 6px', color: r.status === 'OK' ? '#34d399' : r.status ? '#f87171' : '#94a3b8' }}>{r.status ?? '—'}</td>
+                      <td style={{ padding: '4px 6px' }}>{r.nmUtil ?? '—'}</td>
+                      <td style={{ padding: '4px 6px' }}>{r.vtUtil ?? '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -74,6 +74,16 @@ describe('frameColorFor — metric mode', () => {
   });
 });
 
+describe('frameColorFor — S-Concrete pass/fail', () => {
+  const ctx = baseCtx({ colorMode: 'sconcrete', scoStatusById: { m1: 'OK', m2: 'NG' } });
+  it('greens a passing member, reds a failing one, greys an un-run member', () => {
+    expect(frameColorFor(frame('m1'), ctx)).toBe('#16a34a');
+    expect(frameColorFor(frame('m2'), ctx)).toBe('#dc2626');
+    expect(frameColorFor(frame('m3'), ctx)).toBe('#6b7280');   // no result
+    expect(frameColorFor(frame(undefined), ctx)).toBe('#6b7280');
+  });
+});
+
 describe('frameColorFor — auto-group overlay', () => {
   const bins: AutoGroupBin[] = [
     { binKey: 'b1', label: 'Fam 1', color: '#abcdef', memberIds: ['m1'] } as AutoGroupBin,
