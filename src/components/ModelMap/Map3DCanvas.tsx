@@ -218,7 +218,7 @@ export default function Map3DCanvas({
       <svg
         ref={svgRef}
         width={width} height={height}
-        style={{ background: '#0b1220', borderRadius: 10, border: '1px solid #1f2937', display: 'block', cursor: 'grab' }}
+        style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', display: 'block', cursor: 'grab' }}
         onMouseDown={startOrbit}
       >
         {/* Story floor planes (drawn first → behind the members) */}
@@ -226,7 +226,7 @@ export default function Map3DCanvas({
           <polygon
             key={`plane-${pl.story}`}
             points={pl.corners.map(c => `${sx(c.px)},${sy(c.py)}`).join(' ')}
-            fill="rgba(56,189,248,0.06)" stroke="rgba(56,189,248,0.22)" strokeWidth={1}
+            fill="rgba(100,116,139,0.06)" stroke="rgba(100,116,139,0.28)" strokeWidth={1}
             style={{ pointerEvents: 'none' }}
           />
         ))}
@@ -269,16 +269,16 @@ export default function Map3DCanvas({
       </div>
 
       {/* Orbit hint */}
-      <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 10, color: '#64748b', background: 'rgba(15,23,42,0.7)', borderRadius: 6, padding: '3px 8px' }}>
+      <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 10, color: '#64748b', background: 'rgba(255,255,255,0.85)', border: '1px solid #e5e7eb', borderRadius: 6, padding: '3px 8px' }}>
         drag = orbit · wheel = zoom · dbl-click = open
       </div>
 
       {/* Hover tooltip */}
       {hoveredFrame && (
         <div style={{
-          position: 'absolute', top: 8, right: 8, background: '#111827',
-          border: '1px solid #1f2937', borderRadius: 8, padding: '8px 12px',
-          fontSize: 11, color: '#e5e7eb', boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          position: 'absolute', top: 8, right: 8, background: 'white',
+          border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
+          fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
           pointerEvents: 'none', maxWidth: 260,
         }}>
           <div style={{ fontWeight: 700, marginBottom: 2 }}>{hoveredFrame.frameName}</div>
@@ -302,6 +302,6 @@ export default function Map3DCanvas({
 }
 
 const presetBtn: React.CSSProperties = {
-  background: '#1e293b', border: '1px solid #334155', borderRadius: 6,
-  padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: '#cbd5e1', fontWeight: 600,
+  background: 'white', border: '1px solid #e5e7eb', borderRadius: 6,
+  padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: '#374151', fontWeight: 600,
 };
