@@ -42,9 +42,22 @@ src/
   utils/
     concreteDesign.ts    #   ACI beam math + bar tables (getBarArea/getBarDiam, beta1)
     calcBreakdown*.ts    #   "Show Calculations" step-by-step sheets (display only)
-    sco/                 #   S-Concrete .SCO/.SCRS export
+    sco/                 #   S-Concrete .SCO/.SCRS: writers + per-group envelope batch
+                         #   (scoBatch), .SCRS parser, run client (display/verify only)
+    sconcreteMemberResult.ts #  summarises a member's persisted .SCRS result (verify card)
   components/            # React UI — reads results, never computes them
 ```
+
+> **Note — the S-Concrete "Verify" flow is external, not an engine.** The Map view's
+> ② Verify panel (`components/ModelMap/GroupActionsPanel.tsx`) generates `.SCO`
+> files for the design groups, and the Electron main process
+> (`electron/sconcreteBridge.cjs`) runs S-Concrete's BatchReporter and reads the
+> `.SCRS` back. This is a *verification* round-trip against a separate desktop tool
+> — it does **not** feed `runDesign` and is desktop-only. Results are persisted on
+> the project (`sconcreteResults` / `sconcreteRanAt`) and only displayed. Columns
+> import from ETABS as first-class members (`memberType: 'column'`,
+> `rectangular_column`); their design forces are entered post-import via
+> `components/ModelMap/ColumnForceGrid.tsx`, not by the engine.
 
 **The single most important function** is `runDesign(...)` in
 `src/engines/index.ts`. Every result in the app comes from it:
@@ -224,6 +237,9 @@ example, which is the cleanest template in the repo.
 | Change ACI beam math | `src/utils/concreteDesign.ts` |
 | Change ACI column math | `src/engines/aci/aciColumn.ts` |
 | Change EC2 math | `src/engines/ec2/ec2Beam.ts`, `ec2Column.ts` |
+| Change the workflow ribbon / sidebar chips | `src/App.tsx` |
+| Change the map toolbar / ①Design–②Verify panel | `src/components/ModelMap/ModelMapView.tsx` |
+| Change the S-Concrete `.SCO`/`.SCRS` batch | `src/utils/sco/scoBatch.ts` + `electron/sconcreteBridge.cjs` |
 | Add a code | §5 above |
 | Verify a change | `npx tsc -b && npm test && npm run build` |
 | Try one test | `npx vitest run <path/to/file.test.ts>` |
