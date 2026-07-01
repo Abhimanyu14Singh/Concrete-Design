@@ -174,6 +174,22 @@ internal static class Program
         return new JsonObject { ["modelName"] = modelName, ["dll"] = dll };
     }
 
+    /// Resolve the c* OAPI interface that a live ETABS object implements. CSI
+    /// implements the API explicitly on the interfaces, so calls must go through
+    /// the interface type — but its exact assembly/namespace varies by ETABS
+    /// version (some interfaces live in a companion assembly, so looking them up
+    /// by fully-qualified name in ETABSv1.dll can miss). Discovering the interface
+    /// from the object's implemented interfaces is assembly-agnostic and robust.
+    private static Type IfaceOf(object obj, string ifaceName)
+    {
+        var ifaces = obj.GetType().GetInterfaces();
+        return ifaces.FirstOrDefault(i => i.Name == ifaceName)
+            ?? ifaces.FirstOrDefault(i => string.Equals(i.Name, ifaceName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException(
+                $"{ifaceName} interface not found (object implements: " +
+                $"{string.Join(", ", ifaces.Select(i => i.Name))})");
+    }
+
     // ── setGroupAssign: create an ETABS group and assign frame objects to it ──
     // Mirrors the column repo's write-back pattern (unlock → write). The CSI .NET
     // API is invoked through the c* interface types by reflection, like Connect.
@@ -181,7 +197,6 @@ internal static class Program
     {
         if (_sapModel is not object sap || _iSapInterface is not Type iSap)
             throw new InvalidOperationException("Not connected — call connect first.");
-        var asm = iSap.Assembly;
 
         var frameNames = (frameNamesNode ?? new JsonArray())
             .Select(n => n?.GetValue<string>() ?? "")
@@ -196,8 +211,7 @@ internal static class Program
         // Ensure the group exists: SapModel.GroupDef.SetGroup(name, ...)
         var groupDef = iSap.GetProperty("GroupDef")?.GetValue(sap)
             ?? throw new InvalidOperationException("cSapModel.GroupDef not found");
-        var iGroupDef = asm.GetType("ETABSv1.cGroupDef")
-            ?? throw new InvalidOperationException("ETABSv1.cGroupDef not found");
+        var iGroupDef = IfaceOf(groupDef, "cGroupDef");
         var setGroup = iGroupDef.GetMethods().FirstOrDefault(m => m.Name == "SetGroup")
             ?? throw new InvalidOperationException("cGroupDef.SetGroup not found");
         {
@@ -217,8 +231,7 @@ internal static class Program
         // Assign each frame: SapModel.FrameObj.SetGroupAssign(name, groupName, remove=false, itemType=Object)
         var frameObj = iSap.GetProperty("FrameObj")?.GetValue(sap)
             ?? throw new InvalidOperationException("cSapModel.FrameObj not found");
-        var iFrameObj = asm.GetType("ETABSv1.cFrameObj")
-            ?? throw new InvalidOperationException("ETABSv1.cFrameObj not found");
+        var iFrameObj = IfaceOf(frameObj, "cFrameObj");
         var setGA = iFrameObj.GetMethods().FirstOrDefault(m => m.Name == "SetGroupAssign")
             ?? throw new InvalidOperationException("cFrameObj.SetGroupAssign not found");
         var gaPars = setGA.GetParameters();
