@@ -39,16 +39,14 @@ const fcPsiToFcuMpa = (fcPsi: number): number => (fcPsi * PSI_TO_MPA) / 0.8;
 // S-Concrete renders EN-1992 (metric) .SCO files against its EUROPEAN bar list —
 // NOT the "American Alternate Bars" set the sample template happens to embed — and
 // it resolves each bar by its INDEX (position) in that list. So a metric bar must
-// map to its position in the European table, index → Ø (mm) below. Mapping to the
-// American table instead undersized every bar by one European step (Ø10 showed as
-// Ø8, Ø12 as Ø10).
+// map to its position in the European table, index → Ø (mm) below.
 //
-// VALIDATION: calibrated from a real S-Concrete 2026 EN run (user screenshots) —
-// Ø8 → index 2 (renders Ø8) and Ø12 → index 4 (index 3 was rendering Ø10). The
-// small/common bars are confirmed; Ø16+ follow the standard reduced European set
-// and should be re-checked against a Windows run before relying on them.
+// This is the EXACT "European Reinforcing Bars" table printed in a real
+// S-Concrete 2026 .SCRS report — including Ø14 (index 5) and Ø28 (index 9). A
+// reduced set that omitted those shifted every bar ≥ Ø16 down one step (Ø16 → Ø14,
+// Ø20 → Ø16), which is what the user's section view showed.
 const EC2_BAR_DIAM_MM: Record<number, number> = {
-  1: 6, 2: 8, 3: 10, 4: 12, 5: 16, 6: 20, 7: 25, 8: 32, 9: 40,
+  1: 6, 2: 8, 3: 10, 4: 12, 5: 14, 6: 16, 7: 20, 8: 25, 9: 28, 10: 32, 11: 40, 12: 50,
 };
 
 /** Map an app bar size (US # positive, metric Ø mm negative) to the nearest
@@ -173,14 +171,15 @@ export function ec2BeamUlsRows(member: Member, start = 1): string[] {
     const nf = -(lc.Pu ?? 0) * KIP_TO_KN;
     const tf = (lc.Tu ?? 0) * KIPFT_TO_KNM;
     const vfz = (lc.Vu ?? 0) * KIP_TO_KN;
-    // S-Concrete My sign: sagging (positive bending, tension on the BOTTOM face)
-    // is emitted as −My; hogging (tension TOP) as +My. Giving the two envelopes
-    // OPPOSITE signs makes S-Concrete check the correct face for each — essential
-    // once top and bottom bars differ (a same-sign pair only ever checks one face).
-    const mSag = Math.abs((lc.Mu_pos ?? 0) * KIPFT_TO_KNM);
-    const mHog = Math.abs((lc.Mu_neg ?? 0) * KIPFT_TO_KNM);
-    rows.push(ec2LoadRow(i++, nf, tf, vfz, -mSag, { comment: lc.label || `LC${i}` }));
-    if (mHog > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, mHog, { comment: `${lc.label || 'LC'} (hog)` }));
+    // S-Concrete My sign, matching how ETABS/the app report the two moment
+    // envelopes: the Mu_pos envelope is emitted as +My and the Mu_neg envelope as
+    // −My. Giving them OPPOSITE signs makes S-Concrete check the correct face for
+    // each — essential once top and bottom bars differ (a same-sign pair only ever
+    // checks one face).
+    const mPos = Math.abs((lc.Mu_pos ?? 0) * KIPFT_TO_KNM);
+    const mNeg = Math.abs((lc.Mu_neg ?? 0) * KIPFT_TO_KNM);
+    rows.push(ec2LoadRow(i++, nf, tf, vfz, mPos, { comment: lc.label || `LC${i}` }));
+    if (mNeg > 1e-9) rows.push(ec2LoadRow(i++, nf, tf, vfz, -mNeg, { comment: `${lc.label || 'LC'} (−My)` }));
   }
   return rows;
 }
@@ -191,12 +190,11 @@ export function ec2BeamUlsRows(member: Member, start = 1): string[] {
 export function ec2BeamCrackRows(member: Member, project: Project, start = 1): string[] {
   const cp = resolveCrack(member, project.code, project.slsCombo);
   if (!cp || (cp.Mqp_pos == null && cp.Mqp_neg == null)) return [];
-  // Same My sign convention as the ULS rows: the governing SLS moment is emitted
-  // as −My when sagging (tension bottom) and +My when hogging (tension top), so
-  // the crack check runs on the correct face.
-  const mqpSag = Math.abs(cp.Mqp_pos ?? 0) * KIPFT_TO_KNM;
-  const mqpHog = Math.abs(cp.Mqp_neg ?? 0) * KIPFT_TO_KNM;
-  const mqp = mqpSag >= mqpHog ? -mqpSag : mqpHog;
+  // Same My sign convention as the ULS rows: the Mqp_pos envelope → +My, the
+  // Mqp_neg envelope → −My, so the crack check runs on the correct face.
+  const mqpPos = Math.abs(cp.Mqp_pos ?? 0) * KIPFT_TO_KNM;
+  const mqpNeg = Math.abs(cp.Mqp_neg ?? 0) * KIPFT_TO_KNM;
+  const mqp = mqpPos >= mqpNeg ? mqpPos : -mqpNeg;
   let vqp = 0;
   if (project.slsCombo && member.stationForces?.length) {
     const sf = member.stationForces.filter((c) => c.combo === project.slsCombo);

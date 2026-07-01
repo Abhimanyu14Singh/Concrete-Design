@@ -324,11 +324,11 @@ describe('buildGroupEnvelopeScoFiles — metric bar size reaches the EC2 .SCO (E
     expect(db(f.text)).toBe('4');
   });
 
-  it('Ø10 → index 3 and Ø32 → index 8 (position in the European table)', () => {
+  it('Ø10 → index 3 and Ø32 → index 10 (position in the European table)', () => {
     const [a] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], metric(10))], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
     expect(dt(a.text)).toBe('3');
     const [b] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], metric(32))], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'EN1992-1-1', proj);
-    expect(dt(b.text)).toBe('8');
+    expect(dt(b.text)).toBe('10');
   });
 
   it('Ø12 on the MEMBER (no group template) reaches the .SCO too', () => {
@@ -344,10 +344,10 @@ describe('buildGroupEnvelopeScoFiles — metric bar size reaches the EC2 .SCO (E
     expect(dt(f.text)).toBe('4');   // borrowed the bottom Ø12 (index 4)
   });
 
-  it('a truly bar-less cage falls back to a metric default (Ø16 = index 5)', () => {
+  it('a truly bar-less cage falls back to a metric default (Ø16 = index 6)', () => {
     const m = withRebar(beam('b1', 'B1', [lc({ Mu_pos: 100 })]),
       { topBars: [], botBars: [], ties: { barSize: -8, spacing: 6, legs: 2 } });
     const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
-    expect(dt(f.text)).toBe('5');
+    expect(dt(f.text)).toBe('6');
   });
 });

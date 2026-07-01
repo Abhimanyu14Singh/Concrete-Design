@@ -44,18 +44,20 @@ function loadRows(text: string) {
 
 describe('barIndexEC2', () => {
   it('maps metric bars to their S-Concrete European bar-table index (position)', () => {
-    // Confirmed against a real S-Concrete 2026 EN run (user screenshots): the
-    // index is the bar's position in [Ø6, Ø8, Ø10, Ø12, Ø16, Ø20, Ø25, Ø32, Ø40].
-    expect(barIndexEC2(-8)).toBe(2);   // Ø8  → index 2 (renders Ø8)
-    expect(barIndexEC2(-10)).toBe(3);  // Ø10 → index 3
-    expect(barIndexEC2(-12)).toBe(4);  // Ø12 → index 4 (was 3 = Ø10: the reported bug)
-    expect(barIndexEC2(-16)).toBe(5);
-    expect(barIndexEC2(-25)).toBe(7);
-    expect(barIndexEC2(-32)).toBe(8);
+    // The exact "European Reinforcing Bars" table from a real .SCRS report:
+    // [Ø6, Ø8, Ø10, Ø12, Ø14, Ø16, Ø20, Ø25, Ø28, Ø32, Ø40, Ø50] (index 1–12).
+    expect(barIndexEC2(-8)).toBe(2);   // Ø8  → 2
+    expect(barIndexEC2(-10)).toBe(3);  // Ø10 → 3
+    expect(barIndexEC2(-12)).toBe(4);  // Ø12 → 4
+    expect(barIndexEC2(-14)).toBe(5);  // Ø14 → 5
+    expect(barIndexEC2(-16)).toBe(6);  // Ø16 → 6 (a table missing Ø14 gave 5 = Ø14 — the bug)
+    expect(barIndexEC2(-20)).toBe(7);  // Ø20 → 7
+    expect(barIndexEC2(-25)).toBe(8);  // Ø25 → 8
+    expect(barIndexEC2(-32)).toBe(10); // Ø32 → 10
   });
   it('maps US bars to the nearest European diameter', () => {
     expect(barIndexEC2(4)).toBe(4);    // #4 ≈ 12.7 mm → Ø12
-    expect(barIndexEC2(8)).toBe(7);    // #8 ≈ 25.4 mm → Ø25
+    expect(barIndexEC2(8)).toBe(8);    // #8 ≈ 25.4 mm → Ø25
   });
 });
 
@@ -85,7 +87,7 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
   it('reflects the longitudinal bars (single position per face, rest zeroed)', () => {
     expect(param(t, 'Bm NT(1,1)')).toBe('3');
     expect(param(t, 'Bm NB(1,1)')).toBe('4');
-    expect(param(t, 'Bm DT(1,1)')).toBe('8');   // #9 ≈ 28.65 mm → Ø32 (index 8)
+    expect(param(t, 'Bm DT(1,1)')).toBe('9');   // #9 ≈ 28.65 mm → Ø28 (index 9)
     expect(param(t, 'Bm NT(1,2)')).toBe('0');   // sample's 7 cleared
     expect(param(t, 'Bm NbmFace')).toBe('2');   // side bars
   });
@@ -106,8 +108,8 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(rows).toHaveLength(2);                 // sagging + hogging, no SLS combo here
     expect(rows[0].Nf).toBeCloseTo(-17.79, 1);    // -Pu × 4.448
     expect(rows[0].Vfz).toBeCloseTo(756.2, 1);    // Vu × 4.448
-    expect(rows[0].Mfy).toBeCloseTo(-813.49, 1);  // sagging → −My (tension bottom)
-    expect(rows[1].Mfy).toBeCloseTo(406.75, 1);   // hogging → +My (tension top)
+    expect(rows[0].Mfy).toBeCloseTo(813.49, 1);   // Mu_pos envelope → +My
+    expect(rows[1].Mfy).toBeCloseTo(-406.75, 1);  // Mu_neg envelope → −My
   });
 
   it('appends the SLS quasi-permanent crack row from the selected combo', () => {
@@ -115,7 +117,7 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     const rows = loadRows(buildEc2BeamSco(m, project({ slsCombo: 'QP' })));
     expect(rows).toHaveLength(3);                  // sagging + hogging + SLS
     const sls = rows[2];
-    expect(sls.Mfy).toBeCloseTo(-150 * 1.355818, 1);   // sagging SLS moment → −My
+    expect(sls.Mfy).toBeCloseTo(150 * 1.355818, 1);    // Mqp_pos envelope → +My
     expect(sls.Vfz).toBeCloseTo(20 * 4.448222, 1);
     expect(sls.sust).toBeCloseTo(0.6, 6);          // quasi-permanent factor
   });
@@ -162,7 +164,7 @@ describe('buildEc2ColumnSco — app inputs reflected (Member Type 3)', () => {
   it('reflects the cage: Nzcol/Nycol, bar + tie indices, legs, spacing', () => {
     expect(param(t, 'Cm Nycol')).toBe('3');    // top-face bars
     expect(param(t, 'Cm Nzcol')).toBe('4');    // side/2 + 2
-    expect(param(t, 'Cm DVert')).toBe('8');    // #9 ≈ Ø32 (index 8)
+    expect(param(t, 'Cm DVert')).toBe('9');    // #9 ≈ 28.65 mm → Ø28 (index 9)
     expect(param(t, 'Cm DHorz')).toBe('4');    // #4 tie ≈ Ø12 (index 4)
     expect(param(t, 'Cm NClegsZ')).toBe('2');
     expect(+param(t, 'Cm Stie')!).toBe(305);   // 12 in ≈ 304.8
