@@ -149,19 +149,24 @@ internal static class Program
         _getTableMethod = _iDbTablesInterface.GetMethod("GetTableForDisplayArray")
             ?? throw new InvalidOperationException("cDatabaseTables.GetTableForDisplayArray not found");
 
-        // Force display units to kip-ft so GetTableForDisplayArray returns consistent units.
-        // eUnits.kip_ft_F = 4. Use reflection through the interface type.
-        try
+        // Force display units to kip-ft so GetTableForDisplayArray returns consistent
+        // units — but ONLY on an unlocked model. SetPresentUnits modifies the model,
+        // which UNLOCKS it and discards analysis results; on a locked (analysed) model
+        // we skip it and let getUnits / Program Control resolve the conversion instead.
+        if (!ModelLocked())
         {
-            var setPU = iSap.GetMethod("SetPresentUnits");
-            if (setPU != null)
+            try
             {
-                var eUnitsType = asm.GetType("ETABSv1.eUnits");
-                var val = eUnitsType != null ? Enum.ToObject(eUnitsType, 4) : (object)4;
-                setPU.Invoke(sap, new[] { val });
+                var setPU = iSap.GetMethod("SetPresentUnits");
+                if (setPU != null)
+                {
+                    var eUnitsType = asm.GetType("ETABSv1.eUnits");
+                    var val = eUnitsType != null ? Enum.ToObject(eUnitsType, 4) : (object)4;
+                    setPU.Invoke(sap, new[] { val });
+                }
             }
+            catch { /* best-effort — unit conversion will still work via string detection */ }
         }
-        catch { /* best-effort — unit conversion will still work via string detection */ }
 
         string modelName = "ETABS model";
         try
@@ -288,6 +293,21 @@ internal static class Program
         return JsonValue.Create(true)!;
     }
 
+    /// True when the ETABS model is locked (i.e. an analysis has been run and its
+    /// results are present). We must NOT modify a locked model — changing units or
+    /// output selection unlocks it and DISCARDS the results. Conservative: if the
+    /// state can't be read, treat it as locked so we never modify by accident.
+    private static bool ModelLocked()
+    {
+        try
+        {
+            if (_sapModel is not object sap || _iSapInterface is not Type iSap) return true;
+            var r = iSap.GetMethod("GetModelIsLocked")?.Invoke(sap, null);
+            return r is not bool b || b;
+        }
+        catch { return true; }
+    }
+
     // ── selectCombos ─────────────────────────────────────────────────────────
     // Limits which load combinations/cases appear in subsequently fetched display
     // tables, so a model with 50 combos only ships the rows the user asked for.
@@ -299,6 +319,12 @@ internal static class Program
     {
         var db = _dbTables ?? throw new InvalidOperationException("Not connected — call connect first.");
         var iDb = _iDbTablesInterface ?? throw new InvalidOperationException("Not connected — call connect first.");
+
+        // Never modify a locked model — SetLoad*SelectedForDisplay would unlock it and
+        // discard analysis results. The renderer's client-side row filter is the
+        // correctness backstop, so we simply fetch all rows in that case.
+        if (ModelLocked())
+            return new JsonObject { ["combos"] = false, ["cases"] = false, ["count"] = 0, ["skipped"] = "model locked — not modified" };
 
         var names = (combosNode ?? new JsonArray())
             .Select(n => n?.GetValue<string>() ?? "")
