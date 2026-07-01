@@ -370,8 +370,8 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           disabled={!!busy || !desktop}
           title={desktop
             ? (groups.length
-              ? 'Write one .SCO per group (each carrying every member\'s forces; EC2 adds a separate crack-width file), run the S-Concrete batch, pull the governing result per group'
-              : 'Write one .SCO per member, run the S-Concrete batch, pull results')
+              ? 'REGENERATES one .SCO per group from your CURRENT app design (bars, sections, forces), overwriting the folder, then runs the batch. Use this after changing reinforcement in the app.'
+              : 'REGENERATES one .SCO per member from your current app design, then runs the batch. Use this after changing reinforcement in the app.')
             : 'S-Concrete batch requires the Windows desktop app'}
           onClick={runBatch}
         >
@@ -386,7 +386,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           style={{ ...btn, background: desktop ? '#0ea5e9' : '#374151', opacity: busy ? 0.6 : 1 }}
           disabled={!!busy || !desktop}
           title={desktop
-            ? 'Re-run BatchReporter on the .SCO files already in the output folder — your manual edits are preserved — and read the fresh results'
+            ? 'Re-runs the .SCO files ALREADY in the folder, exactly as they are — hand-edits survive. Does NOT regenerate from the app, so rebar/section changes you made in the app since the last ⚙ Batch are NOT included. Use ⚙ Batch to pick those up.'
             : 'Re-run requires the Windows desktop app'}
           onClick={rerunExisting}
         >
@@ -408,6 +408,13 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           {showCfg ? 'Hide settings' : '⚙ Output folder'}
         </button>
       </div>
+
+      {desktop && (
+        <div style={{ fontSize: 9.5, color: '#64748b', lineHeight: 1.5 }}>
+          <b style={{ color: '#818cf8' }}>⚙ Batch</b> rewrites the .SCO files from your current design — <b>use it after changing reinforcement in the app</b>.{' '}
+          <b style={{ color: '#38bdf8' }}>↻ Re-run</b> uses the folder's files as-is (keeps hand-edits) and does <b>not</b> pick up app changes.
+        </div>
+      )}
 
       {showCfg && (
         <div style={{ background: '#0b1220', border: '1px solid #1f2937', borderRadius: 6, padding: 8 }}>
