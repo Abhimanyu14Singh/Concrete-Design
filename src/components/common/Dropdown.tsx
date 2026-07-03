@@ -16,6 +16,7 @@
  */
 import { useState, useEffect, useRef, useId, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { ACCENT, BORDER, INK, SURFACE } from '../../theme';
 
 export interface DropdownOption {
   value: string | number;
@@ -110,7 +111,7 @@ export default function Dropdown({
   const TRIGGER: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
     width: '100%', textAlign: 'left',
-    background: disabled ? '#f9fafb' : 'white',
+    background: disabled ? SURFACE.subtle : 'white',
     cursor: disabled ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.6 : 1,
     ...style,
@@ -135,7 +136,7 @@ export default function Dropdown({
     maxHeight: 220,
     overflowY: 'auto',
     background: 'white',
-    border: '1px solid #d1d5db',
+    border: `1px solid ${BORDER.strong}`,
     borderRadius: 6,
     boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
     zIndex: 9999,
@@ -157,7 +158,7 @@ export default function Dropdown({
         style={TRIGGER}
       >
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-        <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
+        <span style={{ fontSize: 8, color: INK.muted, flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && listPos && createPortal(
@@ -177,14 +178,14 @@ export default function Dropdown({
                 style={{
                   padding: '5px 10px',
                   cursor: opt.disabled ? 'not-allowed' : 'pointer',
-                  background: selected ? '#eff6ff' : 'white',
-                  color: opt.disabled ? '#9ca3af' : selected ? '#2563eb' : '#111827',
+                  background: selected ? ACCENT.softBg : 'white',
+                  color: opt.disabled ? INK.muted : selected ? ACCENT.primary : INK.strong,
                   fontWeight: selected ? 600 : 400,
                   fontSize: 'inherit',
                   whiteSpace: 'nowrap',
                 }}
-                onMouseEnter={e => { if (!opt.disabled) (e.currentTarget as HTMLDivElement).style.background = selected ? '#eff6ff' : '#f9fafb'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = selected ? '#eff6ff' : 'white'; }}
+                onMouseEnter={e => { if (!opt.disabled) (e.currentTarget as HTMLDivElement).style.background = selected ? ACCENT.softBg : SURFACE.subtle; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = selected ? ACCENT.softBg : 'white'; }}
               >
                 {opt.label}
               </div>

@@ -3,7 +3,7 @@ import type { Project, Member, DesignResults, DesignCode, RebarLayout } from '..
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { useUnits } from '../../contexts/UnitsContext';
-import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, INK, MAP_DCR_BANDS } from '../../theme';
+import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, ACCENT, BORDER, INK, MAP_DCR_BANDS, LABEL_STYLE, MONO_NUM, STATUS, SURFACE, TYPE } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
 import MemberEditor from '../SectionInput/MemberEditor';
@@ -90,10 +90,10 @@ function DCRChip({ label, value, isWk }: DCRChipProps) {
 
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-      <span style={{ fontSize: 8, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
+      <span style={{ fontSize: 10, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
       <span style={{
-        padding: '2px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-        background: bg, color: 'white', fontFamily: 'monospace', lineHeight: 1.3,
+        padding: '2px 5px', borderRadius: 3, fontSize: 11, fontWeight: 700,
+        background: bg, color: 'white', ...MONO_NUM, lineHeight: 1.3,
       }}>{display}</span>
     </span>
   );
@@ -153,7 +153,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   const selectedMember = selectedMemberId ? (project.members.find(m => m.id === selectedMemberId) ?? null) : null;
   const selectedGroupId = selection.kind === 'group' ? selection.id : null;
   const ungroupedEntry = ungrouped.length
-    ? { id: '__ungrouped', label: 'Ungrouped', color: '#9ca3af', rebar: undefined as RebarLayout | undefined, members: ungrouped }
+    ? { id: '__ungrouped', label: 'Ungrouped', color: INK.muted, rebar: undefined as RebarLayout | undefined, members: ungrouped }
     : null;
   const selectedGroupSection = selectedGroupId
     ? (groupSections.find(g => g.id === selectedGroupId) ?? (ungroupedEntry?.id === selectedGroupId ? ungroupedEntry : null))
@@ -260,13 +260,13 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
         onClick={() => handleMemberRowClick(m.id)}
         style={{
           display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px 6px 24px', cursor: 'pointer',
-          background: active ? '#eff6ff' : 'white', borderLeft: `3px solid ${active ? '#2563eb' : 'transparent'}`,
+          background: active ? ACCENT.softBg : 'white', borderLeft: `3px solid ${active ? ACCENT.primary : 'transparent'}`,
           borderBottom: '1px solid #f3f4f6',
         }}
       >
-        <span style={{ fontSize: 10, color: '#d97706', flexShrink: 0, width: 12 }}>{isGov ? '▲' : ''}</span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
-        <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', flexShrink: 0 }}>{`${fmtVal(m.section.b, 'length')}×${fmtVal(m.section.h, 'length')} ${label('length')}`}</span>
+        <span style={{ fontSize: 10, color: STATUS.warn, flexShrink: 0, width: 12 }}>{isGov ? '▲' : ''}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: INK.base, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+        <span style={{ fontSize: 10, color: INK.muted, ...MONO_NUM, flexShrink: 0 }}>{`${fmtVal(m.section.b, 'length')}×${fmtVal(m.section.h, 'length')} ${label('length')}`}</span>
         {modes && (
           <span style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
             <DCRChip label="M⁺" value={modes.flexPos} />
@@ -276,7 +276,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
           </span>
         )}
         <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
-        <span style={{ fontSize: 9, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? STATUS.ok : status === 'NG' ? STATUS.fail : STATUS.warn }}>{status}</span>
       </div>
     );
   }
@@ -291,7 +291,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   // Series colors are categorical (no status greens/ambers/reds — those mean
   // pass/warn/fail); Shear keeps the app-wide cyan diagram convention.
   const DCR_SERIES = [
-    { key: 'Flex+',   fill: '#2563eb' },
+    { key: 'Flex+',   fill: ACCENT.primary },
     { key: 'Flex-',   fill: '#7c3aed' },
     { key: 'Shear',   fill: '#0891b2' },
     { key: 'Torsion', fill: '#0d9488' },
@@ -323,8 +323,8 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   }
 
   const inp: React.CSSProperties = {
-    padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6,
-    fontSize: 12, color: '#111827', background: 'white', outline: 'none', fontFamily: 'inherit',
+    padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
+    fontSize: 12, color: INK.strong, background: 'white', outline: 'none', fontFamily: 'inherit',
   };
 
   const allGroups = [
@@ -336,61 +336,61 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Project header */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 14, padding: '16px 20px' }}>
+      <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 14, padding: '16px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ flex: 1 }}>
             {editingMeta ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 2 }}>
-                    <label style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Project Name</label>
+                    <label style={LABEL_STYLE}>Project Name</label>
                     <input style={{ ...inp, fontSize: 14, fontWeight: 700 }} value={meta.name} onChange={e => setMeta(m => ({ ...m, name: e.target.value }))} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
-                    <label style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Engineer</label>
+                    <label style={LABEL_STYLE}>Engineer</label>
                     <input style={inp} value={meta.engineer} onChange={e => setMeta(m => ({ ...m, engineer: e.target.value }))} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
-                    <label style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Date</label>
+                    <label style={LABEL_STYLE}>Date</label>
                     <input style={inp} type="date" value={meta.date} onChange={e => setMeta(m => ({ ...m, date: e.target.value }))} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    <label style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Design Code</label>
+                    <label style={LABEL_STYLE}>Design Code</label>
                     <Dropdown style={inp} value={meta.code} options={DESIGN_CODES.map(c => ({ value: c, label: c }))} onChange={v => setMeta(m => ({ ...m, code: v as DesignCode }))} />
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <label style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Description</label>
+                  <label style={LABEL_STYLE}>Description</label>
                   <input style={inp} value={meta.description} onChange={e => setMeta(m => ({ ...m, description: e.target.value }))} />
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={saveMeta} style={{ padding: '6px 16px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Save</button>
-                  <button onClick={() => { setEditingMeta(false); setMeta({ name: project.name, engineer: project.engineer, date: project.date, code: project.code, description: project.description }); }} style={{ padding: '6px 12px', background: 'white', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={saveMeta} style={{ padding: '6px 16px', background: ACCENT.primary, color: 'white', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Save</button>
+                  <button onClick={() => { setEditingMeta(false); setMeta({ name: project.name, engineer: project.engineer, date: project.date, code: project.code, description: project.description }); }} style={{ padding: '6px 12px', background: 'white', color: INK.secondary, border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
                 </div>
               </div>
             ) : (
               <>
-                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#111827' }}>{project.name}</h2>
-                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#6b7280' }}>{project.description}</p>
-                <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
-                  <span>Engineer: <strong style={{ color: '#374151' }}>{project.engineer}</strong></span>
-                  <span>Code: <strong style={{ color: '#2563eb' }}>{project.code}</strong></span>
-                  <span>Date: <strong style={{ color: '#374151' }}>{project.date}</strong></span>
+                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: INK.strong }}>{project.name}</h2>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: INK.secondary }}>{project.description}</p>
+                <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: INK.secondary, flexWrap: 'wrap' }}>
+                  <span>Engineer: <strong style={{ color: INK.base }}>{project.engineer}</strong></span>
+                  <span>Code: <strong style={{ color: ACCENT.primary }}>{project.code}</strong></span>
+                  <span>Date: <strong style={{ color: INK.base }}>{project.date}</strong></span>
                 </div>
               </>
             )}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             {!editingMeta && (
-              <button onClick={() => setEditingMeta(true)} style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, background: 'white', fontSize: 11, cursor: 'pointer', color: '#374151', fontWeight: 600 }}>
+              <button onClick={() => setEditingMeta(true)} style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, background: 'white', fontSize: 11, cursor: 'pointer', color: INK.base, fontWeight: 600 }}>
                 Edit
               </button>
             )}
             <div style={{ display: 'flex', gap: 6 }}>
               {[
-                { label: 'PASS', count: okCount, color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
-                { label: 'WARN', count: warnCount, color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-                { label: 'FAIL', count: ngCount, color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+                { label: 'PASS', count: okCount, color: STATUS.ok, bg: STATUS.okBg, border: STATUS.okBorder },
+                { label: 'WARN', count: warnCount, color: STATUS.warn, bg: STATUS.warnBg, border: STATUS.warnBorder },
+                { label: 'FAIL', count: ngCount, color: STATUS.fail, bg: STATUS.failBg, border: STATUS.failBorder },
               ].map(({ label: lbl, count, color, bg, border }) => (
                 <div key={lbl} style={{ textAlign: 'center', background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '6px 12px' }}>
                   <div style={{ fontSize: 20, fontWeight: 700, color, lineHeight: 1 }}>{count}</div>
@@ -405,10 +405,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
       {/* Split workspace */}
       <div style={{ display: 'flex', height: 'min(78vh, 900px)', minHeight: 460, cursor: dragging ? 'col-resize' : 'auto' }}>
         {/* Left panel — resizable */}
-        <div style={{ width: leftWidth, flexShrink: 0, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'auto' }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Members by Group</span>
-            <span style={{ fontSize: 11, color: '#9ca3af' }}>{project.members.length} members</span>
+        <div style={{ width: leftWidth, flexShrink: 0, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, overflow: 'auto' }}>
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${BORDER.default}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
+            <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>Members by Group</span>
+            <span style={{ fontSize: 11, color: INK.muted }}>{project.members.length} members</span>
           </div>
           {allGroups.map(sec => {
             const open = !collapsedGroups.has(sec.id);
@@ -423,17 +423,17 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                   onClick={() => handleGroupHeaderClick(sec.id)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', cursor: 'pointer',
-                    background: isGroupSelected ? '#eff6ff' : '#f9fafb',
+                    background: isGroupSelected ? ACCENT.softBg : SURFACE.subtle,
                     borderBottom: '1px solid #f3f4f6',
-                    borderLeft: `3px solid ${isGroupSelected ? '#2563eb' : 'transparent'}`,
+                    borderLeft: `3px solid ${isGroupSelected ? ACCENT.primary : 'transparent'}`,
                   }}
                 >
-                  <span style={{ fontSize: 10, color: '#9ca3af', width: 10, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
-                  <span style={{ width: 10, height: 10, borderRadius: 3, background: sec.color ?? '#9ca3af', flexShrink: 0 }} />
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 10, color: INK.muted, width: 10, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: sec.color ?? INK.muted, flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: INK.strong, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {sec.label}
                   </span>
-                  <span style={{ fontSize: 10, color: '#6b7280', flexShrink: 0 }}>{sec.members.length}</span>
+                  <span style={{ fontSize: 10, color: INK.secondary, flexShrink: 0 }}>{sec.members.length}</span>
                   {/* Failure mode bar */}
                   <span style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
                     <DCRChip label="M⁺" value={gModes.flexPos} />
@@ -443,12 +443,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                   </span>
                   {/* Issue badges */}
                   {ng > 0 && (
-                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: STATUS.failBg, color: STATUS.fail, border: `1px solid ${STATUS.failBorder}`, flexShrink: 0 }}>
                       {ng} NG
                     </span>
                   )}
                   {warn > 0 && (
-                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: STATUS.warnBg, color: STATUS.warn, border: `1px solid ${STATUS.warnBorder}`, flexShrink: 0 }}>
                       {warn} W
                     </span>
                   )}
@@ -463,7 +463,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
         {/* Drag divider */}
         <div
           onMouseDown={onDividerMouseDown}
-          style={{ width: 6, cursor: 'col-resize', flexShrink: 0, background: dragging ? '#bfdbfe' : 'transparent', transition: 'background 0.1s' }}
+          style={{ width: 6, cursor: 'col-resize', flexShrink: 0, background: dragging ? ACCENT.softBorder : 'transparent', transition: 'background 0.1s' }}
         />
 
         {/* Right pane */}
@@ -486,19 +486,19 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
             /* Two-column member detail: inputs left, live results right */
             <>
               {/* Sticky header */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', background: 'white', borderBottom: '1px solid #e5e7eb', borderRadius: '12px 12px 0 0', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', background: 'white', borderBottom: `1px solid ${BORDER.default}`, borderRadius: '12px 12px 0 0', flexShrink: 0 }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>{selectedMember.label}</h3>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{selectedMember.etabs?.story ?? ''}{selectedMember.etabs?.story ? ' · ' : ''}{selectedMember.etabs?.sectionName ?? selectedMember.section.type}</div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: INK.strong }}>{selectedMember.label}</h3>
+                  <div style={{ fontSize: 11, color: INK.muted }}>{selectedMember.etabs?.story ?? ''}{selectedMember.etabs?.story ? ' · ' : ''}{selectedMember.etabs?.sectionName ?? selectedMember.section.type}</div>
                 </div>
-                <button onClick={() => onSelectMember(selectedMember.id)} style={{ fontSize: 11, color: '#2563eb', background: 'none', border: '1px solid #bfdbfe', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                <button onClick={() => onSelectMember(selectedMember.id)} style={{ fontSize: 11, color: ACCENT.primary, background: 'none', border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
                   Open in Member tab ↗
                 </button>
               </div>
               {/* Side-by-side columns */}
-              <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: 'white', border: '1px solid #e5e7eb', borderTop: 'none', borderRadius: '0 0 12px 12px' }}>
+              <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: 'white', border: `1px solid ${BORDER.default}`, borderTop: 'none', borderRadius: '0 0 12px 12px' }}>
                 {/* Left: section inputs / properties */}
-                <div style={{ width: 340, flexShrink: 0, borderRight: '1px solid #e5e7eb', overflow: 'auto', padding: '12px 14px' }}>
+                <div style={{ width: 340, flexShrink: 0, borderRight: `1px solid ${BORDER.default}`, overflow: 'auto', padding: '12px 14px' }}>
                   <MemberEditor key={selectedMember.id} member={selectedMember} onUpdate={handleMemberUpdate} code={project.code} />
                 </div>
                 {/* Right: live DCR / diagrams */}
@@ -508,28 +508,28 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
               </div>
             </>
           ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 13 }}>Select a member or group to view details.</div>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: INK.muted, fontSize: 13 }}>Select a member or group to view details.</div>
           )}
         </div>
       </div>
 
       {/* Issues panel — collapsible, below the Members-by-Group workspace */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, overflow: 'hidden' }}>
         <div
           onClick={() => setIssuesOpen(o => !o)}
-          style={{ padding: '10px 16px', borderBottom: issuesOpen ? '1px solid #e5e7eb' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
+          style={{ padding: '10px 16px', borderBottom: issuesOpen ? `1px solid ${BORDER.default}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
         >
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: issuesOpen ? 'rotate(90deg)' : 'rotate(0deg)', color: '#9ca3af' }}>▶</span>
+          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: issuesOpen ? 'rotate(90deg)' : 'rotate(0deg)', color: INK.muted }}>▶</span>
             Issues
           </span>
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>
+          <span style={{ fontSize: 11, color: INK.muted }}>
             {ngCount} exceeding DCR · {warnCount} warning{warnCount !== 1 ? 's' : ''}
           </span>
         </div>
 
         {issuesOpen && (issues.length === 0 ? (
-          <div style={{ padding: '14px 16px', fontSize: 12, color: '#9ca3af' }}>No issues — all members pass.</div>
+          <div style={{ padding: '14px 16px', fontSize: 12, color: INK.muted }}>No issues — all members pass.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {issues.map(({ member, worstResult, maxDCR }) => {
@@ -545,15 +545,15 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                   style={{
                     display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 16px',
                     borderBottom: '1px solid #f3f4f6',
-                    background: isNG ? '#fef2f2' : 'white',
-                    borderLeft: `3px solid ${isNG ? '#dc2626' : '#d97706'}`,
+                    background: isNG ? STATUS.failBg : 'white',
+                    borderLeft: `3px solid ${isNG ? STATUS.fail : STATUS.warn}`,
                   }}
                 >
                   <button
                     onClick={() => onSelectMember(member.id)}
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                      fontSize: 13, fontWeight: 700, color: '#2563eb', textAlign: 'left', minWidth: 110,
+                      fontSize: 13, fontWeight: 700, color: ACCENT.primary, textAlign: 'left', minWidth: 110,
                     }}
                   >
                     {member.label}
@@ -566,7 +566,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                   </span>
                   <span style={{
                     fontSize: 10, fontWeight: 700, flexShrink: 0, padding: '2px 8px', borderRadius: 10,
-                    color: isNG ? '#dc2626' : '#d97706',
+                    color: isNG ? STATUS.fail : STATUS.warn,
                     background: isNG ? '#fee2e2' : '#fef3c7',
                   }}>
                     {isNG ? 'NG' : 'WARN'}
@@ -576,16 +576,16 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                       <div key={msg} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#4b5563' }}>
                         <span style={{
                           width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                          background: sevOf(msg) === 'error' ? '#dc2626' : '#d97706',
+                          background: sevOf(msg) === 'error' ? STATUS.fail : STATUS.warn,
                         }} />
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg}</span>
                       </div>
                     ))}
                     {extra > 0 && (
-                      <div style={{ fontSize: 10, color: '#9ca3af', paddingLeft: 12 }}>+{extra} more</div>
+                      <div style={{ fontSize: 10, color: INK.muted, paddingLeft: 12 }}>+{extra} more</div>
                     )}
                     {shown.length === 0 && (
-                      <div style={{ fontSize: 11, color: '#9ca3af' }}>DCR exceeds capacity.</div>
+                      <div style={{ fontSize: 11, color: INK.muted }}>DCR exceeds capacity.</div>
                     )}
                   </div>
                 </div>
@@ -597,20 +597,20 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
         {issuesOpen && showSkinControl && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-            padding: '10px 16px', borderTop: '1px solid #e5e7eb', background: '#fffbeb',
+            padding: '10px 16px', borderTop: `1px solid ${BORDER.default}`, background: STATUS.warnBg,
           }}>
             <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>
               {skinFlagged.length} beam{skinFlagged.length !== 1 ? 's' : ''} need skin/side-face reinforcement.
             </span>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <label style={{ fontSize: 11, color: INK.secondary, display: 'flex', alignItems: 'center', gap: 4 }}>
               Bars/face
               <input
                 type="number" min={1} value={skinNumBars}
                 onChange={e => setSkinNumBars(Math.max(1, +e.target.value || 1))}
-                style={{ ...inp, width: 56, fontFamily: 'monospace' }}
+                style={{ ...inp, width: 56, ...MONO_NUM }}
               />
             </label>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <label style={{ fontSize: 11, color: INK.secondary, display: 'flex', alignItems: 'center', gap: 4 }}>
               Bar size
               <Dropdown
                 value={skinBarSize}
@@ -622,7 +622,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
             <button
               onClick={applySkinReinforcement}
               style={{
-                padding: '6px 14px', background: '#d97706', color: 'white', border: 'none',
+                padding: '6px 14px', background: STATUS.warn, color: 'white', border: 'none',
                 borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
               }}
             >
@@ -633,10 +633,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
       </div>
 
       {/* DCR Overview Chart */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
+      <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, padding: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>
-            DCR Overview <span style={{ color: '#9ca3af' }}>· {barData.length} members</span>
+          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>
+            DCR Overview <span style={{ color: INK.muted }}>· {barData.length} members</span>
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Dropdown
@@ -663,13 +663,13 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={barData} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
             <CartesianGrid stroke="#f3f4f6" strokeDasharray="3 3" />
-            <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-            <YAxis domain={[0, 1.3]} tick={{ fill: '#9ca3af', fontSize: 10 }} />
+            <XAxis dataKey="name" tick={{ fill: INK.muted, fontSize: 10 }} />
+            <YAxis domain={[0, 1.3]} tick={{ fill: INK.muted, fontSize: 10 }} />
             <Tooltip
-              contentStyle={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 }}
-              labelStyle={{ color: '#374151', fontWeight: 600 }}
+              contentStyle={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, fontSize: 11 }}
+              labelStyle={{ color: INK.base, fontWeight: 600 }}
             />
-            <Legend wrapperStyle={{ fontSize: 11, color: '#6b7280' }} />
+            <Legend wrapperStyle={{ fontSize: 11, color: INK.secondary }} />
             {shownSeries.map(s => <Bar key={s.key} dataKey={s.key} fill={s.fill} />)}
           </BarChart>
         </ResponsiveContainer>
@@ -707,28 +707,28 @@ function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialE
     }));
   }
 
-  const inp: React.CSSProperties = { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, width: 80, fontFamily: 'monospace' };
+  const inp: React.CSSProperties = { padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, width: 80, fontFamily: 'monospace' };
 
   return (
-    <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Group Material Properties</div>
+    <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: 14 }}>
+      <div style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, marginBottom: 10 }}>Group Material Properties</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center' }}>
+          <div style={{ fontSize: 10, color: INK.secondary, marginBottom: 3, display: 'flex', alignItems: 'center' }}>
             {isEC2 ? 'f_ck (MPa)' : "f'c (ksi)"}
             <InfoTooltip text={isEC2 ? 'Characteristic cylinder compressive strength. The engine derives fcd = 0.85·fck/1.5 (αcc=0.85, γc=1.5).' : "Specified 28-day cylinder compressive strength in ksi."} />
           </div>
           <input type="number" style={inp} value={fck} onChange={e => setFck(+e.target.value)} />
         </div>
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center' }}>
+          <div style={{ fontSize: 10, color: INK.secondary, marginBottom: 3, display: 'flex', alignItems: 'center' }}>
             {isEC2 ? 'f_yk long (MPa)' : 'f_y long (ksi)'}
             <InfoTooltip text={isEC2 ? 'Characteristic yield strength of longitudinal bars. Design value fyd = fyk/γs = fyk/1.15.' : 'Yield strength of longitudinal bars in ksi.'} />
           </div>
           <input type="number" style={inp} value={fyLong} onChange={e => setFyLong(+e.target.value)} />
         </div>
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center' }}>
+          <div style={{ fontSize: 10, color: INK.secondary, marginBottom: 3, display: 'flex', alignItems: 'center' }}>
             {isEC2 ? 'f_yk tie (MPa)' : 'f_yt tie (ksi)'}
             <InfoTooltip text={isEC2 ? 'Characteristic yield strength of transverse bars (links/stirrups). Used for V_Rd,s and min shear reinforcement ratio.' : 'Yield strength of transverse reinforcement (stirrups) in ksi.'} />
           </div>
@@ -768,18 +768,18 @@ function GroupPanel({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Group title */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ width: 14, height: 14, borderRadius: 4, background: group.color ?? '#9ca3af', flexShrink: 0 }} />
-        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>{group.label}</h3>
-        <span style={{ fontSize: 12, color: '#9ca3af' }}>{group.members.length} members</span>
+        <span style={{ width: 14, height: 14, borderRadius: 4, background: group.color ?? INK.muted, flexShrink: 0 }} />
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: INK.strong }}>{group.label}</h3>
+        <span style={{ fontSize: 12, color: INK.muted }}>{group.members.length} members</span>
       </div>
 
       {/* Group DCR summary — averages + distribution histogram */}
       <GroupDcrSummary members={group.members} summaryById={summaryById} code={code} />
 
       {/* Group reinforcement — full interactive editor */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Group Reinforcement</span>
+      <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle }}>
+          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>Group Reinforcement</span>
         </div>
         <GroupRebarEditor
           group={{ id: group.id, label: group.label, color: group.color, rebar: group.rebar, memberIds: group.members.map(m => m.id) }}
@@ -794,14 +794,14 @@ function GroupPanel({
       <GroupMaterialEditor group={group} project={project} onProjectUpdate={onProjectUpdate} />
 
       {/* Member results mini-table */}
-      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: 1 }}>Member Results</span>
+      <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ padding: '8px 14px', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle }}>
+          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>Member Results</span>
         </div>
         {/* Table header */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px 60px 60px 60px 60px', gap: 0, padding: '6px 14px', borderBottom: '1px solid #f3f4f6', background: '#f9fafb' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px 60px 60px 60px 60px', gap: 0, padding: '6px 14px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
           {['Label', 'M⁺ DCR', 'M⁻ DCR', 'V DCR', 'wk', 'Status', ''].map(h => (
-            <span key={h} style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</span>
+            <span key={h} style={LABEL_STYLE}>{h}</span>
           ))}
         </div>
         {group.members.map(m => {
@@ -816,7 +816,7 @@ function GroupPanel({
               onMouseEnter={e => (e.currentTarget.style.background = '#f0f9ff')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              <span style={{ fontSize: 12, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+              <span style={{ fontSize: 12, color: INK.base, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
               {modes ? (
                 <>
                   <DCRInlineCell value={modes.flexPos} />
@@ -827,10 +827,10 @@ function GroupPanel({
               ) : (
                 <><span>—</span><span>—</span><span>—</span><span>—</span></>
               )}
-              <span style={{ fontSize: 10, fontWeight: 700, color: status === 'OK' ? '#16a34a' : status === 'NG' ? '#dc2626' : '#d97706' }}>{status}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: status === 'OK' ? STATUS.ok : status === 'NG' ? STATUS.fail : STATUS.warn }}>{status}</span>
               <button
                 onClick={e => { e.stopPropagation(); onSelectMemberTab(m.id); }}
-                style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                style={{ fontSize: 10, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
               >↗</button>
             </div>
           );
@@ -847,10 +847,10 @@ function AvgChip({ label, value }: { label: string; value: number | undefined })
   const bg = value === undefined ? INK.muted : dcrColor(value);
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-      <span style={{ fontSize: 8, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
+      <span style={{ fontSize: 10, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
       <span style={{
-        padding: '2px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-        background: bg, color: 'white', fontFamily: 'monospace', lineHeight: 1.3,
+        padding: '2px 5px', borderRadius: 3, fontSize: 11, fontWeight: 700,
+        background: bg, color: 'white', ...MONO_NUM, lineHeight: 1.3,
       }}>{display}</span>
     </span>
   );
@@ -873,8 +873,8 @@ function DcrHistogram({ values }: { values: number[] }) {
       {DCR_BUCKETS.map((b, i) => (
         <div key={i} title={`${b.label}: ${counts[i]} member${counts[i] === 1 ? '' : 's'}`}
           style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
-          <span style={{ fontSize: 7, color: '#9ca3af', lineHeight: 1, marginBottom: 1 }}>{counts[i] || ''}</span>
-          <div style={{ width: 12, height: Math.max(2, (counts[i] / maxC) * 22), background: counts[i] ? b.color : '#e5e7eb', borderRadius: 1 }} />
+          <span style={{ fontSize: 10, color: INK.muted, lineHeight: 1, marginBottom: 1 }}>{counts[i] || ''}</span>
+          <div style={{ width: 12, height: Math.max(2, (counts[i] / maxC) * 22), background: counts[i] ? b.color : BORDER.default, borderRadius: 1 }} />
         </div>
       ))}
     </div>
@@ -897,9 +897,9 @@ function GroupDcrSummary({ members, summaryById, code }: { members: Member[]; su
   const avg = { flexPos: sp / n, flexNeg: sn / n, shear: ss / n, wk: cw ? sw / cw : undefined };
   const avgGov = gov.reduce((a, b) => a + b, 0) / gov.length;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 14px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '8px 14px' }}>
       <div>
-        <div style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Average DCR</div>
+        <div style={{ ...LABEL_STYLE, marginBottom: 4 }}>Average DCR</div>
         <div style={{ display: 'flex', gap: 4 }}>
           <AvgChip label="M⁺" value={avg.flexPos} />
           <AvgChip label="M⁻" value={avg.flexNeg} />
@@ -907,10 +907,10 @@ function GroupDcrSummary({ members, summaryById, code }: { members: Member[]; su
           <AvgChip label="wk" value={avg.wk} />
         </div>
       </div>
-      <div style={{ width: 1, alignSelf: 'stretch', background: '#e5e7eb' }} />
+      <div style={{ width: 1, alignSelf: 'stretch', background: BORDER.default }} />
       <div>
-        <div style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
-          DCR Distribution <span style={{ color: '#6b7280', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· avg gov {avgGov.toFixed(2)}</span>
+        <div style={{ ...LABEL_STYLE, marginBottom: 4 }}>
+          DCR Distribution <span style={{ color: INK.secondary, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· avg gov {avgGov.toFixed(2)}</span>
         </div>
         <DcrHistogram values={gov} />
       </div>
@@ -919,16 +919,16 @@ function GroupDcrSummary({ members, summaryById, code }: { members: Member[]; su
 }
 
 function DCRInlineCell({ value, isWk }: { value: number | undefined; isWk?: boolean }) {
-  if (value === undefined) return <span style={{ fontSize: 11, color: '#9ca3af' }}>—</span>;
+  if (value === undefined) return <span style={{ fontSize: 11, color: INK.muted }}>—</span>;
   if (isWk) {
     const ok = value <= 0.9;
     const warn = value > 0.9 && value <= 1.0;
     const fail = value > 1.0;
-    const color = fail ? '#dc2626' : warn ? '#d97706' : '#16a34a';
-    const bg = fail ? '#fef2f2' : warn ? '#fffbeb' : '#f0fdf4';
+    const color = fail ? STATUS.fail : warn ? STATUS.warn : STATUS.ok;
+    const bg = fail ? STATUS.failBg : warn ? STATUS.warnBg : STATUS.okBg;
     return <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: bg, color }}>{fail ? '!' : ok ? 'OK' : '!'}</span>;
   }
-  const color = value > 1.0 ? '#dc2626' : value > 0.75 ? '#d97706' : '#16a34a';
-  const bg = value > 1.0 ? '#fef2f2' : value > 0.75 ? '#fffbeb' : '#f0fdf4';
-  return <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'monospace', padding: '2px 5px', borderRadius: 3, background: bg, color }}>{value.toFixed(2)}</span>;
+  const color = value > 1.0 ? STATUS.fail : value > 0.75 ? STATUS.warn : STATUS.ok;
+  const bg = value > 1.0 ? STATUS.failBg : value > 0.75 ? STATUS.warnBg : STATUS.okBg;
+  return <span style={{ fontSize: 10, fontWeight: 700, ...MONO_NUM, padding: '2px 5px', borderRadius: 3, background: bg, color }}>{value.toFixed(2)}</span>;
 }
