@@ -7,12 +7,13 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { valueToRampColor } from './colorRamp';
 import { groupColor } from './groupColors';
+import { MAP_GRAY, STATUS } from '../../theme';
 
 export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight' | 'autoGroup' | 'sconcrete';
 
-const UNLINKED = '#d1d5db';   // imported frame with no designed member
-const NO_GROUP = '#9ca3af';   // member not in any group / overlay bin
-const SCO_NONE = '#6b7280';   // member with no S-Concrete result yet
+const UNLINKED = MAP_GRAY.unlinked;    // imported frame with no designed member
+const NO_GROUP = MAP_GRAY.unassigned;  // member not in any group / overlay bin
+const SCO_NONE = MAP_GRAY.notRun;      // member with no S-Concrete result yet
 
 /** Build a memberId → color map from the design groups (group display color, by index). */
 export function buildGroupColorMap(designGroups: DesignGroup[]): Map<string, string> {
@@ -48,8 +49,8 @@ export function frameColorFor(f: Pick<MapFrame, 'memberId' | 'sectionName'>, ctx
   if (colorMode === 'sconcrete') {
     if (f.memberId) {
       const s = scoStatusById?.[f.memberId];
-      if (s === 'OK') return '#16a34a';
-      if (s === 'NG') return '#dc2626';
+      if (s === 'OK') return STATUS.ok;
+      if (s === 'NG') return STATUS.fail;
     }
     return SCO_NONE; // not run / not covered
   }

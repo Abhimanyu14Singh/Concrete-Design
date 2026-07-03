@@ -12,6 +12,7 @@ import type { Member, DesignResults, DesignCode } from '../../types';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { useUnits } from '../../contexts/UnitsContext';
+import { DIAGRAM } from '../../theme';
 
 interface Props {
   member: Member;
@@ -112,8 +113,8 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
           <YAxis tick={axisTick} width={45} />
           <Tooltip contentStyle={tooltipStyle} />
           <ReferenceLine y={0} stroke="#9ca3af" />
-          <Area dataKey="Vmax" stroke="#f59e0b" fill="#fde68a" fillOpacity={0.5} isAnimationActive={false} name="V max" />
-          <Area dataKey="Vmin" stroke="#f59e0b" fill="#fde68a" fillOpacity={0.5} isAnimationActive={false} name="V min" />
+          <Area dataKey="Vmax" stroke={DIAGRAM.shear} fill="#cffafe" fillOpacity={0.5} isAnimationActive={false} name="V max" />
+          <Area dataKey="Vmin" stroke={DIAGRAM.shear} fill="#cffafe" fillOpacity={0.5} isAnimationActive={false} name="V min" />
           <Line dataKey="phiVn" stroke="#dc2626" strokeDasharray="6 3" dot={false} isAnimationActive={false} name="φVn" type="stepAfter" />
           <Line dataKey="phiVnNeg" stroke="#dc2626" strokeDasharray="6 3" dot={false} isAnimationActive={false} name="−φVn" type="stepAfter" legendType="none" />
         </ComposedChart>

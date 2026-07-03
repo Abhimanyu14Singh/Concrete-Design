@@ -26,6 +26,7 @@ import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
+import { CATEGORICAL } from '../../theme';
 
 type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff' | 'stacks';
 type FlexFace = 'top' | 'bot';
@@ -463,8 +464,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           onCreateGroupFromSelection={() => {
             const label = window.prompt('Group name:');
             if (label === null) return;
-            const colors = ['#2563eb','#16a34a','#d97706','#9333ea','#0891b2','#dc2626'];
-            const color = colors[Math.floor(Math.random() * colors.length)];
+            const color = CATEGORICAL[Math.floor(Math.random() * CATEGORICAL.length)];
             const frame = frames.find(f => f.frameName === contextMenu.frameName);
             const memberIds = [...selectedFrames]
               .map(fname => frames.find(f => f.frameName === fname)?.memberId)
@@ -492,7 +492,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           <div style={{ display: 'flex', gap: 2 }}>
             {(['2d', '3d'] as const).map(vm => (
               <button key={vm} onClick={() => setViewMode(vm)}
-                style={{ padding: '5px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: viewMode === vm ? '#0f766e' : 'white', color: viewMode === vm ? 'white' : '#374151' }}
+                style={{ padding: '5px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: viewMode === vm ? '#2563eb' : 'white', color: viewMode === vm ? 'white' : '#374151' }}
                 title={vm === '3d' ? 'Rotatable 3D view (drag to orbit, wheel to zoom)' : 'Plan view'}>
                 {vm.toUpperCase()}
               </button>

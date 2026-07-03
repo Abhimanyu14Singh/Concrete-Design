@@ -10,11 +10,12 @@ import {
   Tooltip as RechartsTip, ResponsiveContainer,
 } from 'recharts';
 import { valueToRampColor } from './colorRamp';
+import { CATEGORICAL } from '../../theme';
 
 const NUM_BINS = 20;
 
-/** Colors for each bin-group assignment. */
-const BIN_COLORS = ['#2563eb','#16a34a','#d97706','#9333ea','#0891b2','#dc2626'];
+/** Colors for each bin-group assignment — categorical, no status hues. */
+const BIN_COLORS = CATEGORICAL;
 
 interface HistogramPanelProps {
   /** Raw values to histogram. */

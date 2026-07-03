@@ -8,6 +8,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type ColorMode } from './frameColor';
+import { BORDER, INK, MAP_DCR_BANDS, MAP_GRAY, STATUS } from '../../theme';
 
 export type { ColorMode };
 export type DiagramMode = 'off' | 'moment' | 'shear';
@@ -481,10 +482,11 @@ export default function MapCanvas({
         </div>
       )}
 
-      {/* DCR legend when in DCR mode */}
+      {/* DCR legend when in DCR mode — rendered from the shared bands so the
+          legend can never drift from the fill colors */}
       {colorMode === 'dcr' && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280' }}>
-          {[['<0.70','#16a34a'],['0.70–0.90','#84cc16'],['0.90–1.00','#f59e0b'],['≥1.00','#dc2626'],['Unlinked','#d1d5db']].map(([l, c]) => (
+        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
+          {[...MAP_DCR_BANDS.map((b) => [b.label, b.color] as const), ['Unlinked', MAP_GRAY.unlinked] as const].map(([l, c]) => (
             <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
               {l}
@@ -495,8 +497,8 @@ export default function MapCanvas({
 
       {/* S-Concrete pass/fail legend */}
       {colorMode === 'sconcrete' && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280' }}>
-          {[['OK', '#16a34a'], ['Overstressed', '#dc2626'], ['Not run', '#6b7280']].map(([l, c]) => (
+        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
+          {([['OK', STATUS.ok], ['Overstressed', STATUS.fail], ['Not run', MAP_GRAY.notRun]] as const).map(([l, c]) => (
             <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
               {l}

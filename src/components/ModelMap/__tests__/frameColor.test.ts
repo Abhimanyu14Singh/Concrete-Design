@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type FrameColorContext } from '../frameColor';
 import { dcrToColor } from '../../EtabsImport/dcrColors';
 import { valueToRampColor } from '../colorRamp';
+import { MAP_GRAY, STATUS } from '../../../theme';
 import type { DesignGroup, AutoGroupBin } from '../../../types';
 
 const baseCtx = (over: Partial<FrameColorContext> = {}): FrameColorContext => ({
@@ -31,7 +32,7 @@ describe('frameColorFor — DCR mode', () => {
     expect(frameColorFor(frame('mX'), baseCtx())).toBe(dcrToColor(0));
   });
   it('greys an unlinked frame', () => {
-    expect(frameColorFor(frame(undefined), baseCtx())).toBe('#d1d5db');
+    expect(frameColorFor(frame(undefined), baseCtx())).toBe(MAP_GRAY.unlinked);
   });
 });
 
@@ -47,7 +48,7 @@ describe('frameColorFor — group mode', () => {
     expect(frameColorFor(frame('m3'), ctx)).not.toBe('#123456'); // different group
   });
   it('greys an ungrouped member', () => {
-    expect(frameColorFor(frame('orphan'), ctx)).toBe('#9ca3af');
+    expect(frameColorFor(frame('orphan'), ctx)).toBe(MAP_GRAY.unassigned);
   });
 });
 
@@ -70,17 +71,17 @@ describe('frameColorFor — metric mode', () => {
   });
   it('falls back to grey without a value or range', () => {
     const ctx = baseCtx({ colorMode: 'stirrups', metricById: {}, metricRange: { min: 1, max: 4 } });
-    expect(frameColorFor(frame('m1'), ctx)).toBe('#d1d5db');
+    expect(frameColorFor(frame('m1'), ctx)).toBe(MAP_GRAY.unlinked);
   });
 });
 
 describe('frameColorFor — S-Concrete pass/fail', () => {
   const ctx = baseCtx({ colorMode: 'sconcrete', scoStatusById: { m1: 'OK', m2: 'NG' } });
   it('greens a passing member, reds a failing one, greys an un-run member', () => {
-    expect(frameColorFor(frame('m1'), ctx)).toBe('#16a34a');
-    expect(frameColorFor(frame('m2'), ctx)).toBe('#dc2626');
-    expect(frameColorFor(frame('m3'), ctx)).toBe('#6b7280');   // no result
-    expect(frameColorFor(frame(undefined), ctx)).toBe('#6b7280');
+    expect(frameColorFor(frame('m1'), ctx)).toBe(STATUS.ok);
+    expect(frameColorFor(frame('m2'), ctx)).toBe(STATUS.fail);
+    expect(frameColorFor(frame('m3'), ctx)).toBe(MAP_GRAY.notRun);   // no result
+    expect(frameColorFor(frame(undefined), ctx)).toBe(MAP_GRAY.notRun);
   });
 });
 
@@ -91,6 +92,6 @@ describe('frameColorFor — auto-group overlay', () => {
   const ctx = baseCtx({ colorMode: 'autoGroup', autoGroupColorMap: buildAutoGroupColorMap(bins) });
   it('colors a binned member and greys the rest', () => {
     expect(frameColorFor(frame('m1'), ctx)).toBe('#abcdef');
-    expect(frameColorFor(frame('m9'), ctx)).toBe('#9ca3af');
+    expect(frameColorFor(frame('m9'), ctx)).toBe(MAP_GRAY.unassigned);
   });
 });

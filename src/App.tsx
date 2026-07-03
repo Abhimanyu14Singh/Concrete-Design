@@ -16,7 +16,7 @@ import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import Dropdown from './components/common/Dropdown';
 import { useUnits } from './contexts/UnitsContext';
-import { MEMBER_COLOR, FONT, SURFACE } from './theme';
+import { MEMBER_COLOR, FONT, SURFACE, STATUS } from './theme';
 
 type Tab = 'dashboard' | 'map' | 'member';
 
@@ -859,7 +859,7 @@ export default function App() {
                     fontSize: 9, fontWeight: 800, color: 'white',
                     background: stage.done ? '#16a34a' : current ? '#2563eb' : '#9ca3af',
                   }}>{stage.done ? '✓' : stage.num}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: current ? '#2563eb' : stage.done ? '#15803d' : '#6b7280' }}>{stage.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: current ? '#2563eb' : stage.done ? STATUS.ok : '#6b7280' }}>{stage.label}</span>
                   <span style={{ fontSize: 10, color: '#9ca3af' }}>{stage.hint}</span>
                 </button>
                 {i < arr.length - 1 && <span style={{ color: '#d1d5db', fontSize: 12 }}>→</span>}

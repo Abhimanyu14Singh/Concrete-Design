@@ -21,7 +21,7 @@ import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
-import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR } from '../../theme';
+import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR, STATUS } from '../../theme';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 
 interface Props {
@@ -303,7 +303,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280' }}>S-Concrete verification</span>
             {scoSummary ? (
               <>
-                <span style={{ fontSize: 11, fontWeight: 700, color: scoSummary.status === 'OK' ? '#16a34a' : '#dc2626' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: scoSummary.status === 'OK' ? STATUS.ok : STATUS.fail }}>
                   {scoSummary.status === 'OK' ? '✓ OK' : '✗ Overstressed'}
                 </span>
                 {scoSummary.groupLabel && <span style={{ fontSize: 10, color: '#6b7280' }}>group “{scoSummary.groupLabel}”</span>}
@@ -318,12 +318,12 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
               <span>N-M <b style={{ fontFamily: 'monospace', color: utilColor(scoSummary.nmUtil) }}>{fmtUtil(scoSummary.nmUtil)}</b></span>
               <span>V&amp;T <b style={{ fontFamily: 'monospace', color: utilColor(scoSummary.vtUtil) }}>{fmtUtil(scoSummary.vtUtil)}</b></span>
               {scoSummary.crackStatus && (
-                <span>crack <b style={{ color: scoSummary.crackStatus === 'OK' ? '#16a34a' : '#dc2626' }}>{scoSummary.crackStatus}</b></span>
+                <span>crack <b style={{ color: scoSummary.crackStatus === 'OK' ? STATUS.ok : STATUS.fail }}>{scoSummary.crackStatus}</b></span>
               )}
               <span style={{ marginLeft: 'auto', color: '#6b7280' }}>
                 app DCR <b style={{ fontFamily: 'monospace', color: themeDcrColor(appGovDCR) }}>{appGovDCR.toFixed(2)}</b>
                 {scoAgree != null && (
-                  <span style={{ marginLeft: 6, fontWeight: 700, color: scoAgree ? '#16a34a' : '#d97706' }}>
+                  <span style={{ marginLeft: 6, fontWeight: 700, color: scoAgree ? STATUS.ok : STATUS.warn }}>
                     {scoAgree ? '· agree' : '· differ ⚠'}
                   </span>
                 )}
@@ -517,8 +517,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                   <div style={{ marginTop: 4 }}>
                     <span style={{
                       fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 600,
-                      background: slsFails ? '#fee2e2' : '#dcfce7',
-                      color: slsFails ? '#b91c1c' : '#15803d',
+                      background: slsFails ? STATUS.failBg : STATUS.okBg,
+                      color: slsFails ? STATUS.fail : STATUS.ok,
                       border: `1px solid ${slsFails ? '#fca5a5' : '#86efac'}`,
                     }}>
                       {slsFails ? `⚠ Crack width exceeds limit — M_qp from ${comboLabel}` : `✓ Crack width OK — M_qp from ${comboLabel}`}
@@ -593,7 +593,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_torsion)}>{r.DCR_torsion.toFixed(3)}</span></td>
                         </>
                       )}
-                      <td style={{ padding: '5px 10px', fontWeight: 700, color: r.status === 'OK' ? '#16a34a' : r.status === 'NG' ? '#dc2626' : '#d97706', fontSize: 10 }}>
+                      <td style={{ padding: '5px 10px', fontWeight: 700, color: r.status === 'OK' ? STATUS.ok : r.status === 'NG' ? STATUS.fail : STATUS.warn, fontSize: 10 }}>
                         {r.status}
                       </td>
                     </tr>
@@ -646,7 +646,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {shownWarnings.map((w, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 8px', borderRadius: 6, background: w.severity === 'error' ? '#fef2f2' : '#fffbeb' }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: w.severity === 'error' ? '#dc2626' : '#d97706', flexShrink: 0, marginTop: 1 }}>{w.code}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: w.severity === 'error' ? STATUS.fail : STATUS.warn, flexShrink: 0, marginTop: 1 }}>{w.code}</span>
                 <span style={{ fontSize: 11, color: '#374151' }}>{w.message}</span>
               </div>
             ))}

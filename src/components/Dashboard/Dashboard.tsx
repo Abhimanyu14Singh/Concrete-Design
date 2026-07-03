@@ -3,7 +3,7 @@ import type { Project, Member, DesignResults, DesignCode, RebarLayout } from '..
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { useUnits } from '../../contexts/UnitsContext';
-import { dcrColor as themeDcrColor, dcrBg as themeDcrBg } from '../../theme';
+import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, INK, MAP_DCR_BANDS } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
 import MemberEditor from '../SectionInput/MemberEditor';
@@ -65,41 +65,32 @@ const dcrBg = themeDcrBg;
 
 const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
 
-const CHIP_GREEN  = '#16a34a';
-const CHIP_AMBER  = '#d97706';
-const CHIP_RED    = '#dc2626';
-
-function chipColor(dcr: number): string {
-  if (dcr > 1.0) return CHIP_RED;
-  if (dcr > 0.75) return CHIP_AMBER;
-  return CHIP_GREEN;
-}
-
 interface DCRChipProps {
   label: string;
   value: number | undefined;
   isWk?: boolean;
 }
 
+// Chips use the shared dcrColor thresholds (amber above NEAR_CAPACITY = 0.9),
+// so a member reads the same color here as on the map and in the results.
 function DCRChip({ label, value, isWk }: DCRChipProps) {
   let display: string;
   let bg: string;
 
   if (value === undefined) {
     display = '—';
-    bg = '#9ca3af';
+    bg = INK.muted;
   } else if (isWk) {
-    if (value > 1.0) { display = '!'; bg = CHIP_RED; }
-    else if (value > 0.9) { display = '!'; bg = CHIP_AMBER; }
-    else { display = 'OK'; bg = CHIP_GREEN; }
+    display = value > 1.0 ? '!' : value > 0.9 ? '!' : 'OK';
+    bg = dcrColor(value);
   } else {
     display = value.toFixed(2);
-    bg = chipColor(value);
+    bg = dcrColor(value);
   }
 
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-      <span style={{ fontSize: 8, color: '#9ca3af', fontWeight: 600, lineHeight: 1 }}>{label}</span>
+      <span style={{ fontSize: 8, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
       <span style={{
         padding: '2px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
         background: bg, color: 'white', fontFamily: 'monospace', lineHeight: 1.3,
@@ -297,12 +288,14 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
       ? summaries.filter(s => !assignedIds.has(s.member.id))
       : summaries.filter(s => designGroups.find(g => g.id === dcrGroupFilter)?.memberIds.includes(s.member.id));
 
+  // Series colors are categorical (no status greens/ambers/reds — those mean
+  // pass/warn/fail); Shear keeps the app-wide cyan diagram convention.
   const DCR_SERIES = [
-    { key: 'Flex+',   fill: '#3b82f6' },
-    { key: 'Flex-',   fill: '#8b5cf6' },
-    { key: 'Shear',   fill: '#f59e0b' },
-    { key: 'Torsion', fill: '#10b981' },
-    { key: 'P-M',     fill: '#ec4899' },
+    { key: 'Flex+',   fill: '#2563eb' },
+    { key: 'Flex-',   fill: '#7c3aed' },
+    { key: 'Shear',   fill: '#0891b2' },
+    { key: 'Torsion', fill: '#0d9488' },
+    { key: 'P-M',     fill: '#db2777' },
   ] as const;
   const shownSeries = dcrSeriesFilter === '__all__'
     ? DCR_SERIES
@@ -851,10 +844,10 @@ function GroupPanel({
 
 function AvgChip({ label, value }: { label: string; value: number | undefined }) {
   const display = value === undefined ? '—' : value.toFixed(2);
-  const bg = value === undefined ? '#9ca3af' : chipColor(value);
+  const bg = value === undefined ? INK.muted : dcrColor(value);
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-      <span style={{ fontSize: 8, color: '#9ca3af', fontWeight: 600, lineHeight: 1 }}>{label}</span>
+      <span style={{ fontSize: 8, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
       <span style={{
         padding: '2px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700,
         background: bg, color: 'white', fontFamily: 'monospace', lineHeight: 1.3,
@@ -863,13 +856,9 @@ function AvgChip({ label, value }: { label: string; value: number | undefined })
   );
 }
 
-const DCR_BUCKETS = [
-  { label: '<0.5', max: 0.5, color: '#16a34a' },
-  { label: '0.5–0.75', max: 0.75, color: '#65a30d' },
-  { label: '0.75–0.9', max: 0.9, color: '#d97706' },
-  { label: '0.9–1.0', max: 1.0, color: '#f59e0b' },
-  { label: '≥1.0', max: Infinity, color: '#dc2626' },
-];
+// Same bands as the model map's DCR coloring, so the histogram and the map
+// always tell the same story.
+const DCR_BUCKETS = MAP_DCR_BANDS;
 
 function DcrHistogram({ values }: { values: number[] }) {
   const counts = DCR_BUCKETS.map(() => 0);

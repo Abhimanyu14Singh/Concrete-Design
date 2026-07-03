@@ -18,6 +18,7 @@ import { governingDcr, statusView, summarize, dcrTone, type StatusTone } from '.
 import { runScoBatch, rerunScoBatch, hasSconcrete, detectSconcrete, type SconcreteRunConfig, type SconcreteRunResult, type SconcreteDetect } from '../../utils/sco/sconcreteClient';
 import { buildGroupPushPayload, summarizePushResults } from '../../adapters/etabs/pushGroups';
 import { ComConnection } from '../../adapters/etabs/comClient';
+import { ACCENT, BORDER, CODE_ACCENT, INK, LABEL_STYLE, MONO_NUM, STATUS, SURFACE, TYPE, WEIGHT } from '../../theme';
 
 interface Props {
   groups: DesignGroup[];
@@ -81,17 +82,18 @@ function cageLabel(rebar: RebarLayout | undefined): string | undefined {
 
 const btn: React.CSSProperties = {
   padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
-  fontWeight: 700, fontSize: 12, color: '#fff',
+  fontWeight: WEIGHT.bold, fontSize: TYPE.body, color: '#fff',
 };
+/** Disabled action button — light surface, muted text (the panel is white). */
+const btnDisabled: React.CSSProperties = { background: BORDER.default, color: INK.muted };
 const input: React.CSSProperties = {
-  width: '100%', padding: '4px 6px', borderRadius: 4, fontSize: 11,
-  background: '#0b1220', border: '1px solid #1f2937', color: '#e5e7eb', marginTop: 2,
+  width: '100%', padding: '4px 6px', borderRadius: 4, fontSize: TYPE.label,
+  background: 'white', border: `1px solid ${BORDER.strong}`, color: INK.strong, marginTop: 2,
 };
-const label: React.CSSProperties = { fontSize: 10, color: '#94a3b8', display: 'block', marginTop: 6 };
+const label: React.CSSProperties = { fontSize: TYPE.micro, color: INK.secondary, display: 'block', marginTop: 6 };
 
 // Status tone → colour for the results table (logic lives in resultStatus.ts).
-// Darker shades so they read on the panel's WHITE background (light theme).
-const TONE: Record<StatusTone, string> = { ok: '#059669', warn: '#d97706', ng: '#dc2626', none: '#64748b' };
+const TONE: Record<StatusTone, string> = { ok: STATUS.ok, warn: STATUS.warn, ng: STATUS.fail, none: STATUS.none };
 const dcrColor = (dcr: number | null): string => TONE[dcrTone(dcr)];
 
 export default function GroupActionsPanel({ groups, members, project, frameByMemberId, onProjectChange }: Props) {
@@ -327,11 +329,11 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
   }
 
   return (
-    <div style={{ borderTop: '1px solid #1f2937', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: '#cbd5e1', letterSpacing: 0.3 }}>EXTERNAL TOOLS</div>
+    <div style={{ borderTop: `1px solid ${BORDER.default}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ ...LABEL_STYLE, fontSize: TYPE.label }}>External tools</div>
 
       {!desktop && (
-        <div style={{ fontSize: 10.5, color: '#93c5fd', background: '#0b1220', border: '1px solid #1e3a8a', borderRadius: 6, padding: '6px 8px', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: INK.base, background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, padding: '6px 8px', lineHeight: 1.5 }}>
           You're in the browser. Grouping and design work here, but the <strong>S-Concrete batch</strong> and
           <strong> live ETABS</strong> steps run only in the Windows desktop app (they launch S-Concrete / ETABS locally).
           Create your groups now, then run the batch on desktop.
@@ -339,28 +341,28 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
       )}
 
       {isEc2 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 10.5, color: '#94a3b8' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11, color: INK.secondary }}>
           <span>EC2 SLS crack combo:</span>
           {onProjectChange ? (
             <select
               value={project.slsCombo ?? ''}
               onChange={(e) => onProjectChange((prev) => ({ ...prev, slsCombo: e.target.value || undefined }))}
-              style={{ background: '#0b1220', color: '#e5e7eb', border: '1px solid #1f2937', borderRadius: 4, fontSize: 10.5, padding: '2px 4px' }}
+              style={{ background: 'white', color: INK.strong, border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 11, padding: '2px 4px' }}
             >
               <option value="">— none (no crack file) —</option>
               {slsCombos.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           ) : (
-            <span style={{ color: '#e5e7eb' }}>{project.slsCombo ?? '— none —'}</span>
+            <span style={{ color: INK.strong }}>{project.slsCombo ?? '— none —'}</span>
           )}
-          {ec2NoSls && <span style={{ color: '#fbbf24' }}>⚠ crack-width file will NOT be generated</span>}
-          {isEc2 && slsCombos.length === 0 && onProjectChange && <span style={{ color: '#64748b' }}>(no combos in imported forces)</span>}
+          {ec2NoSls && <span style={{ color: STATUS.warn }}>⚠ crack-width file will NOT be generated</span>}
+          {isEc2 && slsCombos.length === 0 && onProjectChange && <span style={{ color: INK.secondary }}>(no combos in imported forces)</span>}
         </div>
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button
-          style={{ ...btn, background: hasEtabs ? '#10b981' : '#374151', opacity: busy ? 0.6 : 1 }}
+          style={{ ...btn, ...(hasEtabs ? { background: ACCENT.primary } : btnDisabled), opacity: busy ? 0.6 : 1 }}
           disabled={!!busy || !hasEtabs}
           title={hasEtabs ? 'Create ETABS groups and assign member frames' : 'Live ETABS requires the Windows desktop app'}
           onClick={pushToEtabs}
@@ -369,7 +371,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
         </button>
 
         <button
-          style={{ ...btn, background: desktop ? '#6366f1' : '#374151', opacity: busy ? 0.6 : 1 }}
+          style={{ ...btn, ...(desktop ? { background: ACCENT.primary } : btnDisabled), opacity: busy ? 0.6 : 1 }}
           disabled={!!busy || !desktop}
           title={desktop
             ? (groups.length
@@ -386,7 +388,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
         </button>
 
         <button
-          style={{ ...btn, background: desktop ? '#0ea5e9' : '#374151', opacity: busy ? 0.6 : 1 }}
+          style={{ ...btn, ...(desktop ? { background: ACCENT.primary } : btnDisabled), opacity: busy ? 0.6 : 1 }}
           disabled={!!busy || !desktop}
           title={desktop
             ? 'Re-runs the .SCO files ALREADY in the folder, exactly as they are — hand-edits survive. Does NOT regenerate from the app, so rebar/section changes you made in the app since the last ⚙ Batch are NOT included. Use ⚙ Batch to pick those up.'
@@ -398,7 +400,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
 
         {canPick && (
           <button
-            style={{ ...btn, background: cfg.outDir ? '#475569' : '#374151' }}
+            style={{ ...btn, background: 'white', color: INK.base, border: `1px solid ${BORDER.strong}` }}
             disabled={!!busy}
             title="Open the output folder to view or hand-edit the .SCO files, then use Re-run"
             onClick={openFolder}
@@ -407,34 +409,34 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
           </button>
         )}
 
-        <button style={{ ...btn, background: '#374151' }} onClick={() => setShowCfg((s) => !s)} disabled={!!busy}>
+        <button style={{ ...btn, background: 'white', color: INK.base, border: `1px solid ${BORDER.strong}` }} onClick={() => setShowCfg((s) => !s)} disabled={!!busy}>
           {showCfg ? 'Hide settings' : '⚙ Output folder'}
         </button>
       </div>
 
       {desktop && (
-        <div style={{ fontSize: 9.5, color: '#64748b', lineHeight: 1.5 }}>
-          <b style={{ color: '#818cf8' }}>⚙ Batch</b> rewrites the .SCO files from your current design — <b>use it after changing reinforcement in the app</b>.{' '}
-          <b style={{ color: '#38bdf8' }}>↻ Re-run</b> uses the folder's files as-is (keeps hand-edits) and does <b>not</b> pick up app changes.
+        <div style={{ fontSize: TYPE.micro, color: INK.secondary, lineHeight: 1.5 }}>
+          <b style={{ color: ACCENT.primary }}>⚙ Batch</b> rewrites the .SCO files from your current design — <b>use it after changing reinforcement in the app</b>.{' '}
+          <b style={{ color: ACCENT.primary }}>↻ Re-run</b> uses the folder's files as-is (keeps hand-edits) and does <b>not</b> pick up app changes.
         </div>
       )}
 
       {showCfg && (
-        <div style={{ background: '#0b1220', border: '1px solid #1f2937', borderRadius: 6, padding: 8 }}>
+        <div style={{ background: SURFACE.subtle, border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: 8 }}>
           {detect && (detect.found
-            ? <div style={{ fontSize: 9.5, color: '#34d399', marginBottom: 6 }}>✓ S-Concrete detected — no Python needed.</div>
-            : desktop && <div style={{ fontSize: 9.5, color: '#fbbf24', marginBottom: 6 }}>⚠ S-Concrete not found under C:\\Program Files (x86)\\S-FRAME Software\\ — install the S-FRAME Product Suite to run the batch.</div>
+            ? <div style={{ fontSize: TYPE.micro, color: STATUS.ok, marginBottom: 6 }}>✓ S-Concrete detected — no Python needed.</div>
+            : desktop && <div style={{ fontSize: TYPE.micro, color: STATUS.warn, marginBottom: 6 }}>⚠ S-Concrete not found under C:\\Program Files (x86)\\S-FRAME Software\\ — install the S-FRAME Product Suite to run the batch.</div>
           )}
           <PathField label="Output folder (.SCO + .SCRS)" placeholder="C:\\…\\scos" value={cfg.outDir}
             onChange={(v) => setCfg({ ...cfg, outDir: v })} onBrowse={canPick ? () => browse('outDir') : undefined} />
-          <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>
+          <div style={{ fontSize: TYPE.micro, color: INK.secondary, marginTop: 6 }}>
             The batch runs via the bundled S-Concrete helper — no Python or scripts. Defaults to your Documents folder.
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: '#cbd5e1', marginTop: 8, cursor: 'pointer' }}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: TYPE.label, color: INK.base, marginTop: 8, cursor: 'pointer' }}
             title="The pass/fail, DCR and warnings all come from the .SCRS, which is written before this step. The full PDF is only worth the wait when you need the printable report.">
             <input type="checkbox" checked={!!cfg.makePdf} onChange={(e) => setCfg({ ...cfg, makePdf: e.target.checked })} />
             Also generate a PDF report
-            <span style={{ color: '#64748b' }}>(off by default — slow)</span>
+            <span style={{ color: INK.secondary }}>(off by default — slow)</span>
           </label>
           {cfg.makePdf && (
             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
@@ -444,21 +446,21 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                 onChange={(e) => setCfg({ ...cfg, engineer: e.target.value })} />
             </div>
           )}
-          {!canPick && <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 6 }}>Type or paste a full Windows path (file pickers are in the desktop app).</div>}
+          {!canPick && <div style={{ fontSize: TYPE.micro, color: INK.secondary, marginTop: 6 }}>Type or paste a full Windows path (file pickers are in the desktop app).</div>}
         </div>
       )}
 
       {busy && progress && (
-        <div style={{ fontSize: 10.5, color: '#93c5fd' }}>⏳ {friendlyStep(progress)}</div>
+        <div style={{ fontSize: TYPE.label, color: ACCENT.primary }}>⏳ {friendlyStep(progress)}</div>
       )}
-      {msg && <div style={{ fontSize: 11, color: '#34d399' }}>{msg}</div>}
-      {warn && <div style={{ fontSize: 11, color: '#fbbf24' }}>⚠ {warn}</div>}
-      {err && <div style={{ fontSize: 11, color: '#f87171' }}>{err}</div>}
+      {msg && <div style={{ fontSize: TYPE.label, color: STATUS.ok }}>{msg}</div>}
+      {warn && <div style={{ fontSize: TYPE.label, color: STATUS.warn }}>⚠ {warn}</div>}
+      {err && <div style={{ fontSize: TYPE.label, color: STATUS.fail }}>{err}</div>}
 
       {shownResults && shownResults.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 9.5, color: '#64748b' }}>
+            <span style={{ fontSize: TYPE.micro, color: INK.secondary }}>
               {project.sconcreteRanAt ? `Last run ${new Date(project.sconcreteRanAt).toLocaleString()}` : 'S-Concrete results'}
               {' · colour the map by S-Concrete'}
             </span>
@@ -472,13 +474,13 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                 </span>
               )}
               <button onClick={() => saveResults(null)}
-                style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 9.5, cursor: 'pointer', padding: 0 }}>Clear</button>
+                style={{ background: 'none', border: 'none', color: INK.secondary, fontSize: TYPE.micro, cursor: 'pointer', padding: 0 }}>Clear</button>
             </div>
           </div>
-          <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 6 }}>
+          <div style={{ maxHeight: 200, overflow: 'auto', border: `1px solid ${BORDER.default}`, borderRadius: 6 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
-                <tr style={{ color: '#475569', textAlign: 'left', background: '#f8fafc' }}>
+                <tr style={{ color: INK.base, textAlign: 'left', background: SURFACE.subtle }}>
                   <th style={{ padding: '4px 6px' }}>{groups.length ? 'Group' : 'Member'}</th>
                   <th style={{ padding: '4px 6px' }}>Status</th>
                   <th style={{ padding: '4px 6px' }} title="Governing demand/capacity ratio — the worse of N-M and shear+torsion (>1 = over capacity)">DCR</th>
@@ -487,7 +489,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
               </thead>
               <tbody>
                 {shownResults.map((r) => {
-                  const badge = r.kind === 'crack' ? { t: 'crack', c: '#a78bfa' } : r.kind === 'uls' ? { t: 'ULS', c: '#38bdf8' } : null;
+                  const badge = r.kind === 'crack' ? { t: 'crack', c: CODE_ACCENT['EN1992-1-1'] } : r.kind === 'uls' ? { t: 'ULS', c: ACCENT.primary } : null;
                   const isOpen = expanded === r.name;
                   const memberLabels = members.filter((m) => r.memberIds?.includes(m.id)).map((m) => m.label);
                   const overN = (r.nmUtil ?? 0) > 1;
@@ -498,62 +500,62 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                   const warns = r.warnings ?? [];
                   return (
                     <Fragment key={r.name}>
-                      <tr style={{ color: '#1e293b', borderTop: '1px solid #e5e7eb', cursor: 'pointer' }}
+                      <tr style={{ color: INK.strong, borderTop: `1px solid ${BORDER.default}`, cursor: 'pointer' }}
                         onClick={() => setExpanded(isOpen ? null : r.name)} title="Click to see this group's checks">
                         <td style={{ padding: '4px 6px', fontWeight: 600 }}>
-                          <span style={{ color: '#94a3b8', marginRight: 3 }}>{isOpen ? '▾' : '▸'}</span>
+                          <span style={{ color: INK.muted, marginRight: 3 }}>{isOpen ? '▾' : '▸'}</span>
                           {r.groupLabel ?? r.name}
                           {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
                         </td>
                         <td style={{ padding: '4px 6px', color: TONE[sv.tone], fontWeight: 700, whiteSpace: 'nowrap' }}>
                           {sv.text}
-                          {sv.derived && <span style={{ color: '#64748b', fontWeight: 400 }} title="No status line in the report — derived from the governing DCR">&nbsp;*</span>}
+                          {sv.derived && <span style={{ color: INK.secondary, fontWeight: 400 }} title="No status line in the report — derived from the governing DCR">&nbsp;*</span>}
                         </td>
                         <td style={{ padding: '4px 6px', color: dcrColor(dcr), fontWeight: 700, whiteSpace: 'nowrap' }}
                           title={by ? `Governed by ${by} utilization` : undefined}>
                           {dcr != null ? dcr.toFixed(2) : '—'}
-                          {by && <span style={{ color: '#64748b', fontWeight: 400, fontSize: 9, marginLeft: 3 }}>{by}</span>}
+                          {by && <span style={{ color: INK.secondary, fontWeight: 400, fontSize: TYPE.micro, marginLeft: 3 }}>{by}</span>}
                         </td>
-                        <td style={{ padding: '4px 6px', textAlign: 'center', color: warns.length ? TONE.warn : '#334155', fontWeight: warns.length ? 700 : 400 }}
+                        <td style={{ padding: '4px 6px', textAlign: 'center', color: warns.length ? TONE.warn : INK.base, fontWeight: warns.length ? 700 : 400 }}
                           title={warns.length ? `${warns.length} message(s)` : 'no messages'}>
                           {warns.length || '—'}
                         </td>
                       </tr>
                       {isOpen && (
-                        <tr style={{ background: '#f8fafc' }}>
-                          <td colSpan={4} style={{ padding: '6px 10px', fontSize: 10.5, color: '#334155' }}>
+                        <tr style={{ background: SURFACE.subtle }}>
+                          <td colSpan={4} style={{ padding: '6px 10px', fontSize: TYPE.label, color: INK.base }}>
                             <div style={{ marginBottom: 4 }}>
                               <b style={{ color: TONE[sv.tone] }}>{sv.text === '—' ? 'no result' : sv.text}</b>
-                              {sv.derived && <span style={{ color: '#64748b' }}> (derived from DCR — no status line in the report)</span>}
-                              {r.kind && <span style={{ color: '#64748b' }}> · {r.kind === 'crack' ? 'crack-width (SLS)' : r.kind === 'uls' ? 'strength (ULS)' : 'strength'} check</span>}
+                              {sv.derived && <span style={{ color: INK.secondary }}> (derived from DCR — no status line in the report)</span>}
+                              {r.kind && <span style={{ color: INK.secondary }}> · {r.kind === 'crack' ? 'crack-width (SLS)' : r.kind === 'uls' ? 'strength (ULS)' : 'strength'} check</span>}
                             </div>
                             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
-                              <span>Governing DCR <b style={{ color: dcrColor(dcr) }}>{dcr != null ? dcr.toFixed(2) : '—'}</b>{by && <span style={{ color: '#64748b' }}> ({by})</span>}</span>
-                              <span>N-M util <b style={{ color: overN ? '#dc2626' : '#059669' }}>{r.nmUtil ?? '—'}</b></span>
-                              <span>V&amp;T util <b style={{ color: overV ? '#dc2626' : '#059669' }}>{r.vtUtil ?? '—'}</b></span>
+                              <span>Governing DCR <b style={{ color: dcrColor(dcr) }}>{dcr != null ? dcr.toFixed(2) : '—'}</b>{by && <span style={{ color: INK.secondary }}> ({by})</span>}</span>
+                              <span>N-M util <b style={{ color: overN ? STATUS.fail : STATUS.ok }}>{r.nmUtil ?? '—'}</b></span>
+                              <span>V&amp;T util <b style={{ color: overV ? STATUS.fail : STATUS.ok }}>{r.vtUtil ?? '—'}</b></span>
                             </div>
-                            {failing && <div style={{ color: '#dc2626', marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
+                            {failing && <div style={{ color: STATUS.fail, marginBottom: 4 }}>⚠ over capacity: {failing} (util above 1.0)</div>}
                             {r.cage && (
                               <div style={{ marginBottom: 4 }}>
-                                Cage used: <b style={{ fontFamily: 'monospace', color: '#1e293b' }}>{r.cage}</b>
-                                <span style={{ color: '#64748b' }}> — not the bars you picked? Set them in ① Design and click “Apply to N members”, then re-run.</span>
+                                Cage used: <b style={{ ...MONO_NUM, color: INK.strong }}>{r.cage}</b>
+                                <span style={{ color: INK.secondary }}> — not the bars you picked? Set them in ① Design and click “Apply to N members”, then re-run.</span>
                               </div>
                             )}
                             {warns.length > 0 && (
                               <div style={{ marginBottom: 4 }}>
                                 <div style={{ color: TONE.warn, marginBottom: 2 }}>⚠ {warns.length} S-Concrete message{warns.length !== 1 ? 's' : ''}:</div>
-                                <ul style={{ margin: 0, paddingLeft: 16, color: '#b45309' }}>
+                                <ul style={{ margin: 0, paddingLeft: 16, color: STATUS.warn }}>
                                   {warns.slice(0, 8).map((w, i) => <li key={i} style={{ marginBottom: 1 }}>{w}</li>)}
                                 </ul>
-                                {warns.length > 8 && <div style={{ color: '#64748b' }}>+{warns.length - 8} more…</div>}
+                                {warns.length > 8 && <div style={{ color: INK.secondary }}>+{warns.length - 8} more…</div>}
                               </div>
                             )}
                             {memberLabels.length > 0 && (
-                              <div style={{ color: '#94a3b8' }}>
+                              <div style={{ color: INK.secondary }}>
                                 {memberLabels.length} member{memberLabels.length !== 1 ? 's' : ''}: {memberLabels.slice(0, 12).join(', ')}{memberLabels.length > 12 ? '…' : ''}
                               </div>
                             )}
-                            <div style={{ color: '#64748b', marginTop: 3 }}>Open a member to compare its app DCR with this S-Concrete result.</div>
+                            <div style={{ color: INK.secondary, marginTop: 3 }}>Open a member to compare its app DCR with this S-Concrete result.</div>
                           </td>
                         </tr>
                       )}

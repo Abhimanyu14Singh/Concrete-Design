@@ -4,6 +4,7 @@
  * viewport overflow. No external dependencies.
  */
 import { useState, useRef, useCallback } from 'react';
+import { ACCENT, DARK, FONT, TYPE } from '../../theme';
 
 interface Props {
   text: string;
@@ -16,21 +17,22 @@ interface Props {
 const ICON: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   width: 13, height: 13, borderRadius: '50%',
-  background: '#e0e7ff', color: '#4338ca',
+  background: ACCENT.softBg, color: ACCENT.primary,
   fontSize: 9, fontWeight: 700, cursor: 'default',
   flexShrink: 0, userSelect: 'none', lineHeight: 1,
   marginLeft: 4, verticalAlign: 'middle',
 };
 
+// Tooltips stay dark (floating-chrome convention) — the one dark surface left.
 const PANEL: React.CSSProperties = {
   position: 'fixed',
   zIndex: 9999,
   maxWidth: 280,
-  background: '#1e293b',
-  color: '#f1f5f9',
+  background: DARK.surface,
+  color: DARK.ink,
   borderRadius: 8,
   padding: '8px 10px',
-  fontSize: 11,
+  fontSize: TYPE.label,
   lineHeight: 1.5,
   boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
   pointerEvents: 'none',
@@ -69,7 +71,7 @@ export default function InfoTooltip({ text, formula, placement = 'right' }: Prop
         <div style={{ ...PANEL, top: pos.top, left: pos.left }}>
           {text}
           {formula && (
-            <div style={{ marginTop: 5, fontFamily: 'monospace', fontSize: 10, color: '#94a3b8', whiteSpace: 'pre' }}>
+            <div style={{ marginTop: 5, fontFamily: FONT.mono, fontSize: TYPE.micro, color: DARK.inkMuted, whiteSpace: 'pre' }}>
               {formula}
             </div>
           )}
