@@ -9,7 +9,10 @@
  * This module is the pure, testable orchestration logic.
  *
  * Writer selection by design code:
- *  • ACI columns → buildColumnScoText (byte-validated, 1:1 with Column_Design_DW).
+ *  • ACI rect. columns → buildColumnScoText (Version 7, byte-validated 1:1 with
+ *    Column_Design_DW).
+ *  • ACI circular columns → buildCircularColumnScoText (Version 2026.0, Member
+ *    Type 4, byte-validated 1:1 with Column_Design_DW's circular build).
  *  • ACI beams   → buildBeamScoText (Member-Type-1; confirm against a real file).
  *  • EC2 beams   → buildEc2BeamSco (S-Concrete 2026 template; see scoWriterEC2).
  *    Crack width is handled in-file (the EC2 file enables the crack check and
@@ -19,12 +22,14 @@
  *
  * ACI force conventions (matching the column repo's sco_writer.py `_lc_row`):
  *  • Column: P is compression-NEGATIVE (app Pu is +compression, so negated);
- *    ETABS↔S-Concrete axis pairing is M3↔Mux (V2/Z-direction) and M2↔Muy
- *    (V3/Y-direction). The app carries a single Vu, placed on V2; V3 is left 0
- *    and should be confirmed on Windows for true biaxial shear.
+ *    ETABS↔S-Concrete axis pairing is M3↔Mux (Vfz/Z-direction) and M2↔Muy
+ *    (Vfy/Y-direction). Shear is biaxial: ETABS V2 → Vfz (with M3/Mux) and V3 →
+ *    Vfy (with M2/Muy), preserved via LoadCase.Vu2/Vu3; a hand-entered member
+ *    with only the single enveloped Vu falls back to Vu on V2, V3 = 0.
  *  • Beam: Mfy (M3) = governing factored moment, Vfy (V3) = Vu, Tf = Tu, Nf = Pu.
  */
 import { buildBeamScoText, buildColumnScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
+import { buildCircularColumnScoText } from './scoWriterCircular';
 import {
   buildEc2BeamSco, buildEc2ColumnSco, buildEc2BeamScoExplicit, ec2BeamUlsRows, ec2BeamCrackRows,
 } from './scoWriterEC2';
@@ -51,10 +56,13 @@ const sanitize = (s: string): string => s.replace(/[^A-Za-z0-9_.-]+/g, '_');
 const isColumnSection = (m: Member): boolean =>
   m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
 
-/** S-Concrete can check beams and rectangular columns; circular columns use a
- *  template the writers don't emit yet, so they are not eligible for a .SCO. */
-const isScoEligible = (m: Member): boolean =>
-  m.memberType === 'beam' || m.section.type === 'rectangular_column';
+/** S-Concrete can check beams, rectangular columns, and — for ACI — circular
+ *  columns (Version 2026.0). EC2 circular columns have no sample yet, so they
+ *  remain ineligible. */
+const isScoEligible = (m: Member, ec2: boolean): boolean =>
+  m.memberType === 'beam'
+  || m.section.type === 'rectangular_column'
+  || (m.section.type === 'circular_column' && !ec2);
 
 /** Map a beam member's load cases onto S-Concrete Sectional Loads rows. The load
  *  label is also written to the row's Comment column so the governing case stays
@@ -84,8 +92,11 @@ function columnLoadCases(m: Member): ScoLoadCase[] {
     P: -(lc.Pu ?? 0),
     M3: lc.Mux ?? lc.Mu_pos ?? 0,
     M2: lc.Muy ?? 0,
-    V2: lc.Vu ?? 0,
-    V3: 0,
+    // Biaxial shear: V2 (strong, ETABS V2) → Vfz pairs with M3/Mux; V3 (weak,
+    // ETABS V3) → Vfy pairs with M2/Muy. Falls back to the single enveloped Vu on
+    // V2 for hand-entered members that never carried the split shears.
+    V2: lc.Vu2 ?? lc.Vu ?? 0,
+    V3: lc.Vu3 ?? 0,
     T: lc.Tu ?? 0,
   }));
 }
@@ -102,16 +113,24 @@ function colFaceCounts(m: Member): { nz: number; ny: number } {
   return { nz: Math.max(2, nz), ny: Math.max(2, ny) };
 }
 
+/** Total longitudinal bars around a circular column's perimeter (S-Concrete
+ *  Cm Nzcol), summing every bar group — the same count the circular section
+ *  model uses. The writer clamps to ≥4. */
+function circBarCount(m: Member): number {
+  return [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])]
+    .reduce((s, g) => s + g.numBars, 0);
+}
+
 /**
- * Build one .SCO per member in the group. Columns route through the validated
- * rectangular-column writer; beams through the Member-Type-1 writer. Circular
- * columns are skipped (S-Concrete uses a separate circular template the writer
- * does not yet emit).
+ * Build one .SCO per member in the group. Rectangular columns route through the
+ * validated Version-7 writer, circular columns through the validated Version-2026.0
+ * writer (buildCircularColumnScoText), and beams through the Member-Type-1 writer.
  *
  * EC2 (EN 1992-1-1): beams route to buildEc2BeamSco (which needs the project for
- * the crack-width combo) and crack width is handled in-file; EC2 columns are
- * skipped (no EC2 column sample yet). Throws for any other code that has no
- * confirmed S-Concrete header mapping.
+ * the crack-width combo) and crack width is handled in-file; EC2 rectangular
+ * columns route to buildEc2ColumnSco; EC2 circular columns are skipped (no EC2
+ * circular sample yet). Throws for any other code with no confirmed S-Concrete
+ * header mapping.
  */
 export function buildGroupScoFiles(members: Member[], code: DesignCode, project?: Project): ScoFile[] {
   const ec2 = isEc2(code);
@@ -128,14 +147,30 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode, project?
   const files: ScoFile[] = [];
   for (const m of members) {
     if (isColumnSection(m)) {
-      if (m.section.type === 'circular_column') continue; // rectangular template only
+      const longBar = barName(m.rebar.topBars[0]?.barSize ?? m.rebar.botBars[0]?.barSize ?? m.rebar.sideBars?.[0]?.barSize ?? 8);
+      const tieBar = barName(m.rebar.ties ? m.rebar.ties.barSize : m.section.stirrupDia);
+      if (m.section.type === 'circular_column') {
+        if (ec2) continue; // no EC2 circular-column sample yet
+        const text = buildCircularColumnScoText({
+          memberName: m.label,
+          dIn: m.section.diameter ?? m.section.b,
+          fcKsi: m.material.fc / 1000,
+          fyKsi: m.material.fy / 1000,
+          nBars: circBarCount(m),
+          longBar,
+          tieBar,
+          tieSpacingIn: m.rebar.ties?.spacing ?? 12,
+          coverIn: m.section.coverClear,
+          loadCases: columnLoadCases(m),
+        });
+        files.push({ fileName: `${sanitize(m.label)}.SCO`, text, memberId: m.id });
+        continue;
+      }
       if (ec2) {
         files.push({ fileName: `${sanitize(m.label)}.SCO`, text: buildEc2ColumnSco(m), memberId: m.id });
         continue;
       }
       const { nz, ny } = colFaceCounts(m);
-      const longBar = barName(m.rebar.topBars[0]?.barSize ?? m.rebar.botBars[0]?.barSize ?? m.rebar.sideBars?.[0]?.barSize ?? 8);
-      const tieBar = barName(m.rebar.ties ? m.rebar.ties.barSize : m.section.stirrupDia);
       const text = buildColumnScoText({
         memberName: m.label,
         bIn: m.section.b,
@@ -339,10 +374,10 @@ export function buildGroupEnvelopeScoFiles(
 
   for (const g of groups) {
     const groupMembers = g.memberIds.map((id) => byId.get(id)).filter((m): m is Member => m != null);
-    const eligible = groupMembers.filter(isScoEligible);
+    const eligible = groupMembers.filter((m) => isScoEligible(m, ec2));
     if (!eligible.length) continue; // nothing S-Concrete can check → no file
-    // Members S-Concrete can't check at all (e.g. circular columns) — reported, not pooled.
-    const excludedMemberIds = groupMembers.filter((m) => !isScoEligible(m)).map((m) => m.id);
+    // Members S-Concrete can't check (e.g. EC2 circular columns) — reported, not pooled.
+    const excludedMemberIds = groupMembers.filter((m) => !isScoEligible(m, ec2)).map((m) => m.id);
 
     // Sub-group by member type so a mixed beam+column group yields a beam
     // envelope AND a column envelope — no eligible member is silently dropped.

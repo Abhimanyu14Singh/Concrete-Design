@@ -192,21 +192,29 @@ describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
     for (const f of files) expect(f.excludedMemberIds).toEqual([]);   // every eligible member covered
   });
 
-  it('records a truly-unsupported member (circular column) as excluded, not dropped silently', () => {
+  it('records a truly-unsupported member (EC2 circular column) as excluded, not dropped silently', () => {
+    // ACI circular is now emittable; EC2 circular still has no sample, so it is
+    // the remaining "unsupported" case that must be reported, not dropped.
+    const project = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
     const members = [beam('b1', 'B1', [lc({ Mu_pos: 100 })]), circ('c1', 'C1')];
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'ACI318-19');
+    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'EN1992-1-1', project);
     expect(file.memberCount).toBe(1);                 // beam only
-    expect(file.excludedMemberIds).toEqual(['c1']);   // circular column reported
+    expect(file.excludedMemberIds).toEqual(['c1']);   // EC2 circular column reported
   });
 
-  it('skips circular columns when picking eligible members', () => {
+  it('includes an ACI circular column as its own Member-Type-4 envelope', () => {
     const members = [beam('b1', 'B1', [lc({ Mu_pos: 100 })]), circ('c1', 'C1')];
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'ACI318-19');
-    expect(file.memberCount).toBe(1);                 // circular column not eligible
+    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'ACI318-19');
+    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
+    // Beam + circular column → sub-grouped by member type into two envelopes.
+    expect(byName['G_beam.SCO'].text).toContain('Member Type\t 1');   // beam
+    expect(byName['G_col.SCO'].text).toContain('Member Type\t 4');    // circular column
+    for (const f of files) expect(f.excludedMemberIds).toEqual([]);   // nobody dropped
   });
 
-  it('produces NO file for a group with no eligible members', () => {
-    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['c1'])], [circ('c1', 'C1')], 'ACI318-19');
+  it('produces NO file for a group with no eligible members (EC2 circular only)', () => {
+    const project = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
+    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['c1'])], [circ('c1', 'C1')], 'EN1992-1-1', project);
     expect(files).toEqual([]);
   });
 

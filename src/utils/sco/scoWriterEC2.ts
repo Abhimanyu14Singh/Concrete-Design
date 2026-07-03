@@ -336,18 +336,21 @@ export function buildColumnScoTextEC2(p: Ec2ColumnScoParams): string {
 }
 
 /** Sectional Loads rows for a column: one per load case, biaxial.
- *  Nf=-Pu, Tf=Tu, Vfz=Vu, Mfy=Mux (major), Mfz=Muy (minor); SustFactor 0.6
- *  (the sustained-load ratio S-Concrete uses for creep, per the sample). */
+ *  Nf=-Pu, Tf=Tu, Mfy=Mux (major), Mfz=Muy (minor); shear is biaxial —
+ *  Vfz=Vu2 (strong, pairs with Mfy) and Vfy=Vu3 (weak, pairs with Mfz), with a
+ *  fallback to the single enveloped Vu on Vfz. SustFactor 0.6 (the sustained-load
+ *  ratio S-Concrete uses for creep, per the sample). */
 export function ec2ColumnLoadRows(member: Member): string[] {
   const rows: string[] = [];
   let i = 1;
   for (const lc of member.loads) {
     const nf = -(lc.Pu ?? 0) * KIP_TO_KN;
     const tf = (lc.Tu ?? 0) * KIPFT_TO_KNM;
-    const vfz = (lc.Vu ?? 0) * KIP_TO_KN;
+    const vfz = (lc.Vu2 ?? lc.Vu ?? 0) * KIP_TO_KN;
+    const vfy = (lc.Vu3 ?? 0) * KIP_TO_KN;
     const mfy = (lc.Mux ?? lc.Mu_pos ?? 0) * KIPFT_TO_KNM;
     const mfz = (lc.Muy ?? 0) * KIPFT_TO_KNM;
-    rows.push(ec2LoadRow(i++, nf, tf, vfz, mfy, { mfz, sust: 0.6, comment: lc.label || `LC${i}` }));
+    rows.push(ec2LoadRow(i++, nf, tf, vfz, mfy, { vfy, mfz, sust: 0.6, comment: lc.label || `LC${i}` }));
   }
   if (!rows.length) rows.push(ec2LoadRow(1, 0, 0, 0, 0, { sust: 0.6 }));
   return rows;

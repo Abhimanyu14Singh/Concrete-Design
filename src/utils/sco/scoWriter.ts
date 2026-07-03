@@ -40,15 +40,15 @@ const SPLICE_CODES: Record<string, number> = {
 };
 const spliceCode = (t: string | undefined): number => SPLICE_CODES[t || 'None'] ?? 0;
 
-const ecKsi = (fcPsi: number, wcPcf = 150.0): number =>
+export const ecKsi = (fcPsi: number, wcPcf = 150.0): number =>
   33.0 * Math.pow(wcPcf, 1.5) * Math.sqrt(fcPsi) / 1000.0;
 
 const nBarsTotalRect = (nz: number, ny: number): number => 2 * (nz + ny) - 4;
 
 // Python format helpers
-const f0 = (x: number): string => x.toFixed(0);
-const f1 = (x: number): string => x.toFixed(1);
-const f3 = (x: number): string => x.toFixed(3);
+export const f0 = (x: number): string => x.toFixed(0);
+export const f1 = (x: number): string => x.toFixed(1);
+export const f3 = (x: number): string => x.toFixed(3);
 const B = (b: boolean): string => (b ? 'True' : 'False');
 /** Python str(float): integers render with a trailing .0 (e.g. 60 -> "60.0"). */
 const pyFloat = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
@@ -186,7 +186,7 @@ function nLegs(
   return 2 * Math.ceil(nFace / 4);
 }
 
-const BAR_TABLE =
+export const BAR_TABLE =
   '@Object@S-CONCRETE Customized Bar Parameters@0@\n' +
   '@Table@2@\n' +
   'Units\t 0\n' +
@@ -218,7 +218,9 @@ const BAR_TABLE =
 export function buildColumnScoText(p: ColumnScoParams): string {
   const coverIn = p.coverIn ?? 1.5;
   const shape = p.shape ?? 'rectangular';
-  if (shape === 'circular') throw new Error('circular .SCO not yet supported');
+  // Circular columns use a different S-Concrete format (Version 2026.0, Member
+  // Type 4) — see buildCircularColumnScoText in scoWriterCircular.ts.
+  if (shape === 'circular') throw new Error('Use buildCircularColumnScoText for circular columns (Member Type 4).');
   const luYyIn = p.luYyIn ?? 120.0;
   const luZzIn = p.luZzIn ?? 120.0;
   const fyTiesKsi = p.fyTiesKsi ?? 60.0;

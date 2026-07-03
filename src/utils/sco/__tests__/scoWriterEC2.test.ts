@@ -33,13 +33,13 @@ function param(text: string, key: string): string | null {
   const m = text.match(new RegExp(`${esc}\\t ?([^\\t\\n]*)`));
   return m ? m[1].trim() : null;
 }
-// Parse the Sectional Loads rows: c1=Nf c2=Tf c3=Vfz c4=Mfy … c14=SustFactor.
+// Parse the Sectional Loads rows: c1=Nf c2=Tf c3=Vfz c4=Mfy c6=Vfy c7=Mfz … c14=SustFactor.
 function loadRows(text: string) {
   const start = text.indexOf('@Table@16@');
   const end = text.indexOf('@EndTable@', start);
   return text.slice(start, end).split('\n')
     .filter(l => /^\s*\d+\t/.test(l))
-    .map(l => { const c = l.split('\t').map(s => s.trim()); return { Nf: +c[1], Tf: +c[2], Vfz: +c[3], Mfy: +c[4], Mfz: +c[7], sust: +c[14] }; });
+    .map(l => { const c = l.split('\t').map(s => s.trim()); return { Nf: +c[1], Tf: +c[2], Vfz: +c[3], Mfy: +c[4], Vfy: +c[6], Mfz: +c[7], sust: +c[14] }; });
 }
 
 describe('barIndexEC2', () => {
@@ -191,5 +191,22 @@ describe('buildEc2ColumnSco — app inputs reflected (Member Type 3)', () => {
     expect(rows[0].Mfy).toBeCloseTo(200 * 1.355818, 1);   // Mux → major
     expect(rows[0].Mfz).toBeCloseTo(120 * 1.355818, 1);   // Muy → minor
     expect(rows[0].sust).toBeCloseTo(0.6, 6);
+  });
+
+  it('falls back to the single enveloped Vu on Vfz when no Vu2/Vu3 (Vfy 0)', () => {
+    // The fixture carries only Vu=40 (no biaxial split), so Vfz=Vu, Vfy=0.
+    const rows = loadRows(t);
+    expect(rows[0].Vfz).toBeCloseTo(40 * 4.448222, 1);
+    expect(rows[0].Vfy).toBeCloseTo(0, 6);
+  });
+
+  it('emits biaxial shear separately: Vu2 → Vfz (strong), Vu3 → Vfy (weak)', () => {
+    // A member imported from ETABS carries both direction shears; the .SCO must
+    // check BOTH faces instead of collapsing to one Vu.
+    const m = column();
+    m.loads = [{ ...m.loads[0], Vu: 55, Vu2: 55, Vu3: 33 }];
+    const rows = loadRows(buildEc2ColumnSco(m));
+    expect(rows[0].Vfz).toBeCloseTo(55 * 4.448222, 1);   // ETABS V2 → strong face
+    expect(rows[0].Vfy).toBeCloseTo(33 * 4.448222, 1);   // ETABS V3 → weak face
   });
 });

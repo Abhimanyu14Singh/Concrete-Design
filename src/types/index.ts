@@ -149,11 +149,19 @@ export interface LoadCase {
   label: string;
   Mu_pos: number;  // Positive moment (kip-ft)
   Mu_neg: number;  // Negative moment (kip-ft)
-  Vu: number;      // Shear (kips)
+  Vu: number;      // Shear (kips) — beams; columns use the biaxial Vu2/Vu3 below
   Tu: number;      // Torsion (kip-ft)
   Pu: number;      // Axial (kips, + compression)
   Mux?: number;    // Moment about x for column (kip-ft)
   Muy?: number;    // Moment about y for column (kip-ft)
+  /**
+   * Biaxial column shears (kips), preserved separately for the S-Concrete .SCO so
+   * both faces are checked instead of collapsing to a single Vu. ETABS V2 pairs
+   * with the strong-axis moment (Mux/M3 → S-Concrete Vfz) and V3 with the
+   * weak-axis moment (Muy/M2 → Vfy). Absent for beams and hand-entered members.
+   */
+  Vu2?: number;    // ETABS V2, strong-direction shear (kips)
+  Vu3?: number;    // ETABS V3, weak-direction shear (kips)
 }
 
 export interface DesignResults {

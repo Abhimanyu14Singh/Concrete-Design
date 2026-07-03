@@ -42,8 +42,9 @@ function beam(id: string, label: string, loads: LC[] = [lc({ Mu_pos: 180, Mu_neg
     loads, span: 20,
   };
 }
-// A circular column — NOT S-Concrete-eligible (the writer emits rectangular
-// templates only), so it stands in for "a member the batch must skip".
+// A circular column. Under ACI it now routes to the Version-2026.0 (Type 4)
+// writer; under EC2 it is still unsupported, so EC2 tests use it as the member
+// the batch must skip.
 function circ(id: string, label: string): Member {
   return {
     ...beam(id, label), memberType: 'column',
@@ -152,14 +153,16 @@ describe('edge cases', () => {
     for (const v of Object.values(rows[0])) expect(Number.isNaN(v)).toBe(false);
   });
 
-  it('a mixed group exports the beams and skips non-S-Concrete sections (circular columns)', () => {
+  it('a mixed ACI group exports the beams AND the circular column (Type 4)', () => {
     const members = [beam('b1', 'B1'), circ('c1', 'C1'), beam('b2', 'B2')];
     const files = buildScoFilesByGroup([group('g', 'G', ['b1', 'c1', 'b2'])], members, 'ACI318-19')[0].files;
-    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);  // circular column dropped
+    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2', 'c1']);  // circular now emitted
+    expect(files.find(f => f.memberId === 'c1')!.text).toContain('Member Type\t 4');
   });
 
-  it('a group of only non-beam members yields no files', () => {
-    const files = buildScoFilesByGroup([group('g', 'G', ['w1'])], [circ('c1', 'C1')], 'ACI318-19')[0].files;
+  it('a group of only EC2 circular members yields no files (no EC2 circular sample)', () => {
+    const proj: Project = { id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: 'd', members: [] };
+    const files = buildScoFilesByGroup([group('g', 'G', ['c1'])], [circ('c1', 'C1')], 'EN1992-1-1', proj)[0].files;
     expect(files).toHaveLength(0);
   });
 
@@ -221,14 +224,15 @@ describe('collectGroupScoFiles — the flat list fed to the batch run', () => {
     expect(files.map(f => f.memberId)).toEqual(['b1']);
   });
 
-  it('falls back to ALL eligible members when no groups are defined', () => {
+  it('falls back to ALL eligible members when no groups are defined (ACI circular included)', () => {
     const members = [beam('b1', 'B1'), beam('b2', 'B2'), circ('c', 'C')];
     const files = collectGroupScoFiles([], members, 'ACI318-19');
-    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2']);   // circular column excluded
+    expect(files.map(f => f.memberId).sort()).toEqual(['b1', 'b2', 'c']);   // circular now eligible
   });
 
-  it('returns nothing when the groups contain no eligible members', () => {
-    const files = collectGroupScoFiles([group('g', 'G', ['w'])], [circ('c', 'C')], 'ACI318-19');
+  it('returns nothing when the groups contain no eligible members (EC2 circular)', () => {
+    const proj: Project = { id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: 'd', members: [] };
+    const files = collectGroupScoFiles([group('g', 'G', ['c'])], [circ('c', 'C')], 'EN1992-1-1', proj);
     expect(files).toEqual([]);
   });
 

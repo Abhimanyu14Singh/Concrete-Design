@@ -79,6 +79,15 @@ const col = (id: string, label: string, over: Partial<Member['section']> = {}): 
   loads: [{ id: 'LC1', label: '1.2D+1.6L', Mu_pos: 0, Mu_neg: 0, Vu: 30, Tu: 5, Pu: 600, Mux: 120, Muy: 80 }],
 });
 
+// Parse the first ACI Sectional Loads row (Table 16): the row is
+// ` 1\tNf\tTf\tVfz\tMfy\tCmy\tVfy\tMfz\t…`, so Vfz=c3 and Vfy=c6.
+function aciLoadRow(text: string) {
+  const body = text.slice(text.indexOf('@Table@16@'));
+  const line = body.split('\n').find((l) => /^\s*1\t/.test(l))!;
+  const c = line.split('\t').map((s) => s.trim());
+  return { Nf: +c[1], Tf: +c[2], Vfz: +c[3], Mfy: +c[4], Vfy: +c[6], Mfz: +c[7] };
+}
+
 describe('buildGroupScoFiles — columns', () => {
   it('routes a rectangular column through the validated Type-3 writer', () => {
     const files = buildGroupScoFiles([col('c1', 'C1')], 'ACI318-19');
@@ -97,12 +106,31 @@ describe('buildGroupScoFiles — columns', () => {
     expect(t.includes('80.0')).toBe(true);    // M2 = Muy
   });
 
-  it('skips circular columns (no rectangular template)', () => {
+  it('falls back to the single enveloped Vu on Vfz (Vfy 0) when no biaxial split', () => {
+    // The base fixture carries only Vu=30 — no Vu2/Vu3 — so Vfz=Vu, Vfy=0.
+    const r = aciLoadRow(buildGroupScoFiles([col('c1', 'C1')], 'ACI318-19')[0].text);
+    expect(r.Vfz).toBeCloseTo(30, 3);   // ETABS strong-face shear
+    expect(r.Vfy).toBeCloseTo(0, 6);
+  });
+
+  it('emits biaxial shear separately: Vu2 → Vfz (strong), Vu3 → Vfy (weak)', () => {
+    const m = col('c1', 'C1');
+    m.loads = [{ ...m.loads[0], Vu: 45, Vu2: 45, Vu3: 28 }];
+    const r = aciLoadRow(buildGroupScoFiles([m], 'ACI318-19')[0].text);
+    expect(r.Vfz).toBeCloseTo(45, 3);   // ETABS V2 → strong face (with M3/Mux)
+    expect(r.Vfy).toBeCloseTo(28, 3);   // ETABS V3 → weak face (with M2/Muy)
+  });
+
+  it('routes an ACI circular column through the Version-2026.0 (Type 4) writer', () => {
     const files = buildGroupScoFiles(
       [col('c2', 'C2', { type: 'circular_column', diameter: 24, b: 24, h: 24 })],
       'ACI318-19',
     );
-    expect(files).toHaveLength(0);
+    expect(files).toHaveLength(1);
+    const t = files[0].text;
+    expect(t).toContain('Version\t2026.0\n');   // circular format
+    expect(t).toContain('Member Type\t 4\n');    // circular column
+    expect(t).toContain('Cm D\t 24\t');          // diameter injected
   });
 
   it('handles a mixed beam + column group, one .SCO each', () => {

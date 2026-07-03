@@ -165,10 +165,13 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
     });
   }
 
-  // S-Concrete sections: beams (Member Type 1) + rectangular columns (Type 3,
-  // validated writer). Circular columns use a template the writer can't emit yet.
+  // S-Concrete sections: beams (Member Type 1), rectangular columns (Type 3), and
+  // — for ACI — circular columns (Member Type 4, Version 2026.0). EC2 circular
+  // columns have no sample yet, so they stay ineligible under EN 1992-1-1.
   const isScoEligible = (m: typeof members[number]) =>
-    m.memberType === 'beam' || m.section.type === 'rectangular_column';
+    m.memberType === 'beam'
+    || m.section.type === 'rectangular_column'
+    || (m.section.type === 'circular_column' && code !== 'EN1992-1-1');
   const scoMembers = members.filter(isScoEligible);
   // When the user has defined design groups, the batch is scoped to the union of
   // their members (deduped); otherwise it falls back to all eligible members.

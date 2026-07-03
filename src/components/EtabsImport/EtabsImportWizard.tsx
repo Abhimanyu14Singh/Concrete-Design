@@ -240,7 +240,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 ...m,
                 loads: cfs.map((cf, i) => ({
                   id: cf.combo || `LC${i + 1}`, label: cf.combo || `LC${i + 1}`,
+                  // Vu keeps the enveloped max for the app's single-shear engine;
+                  // Vu2/Vu3 preserve both directions for the biaxial S-Concrete .SCO.
                   Pu: -cf.P, Mux: cf.M3, Muy: cf.M2, Vu: Math.max(cf.V2, cf.V3), Tu: cf.T,
+                  Vu2: cf.V2, Vu3: cf.V3,
                   Mu_pos: 0, Mu_neg: 0,
                 })),
               };
