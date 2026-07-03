@@ -17,6 +17,7 @@
     "build:helper": "dotnet publish tools/EtabsHelper -c Release -r win-x64 --no-self-contained -o build-helper && dotnet publish tools/SConcreteHelper -c Release -r win-x64 --no-self-contained -o build-helper-sconcrete"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@pdf-lib/fontkit": "^1.1.1",
     "lucide-react": "^1.17.0",
     "pdf-lib": "^1.17.1",

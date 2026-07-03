@@ -16,7 +16,7 @@ import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import Dropdown from './components/common/Dropdown';
 import { useUnits } from './contexts/UnitsContext';
-import { MEMBER_COLOR } from './theme';
+import { MEMBER_COLOR, FONT, SURFACE } from './theme';
 
 type Tab = 'dashboard' | 'map' | 'member';
 
@@ -457,7 +457,7 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
+    <div id="app-root" style={{ display: 'flex', height: '100vh', background: SURFACE.app, fontFamily: FONT.ui, overflow: 'hidden' }}>
       {showEtabsImport && (
         <EtabsImportWizard
           code={project.code}
