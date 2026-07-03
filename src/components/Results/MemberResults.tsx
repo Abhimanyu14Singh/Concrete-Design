@@ -21,7 +21,7 @@ import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
-import { codeAccent, dcrColor as themeDcrColor, dcrBg as themeDcrBg, MEMBER_COLOR, DCR, STATUS } from '../../theme';
+import { ACCENT, BORDER, DCR, INK, LABEL_STYLE, MEMBER_COLOR, MONO_NUM, STATUS, SURFACE, TRACK, TYPE, codeAccent, dcrBg as themeDcrBg, dcrColor as themeDcrColor } from '../../theme';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 
 interface Props {
@@ -43,10 +43,10 @@ function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr
   const dcrColor = overridden ? DCR.pass : dcr !== undefined ? themeDcrColor(dcr) : undefined;
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 8, minWidth: 0 }}>
-      <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+      <span style={{ fontSize: 11, color: INK.secondary, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         {k}{tip && <InfoTooltip text={tip} formula={formula} />}
       </span>
-      <span style={{ fontSize: 11, color: dcrColor ?? '#111827', fontFamily: 'monospace', fontWeight: dcr !== undefined ? 700 : 400 }}>
+      <span style={{ fontSize: 11, color: dcrColor ?? INK.strong, ...MONO_NUM, fontWeight: dcr !== undefined ? 700 : 400 }}>
         {v}{overridden && <span title="Reviewed by engineer" style={{ marginLeft: 4 }}>✓</span>}
       </span>
     </div>
@@ -54,7 +54,7 @@ function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr
 }
 
 function SectionLabel({ title }: { title: string }) {
-  return <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 4px' }}>{title}</div>;
+  return <div style={{ ...LABEL_STYLE, margin: '10px 0 4px' }}>{title}</div>;
 }
 
 /** A collapsible results check. The governing check (highest DCR) opens by
@@ -69,8 +69,8 @@ function CheckSection({ title, dcr, defaultOpen, children }: { title: string; dc
         onClick={() => setOverride(!open)}
         style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 0 4px', margin: 0 }}
       >
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>
-          <span style={{ display: 'inline-block', width: 10, color: '#9ca3af' }}>{open ? '▾' : '▸'}</span>{title}
+        <span style={LABEL_STYLE}>
+          <span style={{ display: 'inline-block', width: 10, color: INK.muted }}>{open ? '▾' : '▸'}</span>{title}
         </span>
         {dcr !== undefined && <span style={dcrStyle(dcr)}>{dcr.toFixed(2)}</span>}
       </button>
@@ -80,11 +80,11 @@ function CheckSection({ title, dcr, defaultOpen, children }: { title: string; dc
 }
 
 function dcrStyle(dcr: number): React.CSSProperties {
-  return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, fontFamily: 'monospace', padding: '1px 5px', borderRadius: 4, fontSize: 11 };
+  return { background: themeDcrBg(dcr), color: themeDcrColor(dcr), fontWeight: 700, ...MONO_NUM, padding: '1px 5px', borderRadius: 4, fontSize: 11 };
 }
 
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
-const utilColor = (v: number | null): string => (v == null ? '#9ca3af' : themeDcrColor(v));
+const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
 export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
@@ -243,12 +243,12 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         {/* Load case dropdown — C1: mark governing LC */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>Load Case</span>
+          <span style={LABEL_STYLE}>Load Case</span>
           <Dropdown
             value={activeLoad}
             options={member.loads.map(l => ({ value: l.id, label: `${govSet.has(l.id) ? '★ ' : ''}${l.label}` }))}
             onChange={setActiveLoad}
-            style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', cursor: 'pointer' }}
+            style={{ padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', cursor: 'pointer' }}
           />
         </div>
 
@@ -266,10 +266,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         {/* Code + member-type badges */}
         <CodeBadge code={code} />
         <span style={{
-          fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5,
-          color: MEMBER_COLOR[member.memberType] ?? '#6b7280',
-          background: `${MEMBER_COLOR[member.memberType] ?? '#6b7280'}14`,
-          border: `1px solid ${MEMBER_COLOR[member.memberType] ?? '#6b7280'}40`,
+          fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: TRACK.wide,
+          color: MEMBER_COLOR[member.memberType] ?? INK.secondary,
+          background: `${MEMBER_COLOR[member.memberType] ?? INK.secondary}14`,
+          border: `1px solid ${MEMBER_COLOR[member.memberType] ?? INK.secondary}40`,
           borderRadius: 12, padding: '2px 8px',
         }}>
           {isColumn ? 'Column' : member.memberType}
@@ -279,7 +279,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           {onRebarChange && !isColumn && (
             <button
               onClick={handleOptimize}
-              style={{ padding: '5px 10px', border: '1px solid #d97706', borderRadius: 6, background: '#fffbeb', fontSize: 11, cursor: 'pointer', color: '#d97706', fontWeight: 600 }}
+              style={{ padding: '5px 10px', border: `1px solid ${STATUS.warn}`, borderRadius: 6, background: STATUS.warnBg, fontSize: 11, cursor: 'pointer', color: STATUS.warn, fontWeight: 600 }}
               title="Reduce bar count until max DCR ≈ 0.90"
             >
               Optimize
@@ -287,7 +287,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           )}
           <button
             onClick={() => setShowCalc(true)}
-            style={{ padding: '5px 12px', border: '1px solid #e5e7eb', borderRadius: 6, background: 'white', fontSize: 11, cursor: 'pointer', color: '#374151', fontWeight: 600 }}
+            style={{ padding: '5px 12px', border: `1px solid ${BORDER.default}`, borderRadius: 6, background: 'white', fontSize: 11, cursor: 'pointer', color: INK.base, fontWeight: 600 }}
           >
             ∑ Calc Sheet
           </button>
@@ -297,31 +297,31 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
       {/* S-Concrete verification card — the external .SCRS result for this member
           alongside the app's own governing DCR (closes the design ↔ verify loop). */}
       {(scoSummary || scoEligible) && (
-        <div style={{ marginBottom: 10, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
-          background: scoSummary ? (scoSummary.status === 'OK' ? '#f0fdf4' : '#fef2f2') : '#f9fafb' }}>
+        <div style={{ marginBottom: 10, border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
+          background: scoSummary ? (scoSummary.status === 'OK' ? STATUS.okBg : STATUS.failBg) : SURFACE.subtle }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280' }}>S-Concrete verification</span>
+            <span style={LABEL_STYLE}>S-Concrete verification</span>
             {scoSummary ? (
               <>
                 <span style={{ fontSize: 11, fontWeight: 700, color: scoSummary.status === 'OK' ? STATUS.ok : STATUS.fail }}>
                   {scoSummary.status === 'OK' ? '✓ OK' : '✗ Overstressed'}
                 </span>
-                {scoSummary.groupLabel && <span style={{ fontSize: 10, color: '#6b7280' }}>group “{scoSummary.groupLabel}”</span>}
-                {sconcreteRanAt && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#9ca3af' }}>ran {new Date(sconcreteRanAt).toLocaleString()}</span>}
+                {scoSummary.groupLabel && <span style={{ fontSize: 10, color: INK.secondary }}>group “{scoSummary.groupLabel}”</span>}
+                {sconcreteRanAt && <span style={{ marginLeft: 'auto', fontSize: 10, color: INK.muted }}>ran {new Date(sconcreteRanAt).toLocaleString()}</span>}
               </>
             ) : (
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>not run for this member — run the S-Concrete batch in Map → Verify</span>
+              <span style={{ fontSize: 11, color: INK.muted }}>not run for this member — run the S-Concrete batch in Map → Verify</span>
             )}
           </div>
           {scoSummary && (
-            <div style={{ display: 'flex', gap: 16, marginTop: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 11, color: '#374151' }}>
-              <span>N-M <b style={{ fontFamily: 'monospace', color: utilColor(scoSummary.nmUtil) }}>{fmtUtil(scoSummary.nmUtil)}</b></span>
-              <span>V&amp;T <b style={{ fontFamily: 'monospace', color: utilColor(scoSummary.vtUtil) }}>{fmtUtil(scoSummary.vtUtil)}</b></span>
+            <div style={{ display: 'flex', gap: 16, marginTop: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 11, color: INK.base }}>
+              <span>N-M <b style={{ ...MONO_NUM, color: utilColor(scoSummary.nmUtil) }}>{fmtUtil(scoSummary.nmUtil)}</b></span>
+              <span>V&amp;T <b style={{ ...MONO_NUM, color: utilColor(scoSummary.vtUtil) }}>{fmtUtil(scoSummary.vtUtil)}</b></span>
               {scoSummary.crackStatus && (
                 <span>crack <b style={{ color: scoSummary.crackStatus === 'OK' ? STATUS.ok : STATUS.fail }}>{scoSummary.crackStatus}</b></span>
               )}
-              <span style={{ marginLeft: 'auto', color: '#6b7280' }}>
-                app DCR <b style={{ fontFamily: 'monospace', color: themeDcrColor(appGovDCR) }}>{appGovDCR.toFixed(2)}</b>
+              <span style={{ marginLeft: 'auto', color: INK.secondary }}>
+                app DCR <b style={{ ...MONO_NUM, color: themeDcrColor(appGovDCR) }}>{appGovDCR.toFixed(2)}</b>
                 {scoAgree != null && (
                   <span style={{ marginLeft: 6, fontWeight: 700, color: scoAgree ? STATUS.ok : STATUS.warn }}>
                     {scoAgree ? '· agree' : '· differ ⚠'}
@@ -388,7 +388,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                   <button key={lbl}
                     onClick={() => setElevZoom(z => dz === 0 ? 1 : Math.min(2.5, Math.max(1, +(z + dz).toFixed(2))))}
                     title={dz === 0 ? 'Fit' : dz > 0 ? 'Zoom in' : 'Zoom out'}
-                    style={{ border: '1px solid #e5e7eb', background: 'white', color: '#6b7280', borderRadius: 5, fontSize: 10, padding: '1px 7px', cursor: 'pointer' }}>
+                    style={{ border: `1px solid ${BORDER.default}`, background: 'white', color: INK.secondary, borderRadius: 5, fontSize: 10, padding: '1px 7px', cursor: 'pointer' }}>
                     {lbl}
                   </button>
                 ))}
@@ -402,7 +402,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             <ForceDiagram member={member} result={result} code={code} height={130} />
           )}
           {onRebarChange && (
-            <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>
+            <p style={{ fontSize: 10, color: INK.muted, margin: 0, textAlign: 'center' }}>
               Click bar labels to change count • Left = +1, Right-click = −1
             </p>
           )}
@@ -547,24 +547,24 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
 
       {/* C2: All-load-cases comparison table */}
       {member.loads.length > 1 && (
-        <div style={{ marginTop: 14, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+        <div style={{ marginTop: 14, borderTop: `1px solid ${BORDER.default}`, paddingTop: 12 }}>
           <button
             onClick={() => setShowAllLC(v => !v)}
-            style={{ fontSize: 11, fontWeight: 700, color: '#374151', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 6, textTransform: 'uppercase', letterSpacing: 1 }}
+            style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <span style={{ fontSize: 9 }}>{showAllLC ? '▼' : '▶'}</span>
+            <span style={{ fontSize: 10 }}>{showAllLC ? '▼' : '▶'}</span>
             All Load Cases ({member.loads.length})
           </button>
           {showAllLC && (
             <div style={{ marginTop: 8, overflowX: 'auto' }}>
               <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ background: '#f9fafb' }}>
+                  <tr style={{ background: SURFACE.subtle }}>
                     {(isColumn
                       ? ['Load Case', 'P-M DCR', 'Axial DCR', 'Shear DCR', 'Status']
                       : ['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status']
                     ).map(h => (
-                      <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: '#6b7280', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                      <th key={h} style={{ ...LABEL_STYLE, padding: '6px 10px', textAlign: 'left', borderBottom: `1px solid ${BORDER.default}`, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -572,11 +572,11 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                   {allResults.map(({ id, label, r }) => (
                     <tr
                       key={id}
-                      style={{ background: id === activeLoad ? '#eff6ff' : 'white', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}
+                      style={{ background: id === activeLoad ? ACCENT.softBg : 'white', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}
                       onClick={() => setActiveLoad(id)}
                     >
-                      <td style={{ padding: '5px 10px', fontWeight: id === activeLoad ? 700 : 400, color: '#374151' }}>
-                        {govSet.has(id) && <span style={{ color: '#d97706', marginRight: 4 }}>★</span>}
+                      <td style={{ padding: '5px 10px', fontWeight: id === activeLoad ? 700 : 400, color: INK.base }}>
+                        {govSet.has(id) && <span style={{ color: STATUS.warn, marginRight: 4 }}>★</span>}
                         {label}
                       </td>
                       {isColumn ? (
@@ -607,9 +607,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
 
       {/* Warnings + engineer review */}
       {(result.warnings.length > 0 || overrideEntries(overrides).length > 0) && (
-        <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+        <div style={{ marginTop: 16, borderTop: `1px solid ${BORDER.default}`, paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>Code Checks / Warnings</div>
+            <div style={LABEL_STYLE}>Code Checks / Warnings</div>
             {onRebarChange && reviewable.length > 0 && !showReviewForm && (
               <button
                 onClick={() => setShowReviewForm(true)}
@@ -632,12 +632,12 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           {overrideEntries(overrides).map(([key, ov]) => (
             <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', borderRadius: 6, background: DCR.passBg, border: `1px solid ${DCR.pass}40`, marginBottom: 4 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: DCR.pass, flexShrink: 0, marginTop: 1 }}>✓ Reviewed</span>
-              <span style={{ fontSize: 11, color: '#374151', flex: 1 }}>
+              <span style={{ fontSize: 11, color: INK.base, flex: 1 }}>
                 {ov.note || 'No note.'}
               </span>
               {onRebarChange && (
                 <button onClick={() => clearOverride(key)} title="Remove override"
-                  style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, lineHeight: 1 }}>×</button>
+                  style={{ fontSize: 12, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, lineHeight: 1 }}>×</button>
               )}
             </div>
           ))}
@@ -645,9 +645,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           {/* Remaining (non-overridden) warnings */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {shownWarnings.map((w, i) => (
-              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 8px', borderRadius: 6, background: w.severity === 'error' ? '#fef2f2' : '#fffbeb' }}>
+              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 8px', borderRadius: 6, background: w.severity === 'error' ? STATUS.failBg : STATUS.warnBg }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: w.severity === 'error' ? STATUS.fail : STATUS.warn, flexShrink: 0, marginTop: 1 }}>{w.code}</span>
-                <span style={{ fontSize: 11, color: '#374151' }}>{w.message}</span>
+                <span style={{ fontSize: 11, color: INK.base }}>{w.message}</span>
               </div>
             ))}
           </div>
@@ -663,17 +663,17 @@ function ReviewForm({ onCancel, onConfirm }: {
   onConfirm: (ov: MemberOverride) => void;
 }) {
   const [note, setNote] = useState('');
-  const inputStyle: React.CSSProperties = { fontSize: 11, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 6, color: '#111827', background: 'white' };
+  const inputStyle: React.CSSProperties = { fontSize: 11, padding: '4px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, color: INK.strong, background: 'white' };
   return (
-    <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: '#6b7280', fontWeight: 700 }}>
+    <div style={{ background: SURFACE.subtle, border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: 10, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: INK.secondary, fontWeight: 700 }}>
         NOTE (optional)
         <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
           placeholder="e.g. wk = 0.31 mm vs 0.30 mm limit — acceptable given conservative SLS combo."
           style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
       </label>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', background: 'white', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>Cancel</button>
+        <button onClick={onCancel} style={{ fontSize: 11, fontWeight: 600, color: INK.secondary, background: 'white', border: `1px solid ${BORDER.strong}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>Cancel</button>
         <button onClick={() => onConfirm({ note: note.trim() || undefined })}
           style={{ fontSize: 11, fontWeight: 700, color: 'white', background: DCR.pass, border: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>
           Confirm Review

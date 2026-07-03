@@ -3,7 +3,7 @@ import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
 import { useUnits } from '../../contexts/UnitsContext';
-import { BARS, DCR } from '../../theme';
+import { BARS, DCR, FONT } from '../../theme';
 
 interface Props {
   section: SectionDimensions;
@@ -207,17 +207,17 @@ export default function SectionView({
           <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={cx} y={oy + scaledH + 27} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily="monospace">
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}>
             Ø = {fmt(secW, 'length', 1)}
           </text>
           {/* Bar + tie labels */}
           <text x={ox + scaledW + 8} y={cy - 8}
-            fontSize="10" fill={BARS.bot} fontFamily="monospace" {...labelEvents('bot')}>
+            fontSize="10" fill={BARS.bot} fontFamily={FONT.mono} {...labelEvents('bot')}>
             {circTotal > 0 ? `${circTotal}-${formatBarLabel(circBarSize)}` : '—'}
           </text>
           {rebar.ties && (
             <text x={ox + scaledW + 8} y={cy + 8}
-              fontSize="10" fill={BARS.tie} fontFamily="monospace" {...labelEvents('stir')}>
+              fontSize="10" fill={BARS.tie} fontFamily={FONT.mono} {...labelEvents('stir')}>
               {rebar.tieType === 'spiral' ? 'Sp ' : ''}{formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
             </text>
           )}
@@ -230,7 +230,7 @@ export default function SectionView({
           <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox + scaledW / 2} y={oy + scaledH + 27} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily="monospace">
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}>
             {isT ? `bw = ${fmt(bw, 'length', 1)}` : `b = ${fmt(secW, 'length', 1)}`}
           </text>
 
@@ -238,36 +238,36 @@ export default function SectionView({
           <line x1={ox - 14} y1={oy} x2={ox - 14} y2={oy + scaledH}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox - 26} y={oy + scaledH / 2} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily="monospace"
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}
             transform={`rotate(-90,${ox - 26},${oy + scaledH / 2})`}>
             h = {fmt(secH, 'length', 1)}
           </text>
 
           {/* Top bars — left-click +1 bar, right-click -1 bar */}
           <text x={ox + scaledW + 8} y={topLabelY + 4}
-            fontSize="10" fill={BARS.top} fontFamily="monospace"
+            fontSize="10" fill={BARS.top} fontFamily={FONT.mono}
             {...labelEvents('top')}>
             {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
           </text>
           <text x={ox + scaledW + 8} y={topLabelY + 16}
-            fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+            fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
             {interactive ? 'L+1 / R−1' : 'top'}
           </text>
 
           {/* Bottom bars */}
           <text x={ox + scaledW + 8} y={botLabelY + 4}
-            fontSize="10" fill={BARS.bot} fontFamily="monospace"
+            fontSize="10" fill={BARS.bot} fontFamily={FONT.mono}
             {...labelEvents('bot')}>
             {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
           </text>
           <text x={ox + scaledW + 8} y={botLabelY + 16}
-            fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+            fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
             {interactive ? 'L+1 / R−1' : 'bot'}
           </text>
           {/* Side bar label (columns) */}
           {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
             <text x={ox + scaledW + 8} y={(topLabelY + botLabelY) / 2 + 18}
-              fontSize="10" fill={BARS.side} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+              fontSize="10" fill={BARS.side} fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
               {`${rebar.sideBars[0].numBars}-${formatBarLabel(rebar.sideBars[0].barSize)} side`}
             </text>
           )}
@@ -277,10 +277,10 @@ export default function SectionView({
             const ok = asBot >= reqBot;
             return (
               <>
-                <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
                   {`As=${fmt(asBot, 'area')}`}
                 </text>
-                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? DCR.pass : DCR.fail} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? DCR.pass : DCR.fail} fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
                   {`Req:${reqBot.toFixed(2)} ${ok ? '✓' : '⚠'}`}
                 </text>
               </>
@@ -291,12 +291,12 @@ export default function SectionView({
           {rebar.ties && (
             <>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
-                fontSize="10" fill={BARS.tie} fontFamily="monospace"
+                fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
                 {...labelEvents('stir')}>
                 {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
               </text>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
-                fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
                 {interactive ? 'L−s / R+s' : 'stir'}
               </text>
             </>

@@ -7,7 +7,7 @@ import { useState } from 'react';
 import type { Member } from '../../types';
 import { dcrToColor } from './dcrColors';
 import { useUnits } from '../../contexts/UnitsContext';
-import { FONT, INK, MAP_DCR_BANDS } from '../../theme';
+import { BORDER, FONT, INK, MAP_DCR_BANDS, MONO_NUM } from '../../theme';
 
 interface Props {
   members: Member[];                 // beams with etabs link
@@ -45,7 +45,7 @@ export default function PlanMap({
 
   return (
     <div style={{ position: 'relative' }}>
-      <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb' }}>
+      <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 10, border: `1px solid ${BORDER.default}` }}>
         {/* grid */}
         <defs>
           <pattern id="plangrid" width="24" height="24" patternUnits="userSpaceOnUse">
@@ -95,18 +95,18 @@ export default function PlanMap({
       {hovered?.etabs && (
         <div style={{
           position: 'absolute', top: 8, right: 8, background: 'white',
-          border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
-          fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
+          fontSize: 11, color: INK.base, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
           pointerEvents: 'none',
         }}>
-          <div style={{ fontWeight: 700, color: '#111827' }}>{hovered.etabs.frameName}</div>
+          <div style={{ fontWeight: 700, color: INK.strong }}>{hovered.etabs.frameName}</div>
           <div>{hovered.etabs.story} · {hovered.etabs.sectionName} · L = {hovered.span != null ? fmt(hovered.span, 'spanLength') : '—'}</div>
           <div>
-            DCR = <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(dcrById[hovered.id] ?? 0) }}>
+            DCR = <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(dcrById[hovered.id] ?? 0) }}>
               {(dcrById[hovered.id] ?? 0).toFixed(3)}
             </span>
           </div>
-          <div style={{ color: '#9ca3af', marginTop: 2 }}>click = select · double-click = open</div>
+          <div style={{ color: INK.muted, marginTop: 2 }}>click = select · double-click = open</div>
         </div>
       )}
     </div>

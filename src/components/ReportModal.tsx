@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Project } from '../types';
 import { buildReportBytes, type ReportOptions, DEFAULT_REPORT_OPTIONS } from '../utils/export/pdfExport';
+import { ACCENT, BORDER, INK, LABEL_STYLE, STATUS, SURFACE } from '../theme';
 
 interface Props {
   project: Project;
@@ -18,15 +19,12 @@ const PANEL: React.CSSProperties = {
   display: 'flex', overflow: 'hidden', boxShadow: '0 24px 60px rgba(0,0,0,0.4)',
 };
 const SIDEBAR: React.CSSProperties = {
-  width: 320, flexShrink: 0, borderRight: '1px solid #e5e7eb', display: 'flex',
-  flexDirection: 'column', background: '#f9fafb', overflow: 'auto',
+  width: 320, flexShrink: 0, borderRight: `1px solid ${BORDER.default}`, display: 'flex',
+  flexDirection: 'column', background: SURFACE.subtle, overflow: 'auto',
 };
-const SECTION_LABEL: React.CSSProperties = {
-  fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1,
-  margin: '14px 0 6px',
-};
+const SECTION_LABEL: React.CSSProperties = { ...LABEL_STYLE, margin: '14px 0 6px' };
 const inp: React.CSSProperties = {
-  padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, width: '100%',
+  padding: '6px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, width: '100%',
   boxSizing: 'border-box',
 };
 
@@ -140,9 +138,9 @@ export default function ReportModal({ project, onClose }: Props) {
       <div style={PANEL}>
         {/* Controls sidebar */}
         <div style={SIDEBAR}>
-          <div style={{ padding: '14px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white' }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Report Builder</span>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>×</button>
+          <div style={{ padding: '14px 16px', borderBottom: `1px solid ${BORDER.default}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white' }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: INK.strong }}>Report Builder</span>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: INK.muted }}>×</button>
           </div>
 
           <div style={{ padding: '0 16px 16px' }}>
@@ -151,16 +149,16 @@ export default function ReportModal({ project, onClose }: Props) {
             <div style={SECTION_LABEL}>Project Details</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div>
-                <label style={{ fontSize: 10, color: '#9ca3af' }}>Project name</label>
+                <label style={{ fontSize: 10, color: INK.muted }}>Project name</label>
                 <input style={inp} value={reportName} onChange={e => setReportName(e.target.value)} placeholder="Project name" />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: 10, color: '#9ca3af' }}>Engineer</label>
+                  <label style={{ fontSize: 10, color: INK.muted }}>Engineer</label>
                   <input style={inp} value={reportEngineer} onChange={e => setReportEngineer(e.target.value)} placeholder="Engineer name" />
                 </div>
                 <div style={{ width: 100 }}>
-                  <label style={{ fontSize: 10, color: '#9ca3af' }}>Date</label>
+                  <label style={{ fontSize: 10, color: INK.muted }}>Date</label>
                   <input style={inp} value={reportDate} onChange={e => setReportDate(e.target.value)} placeholder="YYYY-MM-DD" />
                 </div>
               </div>
@@ -170,11 +168,11 @@ export default function ReportModal({ project, onClose }: Props) {
             <div style={SECTION_LABEL}>Title block</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 10, color: '#9ca3af' }}>Job number</label>
+                <label style={{ fontSize: 10, color: INK.muted }}>Job number</label>
                 <input style={inp} value={jobNumber} onChange={e => setJobNumber(e.target.value)} placeholder="e.g. 2024-118" />
               </div>
               <div style={{ width: 80 }}>
-                <label style={{ fontSize: 10, color: '#9ca3af' }}>Revision</label>
+                <label style={{ fontSize: 10, color: INK.muted }}>Revision</label>
                 <input style={inp} value={revision} onChange={e => setRevision(e.target.value)} placeholder="A" />
               </div>
             </div>
@@ -182,29 +180,29 @@ export default function ReportModal({ project, onClose }: Props) {
             {/* Scope */}
             <div style={SECTION_LABEL}>Scope</div>
             {([['all', 'Whole project'], ['group', 'By design group'], ['selected', 'Selected members']] as const).map(([k, lbl]) => (
-              <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', padding: '3px 0', cursor: 'pointer' }}>
+              <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: INK.base, padding: '3px 0', cursor: 'pointer' }}>
                 <input type="radio" name="scope" checked={scope === k} onChange={() => setScope(k)} disabled={k === 'group' && groups.length === 0} />
                 {lbl}{k === 'group' && groups.length === 0 ? ' (no groups)' : ''}
               </label>
             ))}
 
             {scope === 'group' && (
-              <div style={{ marginTop: 6, maxHeight: 150, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 6, padding: 6, background: 'white' }}>
+              <div style={{ marginTop: 6, maxHeight: 150, overflow: 'auto', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: 6, background: 'white' }}>
                 {groups.map(g => (
                   <label key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '2px 0', cursor: 'pointer' }}>
                     <input type="checkbox" checked={groupIds.has(g.id)} onChange={() => setGroupIds(prev => { const n = new Set(prev); n.has(g.id) ? n.delete(g.id) : n.add(g.id); return n; })} />
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: g.color ?? '#9ca3af', flexShrink: 0 }} />
-                    {g.label} <span style={{ color: '#9ca3af' }}>({g.memberIds.length})</span>
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: g.color ?? INK.muted, flexShrink: 0 }} />
+                    {g.label} <span style={{ color: INK.muted }}>({g.memberIds.length})</span>
                   </label>
                 ))}
               </div>
             )}
 
             {scope === 'selected' && (
-              <div style={{ marginTop: 6, maxHeight: 180, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 6, padding: 6, background: 'white' }}>
+              <div style={{ marginTop: 6, maxHeight: 180, overflow: 'auto', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: 6, background: 'white' }}>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-                  <button onClick={() => setSelectedIds(new Set(project.members.map(m => m.id)))} style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>All</button>
-                  <button onClick={() => setSelectedIds(new Set())} style={{ fontSize: 10, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}>None</button>
+                  <button onClick={() => setSelectedIds(new Set(project.members.map(m => m.id)))} style={{ fontSize: 10, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer' }}>All</button>
+                  <button onClick={() => setSelectedIds(new Set())} style={{ fontSize: 10, color: INK.secondary, background: 'none', border: 'none', cursor: 'pointer' }}>None</button>
                 </div>
                 {project.members.map(m => (
                   <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '2px 0', cursor: 'pointer' }}>
@@ -223,13 +221,13 @@ export default function ReportModal({ project, onClose }: Props) {
               ['Step-by-step calcs + clauses', includeCalcs, setIncludeCalcs],
               ['Engineer review stamps', includeOverrides, setIncludeOverrides],
             ].map(([lbl, val, set]) => (
-              <label key={lbl as string} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', padding: '3px 0', cursor: 'pointer' }}>
+              <label key={lbl as string} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: INK.base, padding: '3px 0', cursor: 'pointer' }}>
                 <input type="checkbox" checked={val as boolean} onChange={e => (set as (v: boolean) => void)(e.target.checked)} />
                 {lbl as string}
               </label>
             ))}
             {isEC2 && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', padding: '3px 0', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: INK.base, padding: '3px 0', cursor: 'pointer' }}>
                 <input type="checkbox" checked={includeCrack} onChange={e => setIncludeCrack(e.target.checked)} />
                 EC2 crack-width check
               </label>
@@ -238,23 +236,23 @@ export default function ReportModal({ project, onClose }: Props) {
             <button
               onClick={() => { void generate(); }}
               disabled={busy}
-              style={{ marginTop: 16, width: '100%', padding: '10px', background: busy ? '#93c5fd' : '#2563eb', color: 'white', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? 'default' : 'pointer' }}
+              style={{ marginTop: 16, width: '100%', padding: '10px', background: busy ? ACCENT.softBorder : ACCENT.primary, color: 'white', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? 'default' : 'pointer' }}
             >
               {busy ? 'Generating…' : '↻ Refresh Preview'}
             </button>
             <button
               onClick={download}
               disabled={busy || !lastBytes.current}
-              style={{ marginTop: 8, width: '100%', padding: '10px', background: 'white', color: '#16a34a', border: '1px solid #86efac', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy || !lastBytes.current ? 'default' : 'pointer' }}
+              style={{ marginTop: 8, width: '100%', padding: '10px', background: 'white', color: STATUS.ok, border: '1px solid #86efac', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy || !lastBytes.current ? 'default' : 'pointer' }}
             >
               ↓ Download PDF
             </button>
-            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 10, color: INK.muted, marginTop: 8, textAlign: 'center' }}>
               {memberCount} member{memberCount !== 1 ? 's' : ''} in report
               {busy && ' · updating…'}
             </div>
             {error && (
-              <div style={{ marginTop: 10, fontSize: 11, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '6px 10px' }}>
+              <div style={{ marginTop: 10, fontSize: 11, color: STATUS.fail, background: STATUS.failBg, border: `1px solid ${STATUS.failBorder}`, borderRadius: 6, padding: '6px 10px' }}>
                 {error}
               </div>
             )}
