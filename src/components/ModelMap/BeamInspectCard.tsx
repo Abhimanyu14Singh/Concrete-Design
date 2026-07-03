@@ -12,6 +12,7 @@ import { formatBarLabel } from '../../utils/rebar';
 import { steelWeightPerFt, flexSteelRatioPct } from '../../utils/autoGroup';
 import { runDesign } from '../../engines';
 import { useUnits } from '../../contexts/UnitsContext';
+import { BORDER, FONT, INK, MONO_NUM, STATUS } from '../../theme';
 
 interface Props {
   member: Member;
@@ -27,7 +28,7 @@ interface Props {
 const CARD_W = 340;
 
 const dcrColor = (v?: number | null) =>
-  v == null ? '#9ca3af' : v >= 1 ? '#dc2626' : v >= 0.9 ? '#d97706' : '#16a34a';
+  v == null ? INK.muted : v >= 1 ? STATUS.fail : v >= 0.9 ? STATUS.warn : STATUS.ok;
 
 function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V') {
   const byX = new Map<number, number>();
@@ -153,7 +154,7 @@ function Sparkline({ data, color }: { data: { x: number; v: number }[]; color: s
 
 function DcrCell({ v }: { v?: number }) {
   return (
-    <div style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrColor(v), textAlign: 'center' }}>
+    <div style={{ ...MONO_NUM, fontWeight: 700, color: dcrColor(v), textAlign: 'center' }}>
       {v == null ? '—' : v.toFixed(2)}
     </div>
   );
@@ -224,17 +225,17 @@ export default function BeamInspectCard({ member, designResults, code, clientX, 
   return (
     <div style={{
       position: 'absolute', left, top, width: CARD_W, zIndex: 200,
-      background: 'white', border: '1px solid #e5e7eb', borderRadius: 10,
+      background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
       boxShadow: '0 4px 20px rgba(0,0,0,0.12)', padding: '10px 12px',
-      fontSize: 11, color: '#374151',
+      fontSize: 11, color: INK.base,
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 12, color: '#111827' }}>{member.label || member.id}</div>
-          <div style={{ color: '#9ca3af', fontSize: 10 }}>{member.etabs?.story ?? ''} · {member.etabs?.sectionName ?? member.section.type}</div>
+          <div style={{ fontWeight: 700, fontSize: 12, color: INK.strong }}>{member.label || member.id}</div>
+          <div style={{ color: INK.muted, fontSize: 10 }}>{member.etabs?.story ?? ''} · {member.etabs?.sectionName ?? member.section.type}</div>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
       </div>
 
       {/* Section sketch + rebar callouts */}
@@ -243,8 +244,8 @@ export default function BeamInspectCard({ member, designResults, code, clientX, 
         <div style={{ flex: 1, fontSize: 10, lineHeight: 1.6 }}>
           {callouts.map(([k, v]) => (
             <div key={k}>
-              <span style={{ color: '#9ca3af' }}>{k}: </span>
-              <span style={{ color: '#111827', fontFamily: k === 'Steel' ? 'monospace' : undefined }}>{v}</span>
+              <span style={{ color: INK.muted }}>{k}: </span>
+              <span style={{ color: INK.strong, fontFamily: k === 'Steel' ? FONT.mono : undefined }}>{v}</span>
             </div>
           ))}
         </div>
@@ -253,31 +254,31 @@ export default function BeamInspectCard({ member, designResults, code, clientX, 
       {/* M / V envelope sparklines */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
         <div>
-          <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>M envelope</div>
+          <div style={{ fontSize: 10, color: INK.muted, marginBottom: 2 }}>M envelope</div>
           <Sparkline data={mData} color="#7c3aed" />
         </div>
         <div>
-          <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>V envelope</div>
+          <div style={{ fontSize: 10, color: INK.muted, marginBottom: 2 }}>V envelope</div>
           <Sparkline data={vData} color="#0891b2" />
         </div>
       </div>
 
       {/* Zone DCR table */}
       <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 3 }}>DCR by zone</div>
+        <div style={{ fontSize: 10, color: INK.muted, marginBottom: 3 }}>DCR by zone</div>
         <div style={{
           display: 'grid', gridTemplateColumns: `46px repeat(${zones.length}, 1fr)`,
           gap: 2, background: '#f8fafc', borderRadius: 6, padding: '5px 8px', fontSize: 10,
         }}>
           <div />
           {zones.map(z => (
-            <div key={z.label} style={{ color: '#6b7280', fontWeight: 600, textAlign: 'center' }}>{z.label}</div>
+            <div key={z.label} style={{ color: INK.secondary, fontWeight: 600, textAlign: 'center' }}>{z.label}</div>
           ))}
-          <div style={{ color: '#9ca3af' }}>Flex+</div>
+          <div style={{ color: INK.muted }}>Flex+</div>
           {zones.map(z => <DcrCell key={z.label} v={z.pos} />)}
-          <div style={{ color: '#9ca3af' }}>Flex−</div>
+          <div style={{ color: INK.muted }}>Flex−</div>
           {zones.map(z => <DcrCell key={z.label} v={z.neg} />)}
-          <div style={{ color: '#9ca3af' }}>Shear</div>
+          <div style={{ color: INK.muted }}>Shear</div>
           {zones.map(z => <DcrCell key={z.label} v={z.shear} />)}
         </div>
       </div>
@@ -285,27 +286,27 @@ export default function BeamInspectCard({ member, designResults, code, clientX, 
       {/* Whole-member envelope summary */}
       {designResults ? (
         <div style={{ display: 'flex', gap: 12, background: '#f1f5f9', borderRadius: 6, padding: '5px 8px', fontSize: 11 }}>
-          <div style={{ color: '#9ca3af', fontSize: 9, alignSelf: 'center' }}>Envelope</div>
+          <div style={{ color: INK.muted, fontSize: 10, alignSelf: 'center' }}>Envelope</div>
           <div>
-            <div style={{ color: '#9ca3af', fontSize: 9 }}>Flex+</div>
-            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrColor(designResults.DCR_flex_pos) }}>{designResults.DCR_flex_pos?.toFixed(2) ?? '—'}</div>
+            <div style={{ color: INK.muted, fontSize: 10 }}>Flex+</div>
+            <div style={{ ...MONO_NUM, fontWeight: 700, color: dcrColor(designResults.DCR_flex_pos) }}>{designResults.DCR_flex_pos?.toFixed(2) ?? '—'}</div>
           </div>
           <div>
-            <div style={{ color: '#9ca3af', fontSize: 9 }}>Flex−</div>
-            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrColor(designResults.DCR_flex_neg) }}>{designResults.DCR_flex_neg?.toFixed(2) ?? '—'}</div>
+            <div style={{ color: INK.muted, fontSize: 10 }}>Flex−</div>
+            <div style={{ ...MONO_NUM, fontWeight: 700, color: dcrColor(designResults.DCR_flex_neg) }}>{designResults.DCR_flex_neg?.toFixed(2) ?? '—'}</div>
           </div>
           <div>
-            <div style={{ color: '#9ca3af', fontSize: 9 }}>Shear</div>
-            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrColor(designResults.DCR_shear) }}>{designResults.DCR_shear?.toFixed(2) ?? '—'}</div>
+            <div style={{ color: INK.muted, fontSize: 10 }}>Shear</div>
+            <div style={{ ...MONO_NUM, fontWeight: 700, color: dcrColor(designResults.DCR_shear) }}>{designResults.DCR_shear?.toFixed(2) ?? '—'}</div>
           </div>
         </div>
       ) : (
-        <div style={{ color: '#9ca3af', fontSize: 10 }}>No design results — run design first</div>
+        <div style={{ color: INK.muted, fontSize: 10 }}>No design results — run design first</div>
       )}
       {/* ρ% row */}
-      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
-        ρ top: <strong style={{ color: '#374151' }}>{flexSteelRatioPct(member, 'top').toFixed(2)}%</strong>
-        {'  '}ρ bot: <strong style={{ color: '#374151' }}>{flexSteelRatioPct(member, 'bot').toFixed(2)}%</strong>
+      <div style={{ fontSize: 11, color: INK.secondary, marginTop: 4 }}>
+        ρ top: <strong style={{ color: INK.base }}>{flexSteelRatioPct(member, 'top').toFixed(2)}%</strong>
+        {'  '}ρ bot: <strong style={{ color: INK.base }}>{flexSteelRatioPct(member, 'bot').toFixed(2)}%</strong>
       </div>
     </div>
   );

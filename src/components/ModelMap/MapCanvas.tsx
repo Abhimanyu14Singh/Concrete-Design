@@ -8,7 +8,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type ColorMode } from './frameColor';
-import { BORDER, INK, MAP_DCR_BANDS, MAP_GRAY, STATUS } from '../../theme';
+import { BORDER, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK } from '../../theme';
 
 export type { ColorMode };
 export type DiagramMode = 'off' | 'moment' | 'shear';
@@ -305,7 +305,7 @@ export default function MapCanvas({
         ref={svgRef}
         width={width} height={height}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-        style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : inspectMode ? 'zoom-in' : 'default', display: 'block' }}
+        style={{ background: '#f8fafc', borderRadius: 10, border: `1px solid ${BORDER.default}`, cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : inspectMode ? 'zoom-in' : 'default', display: 'block' }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
@@ -409,40 +409,40 @@ export default function MapCanvas({
 
       {/* Toolbar overlay */}
       <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
-        <button onClick={fitView} style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: '#374151' }} title="Fit to view">⊡ Fit</button>
+        <button onClick={fitView} style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: INK.base }} title="Fit to view">⊡ Fit</button>
       </div>
 
       {/* Hover tooltip — suppressed for the beam currently shown in the rich card. */}
       {hovered && !(inspectMode && hovered.memberId === inspectedMemberId) && (
         <div style={{
           position: 'absolute', top: 8, right: 8, background: 'white',
-          border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
-          fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
+          fontSize: 11, color: INK.base, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
           pointerEvents: 'none', maxWidth: 280,
         }}>
-          <div style={{ fontWeight: 700, color: '#111827', marginBottom: 3 }}>{hovered.frameName}</div>
-          <div style={{ color: '#6b7280', marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
+          <div style={{ fontWeight: 700, color: INK.strong, marginBottom: 3 }}>{hovered.frameName}</div>
+          <div style={{ color: INK.secondary, marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
           {hoveredInfo ? (
             hoveredInfo.error ? (
-              <div style={{ color: '#dc2626', fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>
+              <div style={{ color: STATUS.fail, fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>
             ) : (
               <>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
-                  <span>Flex <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(3)}</span></span>
-                  <span>Shear <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(3)}</span></span>
+                  <span>Flex <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(3)}</span></span>
+                  <span>Shear <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(3)}</span></span>
                 </div>
-                <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.6 }}>
-                  <div>Top: <span style={{ color: '#111827' }}>{hoveredInfo.top}</span></div>
-                  <div>Bot: <span style={{ color: '#111827' }}>{hoveredInfo.bot}</span></div>
-                  <div>Stirrups: <span style={{ color: '#111827' }}>{hoveredInfo.stirrups}</span></div>
+                <div style={{ fontSize: 10, color: INK.secondary, lineHeight: 1.6 }}>
+                  <div>Top: <span style={{ color: INK.strong }}>{hoveredInfo.top}</span></div>
+                  <div>Bot: <span style={{ color: INK.strong }}>{hoveredInfo.bot}</span></div>
+                  <div>Stirrups: <span style={{ color: INK.strong }}>{hoveredInfo.stirrups}</span></div>
                   {hoveredInfo.weight && (
-                    <div>Steel: <span style={{ color: '#111827', fontFamily: 'monospace' }}>{hoveredInfo.weight}</span></div>
+                    <div>Steel: <span style={{ color: INK.strong, ...MONO_NUM }}>{hoveredInfo.weight}</span></div>
                   )}
                 </div>
               </>
             )
           ) : (
-            <div style={{ color: '#9ca3af' }}>No results — run design first</div>
+            <div style={{ color: INK.muted }}>No results — run design first</div>
           )}
           {hoveredInfo?.warnings && hoveredInfo.warnings.length > 0 && (() => {
             const sorted = [...hoveredInfo.warnings].sort((a, b) =>
@@ -455,29 +455,29 @@ export default function MapCanvas({
                   const txt = `${w.code}: ${w.message}`;
                   return (
                     <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 4, fontSize: 10 }}>
-                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginTop: 3, flexShrink: 0, background: w.severity === 'error' ? '#dc2626' : '#d97706' }} />
+                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginTop: 3, flexShrink: 0, background: w.severity === 'error' ? STATUS.fail : STATUS.warn }} />
                       <span style={{ color: '#4b5563' }}>{txt.length > 60 ? txt.slice(0, 60) + '…' : txt}</span>
                     </div>
                   );
                 })}
-                {extra > 0 && <div style={{ fontSize: 9, color: '#9ca3af' }}>+{extra} more</div>}
+                {extra > 0 && <div style={{ fontSize: 10, color: INK.muted }}>+{extra} more</div>}
               </div>
             );
           })()}
           {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
             <div style={{ marginTop: 4, fontSize: 10 }}>
-              <span style={{ color: '#374151' }}>{metricLabel ?? 'Metric'}: </span>
-              <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
+              <span style={{ color: INK.base }}>{metricLabel ?? 'Metric'}: </span>
+              <span style={{ ...MONO_NUM, fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
             </div>
           )}
-          <div style={{ color: '#9ca3af', marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
+          <div style={{ color: INK.muted, marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
         </div>
       )}
 
       {/* Error highlight hint */}
       {showErrors && (
-        <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#dc2626' }}>
-          <span style={{ display: 'inline-block', width: 14, height: 3, background: '#dc2626', borderRadius: 2, opacity: 0.45 }} />
+        <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: STATUS.fail }}>
+          <span style={{ display: 'inline-block', width: 14, height: 3, background: STATUS.fail, borderRadius: 2, opacity: 0.45 }} />
           ⚠ has errors
         </div>
       )}
@@ -509,8 +509,8 @@ export default function MapCanvas({
 
       {/* Auto-group overlay legend — family + group # with matching colors */}
       {colorMode === 'autoGroup' && autoGroupOverlay.length > 0 && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#374151', maxHeight: 180, overflow: 'auto', maxWidth: 260 }}>
-          <div style={{ fontWeight: 700, color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Auto-group preview</div>
+        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.base, maxHeight: 180, overflow: 'auto', maxWidth: 260 }}>
+          <div style={{ fontWeight: 700, color: INK.secondary, marginBottom: 4, textTransform: 'uppercase', letterSpacing: TRACK.wide }}>Auto-group preview</div>
           {autoGroupOverlay.map(bin => (
             <div key={bin.binKey} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
               <span style={{ display: 'inline-block', width: 12, height: 4, background: bin.color, borderRadius: 2, flexShrink: 0 }} />
@@ -522,7 +522,7 @@ export default function MapCanvas({
 
       {/* Metric ramp legend */}
       {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && metricRange && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280', minWidth: 140 }}>
+        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary, minWidth: 140 }}>
           <div style={{ marginBottom: 4, fontWeight: 600 }}>{metricLabel ?? ''}</div>
           <div style={{ position: 'relative', height: 10, borderRadius: 4, overflow: 'hidden', background: `linear-gradient(to right, ${rampStops(metricRange.min, metricRange.max).map(s => s.color).join(',')})` }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
@@ -535,7 +535,7 @@ export default function MapCanvas({
 
       {/* Diagram legend */}
       {diagramMode !== 'off' && (
-        <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: diagramMode === 'moment' ? '#7c3aed' : '#0891b2' }}>
+        <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: diagramMode === 'moment' ? '#7c3aed' : '#0891b2' }}>
           {diagramMode === 'moment' ? '▮ Moment envelope (max |M|)' : '▮ Shear envelope (max |V|)'}
         </div>
       )}

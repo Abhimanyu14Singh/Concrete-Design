@@ -26,7 +26,7 @@ import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
-import { CATEGORICAL } from '../../theme';
+import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
 
 type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff' | 'stacks';
 type FlexFace = 'top' | 'bot';
@@ -415,9 +415,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }, []);
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1, padding: '7px 4px', border: 'none', background: active ? 'white' : '#f9fafb',
-    borderBottom: active ? '2px solid #2563eb' : '2px solid transparent',
-    color: active ? '#2563eb' : '#6b7280', fontWeight: active ? 700 : 500,
+    flex: 1, padding: '7px 4px', border: 'none', background: active ? 'white' : SURFACE.subtle,
+    borderBottom: active ? `2px solid ${ACCENT.primary}` : '2px solid transparent',
+    color: active ? ACCENT.primary : INK.secondary, fontWeight: active ? 700 : 500,
     fontSize: 11, cursor: 'pointer', textAlign: 'center',
   });
 
@@ -425,21 +425,21 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   if (!map) {
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, color: '#6b7280' }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, color: INK.secondary }}>
         <div style={{ fontSize: 48 }}>🗺️</div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>No model map yet</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: INK.strong }}>No model map yet</div>
         <div style={{ fontSize: 13 }}>Connect to ETABS or open a tables file to import beams (and columns).</div>
         <button
           onClick={onOpenEtabsImport}
-          style={{ padding: '10px 24px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
+          style={{ padding: '10px 24px', background: ACCENT.primary, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
         >
           Connect to ETABS / Import tables
         </button>
-        <div style={{ fontSize: 12, color: '#9ca3af', maxWidth: 380, textAlign: 'center', lineHeight: 1.6 }}>
-          Then: <strong style={{ color: '#6b7280' }}>①</strong> group members (Groups tab) ·
-          <strong style={{ color: '#6b7280' }}> ②</strong> design (✨ Suggest) ·
-          <strong style={{ color: '#6b7280' }}> ③</strong> run the S-Concrete batch ·
-          <strong style={{ color: '#6b7280' }}> ④</strong> read results back on the map.
+        <div style={{ fontSize: 12, color: INK.muted, maxWidth: 380, textAlign: 'center', lineHeight: 1.6 }}>
+          Then: <strong style={{ color: INK.secondary }}>①</strong> group members (Groups tab) ·
+          <strong style={{ color: INK.secondary }}> ②</strong> design (✨ Suggest) ·
+          <strong style={{ color: INK.secondary }}> ③</strong> run the S-Concrete batch ·
+          <strong style={{ color: INK.secondary }}> ④</strong> read results back on the map.
         </div>
       </div>
     );
@@ -492,7 +492,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           <div style={{ display: 'flex', gap: 2 }}>
             {(['2d', '3d'] as const).map(vm => (
               <button key={vm} onClick={() => setViewMode(vm)}
-                style={{ padding: '5px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: viewMode === vm ? '#2563eb' : 'white', color: viewMode === vm ? 'white' : '#374151' }}
+                style={{ padding: '5px 12px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: viewMode === vm ? ACCENT.primary : 'white', color: viewMode === vm ? 'white' : INK.base }}
                 title={vm === '3d' ? 'Rotatable 3D view (drag to orbit, wheel to zoom)' : 'Plan view'}>
                 {vm.toUpperCase()}
               </button>
@@ -502,13 +502,13 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             value={story}
             options={storyDropdownOptions.map(s => ({ value: s, label: s }))}
             onChange={setStory}
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white' }}
+            style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, background: 'white' }}
           />
 
           <div style={toolSep} />
 
           {/* Colour by: one dropdown replaces the 8 mode buttons */}
-          <span style={{ fontSize: 11, color: '#6b7280' }}>Colour</span>
+          <span style={{ fontSize: 11, color: INK.secondary }}>Colour</span>
           <Dropdown
             value={colorMode}
             options={[
@@ -522,7 +522,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               { value: 'sconcrete', label: 'S-Concrete pass/fail' },
             ]}
             onChange={v => setColorMode(v as ColorMode)}
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, background: 'white', minWidth: 120 }}
+            style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, background: 'white', minWidth: 120 }}
           />
           {colorMode === 'flexSteel' && (
             <button onClick={() => setFlexFace(f => f === 'bot' ? 'top' : 'bot')}
@@ -538,7 +538,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           <div style={{ display: 'flex', gap: 2 }}>
             {(['off', 'moment', 'shear'] as DiagramMode[]).map(m => (
               <button key={m} onClick={() => setDiagramMode(m)}
-                style={{ padding: '5px 9px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: diagramMode === m ? '#7c3aed' : 'white', color: diagramMode === m ? 'white' : '#374151' }}
+                style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: diagramMode === m ? '#7c3aed' : 'white', color: diagramMode === m ? 'white' : INK.base }}
                 title={m === 'off' ? 'No force-diagram overlay' : m === 'moment' ? 'Moment envelope overlay' : 'Shear envelope overlay'}>
                 {m === 'off' ? 'Diag' : m === 'moment' ? 'M' : 'V'}
               </button>
@@ -546,24 +546,24 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           </div>
           <button
             onClick={() => { setInspectMode(m => !m); setInspectedMemberId(null); }}
-            style={{ padding: '5px 9px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: inspectMode ? '#7c3aed' : 'white', color: inspectMode ? 'white' : '#374151' }}
+            style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: inspectMode ? '#7c3aed' : 'white', color: inspectMode ? 'white' : INK.base }}
             title="Inspect: click a beam to see its section sketch and V/M diagrams">
             🔍
           </button>
           <button
             onClick={() => setShowErrors(s => !s)}
-            style={{ padding: '5px 9px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: showErrors ? '#dc2626' : 'white', color: showErrors ? 'white' : '#374151' }}
+            style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: showErrors ? STATUS.fail : 'white', color: showErrors ? 'white' : INK.base }}
             title="Highlight members with design errors or warnings">
             ⚠
           </button>
 
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>
+          <span style={{ fontSize: 11, color: INK.muted }}>
             {map.modelName} · {frames.length} frames
           </span>
           <button onClick={onOpenEtabsImport}
             title="Re-import / re-sync from ETABS"
-            style={{ padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: '#374151', fontWeight: 600 }}>
+            style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: INK.base, fontWeight: 600 }}>
             ↻ Re-sync
           </button>
         </div>
@@ -571,19 +571,19 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         {/* Story visibility chips */}
         {allStories.length > 1 && (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flexShrink: 0, alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: '#9ca3af', marginRight: 2 }}>Floors:</span>
+            <span style={{ fontSize: 10, color: INK.muted, marginRight: 2 }}>Floors:</span>
             {allStories.map(s => {
               const hidden = hiddenStories.has(s);
               return (
                 <button key={s} onClick={() => toggleStoryVisibility(s)}
-                  style={{ padding: '2px 8px', borderRadius: 12, border: '1px solid #d1d5db', fontSize: 10, cursor: 'pointer', background: hidden ? '#f3f4f6' : '#eff6ff', color: hidden ? '#9ca3af' : '#2563eb', fontWeight: hidden ? 400 : 600, textDecoration: hidden ? 'line-through' : 'none' }}>
+                  style={{ padding: '2px 8px', borderRadius: 12, border: `1px solid ${BORDER.strong}`, fontSize: 10, cursor: 'pointer', background: hidden ? '#f3f4f6' : ACCENT.softBg, color: hidden ? INK.muted : ACCENT.primary, fontWeight: hidden ? 400 : 600, textDecoration: hidden ? 'line-through' : 'none' }}>
                   {s}
                 </button>
               );
             })}
             {hiddenStories.size > 0 && (
               <button onClick={() => onProjectChange(prev => ({ ...prev, hiddenStories: [] }))}
-                style={{ padding: '2px 6px', borderRadius: 12, border: '1px solid #fca5a5', fontSize: 10, cursor: 'pointer', background: '#fee2e2', color: '#dc2626' }}>
+                style={{ padding: '2px 6px', borderRadius: 12, border: '1px solid #fca5a5', fontSize: 10, cursor: 'pointer', background: '#fee2e2', color: STATUS.fail }}>
                 Show all
               </button>
             )}
@@ -592,13 +592,13 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
         {/* Group-edit mode banner */}
         {activeGroup && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, flexShrink: 0 }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: activeGroup.color ?? '#2563eb', display: 'inline-block', flexShrink: 0 }} />
-            <span style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, flexShrink: 0 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: activeGroup.color ?? ACCENT.primary, display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: ACCENT.primaryHover, fontWeight: 600 }}>
               Editing <strong>{activeGroup.label}</strong> — click beams to add or remove members
             </span>
             <button onClick={() => setActiveGroupId(null)}
-              style={{ marginLeft: 'auto', padding: '3px 10px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+              style={{ marginLeft: 'auto', padding: '3px 10px', background: ACCENT.primary, color: 'white', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
               Done
             </button>
           </div>
@@ -693,14 +693,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       </div>
 
       {/* Right panel */}
-      <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
         {/* Tab bar — the workflow (Design + Verify) is primary; read-only
             analytics are tucked behind an "Analyze" picker. */}
-        <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #e5e7eb', background: '#f9fafb', paddingRight: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6 }}>
           <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}
             title="Group members, design their cage, and verify with S-Concrete">Design + Verify</button>
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 10, color: '#9ca3af', marginRight: 4 }}>Analyze:</span>
+          <span style={{ fontSize: 10, color: INK.muted, marginRight: 4 }}>Analyze:</span>
           <Dropdown
             value={rightTab === 'groups' ? '' : rightTab}
             options={[
@@ -711,7 +711,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               { value: 'stacks', label: 'Column stacks' },
             ]}
             onChange={v => setRightTab((v || 'groups') as RightTab)}
-            style={{ padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, background: 'white', margin: '4px 0' }}
+            style={{ padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, background: 'white', margin: '4px 0' }}
           />
         </div>
 
@@ -903,7 +903,7 @@ function RangeInput({ value, onCommit }: { value: number; onCommit: (v: number) 
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => { if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); } }}
-      style={{ width: 60, padding: '2px 5px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, fontFamily: 'monospace' }}
+      style={{ width: 60, padding: '2px 5px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 11, ...MONO_NUM }}
     />
   );
 }
@@ -938,13 +938,13 @@ function MetricLegendPanel({
   return (
     <div style={{
       position: 'absolute', top: 8, right: 8, width: 250, background: 'white',
-      borderRadius: 8, padding: '8px 10px', border: '1px solid #e5e7eb',
-      boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: '#374151', zIndex: 20,
+      borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
+      boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontWeight: 700, color: '#111827' }}>{label}</span>
+        <span style={{ fontWeight: 700, color: INK.strong }}>{label}</span>
         <button onClick={onToggleHistogram}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: 10, padding: 0 }}>
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.secondary, fontSize: 10, padding: 0 }}>
           {showHistogram ? 'Hide ▴' : 'Histogram ▾'}
         </button>
       </div>
@@ -969,11 +969,11 @@ function MetricLegendPanel({
 
       {/* Min / Max range controls */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 6 }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 9, color: '#9ca3af' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: INK.muted }}>
           MIN
           <RangeInput value={range.min} onCommit={setMin} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 9, color: '#9ca3af', alignItems: 'flex-end' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, color: INK.muted, alignItems: 'flex-end' }}>
           MAX
           <RangeInput value={range.max} onCommit={setMax} />
         </label>
@@ -986,23 +986,23 @@ function MetricLegendPanel({
         <button onClick={() => applyPercentiles(10, 90)}
           style={presetBtn} title="Clip to the 10th–90th percentile">10–90%</button>
         <button onClick={() => onOverrideChange(null)}
-          style={{ ...presetBtn, marginLeft: 'auto', color: override ? '#dc2626' : '#9ca3af', borderColor: override ? '#fca5a5' : '#e5e7eb' }}
+          style={{ ...presetBtn, marginLeft: 'auto', color: override ? STATUS.fail : INK.muted, borderColor: override ? '#fca5a5' : BORDER.default }}
           disabled={!override}>
           Auto
         </button>
       </div>
-      <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 4 }}>
+      <div style={{ fontSize: 10, color: INK.muted, marginTop: 4 }}>
         Full data: {autoRange.min.toFixed(2)} – {autoRange.max.toFixed(2)} · {values.length} beams
       </div>
     </div>
   );
 }
 
-const toolSep: React.CSSProperties = { width: 1, height: 20, background: '#e5e7eb', margin: '0 2px', flexShrink: 0 };
-const sectionHdr: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#0f172a', padding: '8px 10px 4px', background: '#f9fafb', borderBottom: '1px solid #eef2f7', display: 'flex', alignItems: 'baseline', gap: 6, flexShrink: 0 };
-const sectionHint: React.CSSProperties = { fontSize: 9.5, fontWeight: 400, color: '#9ca3af' };
+const toolSep: React.CSSProperties = { width: 1, height: 20, background: BORDER.default, margin: '0 2px', flexShrink: 0 };
+const sectionHdr: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: INK.strong, padding: '8px 10px 4px', background: SURFACE.subtle, borderBottom: '1px solid #eef2f7', display: 'flex', alignItems: 'baseline', gap: 6, flexShrink: 0 };
+const sectionHint: React.CSSProperties = { fontSize: 10, fontWeight: 400, color: INK.muted };
 
 const presetBtn: React.CSSProperties = {
-  padding: '2px 7px', border: '1px solid #d1d5db', borderRadius: 5,
-  background: 'white', color: '#374151', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+  padding: '2px 7px', border: `1px solid ${BORDER.strong}`, borderRadius: 5,
+  background: 'white', color: INK.base, fontSize: 10, cursor: 'pointer', fontWeight: 600,
 };

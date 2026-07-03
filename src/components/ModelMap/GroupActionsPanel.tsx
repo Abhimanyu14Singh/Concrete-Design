@@ -505,7 +505,7 @@ export default function GroupActionsPanel({ groups, members, project, frameByMem
                         <td style={{ padding: '4px 6px', fontWeight: 600 }}>
                           <span style={{ color: INK.muted, marginRight: 3 }}>{isOpen ? '▾' : '▸'}</span>
                           {r.groupLabel ?? r.name}
-                          {badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
+                          {badge && <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: badge.c, border: `1px solid ${badge.c}`, borderRadius: 4, padding: '0 4px' }}>{badge.t}</span>}
                         </td>
                         <td style={{ padding: '4px 6px', color: TONE[sv.tone], fontWeight: 700, whiteSpace: 'nowrap' }}>
                           {sv.text}

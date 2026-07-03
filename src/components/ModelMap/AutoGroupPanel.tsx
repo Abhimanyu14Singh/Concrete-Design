@@ -18,6 +18,7 @@ import HistogramPanel from './HistogramPanel';
 import { GROUP_PALETTE } from './groupColors';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
+import { ACCENT, BORDER, INK, MONO_NUM } from '../../theme';
 
 /**
  * Reformat a section-family label for the active unit system. Family labels
@@ -222,13 +223,13 @@ export default function AutoGroupPanel({
 
   if (!baseSuggestions.length) {
     return (
-      <div style={{ padding: 12, color: '#9ca3af', fontSize: 12 }}>
+      <div style={{ padding: 12, color: INK.muted, fontSize: 12 }}>
         Import beams first to enable auto-grouping.
       </div>
     );
   }
 
-  const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 3 };
+  const lbl: React.CSSProperties = { fontSize: 10, color: INK.secondary, marginBottom: 3 };
 
   // Color of each preview bin, looked up from the overlay so swatches match
   // exactly what the map plan and the committed groups will show.
@@ -240,38 +241,38 @@ export default function AutoGroupPanel({
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Demand metric selector */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ fontSize: 10, color: '#9ca3af', alignSelf: 'center', marginRight: 4 }}>Cluster by:</span>
+        <span style={{ fontSize: 10, color: INK.muted, alignSelf: 'center', marginRight: 4 }}>Cluster by:</span>
         {(['governing', 'Mu_pos', 'Mu_neg', 'Vu'] as const).map(m => (
           <button key={m} onClick={() => setMetric(m)}
-            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
-              background: metric === m ? '#2563eb' : 'white', color: metric === m ? 'white' : '#374151' }}>
+            style={{ padding: '3px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 5, fontSize: 10, cursor: 'pointer',
+              background: metric === m ? ACCENT.primary : 'white', color: metric === m ? 'white' : INK.base }}>
             {m === 'governing' ? 'Governing' : m === 'Mu_pos' ? 'M⁺' : m === 'Mu_neg' ? 'M⁻' : 'Shear'}
           </button>
         ))}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 10, color: '#6b7280' }}>Pool:</span>
+          <span style={{ fontSize: 10, color: INK.secondary }}>Pool:</span>
           <button
             onClick={() => { setGroupAllBeams(false); setSelectedFamily(''); setTweakedBreaks({}); }}
-            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
-              background: !groupAllBeams ? '#2563eb' : 'white', color: !groupAllBeams ? 'white' : '#374151' }}
+            style={{ padding: '3px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 5, fontSize: 10, cursor: 'pointer',
+              background: !groupAllBeams ? ACCENT.primary : 'white', color: !groupAllBeams ? 'white' : INK.base }}
             title="Group beams within each section family independently">
             By family
           </button>
           <button
             onClick={() => { setGroupAllBeams(true); setSelectedFamily(''); setTweakedBreaks({}); }}
-            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: 'pointer',
-              background: groupAllBeams ? '#2563eb' : 'white', color: groupAllBeams ? 'white' : '#374151' }}
+            style={{ padding: '3px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 5, fontSize: 10, cursor: 'pointer',
+              background: groupAllBeams ? ACCENT.primary : 'white', color: groupAllBeams ? 'white' : INK.base }}
             title="Cluster all beams together regardless of section dimensions or material">
             All beams
           </button>
-          <span style={{ color: '#d1d5db', margin: '0 2px', fontSize: 12, alignSelf: 'center' }}>|</span>
+          <span style={{ color: BORDER.strong, margin: '0 2px', fontSize: 12, alignSelf: 'center' }}>|</span>
           <button
             disabled={groupAllBeams}
             onClick={() => { setSplitByFace(v => !v); setTweakedBreaks({}); }}
-            style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 10, cursor: groupAllBeams ? 'not-allowed' : 'pointer',
+            style={{ padding: '3px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 5, fontSize: 10, cursor: groupAllBeams ? 'not-allowed' : 'pointer',
               opacity: groupAllBeams ? 0.4 : 1,
               background: splitByFace && !groupAllBeams ? '#7c3aed' : 'white',
-              color: splitByFace && !groupAllBeams ? 'white' : '#374151' }}
+              color: splitByFace && !groupAllBeams ? 'white' : INK.base }}
             title="Split each section family into M⁺-governed (bottom bars) and M⁻-governed (top bars) sub-pools before clustering — prevents mixing sagging and hogging beams in the same group">
             Split by face
           </button>
@@ -286,7 +287,7 @@ export default function AutoGroupPanel({
             {(['jenks', 'quantile'] as const).map(alg => (
               <button key={alg}
                 onClick={() => { setAlgorithm(alg); setTweakedBreaks({}); }}
-                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: algorithm === alg ? '#2563eb' : 'white', color: algorithm === alg ? 'white' : '#374151', cursor: 'pointer' }}>
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: algorithm === alg ? ACCENT.primary : 'white', color: algorithm === alg ? 'white' : INK.base, cursor: 'pointer' }}>
                 {alg === 'jenks' ? 'Jenks' : 'Quantile'}
               </button>
             ))}
@@ -297,13 +298,13 @@ export default function AutoGroupPanel({
           <div style={{ display: 'flex', gap: 4 }}>
             <button
               onClick={() => { setKPerFamily('auto'); setTotalGroups(null); setTweakedBreaks({}); }}
-              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: totalGroups === null && kPerFamily === 'auto' ? '#2563eb' : 'white', color: totalGroups === null && kPerFamily === 'auto' ? 'white' : '#374151', cursor: 'pointer' }}>
+              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: totalGroups === null && kPerFamily === 'auto' ? ACCENT.primary : 'white', color: totalGroups === null && kPerFamily === 'auto' ? 'white' : INK.base, cursor: 'pointer' }}>
               Auto
             </button>
             {[2, 3, 4, 5].map(k => (
               <button key={k}
                 onClick={() => { setKPerFamily(k); setTotalGroups(null); setTweakedBreaks({}); }}
-                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: totalGroups === null && kPerFamily === k ? '#2563eb' : 'white', color: totalGroups === null && kPerFamily === k ? 'white' : '#374151', cursor: 'pointer' }}>
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: totalGroups === null && kPerFamily === k ? ACCENT.primary : 'white', color: totalGroups === null && kPerFamily === k ? 'white' : INK.base, cursor: 'pointer' }}>
                 {k}
               </button>
             ))}
@@ -337,18 +338,18 @@ export default function AutoGroupPanel({
                 }
                 setTweakedBreaks({});
               }}
-              style={{ width: 56, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${totalGroups !== null ? '#2563eb' : '#d1d5db'}`, background: totalGroups !== null ? '#eff6ff' : 'white', fontFamily: 'monospace' }}
+              style={{ width: 56, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${totalGroups !== null ? ACCENT.primary : BORDER.strong}`, background: totalGroups !== null ? ACCENT.softBg : 'white', ...MONO_NUM }}
               title="Total design groups across the whole model, distributed across families by demand spread"
             />
             {totalGroups !== null && (
               <button onClick={() => { setTotalGroups(null); setTotalGroupsDraft(''); setTweakedBreaks({}); }}
-                style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', background: 'white', color: '#6b7280', cursor: 'pointer' }}>
+                style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: 'white', color: INK.secondary, cursor: 'pointer' }}>
                 clear
               </button>
             )}
           </div>
           {totalGroups !== null && (
-            <div style={{ fontSize: 9, color: '#6b7280', marginTop: 2 }}>
+            <div style={{ fontSize: 10, color: INK.secondary, marginTop: 2 }}>
               ≈ {baseSuggestions.reduce((s, sg) => s + sg.bins.length, 0)} across {baseSuggestions.length} famil{baseSuggestions.length === 1 ? 'y' : 'ies'}
             </div>
           )}
@@ -367,7 +368,7 @@ export default function AutoGroupPanel({
               return { value: s.familyKey, label: `${displayFamilyLabel(s.familyLabel, units)}${faceLabel} (${count} beams)` };
             })}
             onChange={setSelectedFamily}
-            style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #d1d5db', width: '100%' }}
+            style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, width: '100%' }}
           />
         </div>
       )}
@@ -386,7 +387,7 @@ export default function AutoGroupPanel({
           <div>
             <div style={{ ...lbl, marginBottom: 6 }}>
               Demand distribution — {displayFamilyLabel(activeSuggestion.familyLabel, units)}
-              <span style={{ marginLeft: 6, color: '#2563eb' }}>GVF {(activeSuggestion.gvf * 100).toFixed(0)}%</span>
+              <span style={{ marginLeft: 6, color: ACCENT.primary }}>GVF {(activeSuggestion.gvf * 100).toFixed(0)}%</span>
             </div>
             <HistogramPanel
               values={dispVals}
@@ -419,8 +420,8 @@ export default function AutoGroupPanel({
               onMouseLeave={clearHighlight}>
               <span style={{ width: 10, height: 10, borderRadius: 2, background: previewColor(bi), flexShrink: 0 }} />
               <span style={{ fontSize: 11, flex: 1 }}>Group {bi + 1}</span>
-              <span style={{ fontSize: 10, color: '#6b7280' }}>{mIds.length} beams</span>
-              <span style={{ fontSize: 10, color: '#374151', fontFamily: 'monospace' }}>{demandStr}</span>
+              <span style={{ fontSize: 10, color: INK.secondary }}>{mIds.length} beams</span>
+              <span style={{ fontSize: 10, color: INK.base, ...MONO_NUM }}>{demandStr}</span>
             </div>
           );
         })}
@@ -428,10 +429,10 @@ export default function AutoGroupPanel({
 
       <button
         onClick={handleApply}
-        style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: 6, padding: '7px 0', fontWeight: 600, fontSize: 12, cursor: 'pointer', width: '100%' }}>
+        style={{ background: ACCENT.primary, color: 'white', border: 'none', borderRadius: 6, padding: '7px 0', fontWeight: 600, fontSize: 12, cursor: 'pointer', width: '100%' }}>
         Commit as Design Groups
       </button>
-      <div style={{ fontSize: 9, color: '#9ca3af' }}>
+      <div style={{ fontSize: 10, color: INK.muted }}>
         Overlay is reference-only. Commit replaces existing auto-groups; manual groups untouched.
       </div>
     </div>

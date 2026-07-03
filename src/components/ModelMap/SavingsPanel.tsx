@@ -6,6 +6,7 @@ import { useState, useMemo, Fragment } from 'react';
 import type { Member, DesignResults, DesignGroup } from '../../types';
 import { computeSavings, familyKey, steelWeightPerFt, flexSteelRatioPct } from '../../utils/autoGroup';
 import { useUnits } from '../../contexts/UnitsContext';
+import { ACCENT, BORDER, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
 
 interface SavingsPanelProps {
   members: Member[];
@@ -172,16 +173,16 @@ export default function SavingsPanel({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: INK.strong }}>
             {hasResults ? `~${fmtTons(savings.totalLb)}` : '—'} potential savings
             {hasResults && totalInPlaceLb > 0 && (
-              <span style={{ marginLeft: 6, fontSize: 11, color: '#16a34a' }}>({savingsPct.toFixed(0)}%)</span>
+              <span style={{ marginLeft: 6, fontSize: 11, color: STATUS.ok }}>({savingsPct.toFixed(0)}%)</span>
             )}
           </div>
-          <div style={{ fontSize: 10, color: '#6b7280' }}>at target DCR {(targetDCR * 100).toFixed(0)}%</div>
+          <div style={{ fontSize: 10, color: INK.secondary }}>at target DCR {(targetDCR * 100).toFixed(0)}%</div>
         </div>
         {hasResults && (
-          <button onClick={exportCSV} style={{ fontSize: 10, padding: '4px 8px', borderRadius: 5, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', color: '#374151' }}>
+          <button onClick={exportCSV} style={{ fontSize: 10, padding: '4px 8px', borderRadius: 5, border: `1px solid ${BORDER.strong}`, background: 'white', cursor: 'pointer', color: INK.base }}>
             ↓ CSV
           </button>
         )}
@@ -189,49 +190,49 @@ export default function SavingsPanel({
 
       {/* Target DCR slider */}
       <div>
-        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>
-          Target DCR: <span style={{ fontWeight: 700, color: '#374151' }}>{(targetDCR * 100).toFixed(0)}%</span>
+        <div style={{ fontSize: 10, color: INK.secondary, marginBottom: 3 }}>
+          Target DCR: <span style={{ fontWeight: 700, color: INK.base }}>{(targetDCR * 100).toFixed(0)}%</span>
         </div>
         <input type="range" min={0.70} max={1.00} step={0.01} value={targetDCR}
           onChange={e => onTargetDCRChange(parseFloat(e.target.value))}
-          style={{ width: '100%', accentColor: '#2563eb' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#9ca3af' }}>
+          style={{ width: '100%', accentColor: ACCENT.primary }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: INK.muted }}>
           <span>70% (conservative)</span><span>100% (use everything)</span>
         </div>
       </div>
 
       {/* Steel in place, split longitudinal vs stirrups */}
       {weightTotals.totalLenFt > 0 && (
-        <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px' }}>
-          <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>Steel in place</div>
+        <div style={{ background: '#f8fafc', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: '6px 10px' }}>
+          <div style={{ fontSize: 10, color: INK.secondary, fontWeight: 600, marginBottom: 4 }}>Steel in place</div>
           <div style={{ display: 'flex', gap: 12, fontSize: 10 }}>
             <div>
-              <div style={{ color: '#9ca3af' }}>Longitudinal</div>
-              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#374151' }}>
+              <div style={{ color: INK.muted }}>Longitudinal</div>
+              <div style={{ ...MONO_NUM, fontWeight: 700, color: INK.base }}>
                 {fmtVal(weightTotals.longLb, 'steelWeight')} {label('steelWeight')}
               </div>
-              <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.longLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
+              <div style={{ color: INK.secondary }}>{fmtVal(weightTotals.longLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
             <div>
-              <div style={{ color: '#9ca3af' }}>Stirrups</div>
-              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#374151' }}>
+              <div style={{ color: INK.muted }}>Stirrups</div>
+              <div style={{ ...MONO_NUM, fontWeight: 700, color: INK.base }}>
                 {fmtVal(weightTotals.stirrupLb, 'steelWeight')} {label('steelWeight')}
               </div>
-              <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.stirrupLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
+              <div style={{ color: INK.secondary }}>{fmtVal(weightTotals.stirrupLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
             <div>
-              <div style={{ color: '#9ca3af' }}>Total</div>
-              <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#111827' }}>
+              <div style={{ color: INK.muted }}>Total</div>
+              <div style={{ ...MONO_NUM, fontWeight: 700, color: INK.strong }}>
                 {fmtTons(weightTotals.totalLb)}
               </div>
-              <div style={{ color: '#6b7280' }}>{fmtVal(weightTotals.totalLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
+              <div style={{ color: INK.secondary }}>{fmtVal(weightTotals.totalLb / weightTotals.totalLenFt, 'steelWeightPerLength')} {label('steelWeightPerLength')} avg</div>
             </div>
           </div>
         </div>
       )}
 
       {!hasResults && (
-        <div style={{ fontSize: 11, color: '#9ca3af' }}>
+        <div style={{ fontSize: 11, color: INK.muted }}>
           Design members first to see savings estimates.
         </div>
       )}
@@ -239,13 +240,13 @@ export default function SavingsPanel({
       {/* Consolidation tips */}
       {consolidationTips.length > 0 && (
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>Consolidation ideas</div>
+          <div style={{ fontSize: 10, color: INK.secondary, fontWeight: 600, marginBottom: 4 }}>Consolidation ideas</div>
           {consolidationTips.map((tip, i) => (
-            <div key={i} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '5px 8px', marginBottom: 4, fontSize: 10 }}>
+            <div key={i} style={{ background: STATUS.okBg, border: `1px solid ${STATUS.okBorder}`, borderRadius: 6, padding: '5px 8px', marginBottom: 4, fontSize: 10 }}>
               <span style={{ color: '#166534' }}>{tip.label}</span>
               {onMergeGroups && (
                 <button onClick={() => onMergeGroups(tip.keepId, tip.removeId)}
-                  style={{ marginLeft: 8, fontSize: 9, padding: '1px 6px', border: '1px solid #16a34a', borderRadius: 4, background: 'white', color: '#16a34a', cursor: 'pointer' }}>
+                  style={{ marginLeft: 8, fontSize: 10, padding: '1px 6px', border: `1px solid ${STATUS.ok}`, borderRadius: 4, background: 'white', color: STATUS.ok, cursor: 'pointer' }}>
                   Merge
                 </button>
               )}
@@ -257,17 +258,17 @@ export default function SavingsPanel({
       {/* Per-group table */}
       {hasResults && (
         <div>
-          <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>
+          <div style={{ fontSize: 10, color: INK.secondary, fontWeight: 600, marginBottom: 4 }}>
             By group <span style={{ fontWeight: 400 }}>(click to expand)</span>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
-              <tr style={{ color: '#9ca3af', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={{ padding: '2px 4px', fontWeight: 500 }}>Group</th>
-                <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>Members</th>
-                <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>DCR</th>
-                <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>Savings</th>
-                <th style={{ padding: '2px 4px', fontWeight: 500, textAlign: 'right' }}>%</th>
+              <tr style={{ color: INK.muted, textAlign: 'left', borderBottom: `1px solid ${BORDER.default}` }}>
+                <th style={{ padding: '2px 4px', fontWeight: 600 }}>Group</th>
+                <th style={{ padding: '2px 4px', fontWeight: 600, textAlign: 'right' }}>Members</th>
+                <th style={{ padding: '2px 4px', fontWeight: 600, textAlign: 'right' }}>DCR</th>
+                <th style={{ padding: '2px 4px', fontWeight: 600, textAlign: 'right' }}>Savings</th>
+                <th style={{ padding: '2px 4px', fontWeight: 600, textAlign: 'right' }}>%</th>
               </tr>
             </thead>
             <tbody>
@@ -277,38 +278,38 @@ export default function SavingsPanel({
                     style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
                     onClick={() => setExpanded(expanded === group.id ? null : group.id)}>
                     <td style={{ padding: '3px 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: group.color ?? '#9ca3af', flexShrink: 0 }} />
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: group.color ?? INK.muted, flexShrink: 0 }} />
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>{group.label}</span>
                     </td>
-                    <td style={{ padding: '3px 4px', textAlign: 'right', color: '#374151' }}>{count}</td>
-                    <td style={{ padding: '3px 4px', textAlign: 'right', fontFamily: 'monospace', color: worstDCR >= 1 ? '#dc2626' : '#374151' }}>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', color: INK.base }}>{count}</td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', ...MONO_NUM, color: worstDCR >= 1 ? STATUS.fail : INK.base }}>
                       {worstDCR.toFixed(2)}
                     </td>
-                    <td style={{ padding: '3px 4px', textAlign: 'right', color: lb > 50 ? '#16a34a' : '#6b7280', fontWeight: lb > 50 ? 600 : 400 }}>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', color: lb > 50 ? STATUS.ok : INK.secondary, fontWeight: lb > 50 ? 600 : 400 }}>
                       {fmtVal(lb, 'steelWeight')} {label('steelWeight')}
                     </td>
-                    <td style={{ padding: '3px 4px', textAlign: 'right', color: '#6b7280', fontSize: 9 }}>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', color: INK.secondary, fontSize: 10 }}>
                       {totalInPlaceLb > 0 ? (lb / totalInPlaceLb * 100).toFixed(1) + '%' : '—'}
                     </td>
                   </tr>
                   {expanded === group.id && rho && (
-                    <tr style={{ background: '#f9fafb' }}>
-                      <td colSpan={5} style={{ padding: '3px 12px', fontSize: 9, color: '#6b7280' }}>
+                    <tr style={{ background: SURFACE.subtle }}>
+                      <td colSpan={5} style={{ padding: '3px 12px', fontSize: 10, color: INK.secondary }}>
                         <span style={{ fontWeight: 600 }}>ρ (avg):</span>{' '}
-                        bot <span style={{ fontFamily: 'monospace', color: '#374151' }}>{rho.botProv.toFixed(2)}%</span>
-                        {' → '}<span style={{ fontFamily: 'monospace', color: '#16a34a' }}>{rho.botYield.toFixed(2)}%</span>
-                        {'   '}top <span style={{ fontFamily: 'monospace', color: '#374151' }}>{rho.topProv.toFixed(2)}%</span>
-                        {' → '}<span style={{ fontFamily: 'monospace', color: '#16a34a' }}>{rho.topYield.toFixed(2)}%</span>
+                        bot <span style={{ ...MONO_NUM, color: INK.base }}>{rho.botProv.toFixed(2)}%</span>
+                        {' → '}<span style={{ ...MONO_NUM, color: STATUS.ok }}>{rho.botYield.toFixed(2)}%</span>
+                        {'   '}top <span style={{ ...MONO_NUM, color: INK.base }}>{rho.topProv.toFixed(2)}%</span>
+                        {' → '}<span style={{ ...MONO_NUM, color: STATUS.ok }}>{rho.topYield.toFixed(2)}%</span>
                       </td>
                     </tr>
                   )}
                   {expanded === group.id && savings.perMember
                     .filter(m => memberGroupId[m.memberId] === group.id)
                     .map(m => (
-                      <tr key={m.memberId} style={{ background: '#f9fafb' }}>
-                        <td colSpan={2} style={{ padding: '2px 12px', color: '#6b7280' }}>{m.label} <span style={{ color: '#9ca3af' }}>{m.story}</span></td>
-                        <td style={{ padding: '2px 4px', textAlign: 'right', fontFamily: 'monospace', fontSize: 9, color: '#374151' }}>{m.dcrGov.toFixed(2)}</td>
-                        <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 9, color: '#374151' }}>{fmtVal(m.totalSlackLb, 'steelWeight')} {label('steelWeight')}</td>
+                      <tr key={m.memberId} style={{ background: SURFACE.subtle }}>
+                        <td colSpan={2} style={{ padding: '2px 12px', color: INK.secondary }}>{m.label} <span style={{ color: INK.muted }}>{m.story}</span></td>
+                        <td style={{ padding: '2px 4px', textAlign: 'right', ...MONO_NUM, fontSize: 10, color: INK.base }}>{m.dcrGov.toFixed(2)}</td>
+                        <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 10, color: INK.base }}>{fmtVal(m.totalSlackLb, 'steelWeight')} {label('steelWeight')}</td>
                       </tr>
                     ))}
                 </Fragment>
@@ -318,33 +319,33 @@ export default function SavingsPanel({
                 <>
                   <tr style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
                     onClick={() => setExpanded(expanded === '_ungrouped' ? null : '_ungrouped')}>
-                    <td style={{ padding: '3px 4px', color: '#9ca3af' }}>Ungrouped</td>
-                    <td style={{ padding: '3px 4px', textAlign: 'right', color: '#9ca3af' }}>
+                    <td style={{ padding: '3px 4px', color: INK.muted }}>Ungrouped</td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', color: INK.muted }}>
                       {savings.perMember.filter(m => !memberGroupId[m.memberId]).length}
                     </td>
                     <td />
-                    <td style={{ padding: '3px 4px', textAlign: 'right', color: '#6b7280' }}>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', color: INK.secondary }}>
                       {fmtVal(savings.perMember.filter(m => !memberGroupId[m.memberId]).reduce((s, m) => s + m.totalSlackLb, 0), 'steelWeight')} {label('steelWeight')}
                     </td>
                   </tr>
                   {expanded === '_ungrouped' && savings.perMember
                     .filter(m => !memberGroupId[m.memberId])
                     .map(m => (
-                      <tr key={m.memberId} style={{ background: '#f9fafb' }}>
-                        <td colSpan={2} style={{ padding: '2px 12px', color: '#6b7280' }}>{m.label}</td>
-                        <td style={{ padding: '2px 4px', textAlign: 'right', fontFamily: 'monospace', fontSize: 9 }}>{m.dcrGov.toFixed(2)}</td>
-                        <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 9 }}>{m.totalSlackLb.toFixed(0)}</td>
+                      <tr key={m.memberId} style={{ background: SURFACE.subtle }}>
+                        <td colSpan={2} style={{ padding: '2px 12px', color: INK.secondary }}>{m.label}</td>
+                        <td style={{ padding: '2px 4px', textAlign: 'right', ...MONO_NUM, fontSize: 10 }}>{m.dcrGov.toFixed(2)}</td>
+                        <td style={{ padding: '2px 4px', textAlign: 'right', fontSize: 10 }}>{m.totalSlackLb.toFixed(0)}</td>
                       </tr>
                     ))}
                 </>
               )}
             </tbody>
             <tfoot>
-              <tr style={{ borderTop: '2px solid #e5e7eb', fontWeight: 700 }}>
-                <td colSpan={3} style={{ padding: '4px 4px', color: '#374151', fontSize: 11 }}>Total</td>
-                <td style={{ padding: '4px 4px', textAlign: 'right', color: '#16a34a', fontSize: 11 }}>
+              <tr style={{ borderTop: `2px solid ${BORDER.default}`, fontWeight: 700 }}>
+                <td colSpan={3} style={{ padding: '4px 4px', color: INK.base, fontSize: 11 }}>Total</td>
+                <td style={{ padding: '4px 4px', textAlign: 'right', color: STATUS.ok, fontSize: 11 }}>
                   {fmtVal(savings.totalLb, 'steelWeight')} {label('steelWeight')}<br />
-                  <span style={{ fontSize: 9, color: '#6b7280' }}>{fmtTons(savings.totalLb)}</span>
+                  <span style={{ fontSize: 10, color: INK.secondary }}>{fmtTons(savings.totalLb)}</span>
                 </td>
               </tr>
             </tfoot>

@@ -9,14 +9,15 @@
 import { useMemo } from 'react';
 import type { Member, DesignCode } from '../../types';
 import { buildColumnStacks, type StoryColumn } from '../../utils/columnStack';
+import { BORDER, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
 
 interface Props { members: Member[]; code: DesignCode }
 
 const dcrColor = (dcr: number): string =>
-  dcr > 1 ? '#dc2626' : dcr > 0.9 ? '#d97706' : '#16a34a';
+  dcr > 1 ? STATUS.fail : dcr > 0.9 ? STATUS.warn : STATUS.ok;
 
 const cardStyle: React.CSSProperties = {
-  background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 12px', marginBottom: 10,
+  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '10px 12px', marginBottom: 10,
 };
 
 function sectionLabel(s: StoryColumn): string {
@@ -38,7 +39,7 @@ export default function ColumnStacksPanel({ members, code }: Props) {
 
   if (stacks.length === 0) {
     return (
-      <div style={{ padding: '14px', fontSize: 12, color: '#9ca3af' }}>
+      <div style={{ padding: '14px', fontSize: 12, color: INK.muted }}>
         No multi-story column stacks found. Import columns from an ETABS model (so they carry plan
         coordinates), or add column members with loads, to see stacks here.
       </div>
@@ -47,7 +48,7 @@ export default function ColumnStacksPanel({ members, code }: Props) {
 
   return (
     <div style={{ padding: '12px 14px' }}>
-      <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 8 }}>
+      <div style={{ fontSize: 10, color: INK.muted, marginBottom: 8 }}>
         {stacks.length} stack{stacks.length !== 1 ? 's' : ''} · ordered bottom → top · axial demand vs φPn,max
       </div>
       {stacks.map(stack => {
@@ -55,11 +56,11 @@ export default function ColumnStacksPanel({ members, code }: Props) {
         return (
           <div key={stack.key} style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#374151' }}>{stack.label}</div>
-              <div style={{ fontSize: 10, color: '#9ca3af' }}>{stack.stories.length} stories</div>
+              <div style={{ fontWeight: 700, fontSize: 12, color: INK.base }}>{stack.label}</div>
+              <div style={{ fontSize: 10, color: INK.muted }}>{stack.stories.length} stories</div>
               <span style={{
-                marginLeft: 'auto', fontSize: 10, fontWeight: 700, fontFamily: 'monospace',
-                color: dcrColor(govDcr), background: '#f9fafb', border: '1px solid #e5e7eb',
+                marginLeft: 'auto', fontSize: 10, fontWeight: 700, ...MONO_NUM,
+                color: dcrColor(govDcr), background: SURFACE.subtle, border: `1px solid ${BORDER.default}`,
                 borderRadius: 4, padding: '1px 6px',
               }}>
                 max DCR {govDcr.toFixed(2)}
@@ -67,7 +68,7 @@ export default function ColumnStacksPanel({ members, code }: Props) {
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
-                <tr style={{ color: '#9ca3af', textAlign: 'right' }}>
+                <tr style={{ color: INK.muted, textAlign: 'right' }}>
                   <th style={{ textAlign: 'left', fontWeight: 600, padding: '2px 4px' }}>Story</th>
                   <th style={{ fontWeight: 600, padding: '2px 4px' }}>Elev</th>
                   <th style={{ fontWeight: 600, padding: '2px 4px' }}>Section</th>
@@ -78,7 +79,7 @@ export default function ColumnStacksPanel({ members, code }: Props) {
                   <th style={{ fontWeight: 600, padding: '2px 4px' }}>DCR</th>
                 </tr>
               </thead>
-              <tbody style={{ fontFamily: 'monospace', color: '#374151' }}>
+              <tbody style={{ ...MONO_NUM, color: INK.base }}>
                 {/* top story first for a natural elevation view */}
                 {[...stack.stories].reverse().map(s => {
                   const frac = s.phiPnMax > 0 ? s.PuGov / s.phiPnMax : 0;

@@ -17,6 +17,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin, Point3D } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type ColorMode } from './frameColor';
 import type { FrameInfo } from './MapCanvas';
+import { BORDER, INK, MONO_NUM } from '../../theme';
 
 interface Props {
   frames: MapFrame[];
@@ -218,7 +219,7 @@ export default function Map3DCanvas({
       <svg
         ref={svgRef}
         width={width} height={height}
-        style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', display: 'block', cursor: 'grab' }}
+        style={{ background: '#f8fafc', borderRadius: 10, border: `1px solid ${BORDER.default}`, display: 'block', cursor: 'grab' }}
         onMouseDown={startOrbit}
       >
         {/* Story floor planes (drawn first → behind the members) */}
@@ -269,7 +270,7 @@ export default function Map3DCanvas({
       </div>
 
       {/* Orbit hint */}
-      <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 10, color: '#64748b', background: 'rgba(255,255,255,0.85)', border: '1px solid #e5e7eb', borderRadius: 6, padding: '3px 8px' }}>
+      <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 10, color: '#64748b', background: 'rgba(255,255,255,0.85)', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: '3px 8px' }}>
         drag = orbit · wheel = zoom · dbl-click = open
       </div>
 
@@ -277,16 +278,16 @@ export default function Map3DCanvas({
       {hoveredFrame && (
         <div style={{
           position: 'absolute', top: 8, right: 8, background: 'white',
-          border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
-          fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+          border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
+          fontSize: 11, color: INK.base, boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
           pointerEvents: 'none', maxWidth: 260,
         }}>
           <div style={{ fontWeight: 700, marginBottom: 2 }}>{hoveredFrame.frameName}</div>
           <div style={{ color: '#94a3b8', marginBottom: hoveredInfo ? 4 : 0 }}>{hoveredFrame.story} · {hoveredFrame.sectionName}</div>
           {hoveredInfo && !hoveredInfo.error && (
             <div style={{ display: 'flex', gap: 8 }}>
-              <span>Flex <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(2)}</span></span>
-              <span>Shear <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(2)}</span></span>
+              <span>Flex <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(2)}</span></span>
+              <span>Shear <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(2)}</span></span>
             </div>
           )}
         </div>
@@ -302,6 +303,6 @@ export default function Map3DCanvas({
 }
 
 const presetBtn: React.CSSProperties = {
-  background: 'white', border: '1px solid #e5e7eb', borderRadius: 6,
-  padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: '#374151', fontWeight: 600,
+  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 6,
+  padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: INK.base, fontWeight: 600,
 };

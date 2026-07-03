@@ -10,13 +10,14 @@
  * re-render per keystroke; edits commit on blur / Enter.
  */
 import type { Member, Project, LoadCase } from '../../types';
+import { BORDER, INK, LABEL_STYLE, MONO_NUM, STATUS } from '../../theme';
 
 interface Props {
   members: Member[]; // the active group's members
   onProjectChange: (updater: (p: Project) => Project) => void;
 }
 
-const th: React.CSSProperties = { padding: '3px 4px', fontSize: 9.5, color: '#6b7280', fontWeight: 700, textAlign: 'right' };
+const th: React.CSSProperties = { padding: '3px 4px', fontSize: 10, color: INK.secondary, fontWeight: 700, textAlign: 'right' };
 const td: React.CSSProperties = { padding: '2px 4px' };
 
 function NumCell({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
@@ -27,7 +28,7 @@ function NumCell({ value, onCommit }: { value: number; onCommit: (v: number) => 
       defaultValue={value}
       onBlur={(e) => { const n = parseFloat(e.target.value); if (Number.isFinite(n)) onCommit(n); }}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-      style={{ width: 56, padding: '2px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 10.5, fontFamily: 'monospace', textAlign: 'right' }}
+      style={{ width: 56, padding: '2px 4px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 11, ...MONO_NUM, textAlign: 'right' }}
     />
   );
 }
@@ -55,11 +56,11 @@ export default function ColumnForceGrid({ members, onProjectChange }: Props) {
 
   return (
     <div style={{ padding: '8px 10px', borderTop: '1px solid #f1f5f9' }}>
-      <div style={{ fontSize: 10, fontWeight: 800, color: '#334155', letterSpacing: 0.3, marginBottom: 2 }}>
-        COLUMN FORCES <span style={{ fontWeight: 400, color: '#94a3b8' }}>(kip, kip-ft)</span>
+      <div style={{ ...LABEL_STYLE, color: INK.base, marginBottom: 2 }}>
+        COLUMN FORCES <span style={{ fontWeight: 400, color: INK.secondary, textTransform: 'none', letterSpacing: 0 }}>(kip, kip-ft)</span>
       </div>
       {anyZero && (
-        <div style={{ fontSize: 9.5, color: '#d97706', marginBottom: 4 }}>
+        <div style={{ fontSize: 10, color: STATUS.warn, marginBottom: 4 }}>
           ⚠ some columns still have zero forces — enter Pu / Mux / Muy before running S-Concrete.
         </div>
       )}

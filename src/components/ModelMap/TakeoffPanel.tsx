@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react';
 import type { Member } from '../../types';
 import { projectTakeoff } from '../../utils/takeoff';
 import { useUnits } from '../../contexts/UnitsContext';
+import { BORDER, INK, LABEL_STYLE, MONO_NUM } from '../../theme';
 
 interface Props { members: Member[] }
 
@@ -20,19 +21,17 @@ const LB_TO_KG = 0.453592;
 const FT2_TO_M2 = 0.092903;
 
 const cardStyle: React.CSSProperties = {
-  background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px', marginBottom: 10,
+  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '12px 14px', marginBottom: 10,
 };
-const headingStyle: React.CSSProperties = {
-  fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8,
-};
+const headingStyle: React.CSSProperties = { ...LABEL_STYLE, marginBottom: 8 };
 const num = (n: number, d = 1) => n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div style={{ flex: '1 1 90px', minWidth: 90 }}>
-      <div style={{ fontSize: 18, fontWeight: 700, color: '#111827', fontFamily: 'monospace' }}>{value}</div>
-      <div style={{ fontSize: 10, color: '#6b7280' }}>{label}</div>
-      {sub && <div style={{ fontSize: 9, color: '#9ca3af' }}>{sub}</div>}
+      <div style={{ fontSize: 18, fontWeight: 700, color: INK.strong, ...MONO_NUM }}>{value}</div>
+      <div style={{ fontSize: 10, color: INK.secondary }}>{label}</div>
+      {sub && <div style={{ fontSize: 10, color: INK.muted }}>{sub}</div>}
     </div>
   );
 }
@@ -74,7 +73,7 @@ export default function TakeoffPanel({ members }: Props) {
             sub={`per ${volUnit} concrete`}
           />
         </div>
-        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 8 }}>
+        <div style={{ fontSize: 10, color: INK.muted, marginTop: 8 }}>
           Gross section × member length; no rebar-displacement deduction. {members.length} member{members.length !== 1 ? 's' : ''}.
         </div>
       </div>
@@ -83,14 +82,14 @@ export default function TakeoffPanel({ members }: Props) {
         <div style={headingStyle}>By Member Type</div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
           <thead>
-            <tr style={{ color: '#9ca3af', textAlign: 'right' }}>
+            <tr style={{ color: INK.muted, textAlign: 'right' }}>
               <th style={{ textAlign: 'left', fontWeight: 600, padding: '2px 4px' }}>Type</th>
               <th style={{ fontWeight: 600, padding: '2px 4px' }}>#</th>
               <th style={{ fontWeight: 600, padding: '2px 4px' }}>Concrete ({volUnit})</th>
               <th style={{ fontWeight: 600, padding: '2px 4px' }}>Steel</th>
             </tr>
           </thead>
-          <tbody style={{ fontFamily: 'monospace', color: '#374151' }}>
+          <tbody style={{ ...MONO_NUM, color: INK.base }}>
             {rows.filter(r => t.byType[r.key].count > 0).map(r => {
               const b = t.byType[r.key];
               return (
@@ -103,7 +102,7 @@ export default function TakeoffPanel({ members }: Props) {
               );
             })}
             {members.length === 0 && (
-              <tr><td colSpan={4} style={{ padding: '8px 4px', color: '#9ca3af', textAlign: 'center' }}>No members yet.</td></tr>
+              <tr><td colSpan={4} style={{ padding: '8px 4px', color: INK.muted, textAlign: 'center' }}>No members yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -112,13 +111,13 @@ export default function TakeoffPanel({ members }: Props) {
       <div style={cardStyle}>
         <div style={headingStyle}>Per Gross Floor Area</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <label style={{ fontSize: 11, color: '#6b7280' }}>GFA</label>
+          <label style={{ fontSize: 11, color: INK.secondary }}>GFA</label>
           <input
             type="number" min={0} value={gfaStr} placeholder="0"
             onChange={e => setGfaStr(e.target.value)}
-            style={{ flex: 1, minWidth: 0, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, fontFamily: 'monospace' }}
+            style={{ flex: 1, minWidth: 0, padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, ...MONO_NUM }}
           />
-          <span style={{ fontSize: 11, color: '#9ca3af', width: 28 }}>{si ? 'm²' : 'ft²'}</span>
+          <span style={{ fontSize: 11, color: INK.muted, width: 28 }}>{si ? 'm²' : 'ft²'}</span>
         </div>
         {t.gfaFt2 ? (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -133,7 +132,7 @@ export default function TakeoffPanel({ members }: Props) {
             />
           </div>
         ) : (
-          <div style={{ fontSize: 10, color: '#9ca3af' }}>Enter a gross floor area to see concrete and steel intensities.</div>
+          <div style={{ fontSize: 10, color: INK.muted }}>Enter a gross floor area to see concrete and steel intensities.</div>
         )}
       </div>
     </div>

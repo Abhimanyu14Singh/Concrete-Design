@@ -275,7 +275,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
             <DCRChip label="wk" value={modes.wk} isWk />
           </span>
         )}
-        <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
+        <span style={{ ...MONO_NUM, fontWeight: 700, fontSize: 11, color: dcrColor(dcr), background: dcrBg(dcr), padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>{dcr.toFixed(2)}</span>
         <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: status === 'OK' ? STATUS.ok : status === 'NG' ? STATUS.fail : STATUS.warn }}>{status}</span>
       </div>
     );
@@ -559,7 +559,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                     {member.label}
                   </button>
                   <span style={{
-                    fontFamily: 'monospace', fontWeight: 700, fontSize: 12,
+                    ...MONO_NUM, fontWeight: 700, fontSize: 12,
                     color: dcrColor(maxDCR), background: dcrBg(maxDCR), padding: '2px 6px', borderRadius: 4, flexShrink: 0,
                   }}>
                     {maxDCR.toFixed(3)}
@@ -707,7 +707,7 @@ function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialE
     }));
   }
 
-  const inp: React.CSSProperties = { padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, width: 80, fontFamily: 'monospace' };
+  const inp: React.CSSProperties = { padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, width: 80, ...MONO_NUM };
 
   return (
     <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: 14 }}>

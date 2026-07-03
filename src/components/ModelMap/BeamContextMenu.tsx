@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { DesignGroup } from '../../types';
+import { BORDER, INK, MONO_NUM, STATUS } from '../../theme';
 
 interface Props {
   memberId: string;
@@ -42,13 +43,13 @@ export default function BeamContextMenu({
 
   const menuStyle: React.CSSProperties = {
     position: 'fixed', left: x, top: y, zIndex: 9999,
-    background: 'white', border: '1px solid #e5e7eb', borderRadius: 8,
+    background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8,
     boxShadow: '0 4px 16px rgba(0,0,0,0.15)', fontSize: 12, minWidth: 180,
     overflow: 'visible',
   };
 
   const itemStyle = (danger = false): React.CSSProperties => ({
-    padding: '7px 14px', cursor: 'pointer', color: danger ? '#dc2626' : '#111827',
+    padding: '7px 14px', cursor: 'pointer', color: danger ? STATUS.fail : INK.strong,
     display: 'flex', alignItems: 'center', gap: 6,
     background: 'none',
   });
@@ -58,7 +59,7 @@ export default function BeamContextMenu({
   return (
     <div ref={ref} style={menuStyle}>
       {/* Frame name header */}
-      <div style={{ padding: '6px 14px 4px', fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', borderBottom: '1px solid #f3f4f6' }}>
+      <div style={{ padding: '6px 14px 4px', fontSize: 10, color: INK.muted, ...MONO_NUM, borderBottom: '1px solid #f3f4f6' }}>
         {frameName}
       </div>
 
@@ -81,15 +82,15 @@ export default function BeamContextMenu({
         onMouseLeave={e => (e.currentTarget.style.background = 'none')}
       >
         <span>Move to group</span>
-        <span style={{ color: '#9ca3af' }}>▸</span>
+        <span style={{ color: INK.muted }}>▸</span>
         {groupsOpen && (
           <div style={{
             position: 'absolute', left: '100%', top: 0,
-            background: 'white', border: '1px solid #e5e7eb', borderRadius: 8,
+            background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8,
             boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: 160, fontSize: 12,
           }}>
             {groups.length === 0 && (
-              <div style={{ padding: '8px 12px', color: '#9ca3af' }}>No groups yet</div>
+              <div style={{ padding: '8px 12px', color: INK.muted }}>No groups yet</div>
             )}
             {groups.map(g => (
               <div key={g.id}
@@ -98,7 +99,7 @@ export default function BeamContextMenu({
                 onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}
               >
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.color ?? '#9ca3af', flexShrink: 0 }} />
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.color ?? INK.muted, flexShrink: 0 }} />
                 {g.label}
               </div>
             ))}
