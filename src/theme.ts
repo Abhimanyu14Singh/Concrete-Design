@@ -76,10 +76,13 @@ export const ACCENT = {
 } as const;
 
 // ── Status: the ONLY pass/warn/fail hues in the app ──────────────────────────
+// The -700 weights: dark enough that status TEXT passes WCAG AA (≥4.5:1) on
+// white and on its own tint, while white chip text on the solid fill also
+// passes. (The lighter -600s read fine as fills but fail as small text.)
 export const STATUS = {
-  ok: '#16a34a', okBg: '#f0fdf4', okBorder: '#bbf7d0',
-  warn: '#d97706', warnBg: '#fffbeb', warnBorder: '#fde68a',
-  fail: '#dc2626', failBg: '#fef2f2', failBorder: '#fecaca',
+  ok: '#15803d', okBg: '#f0fdf4', okBorder: '#bbf7d0',
+  warn: '#b45309', warnBg: '#fffbeb', warnBorder: '#fde68a',
+  fail: '#b91c1c', failBg: '#fef2f2', failBorder: '#fecaca',
   none: '#6b7280', noneBg: '#f3f4f6', noneBorder: '#e5e7eb',
 } as const;
 

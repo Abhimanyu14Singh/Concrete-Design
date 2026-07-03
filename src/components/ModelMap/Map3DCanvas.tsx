@@ -17,7 +17,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin, Point3D } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type ColorMode } from './frameColor';
 import type { FrameInfo } from './MapCanvas';
-import { BORDER, INK, MONO_NUM } from '../../theme';
+import { BORDER, INK, MONO_NUM, STATUS } from '../../theme';
 
 interface Props {
   frames: MapFrame[];
@@ -247,7 +247,7 @@ export default function Map3DCanvas({
               onDoubleClick={() => f.memberId && onDoubleClick?.(f.memberId)}
             >
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
-              {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#dc2626" strokeWidth={isHov ? 9 : 7} opacity={0.4} strokeLinecap="round" />}
+              {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={isHov ? 9 : 7} opacity={0.4} strokeLinecap="round" />}
               <line
                 x1={x1} y1={y1} x2={x2} y2={y2}
                 stroke={color}

@@ -1,7 +1,7 @@
 import { formatBarLabel } from '../../utils/rebar';
 import type { Member } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
-import { BARS, FONT } from '../../theme';
+import { BARS, FONT, STATUS } from '../../theme';
 
 interface Props {
   member: Member;
@@ -76,13 +76,13 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
             <line key={`sep-${i}`}
               x1={ox + (i / 3) * drawW} y1={oy - 6}
               x2={ox + (i / 3) * drawW} y2={oy + drawH + 6}
-              stroke="#d97706" strokeWidth="1" strokeDasharray="4 3" />
+              stroke={STATUS.warn} strokeWidth="1" strokeDasharray="4 3" />
           ))}
           {/* Zone spacing labels */}
           {tieZones.map((z, i) => (
             <text key={`zl-${i}`}
               x={ox + ((i + 0.5) / 3) * drawW} y={oy + drawH + 14}
-              textAnchor="middle" fontSize="9" fill="#d97706" fontFamily={FONT.mono}>
+              textAnchor="middle" fontSize="9" fill={STATUS.warn} fontFamily={FONT.mono}>
               {formatBarLabel(ties.barSize)}@{fmt(z.spacing, 'length')}
             </text>
           ))}

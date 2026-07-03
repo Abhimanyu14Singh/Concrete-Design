@@ -370,7 +370,7 @@ export default function MapCanvas({
               {isColumn ? (
                 <>
                   <rect x={x1 - 7} y={y1 - 7} width={14} height={14} fill="transparent" />
-                  {flagged && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke="#dc2626" strokeWidth={2} opacity={0.5} />}
+                  {flagged && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke={STATUS.fail} strokeWidth={2} opacity={0.5} />}
                   {isSel && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke="#2563eb" strokeWidth={2} />}
                   <rect x={x1 - r} y={y1 - r} width={2 * r} height={2 * r} rx={1.5}
                     fill={color} stroke="#0b1220" strokeWidth={0.5}
@@ -379,7 +379,7 @@ export default function MapCanvas({
               ) : (
                 <>
                   <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
-                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#dc2626" strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
+                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
                   {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={9} opacity={0.35} strokeLinecap="round" />}
                   <line x1={x1} y1={y1} x2={x2} y2={y2}
                     stroke={color}

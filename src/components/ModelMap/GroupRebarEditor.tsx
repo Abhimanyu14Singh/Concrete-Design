@@ -10,7 +10,7 @@ import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
-import { ACCENT, BORDER, INK, MONO_NUM, STATUS } from '../../theme';
+import { ACCENT, BORDER, INK, MONO_NUM, STATUS, TRACK } from '../../theme';
 
 interface Props {
   group: DesignGroup;
@@ -143,7 +143,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   return (
     <div style={{ padding: '10px 12px', borderTop: `1px solid ${BORDER.default}`, background: '#f8fafc' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: 11, color: INK.base, textTransform: 'uppercase', letterSpacing: 0.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontWeight: 700, fontSize: 11, color: INK.base, textTransform: 'uppercase', letterSpacing: TRACK.wide, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {group.label} — Rebar Template
         </div>
         <button
