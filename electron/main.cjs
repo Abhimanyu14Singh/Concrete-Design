@@ -18,7 +18,7 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
-    backgroundColor: '#030712',
+    backgroundColor: '#f3f4f6', // match the light app shell (no dark startup flash)
     show: false,
   });
 
