@@ -1,6 +1,6 @@
 {
   "name": "s-dashboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reinforced concrete design per ACI 318-19",
   "private": true,
   "type": "module",
