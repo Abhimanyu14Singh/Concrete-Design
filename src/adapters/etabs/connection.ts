@@ -17,6 +17,16 @@ export interface EtabsConnectInfo {
   units: string; // display only, e.g. "kip-ft"
 }
 
+/** The active unit interpretation a connection reads raw ETABS values under.
+ *  Surfaced to the import wizard so the user can see — and correct — it. */
+export interface UnitInfo {
+  forceKey: string;    // 'kip', 'kn', … (drives forces V/P)
+  lengthKey: string;   // 'ft', 'm', …  (drives sizes b/h/span)
+  label: string;       // 'kip-ft'
+  assumed: boolean;    // true = auto-detection failed; using a fallback default
+  stressUnit: string;  // effective material unit ('mpa' override, or 'kip/ft²' derived)
+}
+
 /** Result of pushing one design group back to ETABS as a named group. */
 export interface PushGroupResult {
   groupName: string;
@@ -80,6 +90,15 @@ export interface ColumnComboForce {
 export interface EtabsConnection {
   readonly kind: 'com' | 'file' | 'mock' | 'bridge';
   connect(): Promise<EtabsConnectInfo>;
+  /** Re-interpret raw ETABS values under an explicit force+length system,
+   *  overriding auto-detection (optional — sources with fixed units omit it). */
+  setUnitSystem?(forceKey: string, lengthKey: string): void;
+  /** Pin the material-strength unit (f'c / fy), or null to derive it from the
+   *  force/length system (optional). */
+  setStressUnit?(unitKey: string | null): void;
+  /** The active unit interpretation, for the wizard to display/seed selectors
+   *  (optional — sources that report units another way omit it). */
+  getUnitInfo?(): UnitInfo;
   getStories(): Promise<string[]>;
   getGroups(): Promise<string[]>;
   getFrameSections(): Promise<EtabsSectionInfo[]>;

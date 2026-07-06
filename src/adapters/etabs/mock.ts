@@ -6,7 +6,7 @@
 import type { ComboForces } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter, UnitInfo,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -106,6 +106,12 @@ export class MockConnection implements EtabsConnection {
 
   async connect(): Promise<EtabsConnectInfo> {
     return { modelName: 'Sample Tower (demo model)', units: 'kip-ft' };
+  }
+
+  // The demo model's forces/sizes are authored directly in the app's internal
+  // units, so there's nothing to re-interpret — reported read-only for the wizard.
+  getUnitInfo(): UnitInfo {
+    return { forceKey: 'kip', lengthKey: 'ft', label: 'kip-ft', assumed: false, stressUnit: 'psi' };
   }
 
   async getStories(): Promise<string[]> {

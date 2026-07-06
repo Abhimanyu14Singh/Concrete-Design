@@ -7,7 +7,8 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import type { Member, DesignGroup, DesignCode, ModelMap, MapFrame } from '../../types';
-import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
+import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo, UnitInfo } from '../../adapters/etabs/connection';
+import { FORCE_UNITS, LENGTH_UNITS, STRESS_UNITS } from '../../adapters/etabs/tableConnection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
 import { buildMembers, buildColumnMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
@@ -73,6 +74,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [source, setSource] = useState<SourceKind>(window.electronAPI?.etabs ? 'com' : 'mock');
   const connRef = useRef<EtabsConnection | null>(null);
   const [connInfo, setConnInfo] = useState<EtabsConnectInfo | null>(null);
+  // How raw ETABS values are being read (force/length/stress). Seeded from the
+  // connection's auto-detection on connect; the user can correct it if ETABS
+  // reported — or the app fell back to — the wrong unit system. This is the
+  // fix for the silent kip-ft fallback that mis-scales a locked SI model.
+  const [unitInfo, setUnitInfo] = useState<UnitInfo | null>(null);
+  const [stressOverride, setStressOverride] = useState<string | null>(null); // null = derive from force/length
 
   // step 2 — model lists + selections
   const [stories, setStories] = useState<string[]>([]);
@@ -169,6 +176,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const info = await conn.connect();
       connRef.current = conn;
       setConnInfo(info);
+      // Surface the detected unit interpretation so the user can see/correct it.
+      setUnitInfo(conn.getUnitInfo?.() ?? null);
+      setStressOverride(null);
       // Adopt the model's unit SYSTEM so imported sizes read in the model's units
       // (SI model → mm, imperial model → in), matching what ETABS shows. The units
       // label is "force-length" (e.g. "kn-m", "kip-ft"); the length part decides.
@@ -191,6 +201,34 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   async function handleConnect() {
     if (source === 'mock') return connectWith(new MockConnection());
     return connectWith(new ComConnection());
+  }
+
+  const canOverrideUnits = !!connRef.current?.setUnitSystem;
+
+  /**
+   * Re-interpret the model under an explicit force/length/stress unit system and
+   * refresh the unit-dependent previews (section sizes, material strengths). The
+   * corrected units then flow through to the forces imported in buildAndReview.
+   */
+  async function applyModelUnits(next: { forceKey?: string; lengthKey?: string; stress?: string | null }) {
+    const conn = connRef.current;
+    if (!conn || !unitInfo) return;
+    await run(async () => {
+      if ((next.forceKey !== undefined || next.lengthKey !== undefined) && conn.setUnitSystem) {
+        conn.setUnitSystem(next.forceKey ?? unitInfo.forceKey, next.lengthKey ?? unitInfo.lengthKey);
+      }
+      if (next.stress !== undefined && conn.setStressUnit) {
+        conn.setStressUnit(next.stress);
+        setStressOverride(next.stress);
+      }
+      // Re-read only the unit-dependent lists; keep the user's section selection.
+      const [sec, mat] = await Promise.all([conn.getFrameSections(), conn.getMaterials()]);
+      setSections(sec);
+      setMaterials(mat);
+      setUnitInfo(conn.getUnitInfo?.() ?? unitInfo);
+      setMatchCount(null);
+      return true;
+    });
   }
 
   async function refreshMatchCount() {
@@ -365,6 +403,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   // ── styles ──────────────────────────────────────────────────────────────────
   const card: React.CSSProperties = { background: SURFACE.subtle, border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '12px 14px' };
   const lbl: React.CSSProperties = { ...LABEL_STYLE, marginBottom: 6 };
+  const unitField: React.CSSProperties = { fontSize: 11, color: INK.secondary, fontWeight: 600, display: 'flex', flexDirection: 'column', gap: 3 };
   const inp: React.CSSProperties = { padding: '5px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', outline: 'none', ...MONO_NUM };
   const btn = (primary = false): React.CSSProperties => ({
     padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
@@ -454,6 +493,67 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 ✓ Connected: {connInfo.modelName} <span style={{ color: INK.muted }}>({connInfo.units})</span>
               </div>
 
+              {/* Model units — how raw ETABS values are interpreted. Every imported
+                  force, moment, size and material strength is scaled by these, so a
+                  wrong detection mis-scales the whole model. Shown here (and made
+                  editable) so the user can verify/correct it before importing. */}
+              {unitInfo && (
+                <div style={{
+                  ...card,
+                  display: 'flex', flexDirection: 'column', gap: 10,
+                  borderColor: unitInfo.assumed ? STATUS.warnBorder : BORDER.default,
+                  background: unitInfo.assumed ? STATUS.warnBg : SURFACE.subtle,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Model units — how ETABS values are read</div>
+                    {unitInfo.assumed
+                      ? <span style={{ fontSize: 10, fontWeight: 700, color: STATUS.warn }}>⚠ Not auto-detected — assuming {unitInfo.label}. Verify below.</span>
+                      : <span style={{ fontSize: 10, color: STATUS.ok, fontWeight: 600 }}>✓ Detected {unitInfo.label}</span>}
+                  </div>
+                  {canOverrideUnits ? (
+                    <>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <label style={unitField}>
+                          Force
+                          <Dropdown style={{ ...inp, width: 92 }} value={unitInfo.forceKey}
+                            options={FORCE_UNITS.map(u => ({ value: u.key, label: u.label }))}
+                            onChange={v => applyModelUnits({ forceKey: v })} />
+                        </label>
+                        <label style={unitField}>
+                          Length
+                          <Dropdown style={{ ...inp, width: 92 }} value={unitInfo.lengthKey}
+                            options={LENGTH_UNITS.map(u => ({ value: u.key, label: u.label }))}
+                            onChange={v => applyModelUnits({ lengthKey: v })} />
+                        </label>
+                        <label style={unitField}>
+                          Material f′c / fy
+                          <Dropdown style={{ ...inp, width: 148 }} value={stressOverride ?? 'auto'}
+                            options={[
+                              { value: 'auto', label: `Auto (${unitInfo.forceKey}/${unitInfo.lengthKey}²)` },
+                              ...STRESS_UNITS.map(u => ({ value: u.key, label: u.label })),
+                            ]}
+                            onChange={v => applyModelUnits({ stress: v === 'auto' ? null : v })} />
+                        </label>
+                      </div>
+                      {/* Derived read-outs so the user sees exactly what each quantity comes in as. */}
+                      <div style={{ display: 'flex', gap: 18, rowGap: 4, flexWrap: 'wrap', fontSize: 11, color: INK.secondary }}>
+                        <span>Forces V·P → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.forceKey}</b></span>
+                        <span>Moments M·T → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.forceKey}·{unitInfo.lengthKey}</b></span>
+                        <span>Sizes b·h·L → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.lengthKey}</b></span>
+                        <span>Strength f′c·fy → <b style={{ color: INK.base, ...MONO_NUM }}>{stressOverride ? (STRESS_UNITS.find(s => s.key === stressOverride)?.label ?? stressOverride) : `${unitInfo.forceKey}/${unitInfo.lengthKey}²`}</b></span>
+                      </div>
+                      <div style={{ fontSize: 10, color: INK.muted }}>
+                        Every imported value is scaled by these into the app's internal units (kip, kip-ft, in, psi). Change them only if the section sizes or forces below look wrong.
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 11, color: INK.secondary }}>
+                      Demo model — values are authored directly in kip, kip-ft, in, psi. Connect to a live ETABS model to adjust unit interpretation.
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* First decision: what to import. Columns are disabled when the
                   source can't expose them (keeps the choice honest). */}
               <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -472,9 +572,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   ? <span style={{ fontSize: 10, color: INK.muted }}>This source doesn't expose columns.</span>
                   : includeColumns && <span style={{ fontSize: 10, color: INK.secondary }}>Columns import with geometry + section; enter design forces after import.</span>}
                 <div style={{ flex: 1 }} />
-                {/* Units for the section sizes shown below — defaults to the model's
-                    unit system; switch to see the sections in mm or in. */}
-                <div style={{ ...lbl, marginBottom: 0 }}>Units</div>
+                {/* How the section sizes below are DISPLAYED (mm vs in) — a view
+                    toggle only, independent of the model-unit interpretation above. */}
+                <div style={{ ...lbl, marginBottom: 0 }}>Display</div>
                 {(['si', 'imperial'] as const).map(u => (
                   <button key={u} onClick={() => handleWizardUnitsChange(u)}
                     style={{ ...btn(wizardUnits === u), padding: '5px 12px', fontSize: 12 }}>

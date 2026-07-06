@@ -22,7 +22,7 @@
 import type { ComboForces, StationForce } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter, UnitInfo,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -32,6 +32,9 @@ interface UnitFactors {
   lengthToFt: number;   // model length unit → ft
   forceToKip: number;   // model force unit → kip
   label: string;        // e.g. "kip-ft", "kn-m"
+  forceKey: string;     // the ETABS force-unit key, e.g. "kip", "kn"
+  lengthKey: string;    // the ETABS length-unit key, e.g. "ft", "m"
+  assumed?: boolean;    // true when detection failed and this is a fallback default
 }
 
 const LENGTH_TO_FT: Record<string, number> = {
@@ -41,6 +44,27 @@ const FORCE_TO_KIP: Record<string, number> = {
   lb: 0.001, kip: 1, n: 0.0002248089, kn: 0.2248089, kgf: 0.0022046, tonf: 2.2046,
 };
 
+// Options exposed to the import wizard so a user can correct a mis-detected
+// unit system. Keys match the FORCE_TO_KIP / LENGTH_TO_FT lookup tables above.
+export const FORCE_UNITS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: 'lb', label: 'lb' }, { key: 'kip', label: 'kip' },
+  { key: 'n', label: 'N' }, { key: 'kn', label: 'kN' },
+  { key: 'kgf', label: 'kgf' }, { key: 'tonf', label: 'tonf' },
+];
+export const LENGTH_UNITS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: 'in', label: 'in' }, { key: 'ft', label: 'ft' },
+  { key: 'mm', label: 'mm' }, { key: 'cm', label: 'cm' }, { key: 'm', label: 'm' },
+];
+// Material stress (f'c / fy) unit → psi. Used only when the user pins the
+// material unit explicitly; otherwise stress is derived from force ÷ length².
+export const STRESS_UNITS: ReadonlyArray<{ key: string; label: string; toPsi: number }> = [
+  { key: 'psi', label: 'psi', toPsi: 1 },
+  { key: 'ksi', label: 'ksi', toPsi: 1000 },
+  { key: 'mpa', label: 'MPa', toPsi: 145.0377 },
+  { key: 'kpa', label: 'kPa', toPsi: 0.1450377 },
+  { key: 'kgfcm2', label: 'kgf/cm²', toPsi: 14.223343 },
+];
+
 /** Parse ETABS "Program Control" CurrUnits, e.g. "Kip, in, F" / "kN, m, C". */
 export function parseUnits(currUnits: string): UnitFactors | null {
   const parts = currUnits.split(',').map(p => p.trim().toLowerCase());
@@ -48,10 +72,13 @@ export function parseUnits(currUnits: string): UnitFactors | null {
   const f = FORCE_TO_KIP[parts[0]];
   const l = LENGTH_TO_FT[parts[1]];
   if (f === undefined || l === undefined) return null;
-  return { forceToKip: f, lengthToFt: l, label: `${parts[0]}-${parts[1]}` };
+  return { forceToKip: f, lengthToFt: l, label: `${parts[0]}-${parts[1]}`, forceKey: parts[0], lengthKey: parts[1] };
 }
 
-const DEFAULT_UNITS: UnitFactors = { forceToKip: 1, lengthToFt: 1, label: 'kip-ft (assumed)' };
+const DEFAULT_UNITS: UnitFactors = {
+  forceToKip: 1, lengthToFt: 1, label: 'kip-ft (assumed)',
+  forceKey: 'kip', lengthKey: 'ft', assumed: true,
+};
 
 /**
  * Map ETABS eUnits integer → UnitFactors.
@@ -61,7 +88,7 @@ const DEFAULT_UNITS: UnitFactors = { forceToKip: 1, lengthToFt: 1, label: 'kip-f
  *  13=kN_cm 14=kgf_cm 15=N_cm  16=tonf_cm
  */
 export function eUnitsToFactors(e: number): UnitFactors | null {
-  const map: Record<number, UnitFactors> = {
+  const map: Record<number, { forceToKip: number; lengthToFt: number; label: string }> = {
     1:  { forceToKip: 0.001,       lengthToFt: 1/12,           label: 'lb-in'   },
     2:  { forceToKip: 0.001,       lengthToFt: 1,              label: 'lb-ft'   },
     3:  { forceToKip: 1,           lengthToFt: 1/12,           label: 'kip-in'  },
@@ -79,7 +106,10 @@ export function eUnitsToFactors(e: number): UnitFactors | null {
     15: { forceToKip: 0.0002248089,lengthToFt: 1/30.48,        label: 'n-cm'    },
     16: { forceToKip: 2.2046,      lengthToFt: 1/30.48,        label: 'tonf-cm' },
   };
-  return map[e] ?? null;
+  const m = map[e];
+  if (!m) return null;
+  const [forceKey, lengthKey] = m.label.split('-');
+  return { ...m, forceKey, lengthKey };
 }
 
 /** Read a column by any of several names; falls back to case-insensitive match. */
@@ -130,6 +160,9 @@ export abstract class TableConnection implements EtabsConnection {
   protected fetchUnitsEnum(): Promise<number | null> { return Promise.resolve(null); }
 
   protected units: UnitFactors = DEFAULT_UNITS;
+  // When set, material strengths (f'c / fy) are read in this explicit unit
+  // instead of being derived from the force/length system. null = derive.
+  private stressOverrideKey: string | null = null;
   private beamsCache: EtabsBeamGeom[] | null = null;
   private columnsCache: EtabsColumnGeom[] | null = null;
   private sectionNamesUsed = new Set<string>();
@@ -177,6 +210,52 @@ export abstract class TableConnection implements EtabsConnection {
     }
 
     return { modelName, units: this.units.label };
+  }
+
+  /**
+   * Re-interpret every raw ETABS value under an explicit force + length unit
+   * system, overriding auto-detection. The wizard exposes this so a user can
+   * correct a mis-detected model (e.g. a locked SI model that silently fell
+   * back to the kip-ft default). Clears all cached geometry/forces so the next
+   * read re-converts with the new factors.
+   */
+  setUnitSystem(forceKey: string, lengthKey: string): void {
+    const f = FORCE_TO_KIP[forceKey.toLowerCase()];
+    const l = LENGTH_TO_FT[lengthKey.toLowerCase()];
+    if (f === undefined || l === undefined) {
+      throw new Error(`Unsupported unit "${forceKey}, ${lengthKey}".`);
+    }
+    this.units = { forceToKip: f, lengthToFt: l, label: `${forceKey}-${lengthKey}`, forceKey, lengthKey };
+    this.invalidateModelCaches();
+  }
+
+  /** Pin the material-strength unit (f'c / fy), or null to derive it from the
+   *  force/length system. Materials aren't cached, so this takes effect on the
+   *  next getMaterials() call. */
+  setStressUnit(unitKey: string | null): void {
+    this.stressOverrideKey = unitKey;
+  }
+
+  /** The active unit interpretation, for the wizard to display and seed its
+   *  selectors from. `stressUnit` is the effective material unit (the explicit
+   *  override, or a derived "force/length²" label). */
+  getUnitInfo(): UnitInfo {
+    const u = this.units;
+    const stressUnit = this.stressOverrideKey ?? `${u.forceKey}/${u.lengthKey}²`;
+    return { forceKey: u.forceKey, lengthKey: u.lengthKey, label: u.label, assumed: !!u.assumed, stressUnit };
+  }
+
+  /** Drop every cache that bakes in the current unit factors so the next read
+   *  re-converts. Called on unit override. */
+  private invalidateModelCaches(): void {
+    this.beamsCache = null;
+    this.columnsCache = null;
+    this.ctxCache = null;
+    this.forcesCache = null;
+    this.forcesCacheKey = '';
+    this.storiesCache = [];
+    this.groupNames = [];
+    this.sectionNamesUsed = new Set();
   }
 
   async getStories(): Promise<string[]> {
@@ -361,8 +440,13 @@ export abstract class TableConnection implements EtabsConnection {
   }
 
   async getMaterials(): Promise<EtabsMaterialInfo[]> {
-    // stress→psi: (force→lbf) / (length→in)²
-    const stressToPsi = (this.units.forceToKip * 1000) / Math.pow(this.units.lengthToFt * 12, 2);
+    // stress→psi: (force→lbf) / (length→in)², unless the user pinned the
+    // material unit explicitly (e.g. properties defined in MPa on a kip-ft model).
+    const derivedToPsi = (this.units.forceToKip * 1000) / Math.pow(this.units.lengthToFt * 12, 2);
+    const pinned = this.stressOverrideKey
+      ? STRESS_UNITS.find(s => s.key === this.stressOverrideKey)?.toPsi
+      : undefined;
+    const stressToPsi = pinned ?? derivedToPsi;
     const out: EtabsMaterialInfo[] = [];
     try {
       for (const r of await this.fetchTable('Material Properties - Concrete Data')) {

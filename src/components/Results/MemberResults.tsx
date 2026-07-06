@@ -333,8 +333,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         </div>
       )}
 
-      {/* 3-column layout: properties | section SVG | results */}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      {/* 3-column layout: properties | section SVG | results. Wraps when the host
+          panel is narrow (e.g. the Dashboard Design+Verify split) so the fixed-width
+          section/elevation drawings never overflow onto the results column. */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         {/* Left: member properties + applied loads */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
           <SectionLabel title="Member" />
@@ -371,8 +373,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           )}
         </div>
 
-        {/* Center: Section diagram */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        {/* Center: Section diagram. minWidth holds the 300px section SVG so the
+            row wraps rather than crushing/overflowing it when the panel is narrow. */}
+        <div style={{ flex: '1 1 316px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 316 }}>
           <SectionView
             section={member.section}
             rebar={member.rebar}
@@ -393,7 +396,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                   </button>
                 ))}
               </div>
-              <div style={{ overflowX: elevZoom > 1 ? 'auto' : 'visible' }}>
+              <div style={{ overflowX: 'auto' }}>
                 <ElevationView member={member} width={520} height={member.rebar.tieZones ? 200 : 170} zoom={elevZoom} />
               </div>
             </div>
