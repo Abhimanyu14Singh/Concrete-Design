@@ -60,7 +60,7 @@ function worstDCR(m: Member, code: DesignCode): number {
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
-  const { units, fmt } = useUnits();
+  const { units } = useUnits();
   const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -112,8 +112,23 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     imposeSkinReinf: true, skinBarSize: units === 'si' ? -12 : 5,
   }));
 
-  // When the user switches units inside the wizard, reset bar size defaults
+  // 1 MPa = 145.0377 psi — the single stress conversion used across the wizard.
+  const PSI_PER_MPA = 145.0377;
+
+  // When the user switches the display units inside the wizard: reset bar-size
+  // defaults AND convert any entered material-strength overrides so the numbers
+  // keep their physical meaning (e.g. 5000 psi ⇄ 34.5 MPa), rather than being
+  // silently relabelled (5000 psi → "5000 MPa").
   function handleWizardUnitsChange(u: 'imperial' | 'si') {
+    if (u !== wizardUnits) {
+      const conv = (s: string) => {
+        const n = parseFloat(s);
+        if (!Number.isFinite(n)) return s; // keep blanks/partial input as typed
+        const v = u === 'si' ? n / PSI_PER_MPA : n * PSI_PER_MPA;
+        return String(+v.toFixed(u === 'si' ? 1 : 0));
+      };
+      setMatOverride(m => ({ ...m, fck: conv(m.fck), fyLong: conv(m.fyLong), fyTie: conv(m.fyTie) }));
+    }
     setWizardUnits(u);
     setSeed(s => ({
       ...s,
@@ -128,6 +143,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   // toggle. Section widths/depths are stored in inches.
   const wLen = (inches: number) => wizardUnits === 'si' ? Math.round(inches * IN_TO_MM) : +inches.toFixed(1);
   const wLenUnit = wizardUnits === 'si' ? 'mm' : 'in';
+
+  // Stress (f'c / fy) in the WIZARD's display units: MPa when SI, ksi when
+  // imperial. Values are stored in psi. Keeps the materials preview consistent
+  // with the Display toggle instead of the app's global unit system.
+  const wStress = (psi: number) => wizardUnits === 'si'
+    ? `${(psi / PSI_PER_MPA).toFixed(1)} MPa`
+    : `${(psi / 1000).toFixed(1)} ksi`;
 
   const [applyToProject, setApplyToProject] = useState(true);
 
@@ -294,7 +316,6 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       if (!built.length) throw new Error('No members match the current filter.');
       // Apply global material overrides if the user enabled them.
       if (matOverride.enabled) {
-        const PSI_PER_MPA = 145.038;
         const toInternal = (v: string) => {
           const n = parseFloat(v);
           if (!Number.isFinite(n) || n <= 0) return null;
@@ -722,8 +743,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     {materials.map(m => (
                       <tr key={m.name}>
                         <td style={{ padding: '2px 16px 2px 0', ...MONO_NUM, color: ACCENT.primary }}>{m.name}</td>
-                        <td style={{ padding: '2px 16px 2px 0', color: INK.secondary }}>{m.fc ? `f'c = ${fmt(m.fc / 1000, 'stressKsi')}` : ''}</td>
-                        <td style={{ color: INK.secondary }}>{m.fy ? `fy = ${fmt(m.fy / 1000, 'stressKsi')}` : ''}</td>
+                        <td style={{ padding: '2px 16px 2px 0', color: INK.secondary }}>{m.fc ? `f'c = ${wStress(m.fc)}` : ''}</td>
+                        <td style={{ color: INK.secondary }}>{m.fy ? `fy = ${wStress(m.fy)}` : ''}</td>
                       </tr>
                     ))}
                   </tbody>
