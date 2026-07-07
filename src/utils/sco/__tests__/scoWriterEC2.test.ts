@@ -94,12 +94,27 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(+param(t, 'Es')!).toBeCloseTo(199948, 0);
   });
 
-  it('reflects the longitudinal bars (single position per face, rest zeroed)', () => {
+  it('reflects the longitudinal bars (one layer when they fit the width)', () => {
     expect(param(t, 'Bm NT(1,1)')).toBe('3');
     expect(param(t, 'Bm NB(1,1)')).toBe('4');
     expect(param(t, 'Bm DT(1,1)')).toBe('9');   // #9 ≈ 28.65 mm → Ø28 (index 9)
-    expect(param(t, 'Bm NT(1,2)')).toBe('0');   // sample's 7 cleared
+    expect(param(t, 'Bm NT(1,2)')).toBe('0');   // 3 top bars fit one layer → 2nd layer empty
     expect(param(t, 'Bm NbmFace')).toBe('2');   // side bars
+  });
+
+  it('splits a face too wide for one row into stacked layers (NB(1,1)+NB(1,2))', () => {
+    // 8 bottom bars in a 12" web: ≥ max(1", db) clear spacing fits 4 per layer,
+    // so S-Concrete must receive two rows of 4 — not one impossible row of 8.
+    const m = beam();
+    m.section = { type: 'rectangular_beam', b: 12, h: 24, coverClear: 1.5, stirrupDia: 4 };
+    m.rebar = { ...m.rebar, botBars: [{ numBars: 8, barSize: 9 }], topBars: [{ numBars: 3, barSize: 9 }] };
+    const tt = buildEc2BeamSco(m, project());
+    expect(param(tt, 'Bm NB(1,1)')).toBe('4');   // layer 1
+    expect(param(tt, 'Bm NB(1,2)')).toBe('4');   // layer 2 (the bug emitted 0 here)
+    expect(param(tt, 'Bm NB(1,3)')).toBe('0');
+    expect(param(tt, 'Bm DB(1,2)')).toBe('9');   // both layers same bar size
+    expect(param(tt, 'Bm NT(1,1)')).toBe('3');   // 3 top bars still fit one layer
+    expect(param(tt, 'Bm NT(1,2)')).toBe('0');
   });
 
   it('reflects the stirrups (size index, spacing mm, legs)', () => {

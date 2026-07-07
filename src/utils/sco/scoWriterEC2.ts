@@ -25,6 +25,7 @@ import ec2BeamTemplate from './templates/ec2Beam.sco?raw';
 import ec2ColumnTemplate from './templates/ec2Column.sco?raw';
 import type { Member, Project } from '../../types';
 import { getBarDiam } from '../concreteDesign';
+import { maxBarsPerLayer } from '../suggestRebar';
 import { resolveCrack } from '../resolveCrack';
 import { signedMomentEnvelope } from '../autoGroup';
 
@@ -103,8 +104,8 @@ export interface Ec2BeamScoParams {
   webMm: number; depthMm: number; flangeWidthMm: number; flangeThkMm: number; ignoreFlange: boolean;
   coverMm: number;
   fyMpa: number; fcuMpa: number; esMpa: number;
-  topCount: number; topBarIdx: number;
-  botCount: number; botBarIdx: number;
+  topLayers: number[]; topBarIdx: number;   // bars per stacked layer, top face
+  botLayers: number[]; botBarIdx: number;   // bars per stacked layer, bottom face
   faceCount: number; faceBarIdx: number;
   stirrupBarIdx: number; stirrupSpacingMm: number; stirrupLegs: number;
   crackWidthLimitMm: number;
@@ -136,15 +137,22 @@ export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
   t = setParam(t, 'fy3', r3(p.fyMpa));
   t = setParam(t, 'fcu', r3(p.fcuMpa));
   t = setParam(t, 'Es', r3(p.esMpa));
-  // Longitudinal bars — collapse to a single position per face; zero the rest.
-  t = setParam(t, 'Bm NT(1,1)', p.topCount);
-  for (const c of [2, 3, 4, 5]) t = setParam(t, `Bm NT(1,${c})`, 0);
-  for (const c of [1, 2, 3, 4, 5]) t = setParam(t, `Bm NT(2,${c})`, 0);
-  t = setParam(t, 'Bm NB(1,1)', p.botCount);
-  for (const c of [2, 3, 4, 5]) t = setParam(t, `Bm NB(1,${c})`, 0);
-  for (const c of [1, 2, 3, 4, 5]) t = setParam(t, `Bm NB(2,${c})`, 0);
-  t = setParam(t, 'Bm DT(1,1)', p.topBarIdx);
-  t = setParam(t, 'Bm DB(1,1)', p.botBarIdx);
+  // Longitudinal bars — distribute each face across S-Concrete's stacked layers
+  // NT/NB(1,j) (j = 1..5), so a face that needs two rows (e.g. 8 bottom bars in a
+  // 300 mm web → 4 + 4) is emitted with real layers instead of one crowded row.
+  // Curtain 2 (N(2,j)) is unused; every populated layer takes the same bar size
+  // (SameDTop/SameDBot = 1 in the template).
+  const writeFace = (t0: string, N: 'NT' | 'NB', D: 'DT' | 'DB', layers: number[], barIdx: number): string => {
+    let tt = t0;
+    for (let j = 1; j <= 5; j++) {
+      tt = setParam(tt, `Bm ${N}(1,${j})`, layers[j - 1] ?? 0);
+      tt = setParam(tt, `Bm ${N}(2,${j})`, 0);
+      tt = setParam(tt, `Bm ${D}(1,${j})`, barIdx);
+    }
+    return tt;
+  };
+  t = writeFace(t, 'NT', 'DT', p.topLayers, p.topBarIdx);
+  t = writeFace(t, 'NB', 'DB', p.botLayers, p.botBarIdx);
   // Side / skin face bars
   t = setParam(t, 'Bm NbmFace', p.faceCount);
   t = setParam(t, 'Bm DbmFace', p.faceBarIdx);
@@ -162,6 +170,27 @@ export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
 }
 
 const sumBars = (gs: { numBars: number }[]) => gs.reduce((s, g) => s + g.numBars, 0);
+
+/**
+ * Distribute `total` bars of one face across S-Concrete's up-to-5 stacked layers
+ * (NT/NB(1,j)), filling `perLayer` bars per row — so a face wider than one layer
+ * holds (e.g. 8 bars in a 300 mm web → 4 + 4) is emitted as real layers instead
+ * of one impossibly-crowded row. Any remainder beyond 5 layers folds into the
+ * last row (a degenerate case S-Concrete will flag).
+ */
+export function splitLayers(total: number, perLayer: number, maxLayers = 5): number[] {
+  if (total <= 0) return [0];
+  const n = Math.max(1, perLayer);
+  const layers: number[] = [];
+  let rem = total;
+  while (rem > 0 && layers.length < maxLayers) {
+    const c = Math.min(rem, n);
+    layers.push(c);
+    rem -= c;
+  }
+  if (rem > 0) layers[layers.length - 1] += rem;
+  return layers;
+}
 
 /** ULS sagging + hogging Sectional Loads rows for a beam, numbered from `start`. */
 export function ec2BeamUlsRows(member: Member, start = 1): string[] {
@@ -225,6 +254,10 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
   // bar the user never chose (the "I picked Ø12 but the .SCO shows Ø10" surprise).
   const topSize = top[0]?.barSize ?? bot[0]?.barSize ?? -16;
   const botSize = bot[0]?.barSize ?? top[0]?.barSize ?? -16;
+  // Split each face into stacked layers using the SAME per-layer capacity the
+  // auto-designer uses, so the .SCO layout matches what the app drew.
+  const topLayers = splitLayers(sumBars(top), maxBarsPerLayer(member, topSize));
+  const botLayers = splitLayers(sumBars(bot), maxBarsPerLayer(member, botSize));
   return {
     memberName: member.label,
     webMm: (s.bw ?? s.b) * IN_TO_MM,
@@ -236,9 +269,9 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
     fyMpa: member.material.fy * PSI_TO_MPA,
     fcuMpa: fcPsiToFcuMpa(member.material.fc),
     esMpa: member.material.Es * PSI_TO_MPA,
-    topCount: sumBars(top),
+    topLayers,
     topBarIdx: barIndexEC2(topSize),
-    botCount: sumBars(bot),
+    botLayers,
     botBarIdx: barIndexEC2(botSize),
     faceCount: sumBars(side),
     faceBarIdx: barIndexEC2(side[0]?.barSize ?? -12),

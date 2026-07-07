@@ -54,7 +54,7 @@ interface FaceCandidate {
 }
 
 /** Max bars per layer that fit the web width with ≥ max(1", db) clear spacing. */
-function maxBarsPerLayer(member: Member, barSize: number): number {
+export function maxBarsPerLayer(member: Member, barSize: number): number {
   const db = getBarDiam(barSize);
   const bw = member.section.bw ?? member.section.b;
   const dStir = getBarDiam(member.section.stirrupDia);
