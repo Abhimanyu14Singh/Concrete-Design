@@ -38,7 +38,11 @@ export default function SectionView({
   const oy = pT + (drawH - scaledH) / 2;
 
   const tieD = getBarDiam(section.stirrupDia);
-  const stOff = (section.coverClear + tieD / 2) * scale;
+  // Clamp the cover offset so a mis-scaled / degenerate section (cover ≥ half the
+  // depth — e.g. a beam imported with the wrong units) still renders a visible
+  // stirrup hoop and bars instead of collapsing to an empty rectangle. For normal
+  // sections cover ≪ size, so the clamp never bites.
+  const stOff = Math.min((section.coverClear + tieD / 2) * scale, scaledW * 0.4, scaledH * 0.4);
   const bw = section.bw ?? secW;
   const hf = section.hf ?? 0;
   const isT = section.type === 'T_beam' || section.type === 'L_beam';

@@ -347,8 +347,12 @@ internal static class Program
     }
 
     // ── getUnits ──────────────────────────────────────────────────────────────
-    // Returns the eUnits enum integer that is currently active for display tables.
-    // We call SetPresentUnits(4=kip_ft_F) at connect so this should always be 4.
+    // Returns the eUnits enum integer for the API "present units" — the SAME
+    // units GetTableForDisplayArray formats every table in. The app relies on
+    // this as the authoritative source for converting table data (it can differ
+    // from the model's GUI/"Program Control" units on a locked model). We do NOT
+    // call SetPresentUnits (that would force a unit system the user didn't pick);
+    // we just read whatever ETABS is presenting.
 
     private static JsonNode GetUnits()
     {

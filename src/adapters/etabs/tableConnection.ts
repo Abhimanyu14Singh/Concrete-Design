@@ -183,30 +183,38 @@ export abstract class TableConnection implements EtabsConnection {
     const { modelName } = await this.openSession();
 
     // The model's CURRENT units scale every table we read (sections, forces,
-    // coordinates), so they must be right.
+    // coordinates), so they must match what the tables are actually returned in.
     //
-    // PRIMARY: the "Program Control" CurrUnits string (e.g. "kN, m, C") — it
-    // always reflects the live display units. We used to trust the eUnits enum
-    // first, but that's only reliable when the sidecar's SetPresentUnits ran; on
-    // a LOCKED (analysed) model we deliberately skip that to avoid unlocking, and
-    // the enum read can then fall back to a default (kip-ft), which mis-scales an
-    // SI model's sections and forces (e.g. a 1000 mm beam shows as 305 mm).
-    // CurrUnits has no such failure mode.
+    // PRIMARY: the eUnits enum from GetPresentUnits (the sidecar). ETABS formats
+    // every table via GetTableForDisplayArray in the API "present units", and
+    // GetPresentUnits reports exactly those units — so the enum is the
+    // authoritative source for how to convert the data we read. (It used to be
+    // unreliable because the sidecar invoked GetPresentUnits with a wrong
+    // signature and fell back to a default; that's fixed, so it now returns the
+    // real present-units enum, or -1 when genuinely unavailable.)
+    //
+    // FALLBACK: the "Program Control" CurrUnits string. This reports the model's
+    // SAVED / GUI display units, which can DIFFER from the API present units on a
+    // locked model — e.g. the GUI shows "kip, in" but the tables come back in
+    // kN·m, so trusting CurrUnits mis-scales sections (a 300 mm beam → 0.3 in)
+    // and materials (3 ksi → 20 684 "ksi"). Used only when the enum is
+    // unavailable (e.g. the HTTP bridge, which has no GetPresentUnits).
     let resolved = false;
     try {
-      const pc = await this.fetchTable('Program Control');
-      const cu = str(pc[0] ?? {}, 'CurrUnits', 'Curr Units');
-      const parsed = cu ? parseUnits(cu) : null;
-      if (parsed) { this.units = parsed; resolved = true; }
-    } catch { /* fall through to the enum */ }
+      const enumVal = await this.fetchUnitsEnum();
+      // Guard against the sidecar's -1 "unavailable" sentinel (and any other
+      // out-of-range value) — only a valid eUnits (1..16) is authoritative.
+      const factors = enumVal != null && enumVal >= 1 ? eUnitsToFactors(enumVal) : null;
+      if (factors) { this.units = factors; resolved = true; }
+    } catch { /* fall through to CurrUnits */ }
 
-    // Fallback: the eUnits enum from the transport.
     if (!resolved) {
       try {
-        const enumVal = await this.fetchUnitsEnum();
-        const factors = enumVal != null ? eUnitsToFactors(enumVal) : null;
-        if (factors) this.units = factors;
-      } catch { /* keep defaults */ }
+        const pc = await this.fetchTable('Program Control');
+        const cu = str(pc[0] ?? {}, 'CurrUnits', 'Curr Units');
+        const parsed = cu ? parseUnits(cu) : null;
+        if (parsed) this.units = parsed;
+      } catch { /* keep DEFAULT_UNITS */ }
     }
 
     return { modelName, units: this.units.label };

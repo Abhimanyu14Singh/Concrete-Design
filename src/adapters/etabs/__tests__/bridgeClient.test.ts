@@ -274,22 +274,30 @@ describe('ComConnection: selectCombos called before force table fetch', () => {
   });
 });
 
-describe('ComConnection: units come from Program Control (not a forced enum)', () => {
-  it('uses the Program Control CurrUnits (kN-m) even when the enum hint says kip-ft', async () => {
-    // The sidecar no longer forces units to kip-ft, so the tables report in the
-    // model's OWN units. Program Control CurrUnits is the source of truth; a
-    // stale/fallback enum (4 = kip-ft) must NOT override an SI model.
-    mockIpc(TABLES, 4); // CurrUnits = kN-m, but getUnits returns 4 (kip-ft)
+describe('ComConnection: units come from the present-units enum (authoritative for tables)', () => {
+  it('trusts a valid GetPresentUnits enum over the Program Control GUI string', async () => {
+    // GetTableForDisplayArray returns every table in the API "present units",
+    // which GetPresentUnits (the enum) reports. Program Control CurrUnits is the
+    // model's GUI/saved units and can DIFFER on a locked model — so a valid enum
+    // wins. Here the GUI says kip-ft but the tables (and the enum) are kN-m.
+    const guiKipFt = { ...TABLES, 'Program Control': [{ CurrUnits: 'kip, ft, F' }] };
+    mockIpc(guiKipFt, 6); // enum 6 = kN_m
     const conn = new ComConnection();
     const info = await conn.connect();
     expect(info.units).toBe('kn-m');
   });
 
-  it('uses the enum only when Program Control has no CurrUnits', async () => {
-    const noCurr = { ...TABLES, 'Program Control': [{}] };
-    mockIpc(noCurr, 4); // no CurrUnits string → fall back to the enum (kip-ft)
+  it('falls back to Program Control CurrUnits when the enum is unavailable', async () => {
+    mockIpc(TABLES); // getUnits throws → no enum → use CurrUnits (kN-m)
     const conn = new ComConnection();
     const info = await conn.connect();
-    expect(info.units).toBe('kip-ft');
+    expect(info.units).toBe('kn-m');
+  });
+
+  it('ignores the sidecar -1 "unavailable" sentinel and uses CurrUnits', async () => {
+    mockIpc(TABLES, -1); // enum unavailable (-1) → CurrUnits (kN-m)
+    const conn = new ComConnection();
+    const info = await conn.connect();
+    expect(info.units).toBe('kn-m');
   });
 });

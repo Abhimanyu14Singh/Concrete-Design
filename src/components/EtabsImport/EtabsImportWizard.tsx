@@ -151,6 +151,17 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     ? `${(psi / PSI_PER_MPA).toFixed(1)} MPa`
     : `${(psi / 1000).toFixed(1)} ksi`;
 
+  // Sanity of the imported model under the CURRENT unit interpretation. If a beam
+  // comes in a few tenths of an inch tall, or f'c reads ~20,000 ksi, the units are
+  // wrong — the tables came back in a different system than we detected. Bounds are
+  // deliberately generous (internal in / psi): 2–300 in, f'c 0.5–20 ksi, fy 20–120 ksi.
+  const sampleSec = sections[0];
+  const sampleConc = materials.find(m => m.fc != null);
+  const unitsImplausible =
+    sections.some(s => s.width < 2 || s.width > 300 || s.depth < 2 || s.depth > 300) ||
+    materials.some(m => (m.fc != null && (m.fc < 500 || m.fc > 20000)) ||
+                        (m.fy != null && (m.fy < 20000 || m.fy > 120000)));
+
   const [applyToProject, setApplyToProject] = useState(true);
 
   // Material overrides — stored in display units (MPa for SI, psi for imperial).
@@ -563,9 +574,27 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                         <span>Sizes b·h·L → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.lengthKey}</b></span>
                         <span>Strength f′c·fy → <b style={{ color: INK.base, ...MONO_NUM }}>{stressOverride ? (STRESS_UNITS.find(s => s.key === stressOverride)?.label ?? stressOverride) : `${unitInfo.forceKey}/${unitInfo.lengthKey}²`}</b></span>
                       </div>
-                      <div style={{ fontSize: 10, color: INK.muted }}>
-                        Every imported value is scaled by these into the app's internal units (kip, kip-ft, in, psi). Change them only if the section sizes or forces below look wrong.
-                      </div>
+
+                      {/* Live "as read" sample — the surest sanity check: does a real
+                          section + material land at a sensible size/strength? */}
+                      {(sampleSec || sampleConc) && (
+                        <div style={{ display: 'flex', gap: 18, rowGap: 4, flexWrap: 'wrap', fontSize: 11, color: INK.secondary, paddingTop: 6, borderTop: `1px solid ${BORDER.subtle}` }}>
+                          <span style={{ fontWeight: 700, color: INK.base }}>Reads as:</span>
+                          {sampleSec && <span><span style={{ ...MONO_NUM, color: ACCENT.primary }}>{sampleSec.name}</span> → <b style={{ color: INK.base }}>{wLen(sampleSec.width)}×{wLen(sampleSec.depth)} {wLenUnit}</b></span>}
+                          {sampleConc && <span><span style={{ ...MONO_NUM, color: ACCENT.primary }}>{sampleConc.name}</span> → <b style={{ color: INK.base }}>f′c {wStress(sampleConc.fc!)}</b></span>}
+                        </div>
+                      )}
+
+                      {unitsImplausible ? (
+                        <div style={{ fontSize: 11, color: STATUS.fail, fontWeight: 600, background: STATUS.failBg, border: `1px solid ${STATUS.failBorder}`, borderRadius: 6, padding: '6px 10px' }}>
+                          ⚠ These values look wrong — the model units above don't match the data ETABS returned.
+                          Adjust Force / Length until the sizes and f′c read sensibly (e.g. a real beam, not a fraction of an inch).
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 10, color: INK.muted }}>
+                          Every imported value is scaled by these into the app's internal units (kip, kip-ft, in, psi). Change them only if the “Reads as” sizes/strengths above look wrong.
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div style={{ fontSize: 11, color: INK.secondary }}>
