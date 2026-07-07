@@ -369,6 +369,13 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
               <KV k="Vu" v={fmt(load.Vu, 'force')} tip="Factored shear demand. Checked against φVn = φ(Vc + Vs)." />
               {load.Tu > 0 && <KV k="Tu" v={fmt(load.Tu, 'moment')} tip="Factored torsional demand. Torsion design required when Tu > φTcr." />}
               {load.Pu !== 0 && <KV k="Pu" v={fmt(load.Pu, 'force')} tip="Axial force on beam (positive = compression). Modifies Vc via σcp term." />}
+              {(member.stationForces?.length ?? 0) > 0 && (
+                <div style={{ fontSize: 10, color: INK.muted, marginTop: 5, lineHeight: 1.4 }}
+                  title="These loads are the ENVELOPE (worst case) across the combos below and every station. If ETABS shows higher, that value is from a combo not listed here — re-import including it, or switch the import Force source to Analysis.">
+                  Envelope of {member.stationForces!.length} combo{member.stationForces!.length === 1 ? '' : 's'}:{' '}
+                  <span style={{ ...MONO_NUM, color: INK.secondary }}>{member.stationForces!.map(cf => cf.combo).join(', ')}</span>
+                </div>
+              )}
             </>
           )}
         </div>

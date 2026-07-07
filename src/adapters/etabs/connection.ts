@@ -96,6 +96,9 @@ export interface EtabsConnection {
   /** Pin the material-strength unit (f'c / fy), or null to derive it from the
    *  force/length system (optional). */
   setStressUnit?(unitKey: string | null): void;
+  /** Choose which force table to import: 'design' (Design Forces) or 'element'
+   *  (raw per-combo analysis forces, matching ETABS's frame-force display). */
+  setForceSource?(pref: 'design' | 'element'): void;
   /** The active unit interpretation, for the wizard to display/seed selectors
    *  (optional — sources that report units another way omit it). */
   getUnitInfo?(): UnitInfo;

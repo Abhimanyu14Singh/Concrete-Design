@@ -163,6 +163,15 @@ export abstract class TableConnection implements EtabsConnection {
   // When set, material strengths (f'c / fy) are read in this explicit unit
   // instead of being derived from the force/length system. null = derive.
   private stressOverrideKey: string | null = null;
+  // Which ETABS force table to read: 'design' = "Design Forces - Beams" (the
+  // concrete-design forces, at design stations / face-of-support), 'element' =
+  // "Element Forces - Beams" (raw per-combo analysis forces at every station,
+  // i.e. what "Display → Forces → Frames" shows). Default matches the historic
+  // behaviour; the wizard exposes a toggle so imported values line up with
+  // whichever table the user reads in ETABS.
+  private forceSourcePref: 'design' | 'element' = 'design';
+  /** The force table actually used on the last getStationForces (for display). */
+  private lastForceTable = '';
   private beamsCache: EtabsBeamGeom[] | null = null;
   private columnsCache: EtabsColumnGeom[] | null = null;
   private sectionNamesUsed = new Set<string>();
@@ -243,6 +252,19 @@ export abstract class TableConnection implements EtabsConnection {
   setStressUnit(unitKey: string | null): void {
     this.stressOverrideKey = unitKey;
   }
+
+  /** Choose which force table to import: 'design' (default) reads
+   *  "Design Forces …"; 'element' reads the raw per-combo "Element Forces …"
+   *  (matches ETABS's frame-force display). Invalidates cached forces. */
+  setForceSource(pref: 'design' | 'element'): void {
+    if (pref === this.forceSourcePref) return;
+    this.forceSourcePref = pref;
+    this.forcesCache = null;
+    this.forcesCacheKey = '';
+  }
+
+  /** The force table used on the last getStationForces call (provenance label). */
+  getLastForceTable(): string { return this.lastForceTable; }
 
   /** The active unit interpretation, for the wizard to display and seed its
    *  selectors from. `stressUnit` is the effective material unit (the explicit
@@ -497,14 +519,19 @@ export abstract class TableConnection implements EtabsConnection {
     combos: string[],
     sourceGroup?: string,
   ): Promise<Record<string, ComboForces[]>> {
-    const cacheKey = `${sourceGroup ?? ''}|${combos.slice().sort().join(',')}`;
+    const cacheKey = `${this.forceSourcePref}|${sourceGroup ?? ''}|${combos.slice().sort().join(',')}`;
     if (!this.forcesCache || this.forcesCacheKey !== cacheKey) {
       // Restrict which combos/cases ETABS returns (best-effort; client filter is the backstop).
       await this.selectCombosAtSource(combos);
-      this.forcesCache = await this.fetchTable('Design Forces - Beams', sourceGroup);
+      // Read the user's chosen table first; fall back to the other so a model
+      // that only has one (e.g. analysis run but design not) still imports.
+      const primary = this.forceSourcePref === 'element' ? 'Element Forces - Beams' : 'Design Forces - Beams';
+      const secondary = this.forceSourcePref === 'element' ? 'Design Forces - Beams' : 'Element Forces - Beams';
+      this.forcesCache = await this.fetchTable(primary, sourceGroup);
+      this.lastForceTable = primary;
       if (!this.forcesCache.length) {
-        // Design tables need design combos selected; analysis output always exists
-        this.forcesCache = await this.fetchTable('Element Forces - Beams', sourceGroup);
+        this.forcesCache = await this.fetchTable(secondary, sourceGroup);
+        this.lastForceTable = secondary;
       }
       this.forcesCacheKey = cacheKey;
       if (!this.forcesCache.length) {
@@ -566,8 +593,10 @@ export abstract class TableConnection implements EtabsConnection {
   async getColumnForces(
     frameNames: string[], combos: string[], sourceGroup?: string,
   ): Promise<Record<string, ColumnComboForce[]>> {
-    let rows = await this.fetchTable('Design Forces - Columns', sourceGroup);
-    if (!rows.length) rows = await this.fetchTable('Element Forces - Columns', sourceGroup);
+    const primary = this.forceSourcePref === 'element' ? 'Element Forces - Columns' : 'Design Forces - Columns';
+    const secondary = this.forceSourcePref === 'element' ? 'Design Forces - Columns' : 'Element Forces - Columns';
+    let rows = await this.fetchTable(primary, sourceGroup);
+    if (!rows.length) rows = await this.fetchTable(secondary, sourceGroup);
 
     const wanted = new Set(frameNames);
     const comboSet = new Set(combos);

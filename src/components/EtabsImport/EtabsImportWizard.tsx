@@ -95,6 +95,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [selCombos, setSelCombos] = useState<Set<string>>(new Set());
   const [slsComboId, setSlsComboId] = useState<string>('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  // Which ETABS force table to import. 'design' = the concrete Design Forces
+  // (design stations / face-of-support). 'element' = raw per-combo Element
+  // (analysis) forces — what "Display → Forces → Frames" shows. Switch to
+  // 'element' to match the numbers you read off the ETABS model directly.
+  const [forceSource, setForceSource] = useState<'design' | 'element'>('design');
   // Member scope — the first decision in the filter step: beams (default),
   // columns, or both. Columns need a connection that supports getColumns; the
   // selector disables them and falls back to beams-only otherwise. Column design
@@ -275,6 +280,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     const conn = connRef.current;
     if (!conn) return;
     const ok = await run(async () => {
+      // Import forces from the table the user chose (design vs raw analysis).
+      conn.setForceSource?.(forceSource);
       // Get all beams (no filter) for the connectivity map snapshot — always
       // captured so the plan map shows the full model as context.
       const allBeams = await conn.getBeams({});
@@ -700,6 +707,24 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </div>
                 </div>
                 {includeBeams && <div style={card}>
+                  {/* Force source — which ETABS table the imported moments/shears come
+                      from. Switch to Analysis to match the numbers you read directly off
+                      the ETABS frame-force display. */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Force source</div>
+                    {([
+                      ['design', 'Design forces', 'ETABS concrete Design Forces (design stations / face of support)'],
+                      ['element', 'Analysis (element)', 'Raw per-combo Element Forces — matches ETABS Display → Forces → Frames'],
+                    ] as ['design' | 'element', string, string][]).map(([val, text, title]) => (
+                      <button key={val} title={title} onClick={() => setForceSource(val)}
+                        style={{ ...btn(forceSource === val), padding: '5px 14px', fontSize: 12 }}>
+                        {text}
+                      </button>
+                    ))}
+                    <span style={{ fontSize: 10, color: INK.muted, flex: 1, minWidth: 180 }}>
+                      Use <b>Analysis</b> if imported M/V don't match what you read in ETABS.
+                    </span>
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     <div style={lbl}>Load combinations to import</div>
                     <span style={{ fontSize: 10, color: INK.muted }}>
