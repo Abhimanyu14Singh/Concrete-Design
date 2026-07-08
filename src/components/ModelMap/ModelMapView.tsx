@@ -692,6 +692,34 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         </div>
       </div>
 
+      {/* Reinforcement editor — slides out as its own column between the map and the
+          right panel whenever a group is active, so the cage is visible without
+          scrolling the Design pane. Dismiss with ✕ or by re-clicking the group row.
+          The map (flex:1) narrows and its ResizeObserver re-fits the canvas. */}
+      {activeGroup && (
+        <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: SURFACE.raised, overflow: 'hidden', animation: 'slideInCol 160ms ease-out' }}>
+          <div style={{ ...sectionHdr, justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeGroup.label} · Reinforcement</span>
+            <button title="Close editor" onClick={() => setActiveGroupId(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: INK.secondary, fontSize: 13, lineHeight: 1, padding: 2, flexShrink: 0 }}>✕</button>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <GroupRebarEditor
+              group={activeGroup}
+              members={members.filter(m => activeGroup.memberIds.includes(m.id))}
+              onApply={handleApplyRebar}
+              code={project.code}
+              targetDCR={project.targetDCR ?? 0.9}
+            />
+            {members.some(m => activeGroup.memberIds.includes(m.id) && m.memberType === 'column') && (
+              <ColumnForceGrid
+                members={members.filter(m => activeGroup.memberIds.includes(m.id))}
+                onProjectChange={onProjectChange}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Right panel */}
       <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
         {/* Tab bar — the workflow (Design + Verify) is primary; read-only
@@ -724,8 +752,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               storageKey="designVerifySplit"
               top={
                 <>
-                  {/* ① DESIGN — group members, then set/suggest the cage (the editor
-                      sits directly under the active group, not below the batch). */}
+                  {/* ① DESIGN — group members, then set or ✨-suggest the cage. The
+                      active group's rebar editor opens as a slide-out column beside
+                      this panel (the {activeGroup && …} block just before the right panel). */}
                   <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span></div>
                   <GroupPanel
                     groups={groups}
@@ -742,23 +771,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                     onSuggestAll={handleSuggestAllGroups}
                     suggestAllNote={suggestAllNote}
                   />
-                  {activeGroup && (
-                    <GroupRebarEditor
-                      group={activeGroup}
-                      members={members.filter(m => activeGroup.memberIds.includes(m.id))}
-                      onApply={handleApplyRebar}
-                      code={project.code}
-                      targetDCR={project.targetDCR ?? 0.9}
-                    />
-                  )}
-                  {/* Column groups: enter design forces group-wide (imported columns
-                      start at zero) so they can be verified in S-Concrete. */}
-                  {activeGroup && members.some(m => activeGroup.memberIds.includes(m.id) && m.memberType === 'column') && (
-                    <ColumnForceGrid
-                      members={members.filter(m => activeGroup.memberIds.includes(m.id))}
-                      onProjectChange={onProjectChange}
-                    />
-                  )}
                 </>
               }
               bottom={

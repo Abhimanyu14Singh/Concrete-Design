@@ -30,6 +30,12 @@ body {
 ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
+/* Slide-out reinforcement editor column (Map view) — see ModelMapView.tsx */
+@keyframes slideInCol {
+  from { transform: translateX(12px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
 /* E2: Print styles */
 @media print {
   #app-header, #app-sidebar { display: none !important; }
