@@ -34,8 +34,16 @@ const IN_TO_MM = 25.4;
 const PSI_TO_MPA = 1 / 145.0377;
 const KIP_TO_KN = 4.448222;
 const KIPFT_TO_KNM = 1.355818;
-/** Cylinder strength (psi) → characteristic cube strength fcu (MPa). */
-const fcPsiToFcuMpa = (fcPsi: number): number => (fcPsi * PSI_TO_MPA) / 0.8;
+/**
+ * Concrete strength (psi) → the value S-Concrete's `fcu` field wants (MPa).
+ * Despite the BS-era name, S-Concrete's EN 1992 (Codes 14) files store the
+ * CYLINDER strength fck in that field — NOT the cube. Confirmed from a real
+ * sample: its Ec = 37277.87 MPa is exactly Ecm = 22000·((fck+8)/10)^0.3 for
+ * fck = 50. If the 50 were the CUBE (⇒ fck = 40) Ecm would be 35220, which it
+ * is not — so the field is the cylinder fck. Push it directly; dividing by 0.8
+ * to make a "cube" over-stated the concrete by 25%.
+ */
+const fckPsiToMpa = (fcPsi: number): number => fcPsi * PSI_TO_MPA;
 
 // S-Concrete renders EN-1992 (metric) .SCO files against its EUROPEAN bar list —
 // NOT the "American Alternate Bars" set the sample template happens to embed — and
@@ -267,7 +275,7 @@ export function memberToEc2BeamParams(member: Member, project: Project): Ec2Beam
     ignoreFlange: !isFlanged,
     coverMm: s.coverClear * IN_TO_MM,
     fyMpa: member.material.fy * PSI_TO_MPA,
-    fcuMpa: fcPsiToFcuMpa(member.material.fc),
+    fcuMpa: fckPsiToMpa(member.material.fc),
     esMpa: member.material.Es * PSI_TO_MPA,
     topLayers,
     topBarIdx: barIndexEC2(topSize),
@@ -404,7 +412,7 @@ export function memberToEc2ColumnParams(member: Member): Ec2ColumnScoParams {
     diameterMm: D * IN_TO_MM,
     coverMm: s.coverClear * IN_TO_MM,
     fyMpa: member.material.fy * PSI_TO_MPA,
-    fcuMpa: fcPsiToFcuMpa(member.material.fc),
+    fcuMpa: fckPsiToMpa(member.material.fc),
     esMpa: member.material.Es * PSI_TO_MPA,
     nzcol: Math.max(2, nz),
     nycol: Math.max(2, ny),

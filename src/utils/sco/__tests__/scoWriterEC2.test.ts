@@ -88,10 +88,19 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(+param(t, 'Bm Top')!).toBe(38);         // 1.5 in cover
   });
 
-  it('reflects the materials (psi → MPa; fcu from cylinder fc)', () => {
+  it('reflects the materials — S-Concrete EN fcu field holds the CYLINDER fck', () => {
     expect(+param(t, 'fy')!).toBeCloseTo(413.7, 1);     // 60 ksi
-    expect(+param(t, 'fcu')!).toBeCloseTo(40, 1);       // 4641 psi cyl → 40 MPa cube
+    // 4641 psi = 32 MPa cylinder → pushed straight through (NOT ÷0.8 to a cube).
+    // S-Concrete's EN files store fck there (its Ec is Ecm(fck), not Ecm(fck_cube)).
+    expect(+param(t, 'fcu')!).toBeCloseTo(32, 1);
     expect(+param(t, 'Es')!).toBeCloseTo(199948, 0);
+  });
+
+  it('pushes the cylinder fck straight through (C40/50 → 40, C50/60 → 50)', () => {
+    const m40 = beam(); m40.material = { ...m40.material, fc: 40 * 145.0377 }; // 40 MPa cyl
+    expect(+param(buildEc2BeamSco(m40, project()), 'fcu')!).toBeCloseTo(40, 1);
+    const m50 = beam(); m50.material = { ...m50.material, fc: 50 * 145.0377 }; // 50 MPa cyl (the sample)
+    expect(+param(buildEc2BeamSco(m50, project()), 'fcu')!).toBeCloseTo(50, 1);
   });
 
   it('reflects the longitudinal bars (one layer when they fit the width)', () => {
