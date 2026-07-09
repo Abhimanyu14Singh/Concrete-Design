@@ -10,7 +10,6 @@ import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
-import Map3DCanvas from './Map3DCanvas';
 import GroupPanel from './GroupPanel';
 import GroupActionsPanel from './GroupActionsPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -18,6 +17,8 @@ import ColumnForceGrid from './ColumnForceGrid';
 import AutoGroupPanel from './AutoGroupPanel';
 import TopProgressBar from '../common/TopProgressBar';
 import HistogramPanel from './HistogramPanel';
+import { concGradeLabel, steelGradeLabel, METRIC_MODES } from './frameColor';
+import { groupColor } from './groupColors';
 import { rampStops } from './colorRamp';
 import SavingsPanel from './SavingsPanel';
 import TakeoffPanel from './TakeoffPanel';
@@ -76,14 +77,14 @@ function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V'): { x: nu
 // stationEnvelope is used inside BeamInspectCard too, exported there locally.
 
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
-  const { fmtVal, label } = useUnits();
+  const { fmtVal, label, units, toDisplay } = useUnits();
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>('dcr');
   const [flexFace, setFlexFace] = useState<FlexFace>('bot');
   const [story, setStory] = useState<string>('All');
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [lineWeightScale, setLineWeightScale] = useState(0.4); // feature ④: 0 = uniform 3px
   const [rightTab, setRightTab] = useState<RightTab>('groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
@@ -241,21 +242,26 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return out;
   }, [members, diagramMode]);
 
-  const isMetricMode = colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight';
+  const isMetricMode = METRIC_MODES.includes(colorMode);
 
-  // Hotspot metric memos
+  // Hotspot metric memos. Steel% / Stirrups / Weight are beam-only; Height / Width
+  // cover every member (beams + columns) and are converted to the display length unit.
   const { metricById, metricRange, metricLabel, metricValues } = useMemo(() => {
-    if (colorMode !== 'flexSteel' && colorMode !== 'stirrups' && colorMode !== 'weight') {
+    if (!METRIC_MODES.includes(colorMode)) {
       return { metricById: undefined, metricRange: undefined, metricLabel: undefined, metricValues: [] as number[] };
     }
+    const isDim = colorMode === 'height' || colorMode === 'width';
     const out: Record<string, number> = {};
     const vals: number[] = [];
     let min = Infinity, max = -Infinity;
     for (const m of members) {
-      if (m.memberType !== 'beam') continue;
+      if (!isDim && m.memberType !== 'beam') continue;
+      const s = m.section;
       const v = colorMode === 'flexSteel' ? flexSteelRatioPct(m, flexFace)
         : colorMode === 'stirrups' ? stirrupAvPerFt(m)
-        : steelWeightPerFt(m).totalLbFt;
+        : colorMode === 'weight' ? steelWeightPerFt(m).totalLbFt
+        : colorMode === 'height' ? toDisplay(s.type === 'circular_column' ? (s.diameter ?? s.b) : s.h, 'length')
+        : toDisplay(s.type === 'circular_column' ? (s.diameter ?? s.b) : (s.bw ?? s.b), 'length'); // width
       out[m.id] = v;
       vals.push(v);
       if (v < min) min = v;
@@ -268,9 +274,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       metricValues: vals,
       metricLabel: colorMode === 'flexSteel' ? `ρ${flexFace === 'bot' ? '⁺' : '⁻'} (%)`
         : colorMode === 'stirrups' ? `Av/s (${label('areaPerLength')})`
-        : `Steel (${label('steelWeightPerLength')})`,
+        : colorMode === 'weight' ? `Steel (${label('steelWeightPerLength')})`
+        : colorMode === 'height' ? `h (${label('length')})`
+        : `b (${label('length')})`,
     };
-  }, [members, colorMode, flexFace, label]);
+  }, [members, colorMode, flexFace, label, toDisplay]);
 
   // Reset any manual legend bounds when the active metric changes — a range tuned
   // for ρ% would be meaningless for Av/s or weight.
@@ -280,6 +288,44 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const effectiveMetricRange = metricRange
     ? (metricOverride ?? metricRange)
     : undefined;
+
+  // Feature ④: memberId → section width (in) for proportional line weight.
+  const widthById = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const m of members) {
+      const s = m.section;
+      out[m.id] = s.type === 'circular_column' ? (s.diameter ?? s.b) : (s.bw ?? s.b);
+    }
+    return out;
+  }, [members]);
+
+  // Feature ①: frame names of the active group — highlighted on the canvas while
+  // every other frame halftones. Undefined when no group is selected.
+  const focusFrames = useMemo(() => {
+    if (!activeGroupId) return undefined;
+    const g = groups.find(gr => gr.id === activeGroupId);
+    if (!g) return undefined;
+    const s = new Set<string>();
+    for (const mid of g.memberIds) { const fn = frameByMemberId.get(mid); if (fn) s.add(fn); }
+    return s;
+  }, [activeGroupId, groups, frameByMemberId]);
+
+  // Feature ②: categorical colour map + legend for Conc grade (f′c) / Steel grade (f_y).
+  const { gradeColorMap, gradeLegend } = useMemo(() => {
+    if (colorMode !== 'concGrade' && colorMode !== 'steelGrade') {
+      return { gradeColorMap: undefined, gradeLegend: [] as { label: string; color: string; count: number }[] };
+    }
+    const si = units === 'si';
+    const valOf = (m: (typeof members)[number]) => colorMode === 'concGrade' ? m.material.fc : m.material.fy;
+    const labelOf = (v: number) => colorMode === 'concGrade' ? concGradeLabel(v, si) : steelGradeLabel(v, si);
+    const distinct = [...new Set(members.map(valOf))].sort((a, b) => a - b);
+    const colorByVal = new Map<number, string>();
+    distinct.forEach((v, i) => colorByVal.set(v, CATEGORICAL[i % CATEGORICAL.length]));
+    const map = new Map<string, string>();
+    for (const m of members) map.set(m.id, colorByVal.get(valOf(m))!);
+    const legend = distinct.map(v => ({ label: labelOf(v), color: colorByVal.get(v)!, count: members.filter(m => valOf(m) === v).length }));
+    return { gradeColorMap: map, gradeLegend: legend };
+  }, [colorMode, members, units]);
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange(prev => ({ ...prev, designGroups: newGroups }));
@@ -489,16 +535,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
-          {/* View: 2D/3D + story */}
-          <div style={{ display: 'flex', gap: 2 }}>
-            {(['2d', '3d'] as const).map(vm => (
-              <button key={vm} onClick={() => setViewMode(vm)}
-                style={{ padding: '5px 12px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: viewMode === vm ? ACCENT.primary : 'white', color: viewMode === vm ? 'white' : INK.base }}
-                title={vm === '3d' ? 'Rotatable 3D view (drag to orbit, wheel to zoom)' : 'Plan view'}>
-                {vm.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          {/* Story filter */}
           <Dropdown
             value={story}
             options={storyDropdownOptions.map(s => ({ value: s, label: s }))}
@@ -515,10 +552,15 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             options={[
               { value: 'dcr', label: 'DCR' },
               { value: 'group', label: 'Design group' },
+              { value: 'groupTags', label: 'Group + tags' },
               { value: 'section', label: 'Section' },
               { value: 'flexSteel', label: 'Steel % (ρ)' },
               { value: 'stirrups', label: `Stirrups (${label('areaPerLength')})` },
               { value: 'weight', label: `Steel weight (${label('steelWeightPerLength')})` },
+              { value: 'height', label: `Height (${label('length')})` },
+              { value: 'width', label: `Width (${label('length')})` },
+              { value: 'concGrade', label: 'Conc grade (f′c)' },
+              { value: 'steelGrade', label: 'Steel grade (f_y)' },
               { value: 'autoGroup', label: 'Auto-group overlay' },
               { value: 'sconcrete', label: 'S-Concrete pass/fail' },
             ]}
@@ -532,6 +574,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               {flexFace === 'bot' ? 'Bot ↕' : 'Top ↕'}
             </button>
           )}
+
+          <div style={toolSep} />
+
+          {/* Line weight — stroke thickness proportional to beam width */}
+          <span style={{ fontSize: 11, color: INK.secondary }}>Line wt</span>
+          <input
+            type="range" min={0} max={1} step={0.05} value={lineWeightScale}
+            onChange={e => setLineWeightScale(parseFloat(e.target.value))}
+            title="Line weight — thicker lines for wider beams (0 = uniform)"
+            style={{ width: 84, cursor: 'pointer', accentColor: ACCENT.primary }}
+          />
 
           <div style={toolSep} />
 
@@ -607,27 +660,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
         {/* Map canvas */}
         <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          {viewMode === '3d' ? (
-            <Map3DCanvas
-              frames={frames}
-              dcrById={dcrById}
-              infoById={infoById}
-              designGroups={groups}
-              story={story}
-              colorMode={colorMode}
-              onDoubleClick={onPickMember}
-              width={canvasSize.w}
-              height={canvasSize.h}
-              metricById={metricById}
-              metricRange={effectiveMetricRange}
-              scoStatusById={scoStatusById}
-              autoGroupOverlay={autoGroupOverlay}
-              hiddenMemberIds={hiddenMemberIds}
-              hiddenStories={hiddenStories}
-              showErrors={showErrors}
-              errorMemberIds={errorMemberIds}
-            />
-          ) : (
           <MapCanvas
             frames={frames}
             dcrById={dcrById}
@@ -660,11 +692,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             inspectedMemberId={inspectedMemberId}
             showErrors={showErrors}
             errorMemberIds={errorMemberIds}
+            focusFrames={focusFrames}
+            lineWeightScale={lineWeightScale}
+            widthById={widthById}
+            gradeColorMap={gradeColorMap}
           />
-          )}
 
           {/* Beam inspect card */}
-          {viewMode === '2d' && inspectMode && inspectedMember && (
+          {inspectMode && inspectedMember && (
             <BeamInspectCard
               member={inspectedMember}
               designResults={designResultsById[inspectedMember.id]}
@@ -688,6 +723,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onOverrideChange={setMetricOverride}
               showHistogram={showMetricHistogram}
               onToggleHistogram={() => setShowMetricHistogram(s => !s)}
+            />
+          )}
+
+          {/* Categorical legend — concrete/steel grade, or numbered design groups. */}
+          {(colorMode === 'concGrade' || colorMode === 'steelGrade') && gradeLegend.length > 0 && (
+            <CategoricalLegend title={colorMode === 'concGrade' ? 'Concrete grade' : 'Steel grade'} rows={gradeLegend} />
+          )}
+          {colorMode === 'groupTags' && (
+            <CategoricalLegend
+              title="Design groups"
+              rows={groups.map((g, i) => ({ index: i + 1, label: g.label, color: groupColor(g.color, i), count: g.memberIds.length }))}
             />
           )}
         </div>
@@ -918,6 +964,29 @@ function RangeInput({ value, onCommit }: { value: number; onCommit: (v: number) 
       onKeyDown={e => { if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); } }}
       style={{ width: 60, padding: '2px 5px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 11, ...MONO_NUM }}
     />
+  );
+}
+
+/** Compact top-right legend for categorical color modes (grade / numbered groups). */
+function CategoricalLegend({ title, rows }: { title: string; rows: { label: string; color: string; count: number; index?: number }[] }) {
+  return (
+    <div style={{
+      position: 'absolute', top: 8, right: 8, width: 210, maxHeight: '70%', overflowY: 'auto',
+      background: 'white', borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
+      boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
+    }}>
+      <div style={{ fontWeight: 700, color: INK.strong, marginBottom: 6 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            {r.index !== undefined && <span style={{ ...MONO_NUM, width: 14, textAlign: 'right', color: INK.muted, fontWeight: 700 }}>{r.index}</span>}
+            <span style={{ width: 14, height: 12, borderRadius: 3, background: r.color, flexShrink: 0 }} />
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+            <span style={{ color: INK.muted }}>({r.count})</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -7,7 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
-import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type ColorMode } from './frameColor';
+import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
 import { BORDER, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK } from '../../theme';
 
 export type { ColorMode };
@@ -70,6 +70,14 @@ interface Props {
   showErrors?: boolean;
   /** Member ids flagged as having errors. */
   errorMemberIds?: Set<string>;
+  /** Frames of the active design group — highlighted; all others halftone. Empty = no focus. */
+  focusFrames?: Set<string>;
+  /** 0 = uniform line weight (today's look); >0 scales stroke by member width. */
+  lineWeightScale?: number;
+  /** memberId → section width (in), for proportional line weight. */
+  widthById?: Record<string, number>;
+  /** memberId → categorical color for the 'concGrade' / 'steelGrade' modes. */
+  gradeColorMap?: Map<string, string>;
 }
 
 export default function MapCanvas({
@@ -82,6 +90,7 @@ export default function MapCanvas({
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
   showErrors = false, errorMemberIds = new Set(),
+  focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -118,12 +127,30 @@ export default function MapCanvas({
   const tx = (x: number) => pad + (x - minX) * scale;
   const ty = (y: number) => height - pad - (y - minY) * scale;
 
-  // Shared coloring (identical in the 3D view): group / auto-group lookups + the
-  // per-frame color for the active mode.
+  // Shared coloring: group / auto-group lookups + the per-frame color for the mode.
   const groupColorMap = buildGroupColorMap(designGroups);
   const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
+  const groupIndexMap = buildGroupIndexMap(designGroups);
   const frameColor = (f: MapFrame): string =>
-    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, scoStatusById });
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById });
+
+  // Proportional line weight (feature ④): scale a beam's stroke by its width. At
+  // lineWeightScale 0 this collapses to the constant 3px (today's look); higher
+  // values spread strokes across ~2–10px in proportion to width, so wider beams
+  // read as heavier lines. Halos add a fixed offset so they track the line.
+  const wVals = Object.values(widthById);
+  const minW = wVals.length ? Math.min(...wVals) : 0;
+  const maxW = wVals.length ? Math.max(...wVals) : 1;
+  const strokeFor = (memberId: string | undefined, hov: boolean): number => {
+    const base = 3;
+    const w = memberId ? widthById[memberId] : undefined;
+    let px = base;
+    if (lineWeightScale > 0 && w !== undefined && maxW > minW) {
+      const t = (w - minW) / (maxW - minW);              // 0..1 across the width range
+      px = base + lineWeightScale * (2 + t * 6 - base);  // blend base → 2..8px band
+    }
+    return px + (hov ? 2 : 0);
+  };
 
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -337,6 +364,9 @@ export default function MapCanvas({
           const color = frameColor(f);
           const linked = !!f.memberId;
           const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);
+          // Feature ①: when a group is active, halftone every frame not in it.
+          const dimmed = !!focusFrames && focusFrames.size > 0 && !focusFrames.has(f.frameName);
+          const baseOpacity = dimmed ? 0.12 : (linked ? 1 : 0.6);
           // A (near-)vertical member — a column — projects to a single point in
           // plan; draw it as a square marker instead of a zero-length line.
           const isColumn = Math.hypot(f.pt2.x - f.pt1.x, f.pt2.y - f.pt1.y) < 0.5;
@@ -374,20 +404,30 @@ export default function MapCanvas({
                   {isSel && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke="#2563eb" strokeWidth={2} />}
                   <rect x={x1 - r} y={y1 - r} width={2 * r} height={2 * r} rx={1.5}
                     fill={color} stroke="#0b1220" strokeWidth={0.5}
-                    strokeDasharray={linked ? undefined : '3 2'} opacity={linked ? 1 : 0.6} />
+                    strokeDasharray={linked ? undefined : '3 2'} opacity={baseOpacity} />
                 </>
               ) : (
                 <>
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
-                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
-                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={9} opacity={0.35} strokeLinecap="round" />}
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(12, strokeFor(f.memberId, isHov) + 8)} />
+                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={strokeFor(f.memberId, isHov) + 4} opacity={0.45} strokeLinecap="round" />}
+                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={strokeFor(f.memberId, isHov) + 6} opacity={0.35} strokeLinecap="round" />}
                   <line x1={x1} y1={y1} x2={x2} y2={y2}
                     stroke={color}
-                    strokeWidth={isHov ? 5 : 3}
+                    strokeWidth={strokeFor(f.memberId, isHov)}
                     strokeLinecap="round"
                     strokeDasharray={linked ? undefined : '6 4'}
-                    opacity={linked ? 1 : 0.6}
+                    opacity={baseOpacity}
                   />
+                  {colorMode === 'groupTags' && f.memberId && groupIndexMap.has(f.memberId) && (
+                    <>
+                      <rect x={(x1 + x2) / 2 - 7} y={(y1 + y2) / 2 - 7} width={14} height={14} rx={2.5}
+                        fill="white" stroke={BORDER.default} opacity={dimmed ? 0.3 : 0.95} style={{ pointerEvents: 'none' }} />
+                      <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 3.5} fontSize={10} fontWeight={800}
+                        textAnchor="middle" fill={INK.strong} opacity={dimmed ? 0.3 : 1} style={{ pointerEvents: 'none' }}>
+                        {(groupIndexMap.get(f.memberId) ?? 0) + 1}
+                      </text>
+                    </>
+                  )}
                 </>
               )}
             </g>
@@ -422,6 +462,17 @@ export default function MapCanvas({
         }}>
           <div style={{ fontWeight: 700, color: INK.strong, marginBottom: 3 }}>{hovered.frameName}</div>
           <div style={{ color: INK.secondary, marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
+          {(() => {
+            // Feature ⑤: show which design group this beam belongs to.
+            const g = hovered.memberId ? designGroups.find(gr => gr.memberIds.includes(hovered.memberId!)) : undefined;
+            const col = hovered.memberId ? groupColorMap.get(hovered.memberId) : undefined;
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: col ?? MAP_GRAY.unassigned }} />
+                <span style={{ color: g ? INK.strong : INK.muted, fontWeight: 600 }}>{g ? g.label : 'Ungrouped'}</span>
+              </div>
+            );
+          })()}
           {hoveredInfo ? (
             hoveredInfo.error ? (
               <div style={{ color: STATUS.fail, fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>

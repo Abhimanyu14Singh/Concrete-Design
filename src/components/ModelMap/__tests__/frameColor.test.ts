@@ -1,10 +1,12 @@
 /**
- * Locks the shared frame-coloring logic used by BOTH the 2D plan canvas and the
- * 3D orbit canvas. Each mode is asserted against the underlying color primitive
- * so the two views can never drift apart.
+ * Locks the shared frame-coloring logic for the 2D plan canvas. Each mode is
+ * asserted against the underlying color primitive so colors stay stable.
  */
 import { describe, it, expect } from 'vitest';
-import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, type FrameColorContext } from '../frameColor';
+import {
+  frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap,
+  concGradeLabel, steelGradeLabel, type FrameColorContext,
+} from '../frameColor';
 import { dcrToColor } from '../../EtabsImport/dcrColors';
 import { valueToRampColor } from '../colorRamp';
 import { MAP_GRAY, STATUS } from '../../../theme';
@@ -69,6 +71,12 @@ describe('frameColorFor — metric mode', () => {
     const ctx = baseCtx({ colorMode: 'flexSteel', metricById: { m1: 2.5 }, metricRange: { min: 1, max: 4 } });
     expect(frameColorFor(frame('m1'), ctx)).toBe(valueToRampColor(2.5, 1, 4));
   });
+  it('ramps height and width the same way', () => {
+    for (const mode of ['height', 'width'] as const) {
+      const ctx = baseCtx({ colorMode: mode, metricById: { m1: 12 }, metricRange: { min: 10, max: 30 } });
+      expect(frameColorFor(frame('m1'), ctx)).toBe(valueToRampColor(12, 10, 30));
+    }
+  });
   it('falls back to grey without a value or range', () => {
     const ctx = baseCtx({ colorMode: 'stirrups', metricById: {}, metricRange: { min: 1, max: 4 } });
     expect(frameColorFor(frame('m1'), ctx)).toBe(MAP_GRAY.unlinked);
@@ -93,5 +101,53 @@ describe('frameColorFor — auto-group overlay', () => {
   it('colors a binned member and greys the rest', () => {
     expect(frameColorFor(frame('m1'), ctx)).toBe('#abcdef');
     expect(frameColorFor(frame('m9'), ctx)).toBe(MAP_GRAY.unassigned);
+  });
+});
+
+describe('frameColorFor — concrete/steel grade', () => {
+  const gradeColorMap = new Map([['m1', '#aa0000'], ['m2', '#aa0000'], ['m3', '#00aa00']]);
+  it('colors by the grade map for both grade modes and greys the rest', () => {
+    for (const mode of ['concGrade', 'steelGrade'] as const) {
+      const ctx = baseCtx({ colorMode: mode, gradeColorMap });
+      expect(frameColorFor(frame('m1'), ctx)).toBe('#aa0000');
+      expect(frameColorFor(frame('m2'), ctx)).toBe('#aa0000');     // same grade → same color
+      expect(frameColorFor(frame('m3'), ctx)).toBe('#00aa00');
+      expect(frameColorFor(frame('mX'), ctx)).toBe(MAP_GRAY.unassigned);
+    }
+  });
+});
+
+describe('frameColorFor — groupTags mode', () => {
+  const groups: DesignGroup[] = [
+    { id: 'g1', label: 'A', memberIds: ['m1'], color: '#123456' },
+    { id: 'g2', label: 'B', memberIds: ['m3'] },
+  ];
+  it('colors identically to group mode', () => {
+    const ctx = baseCtx({ colorMode: 'groupTags', groupColorMap: buildGroupColorMap(groups) });
+    expect(frameColorFor(frame('m1'), ctx)).toBe('#123456');
+    expect(frameColorFor(frame('orphan'), ctx)).toBe(MAP_GRAY.unassigned);
+  });
+});
+
+describe('buildGroupIndexMap', () => {
+  it('maps each member to its group index in array order', () => {
+    const groups: DesignGroup[] = [
+      { id: 'g1', label: 'A', memberIds: ['m1', 'm2'] },
+      { id: 'g2', label: 'B', memberIds: ['m3'] },
+    ];
+    const idx = buildGroupIndexMap(groups);
+    expect(idx.get('m1')).toBe(0);
+    expect(idx.get('m2')).toBe(0);
+    expect(idx.get('m3')).toBe(1);
+    expect(idx.has('mX')).toBe(false);
+  });
+});
+
+describe('grade labels', () => {
+  it('formats concrete/steel grades in SI and imperial', () => {
+    expect(concGradeLabel(30 * 145.0377, true)).toBe('C30');
+    expect(steelGradeLabel(500 * 145.0377, true)).toBe('B500');
+    expect(concGradeLabel(4000, false)).toBe('4 ksi');
+    expect(steelGradeLabel(60000, false)).toBe('Gr 60');
   });
 });
