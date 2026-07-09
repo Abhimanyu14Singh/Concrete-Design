@@ -48,6 +48,32 @@ describe('suggestGroupRebar', () => {
     expect(r.governingMemberId).toBe('b1');
   });
 
+  it('adds code-based skin bars to a deep beam (ACI §9.7.2.3, h > 36 in)', () => {
+    const m = makeBeam({ id: 'deep', h: 40, MuPos: 260, MuNeg: 220, Vu: 55 });
+    const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    expect(r.rebar.sideBars).toBeDefined();
+    expect(r.rebar.sideBars![0].numBars).toBeGreaterThanOrEqual(1); // per face
+  });
+
+  it('adds no skin bars to a shallow beam (h ≤ 36 in)', () => {
+    const r = suggestGroupRebar([makeBeam({ id: 'shallow', h: 24 })], 'ACI318-19', 0.9);
+    if (isSuggestError(r)) return;
+    expect(r.rebar.sideBars).toBeUndefined();
+  });
+
+  it('uses a third bar layer for very high demand instead of erroring', () => {
+    // A narrow, deep beam with a large sagging moment needs more bottom steel
+    // than two full layers can hold; the 3-layer branch lets it succeed.
+    const m = makeBeam({ id: 'tall', b: 14, h: 48, MuPos: 1500, MuNeg: 500, Vu: 110 });
+    const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    expect(r.rebar.botBars.length).toBe(3);
+    expect(r.worstDCRFlex).toBeLessThanOrEqual(0.9 + 1e-6);
+  });
+
   it('only uses practical bar sizes and stirrup spacings', () => {
     const m = makeBeam({ id: 'b1', MuPos: 250, MuNeg: 200, Vu: 60 });
     const r = suggestGroupRebar([m], 'ACI318-19', 0.9);

@@ -3,7 +3,7 @@
  * group meeting the group's worst demand at the target DCR.
  *
  * Practical defaults (typical office detailing standards):
- *   longitudinal: #5–#9, min 2 bars/layer, max 2 layers, outer layer ≥ inner;
+ *   longitudinal: #5–#9, min 2 bars/layer, max 3 layers, outer layer ≥ inner;
  *   stirrups: #4 or #5, 2 then 4 legs, spacings {4,6,8,10,12} in,
  *   zoned [end, mid, end] with the mid zone one increment more relaxed.
  *
@@ -16,6 +16,7 @@ import { runDesign } from '../engines';
 import { getBarArea, getBarDiam } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
 import { suggestColumnRebar, isColumnMember } from './suggestColumnRebar';
+import { minSkinReinforcement } from '../adapters/etabs/rebarSeed';
 
 const LONG_BAR_SIZES_US  = [5, 6, 7, 8, 9];
 const LONG_BAR_SIZES_EC2 = [-10, -12, -16, -20, -25, -32];
@@ -68,7 +69,7 @@ export function maxBarsPerLayer(member: Member, barSize: number): number {
  * Practical layouts for one face at a SINGLE bar size with As ≥ required,
  * lightest first. Number of bars / layers may vary, but the size is fixed.
  */
-function faceCandidatesAtSize(member: Member, AsRequired: number, size: number): FaceCandidate[] {
+function faceCandidatesAtSize(member: Member, AsRequired: number, size: number, maxLayers = 2): FaceCandidate[] {
   const out: FaceCandidate[] = [];
   const Ab = getBarArea(size);
   const nMax = maxBarsPerLayer(member, size);
@@ -88,6 +89,24 @@ function faceCandidatesAtSize(member: Member, AsRequired: number, size: number):
     if (inner < 2 || inner > outer) continue;
     out.push({ layers: [{ numBars: outer, barSize: size }, { numBars: inner, barSize: size }], As });
     break;
+  }
+  // three layers (outer ≥ mid ≥ inner ≥ 2) — a FALLBACK, only when two full
+  // layers can't hold the demand (maxLayers = 3). Returns a ladder of increasing
+  // totals so the verify loop can still bump for DCR at the largest bar size
+  // (where there is no larger size to step up to).
+  if (maxLayers >= 3) {
+    const maxTotal3 = 3 * nMax;
+    for (let total = Math.max(6, 2 * nMax + 1); total <= maxTotal3; total++) {
+      const As = total * Ab;
+      if (As < AsRequired) continue;
+      const l1 = Math.min(nMax, Math.ceil(total / 3));
+      const l2 = Math.min(nMax, Math.ceil((total - l1) / 2));
+      const l3 = total - l1 - l2;
+      if (l3 < 2 || l3 > l2 || l2 > l1) continue;
+      out.push({ layers: [
+        { numBars: l1, barSize: size }, { numBars: l2, barSize: size }, { numBars: l3, barSize: size },
+      ], As });
+    }
   }
   return out.sort((a, b) => a.As - b.As);
 }
@@ -170,10 +189,16 @@ export function suggestGroupRebar(
   let sizeIdx = -1;
   let topCands: FaceCandidate[] = [];
   let botCands: FaceCandidate[] = [];
-  for (let i = 0; i < LONG_BAR_SIZES.length; i++) {
-    const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i]);
-    const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i]);
-    if (t.length && b.length) { sizeIdx = i; topCands = t; botCands = b; break; }
+  // Prefer ≤2 layers; only fall back to a 3rd layer when NO bar size holds the
+  // demand in two — so "no practical layout" now means even 3 layers won't fit.
+  let maxLayers = 2;
+  for (const ml of [2, 3]) {
+    for (let i = 0; i < LONG_BAR_SIZES.length; i++) {
+      const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i], ml);
+      const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i], ml);
+      if (t.length && b.length) { sizeIdx = i; topCands = t; botCands = b; maxLayers = ml; break; }
+    }
+    if (sizeIdx >= 0) break;
   }
   if (sizeIdx < 0) {
     return { error: 'No practical bar layout fits this section — consider a larger section.' };
@@ -223,8 +248,11 @@ export function suggestGroupRebar(
         const As = topCands[ti].As + botCands[bi].As;
         return s + memberSteelWeightLb(As, len);
       }, 0);
+      // Deep beams (ACI §9.7.2.3 / EC2 §7.3.3): add code-based skin/side bars
+      // (per face). Side bars don't change flex/shear DCR, so no re-verify.
+      const skin = minSkinReinforcement(governing.section, code, isEC2 ? -12 : 5);
       return {
-        rebar: candidate,
+        rebar: skin ? { ...candidate, sideBars: [skin] } : candidate,
         worstDCRFlex: worstFlex,
         worstDCRShear: worstShear,
         steelLb,
@@ -245,8 +273,8 @@ export function suggestGroupRebar(
         // Exhausted at this size — step up to the next common size.
         let stepped = false;
         for (let i = sizeIdx + 1; i < LONG_BAR_SIZES.length; i++) {
-          const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i]);
-          const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i]);
+          const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i], maxLayers);
+          const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i], maxLayers);
           if (t.length && b.length) {
             sizeIdx = i; topCands = t; botCands = b; ti = 0; bi = 0; stepped = true; break;
           }

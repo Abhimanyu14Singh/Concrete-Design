@@ -27,8 +27,10 @@ const IN_TO_MM = 25.4;
  *  - ACI 318 §9.7.2.3: required when h > 36 in, distributed over the lower h/2
  *    of the web at ≤ 12 in spacing.
  *  - EC2 §7.3.3: surface/skin reinforcement when h > 1000 mm, at ≤ 300 mm.
- * Returns the total side bars (both faces) and bar size, or undefined when the
- * section is too shallow to require skin steel.
+ * Returns the side bars PER FACE and bar size, or undefined when the section is
+ * too shallow to require skin steel. (Beam convention — the section drawing, the
+ * crack engine, and the .SCO all count skin bars per face; the column seed
+ * doubles this to a both-faces total since columns pool their side bars.)
  */
 export function minSkinReinforcement(
   section: SectionDimensions,
@@ -43,7 +45,7 @@ export function minSkinReinforcement(
   const cover = section.coverClear ?? 1.5;
   const region = Math.max(0, h / 2 - cover); // lower (tension) half of the web
   const perFace = Math.max(1, Math.ceil(region / sMaxIn));
-  return { numBars: 2 * perFace, barSize }; // both faces
+  return { numBars: perFace, barSize }; // bars PER FACE (beam convention)
 }
 
 // US bars (#5–#11) and metric bars (Ø16–Ø32, stored negative). pickBars
@@ -111,10 +113,15 @@ export function seedRebar(section: SectionDimensions, opts: SeedOptions, code?: 
     { spacing: opts.stirrupSpacings[2] },
   ];
 
-  // Code-based minimum skin reinforcement for deep beams (opt-in via wizard)
-  const skin = opts.imposeSkinReinf && code
+  // Code-based minimum skin reinforcement for deep members (opt-in via wizard).
+  // minSkinReinforcement returns bars PER FACE (beam convention); columns pool
+  // their side bars as a both-faces total, so double for column sections.
+  const skinPerFace = opts.imposeSkinReinf && code
     ? minSkinReinforcement(section, code, opts.skinBarSize ?? (isEC2 ? -12 : 5))
     : undefined;
+  const skin = skinPerFace && section.type.endsWith('_column')
+    ? { ...skinPerFace, numBars: skinPerFace.numBars * 2 }
+    : skinPerFace;
 
   return {
     topBars: [pickBars(AsTop, section, stirrupBarSize, code)],
