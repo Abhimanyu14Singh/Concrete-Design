@@ -56,6 +56,7 @@ export default function App() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [helpTarget, setHelpTarget] = useState<{ section: string } | null>(null);
   const { units, setUnits, fmt } = useUnits();
 
   // B5: dirty indicator
@@ -259,6 +260,20 @@ export default function App() {
 
   // ── ETABS import ───────────────────────────────────────────────────────────
   const [showEtabsImport, setShowEtabsImport] = useState(false);
+
+  // Deep-link into the Help tab from any panel's "?" (see HelpLink). Close any
+  // open dialog so the guide is visible, jump to the Help tab, and remember the
+  // section so HelpView can scroll to it.
+  useEffect(() => {
+    const onOpenHelp = (e: Event) => {
+      const section = (e as CustomEvent).detail as string | undefined;
+      setHelpTarget(section ? { section } : null);
+      setShowEtabsImport(false); setShowReport(false); setShowExport(false); setShowPrefs(false);
+      setTab('help');
+    };
+    window.addEventListener('open-help', onOpenHelp);
+    return () => window.removeEventListener('open-help', onOpenHelp);
+  }, []);
 
   function handleEtabsImport(
     members: Member[],
@@ -966,7 +981,7 @@ export default function App() {
                 </div>
               </div>
             )}
-            {tab === 'help' && <HelpView />}
+            {tab === 'help' && <HelpView target={helpTarget} />}
           </div>
         </main>
       </div>

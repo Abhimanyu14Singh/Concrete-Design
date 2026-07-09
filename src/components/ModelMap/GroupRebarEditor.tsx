@@ -10,6 +10,7 @@ import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
+import HelpLink from '../Help/HelpLink';
 import { ACCENT, BORDER, INK, MONO_NUM, STATUS, TRACK } from '../../theme';
 
 interface Props {
@@ -146,6 +147,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ fontWeight: 700, fontSize: 11, color: INK.base, textTransform: 'uppercase', letterSpacing: TRACK.wide, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {group.label} — Rebar Template
         </div>
+        <HelpLink section="suggest" title="How Suggest sizes the cage" />
         <button
           onClick={handleSuggest}
           title={`Pick the lightest practical layout meeting the group's worst demand at target DCR ${targetDCR.toFixed(2)}`}

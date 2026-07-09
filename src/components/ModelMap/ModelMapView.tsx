@@ -24,6 +24,7 @@ import TakeoffPanel from './TakeoffPanel';
 import ColumnStacksPanel from './ColumnStacksPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
+import HelpLink from '../Help/HelpLink';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
 import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
@@ -755,7 +756,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
                   {/* ① DESIGN — group members, then set or ✨-suggest the cage. The
                       active group's rebar editor opens as a slide-out column beside
                       this panel (the {activeGroup && …} block just before the right panel). */}
-                  <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span></div>
+                  <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span><div style={{ flex: 1 }} /><HelpLink section="design" title="How grouping & the cage work" /></div>
                   <GroupPanel
                     groups={groups}
                     frames={frames}
@@ -776,7 +777,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               bottom={
                 <>
                   {/* ② VERIFY — run S-Concrete on the designed groups. */}
-                  <div style={sectionHdr}>② Verify<span style={sectionHint}>run the S-Concrete batch · governing result per group</span></div>
+                  <div style={sectionHdr}>② Verify<span style={sectionHint}>run the S-Concrete batch · governing result per group</span><div style={{ flex: 1 }} /><HelpLink section="verify" title="How S-Concrete verification works" /></div>
                   <GroupActionsPanel
                     groups={groups}
                     members={members}
