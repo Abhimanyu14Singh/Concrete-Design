@@ -9,6 +9,7 @@ import { exportExcel } from './utils/export/excelExport';
 import { buildSchedulePDF } from './utils/export/schedulePdfExport';
 import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
+import HelpView from './components/Help/HelpView';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
@@ -18,7 +19,7 @@ import Dropdown from './components/common/Dropdown';
 import { useUnits } from './contexts/UnitsContext';
 import { MEMBER_COLOR, FONT, SURFACE, STATUS, INK, BORDER, ACCENT, LABEL_STYLE } from './theme';
 
-type Tab = 'dashboard' | 'map' | 'member';
+type Tab = 'dashboard' | 'map' | 'member' | 'help';
 
 const hdrBtn: React.CSSProperties = {
   padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
@@ -634,7 +635,7 @@ export default function App() {
         <header id="app-header" style={{ background: 'white', borderBottom: `1px solid ${BORDER.default}`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member']] as [Tab, string][]).map(([key, label]) => (
+            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
@@ -965,6 +966,7 @@ export default function App() {
                 </div>
               </div>
             )}
+            {tab === 'help' && <HelpView />}
           </div>
         </main>
       </div>
