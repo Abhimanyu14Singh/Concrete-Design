@@ -134,6 +134,7 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
 
   it('reflects the crack-width limit and enables the check', () => {
     expect(param(t, 'Bm CheckCracks')).toBe('1');
+    expect(param(t, 'Bm CheckCracksF')).toBe('1');
     expect(+param(t, 'Bm CrkWdthLmt')!).toBeCloseTo(0.3, 6);
   });
 

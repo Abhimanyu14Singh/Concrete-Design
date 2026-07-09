@@ -107,6 +107,21 @@ export default function SectionView({
   const topLabelY = oy + stOff + topBarR;
   const botLabelY = oy + scaledH - stOff - botBarR;
 
+  // Innermost longitudinal-layer centers — the bottom-most TOP layer and the
+  // top-most BOTTOM layer. Face/skin bars are spaced in the clear web BETWEEN
+  // these two, never over the top/bottom bars. Mirrors barDots' layer stacking:
+  // each prior layer drops by bar Ø + clear spacing (so multi-layer top/bottom
+  // groups push the band inward correctly; single-layer ⇒ same as the outer y).
+  const sClearPx = (rebar.layerClearSpacing ?? 1.0) * scale;
+  const layerDrop = (bars: { barSize: number }[]) =>
+    bars.slice(0, -1).reduce((s, g) => s + getBarDiam(g.barSize) * scale + sClearPx, 0);
+  const lastTop = rebar.topBars[rebar.topBars.length - 1];
+  const lastBot = rebar.botBars[rebar.botBars.length - 1];
+  const yTopInner = oy + stOff + layerDrop(rebar.topBars)
+    + Math.max(3, (getBarDiam(lastTop?.barSize ?? 8) / 2) * scale);
+  const yBotInner = oy + scaledH - stOff - layerDrop(rebar.botBars)
+    - Math.max(3, (getBarDiam(lastBot?.barSize ?? 8) / 2) * scale);
+
   // Circular columns: pool ALL bar groups onto the ring (matches engine layout)
   const circGroups = [...rebar.topBars, ...rebar.botBars, ...(rebar.sideBars ?? [])]
     .filter(g => g.numBars > 0);
@@ -190,11 +205,12 @@ export default function SectionView({
             const r = Math.max(2.5, (getBarDiam(grp.barSize) / 2) * scale);
             // Columns: pairs at evenly spaced heights between face layers (engine convention)
             const rows = isColumn ? Math.max(1, Math.round(grp.numBars / 2)) : grp.numBars;
-            const yTop = oy + stOff + topBarR;
-            const yBot = oy + scaledH - stOff - botBarR;
             return Array.from({ length: rows }, (_, i) => {
               const t = (i + 1) / (rows + 1);
-              const by = isColumn ? yTop + t * (yBot - yTop) : oy + (scaledH / (grp.numBars + 1)) * (i + 1);
+              // Evenly spaced in the clear web between the innermost top layer and
+              // the innermost bottom layer — so face bars never overlap the top/
+              // bottom bars (the same interpolation the column path already used).
+              const by = yTopInner + t * (yBotInner - yTopInner);
               return [
                 <circle key={`sl-${gi}-${i}`} cx={ox + stOff + r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
                 <circle key={`sr-${gi}-${i}`} cx={ox + scaledW - stOff - r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,

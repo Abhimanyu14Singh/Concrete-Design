@@ -169,8 +169,13 @@ export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
   t = setParam(t, 'Bm Sstir', Math.round(p.stirrupSpacingMm));
   t = setParam(t, 'Bm NlegsZ', p.stirrupLegs);
   t = setParam(t, 'Bm NlegsY', p.stirrupLegs);
-  // Crack width
+  // Crack width — CheckCracks and CheckCracksF are the direct crack-width (SLS)
+  // checks: off in the ULS file, on only in the SLS/crack file (both follow
+  // p.checkCracks). CheckCracksF is a separate template token from CheckCracks,
+  // so setParam targets it independently. (Bm CheckBarS — the §7.3.3 deemed-to-
+  // satisfy spacing check — is intentionally left at the template default.)
   t = setParam(t, 'Bm CheckCracks', p.checkCracks ? 1 : 0);
+  t = setParam(t, 'Bm CheckCracksF', p.checkCracks ? 1 : 0);
   t = setParam(t, 'Bm CrkWdthLmt', r3(p.crackWidthLimitMm));
   // Forces
   t = replaceSectionalLoads(t, p.rows);

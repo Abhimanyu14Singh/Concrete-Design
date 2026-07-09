@@ -283,6 +283,8 @@ describe('buildGroupEnvelopeScoFiles — EC2 routing', () => {
     const crack = files.find(f => f.fileName === 'EC2_crack.SCO')!;
     expect(uls.text).toContain('Bm CheckCracks\t 0');     // ULS set: crack OFF
     expect(crack.text).toContain('Bm CheckCracks\t 1');   // crack set: crack ON
+    expect(uls.text).toContain('Bm CheckCracksF\t 0');    // ULS set: face crack OFF
+    expect(crack.text).toContain('Bm CheckCracksF\t 1');  // crack set: face crack ON
     expect(uls.text).toContain('Member Name\t EC2');
     expect(crack.text).toContain('Member Name\t EC2 (crack)');
     // The ULS set carries both members' ULS rows; the crack set carries both
