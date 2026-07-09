@@ -55,7 +55,27 @@ function createWindow() {
         { role: 'togglefullscreen' },
       ],
     },
-    { label: 'Help', submenu: [{ label: 'About S-Dashboard', click: () => {} }] },
+    {
+      label: 'Help',
+      submenu: [
+        { label: 'Doc Resources',      accelerator: 'F1', click: () => win.webContents.send('open-help', 'guide') },
+        { label: 'Your First Model',                      click: () => win.webContents.send('open-help', 'start') },
+        { label: 'Keyboard Shortcuts',                    click: () => win.webContents.send('open-help', 'keys')  },
+        { label: 'FAQ & Troubleshooting',                 click: () => win.webContents.send('open-help', 'faq')   },
+        { type: 'separator' },
+        {
+          label: 'About S-Dashboard',
+          click: () =>
+            dialog.showMessageBox(win, {
+              type: 'info',
+              title: 'About S-Dashboard',
+              message: 'S-Dashboard',
+              detail: `Version ${app.getVersion()}\n\nETABS → Design → S-Concrete verification for reinforced-concrete frames.`,
+              buttons: ['OK'],
+            }),
+        },
+      ],
+    },
   ]);
   Menu.setApplicationMenu(menu);
 }

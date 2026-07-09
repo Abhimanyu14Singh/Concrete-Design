@@ -398,6 +398,7 @@ function KeysPage() {
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>Y</Kbd>{'  '}<span style={{ color: INK.muted, fontSize: 12 }}>or</span>{'  '}<Kbd>Ctrl</Kbd><Kbd>⇧</Kbd><Kbd>Z</Kbd></>} action="Redo" />
         <KeyRow keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} action="Previous / next member (in the Member view)" />
         <KeyRow keys={<Kbd>Esc</Kbd>} action="Close the open menu or dialog" />
+        <KeyRow keys={<Kbd>F1</Kbd>} action="Open Help (desktop app) — also under the Help menu" />
         <KeyRow keys={<><Kbd>Enter</Kbd>{'  '}<span style={{ color: INK.muted, fontSize: 12 }}>/</span>{'  '}<Kbd>Esc</Kbd></>} action="Commit / cancel a group rename" />
       </div>
       <Callout>In the <B>desktop app</B>, Save and Open use the operating system's native file dialogs; the rest of the shortcuts work everywhere.</Callout>
@@ -457,19 +458,26 @@ const HELP_TABS = [
 ] as const;
 type HelpTab = typeof HELP_TABS[number]['key'];
 
-export default function HelpView({ target }: { target?: { section: string } | null }) {
+export default function HelpView({ target }: { target?: { tab?: string; section?: string } | null }) {
   const [helpTab, setHelpTab] = useState<HelpTab>('guide');
 
   const scrollTo = (id: string) => {
     document.getElementById(`doc-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // Deep-link from a panel's "?" — switch to the guide and scroll to its section.
+  // React to a deep-link: the native Help menu passes a sub-tab; a panel's "?"
+  // passes a doc section (which lives on the guide, so switch there and scroll).
   useEffect(() => {
     if (!target) return;
-    setHelpTab('guide');
-    const t = setTimeout(() => scrollTo(target.section), 60);
-    return () => clearTimeout(t);
+    if (target.section) {
+      setHelpTab('guide');
+      const section = target.section;
+      const t = setTimeout(() => scrollTo(section), 60);
+      return () => clearTimeout(t);
+    }
+    if (target.tab && HELP_TABS.some(t => t.key === target.tab)) {
+      setHelpTab(target.tab as HelpTab);
+    }
   }, [target]);
 
   return (

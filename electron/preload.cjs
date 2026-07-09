@@ -23,4 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offTriggerSave: ()     => ipcRenderer.removeAllListeners('trigger-save'),
   offTriggerOpen: ()     => ipcRenderer.removeAllListeners('trigger-open'),
   offNewProject:  ()     => ipcRenderer.removeAllListeners('new-project'),
+  // Native Help menu → open the Help tab at a sub-tab (payload: 'guide' | 'start' | 'keys' | 'faq').
+  onOpenHelp:     (cb)   => { ipcRenderer.removeAllListeners('open-help'); ipcRenderer.on('open-help', (_e, tab) => cb(tab)); },
+  offOpenHelp:    ()     => ipcRenderer.removeAllListeners('open-help'),
 });

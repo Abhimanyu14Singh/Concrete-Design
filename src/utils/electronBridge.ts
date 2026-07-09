@@ -13,6 +13,8 @@ declare global {
       offTriggerSave: () => void;
       offTriggerOpen: () => void;
       offNewProject:  () => void;
+      onOpenHelp?:    (cb: (tab: string) => void) => void;
+      offOpenHelp?:   () => void;
     };
   }
 }

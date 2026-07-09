@@ -56,7 +56,7 @@ export default function App() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showReport, setShowReport] = useState(false);
-  const [helpTarget, setHelpTarget] = useState<{ section: string } | null>(null);
+  const [helpTarget, setHelpTarget] = useState<{ tab?: string; section?: string } | null>(null);
   const { units, setUnits, fmt } = useUnits();
 
   // B5: dirty indicator
@@ -261,19 +261,32 @@ export default function App() {
   // ── ETABS import ───────────────────────────────────────────────────────────
   const [showEtabsImport, setShowEtabsImport] = useState(false);
 
-  // Deep-link into the Help tab from any panel's "?" (see HelpLink). Close any
-  // open dialog so the guide is visible, jump to the Help tab, and remember the
-  // section so HelpView can scroll to it.
+  // Open the Help tab, closing any open dialog first so the guide is visible.
+  // Two entry points funnel here: a panel's "?" (HelpLink → window `open-help`
+  // event, carries a doc section) and the native Help menu (Electron IPC, carries
+  // a sub-tab). HelpView reads `target` to pick the sub-tab / scroll to a section.
+  const openHelpTarget = useCallback((t: { tab?: string; section?: string }) => {
+    setShowEtabsImport(false); setShowReport(false); setShowExport(false); setShowPrefs(false);
+    setHelpTarget(t);
+    setTab('help');
+  }, []);
+
   useEffect(() => {
     const onOpenHelp = (e: Event) => {
       const section = (e as CustomEvent).detail as string | undefined;
-      setHelpTarget(section ? { section } : null);
-      setShowEtabsImport(false); setShowReport(false); setShowExport(false); setShowPrefs(false);
-      setTab('help');
+      openHelpTarget(section ? { section } : {});
     };
     window.addEventListener('open-help', onOpenHelp);
     return () => window.removeEventListener('open-help', onOpenHelp);
-  }, []);
+  }, [openHelpTarget]);
+
+  // Native Help menu (desktop) → open the matching Help sub-tab.
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onOpenHelp) return;
+    api.onOpenHelp(tab => openHelpTarget({ tab }));
+    return () => api.offOpenHelp?.();
+  }, [openHelpTarget]);
 
   function handleEtabsImport(
     members: Member[],
