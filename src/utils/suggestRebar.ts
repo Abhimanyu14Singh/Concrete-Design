@@ -1,28 +1,41 @@
 /**
  * suggestGroupRebar — picks the lightest *practical* rebar layout for a design
- * group meeting the group's worst demand at the target DCR.
+ * group that meets the group's worst demand at the target DCR.
  *
- * Practical defaults (typical office detailing standards):
- *   longitudinal: #5–#9, min 2 bars/layer, max 3 layers, outer layer ≥ inner;
- *   stirrups: #4 or #5, 2 then 4 legs, spacings {4,6,8,10,12} in,
- *   zoned [end, mid, end] with the mid zone one increment more relaxed.
+ * Approach: a **capacity-inversion search**, not a linear demand estimate. The
+ * flexural capacity M_Rd is monotonically increasing in total steel area across
+ * the whole practical range, so for each candidate bar size we enumerate the full
+ * ladder of buildable layouts (1..MAX_LAYERS layers, area-ascending) and
+ * BINARY-SEARCH the lightest rung whose *engine-computed* DCR ≤ target — exact,
+ * because DCR is monotone in area. Shear is solved the same way over a
+ * cost-ordered stirrup ladder (DCR_shear depends only on the link steel rate).
+ * This replaces the old "linear As≈M/(0.9·d·f_y) seed + 5 correction retries",
+ * which under-seeded and ran out of budget on heavily-loaded deep sections
+ * (where the real lever arm collapses well below 0.9·d) and wrongly reported
+ * "needs a larger section" for cages that a designer could clearly build.
  *
- * Verification-driven: candidate areas come from the engine's own As_req /
- * Av_req demand outputs, and the winning layout is re-verified with runDesign
- * so strain-compatibility effects can bump to the next candidate.
+ * Guardrails: floors every face at As,min, and GATES at As,max (ρmax) so it never
+ * proposes an over-reinforced / illegal cage — in that case, or when even the
+ * richest catalog layout can't carry the demand (flexure) or the compression
+ * strut governs (shear), it returns a specific, honest error naming the limit.
+ *
+ * Practical envelope (typical office detailing):
+ *   longitudinal #5–#11 (EC2 Ø10–Ø32), 2–4 layers, ≥2 bars/layer, outer ≥ inner;
+ *   stirrups #4/#5/#6 (EC2 Ø8/10/12), 2/3/4/6 legs, spacings {4,6,8,10,12} in
+ *   (EC2 100–250 mm), zoned [end, mid, end] with the mid third relaxed when slack.
  */
-import type { Member, RebarLayout, Project, DesignResults } from '../types';
+import type { Member, RebarLayout, Project, DesignResults, LoadCase } from '../types';
 import { runDesign } from '../engines';
 import { getBarArea, getBarDiam } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
 import { suggestColumnRebar, isColumnMember } from './suggestColumnRebar';
 import { minSkinReinforcement } from '../adapters/etabs/rebarSeed';
 
-const LONG_BAR_SIZES_US  = [5, 6, 7, 8, 9];
+const LONG_BAR_SIZES_US  = [5, 6, 7, 8, 9, 10, 11];
 const LONG_BAR_SIZES_EC2 = [-10, -12, -16, -20, -25, -32];
 
 // US stirrup candidates
-const STIRRUP_SIZES_US       = [4, 5];
+const STIRRUP_SIZES_US       = [4, 5, 6];
 const STIRRUP_SPACINGS_US    = [4, 6, 8, 10, 12]; // in
 
 // EC2 stirrup candidates — Ø8, Ø10, Ø12 links; spacings 100/125/150/175/200/250 mm → in
@@ -33,7 +46,11 @@ const STIRRUP_SPACINGS_EC2   = [100, 125, 150, 175, 200, 250].map(mm => mm / 25.
 // two hoops / a hoop + 2 crossties (4), then 6 for wide/heavily-loaded webs.
 const STIRRUP_LEGS = [2, 3, 4, 6];
 
-const MAX_VERIFY_RETRIES = 5;
+// Longitudinal layers allowed. 3–4 layers only appear when fewer can't hold the
+// demand; a 4-layer cage pushes x/d up, which the engine flags (§5.5 / brittle).
+const MAX_LAYERS = 4;
+
+const EPS = 1e-6;
 
 export interface SuggestResult {
   rebar: RebarLayout;
@@ -53,11 +70,6 @@ export function isSuggestError(r: SuggestResult | SuggestError): r is SuggestErr
   return 'error' in r;
 }
 
-interface FaceCandidate {
-  layers: { numBars: number; barSize: number }[];
-  As: number;
-}
-
 /** Max bars per layer that fit the web width with ≥ max(1", db) clear spacing. */
 export function maxBarsPerLayer(member: Member, barSize: number): number {
   const db = getBarDiam(barSize);
@@ -69,80 +81,49 @@ export function maxBarsPerLayer(member: Member, barSize: number): number {
   return Math.max(0, Math.floor((usable + clear) / (db + clear)));
 }
 
-/**
- * Practical layouts for one face at a SINGLE bar size with As ≥ required,
- * lightest first. Number of bars / layers may vary, but the size is fixed.
- */
-function faceCandidatesAtSize(member: Member, AsRequired: number, size: number, maxLayers = 2): FaceCandidate[] {
-  const out: FaceCandidate[] = [];
-  const Ab = getBarArea(size);
-  const nMax = maxBarsPerLayer(member, size);
-  if (nMax < 2) return out;
-  // single layer
-  for (let n = 2; n <= nMax; n++) {
-    const As = n * Ab;
-    if (As >= AsRequired) { out.push({ layers: [{ numBars: n, barSize: size }], As }); break; }
-  }
-  // two layers (outer ≥ inner, inner ≥ 2)
-  const maxTotal = 2 * nMax;
-  for (let total = Math.max(4, nMax + 1); total <= maxTotal; total++) {
-    const As = total * Ab;
-    if (As < AsRequired) continue;
-    const outer = Math.min(nMax, Math.ceil(total / 2) > nMax ? nMax : Math.ceil(total / 2));
-    const inner = total - outer;
-    if (inner < 2 || inner > outer) continue;
-    out.push({ layers: [{ numBars: outer, barSize: size }, { numBars: inner, barSize: size }], As });
-    break;
-  }
-  // three layers (outer ≥ mid ≥ inner ≥ 2) — a FALLBACK, only when two full
-  // layers can't hold the demand (maxLayers = 3). Returns a ladder of increasing
-  // totals so the verify loop can still bump for DCR at the largest bar size
-  // (where there is no larger size to step up to).
-  if (maxLayers >= 3) {
-    const maxTotal3 = 3 * nMax;
-    for (let total = Math.max(6, 2 * nMax + 1); total <= maxTotal3; total++) {
-      const As = total * Ab;
-      if (As < AsRequired) continue;
-      const l1 = Math.min(nMax, Math.ceil(total / 3));
-      const l2 = Math.min(nMax, Math.ceil((total - l1) / 2));
-      const l3 = total - l1 - l2;
-      if (l3 < 2 || l3 > l2 || l2 > l1) continue;
-      out.push({ layers: [
-        { numBars: l1, barSize: size }, { numBars: l2, barSize: size }, { numBars: l3, barSize: size },
-      ], As });
-    }
-  }
-  return out.sort((a, b) => a.As - b.As);
+interface Rung {
+  layers: { numBars: number; barSize: number }[];
+  As: number;        // in²
+  totalBars: number;
 }
 
-/** Cheapest practical stirrup layout meeting Av/s demand at target. */
-function stirrupCandidate(
-  AvReqPerIn: number,
-  targetDCR: number,
-  isEC2: boolean,
-): RebarLayout['ties'] & { tieZones: [{ spacing: number }, { spacing: number }, { spacing: number }] } | null {
-  const STIRRUP_SIZES    = isEC2 ? STIRRUP_SIZES_EC2    : STIRRUP_SIZES_US;
-  const STIRRUP_SPACINGS = isEC2 ? STIRRUP_SPACINGS_EC2 : STIRRUP_SPACINGS_US;
-  const demand = AvReqPerIn / targetDCR;
-  for (const legs of STIRRUP_LEGS) {
-    for (const size of STIRRUP_SIZES) {
-      const Ab = getBarArea(size);
-      // largest spacing that still meets demand
-      let chosen: number | null = null;
-      for (const s of [...STIRRUP_SPACINGS].reverse()) {
-        if ((legs * Ab) / s >= demand) { chosen = s; break; }
-      }
-      if (chosen !== null) {
-        const midIdx = Math.min(STIRRUP_SPACINGS.indexOf(chosen) + 1, STIRRUP_SPACINGS.length - 1);
-        const mid = STIRRUP_SPACINGS[midIdx];
-        return {
-          barSize: size, spacing: chosen, legs,
-          tieZones: [{ spacing: chosen }, { spacing: mid }, { spacing: chosen }],
-        };
-      }
-    }
+/**
+ * Balanced split of `total` bars into the fewest layers that hold them, each layer
+ * in [2, nMax] and non-increasing (outer ≥ inner). Returns null if `total` can't be
+ * laid out that way (e.g. 3 bars into 2-per-layer webs).
+ */
+function layerSplit(total: number, nMax: number, maxLayers: number): number[] | null {
+  const L = Math.ceil(total / nMax);
+  if (L > maxLayers) return null;
+  const base = Math.floor(total / L);
+  const rem = total % L;
+  const layers: number[] = [];
+  for (let i = 0; i < L; i++) layers.push(base + (i < rem ? 1 : 0)); // first `rem` get +1 → non-increasing
+  if (layers[L - 1] < 2 || layers[0] > nMax) return null;
+  return layers;
+}
+
+/** Full ladder of one face's layouts at a fixed bar size, lightest (fewest bars) first. */
+function faceLadder(size: number, nMax: number): Rung[] {
+  if (nMax < 2) return [];
+  const Ab = getBarArea(size);
+  const out: Rung[] = [];
+  for (let total = 2; total <= nMax * MAX_LAYERS; total++) {
+    const split = layerSplit(total, nMax, MAX_LAYERS);
+    if (!split) continue;
+    out.push({ layers: split.map(n => ({ numBars: n, barSize: size })), As: total * Ab, totalBars: total });
   }
-  return null;
+  return out; // area-ascending by construction
+}
+
+/** First index i in [0,n) where `pass(i)` is true, assuming pass is monotone false→true. -1 if none. */
+function firstPassing(n: number, pass: (i: number) => boolean): number {
+  let lo = 0, hi = n - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (pass(mid)) { ans = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  return ans;
 }
 
 export function suggestGroupRebar(
@@ -160,159 +141,167 @@ export function suggestGroupRebar(
   }
   if (!beams.length) return { error: 'No designed beam members with loads in this group.' };
 
-  // 1. Demand pass: worst As_req / Av_req across the group (engine demand-side
-  //    outputs are independent of the currently provided steel).
-  let worstAsTop = 0, worstAsBot = 0, worstAsMin = 0, worstAv = 0;
-  let governing: Member = beams[0];
-  let governingScore = -1;
+  const isEC2 = code === 'EN1992-1-1';
+  const LONG_BAR_SIZES   = isEC2 ? LONG_BAR_SIZES_EC2   : LONG_BAR_SIZES_US;
+  const STIRRUP_SIZES    = isEC2 ? STIRRUP_SIZES_EC2    : STIRRUP_SIZES_US;
+  const STIRRUP_SPACINGS = isEC2 ? STIRRUP_SPACINGS_EC2 : STIRRUP_SPACINGS_US;
+
+  // 1. One design pass per beam: surface hard errors up front, take the group's As,min
+  //    floor / As,max cap, and record the governing member+LC for each action (worst
+  //    hogging, sagging, shear). The binary searches below probe only these governing
+  //    members — a single common cage on a same-section group is governed by the worst
+  //    demand — and step 4 re-verifies the assembled cage on EVERY member × load case.
+  let AsMinFloor = 0, AsMaxCap = Infinity;
+  let governing: Member = beams[0], govScore = -1;
+  let topGov = { m: beams[0], lc: beams[0].loads[0] };
+  let botGov = topGov, shearGov = topGov;
+  let topGovM = -Infinity, botGovM = -Infinity, shearGovV = -Infinity;
+  for (const m of beams) {
+    const negLC = m.loads.reduce((a, b) => (b.Mu_neg ?? 0) > (a.Mu_neg ?? 0) ? b : a);
+    const posLC = m.loads.reduce((a, b) => (b.Mu_pos ?? 0) > (a.Mu_pos ?? 0) ? b : a);
+    const vLC   = m.loads.reduce((a, b) => Math.abs(b.Vu ?? 0) > Math.abs(a.Vu ?? 0) ? b : a);
+    if ((negLC.Mu_neg ?? 0) > topGovM)     { topGovM = negLC.Mu_neg ?? 0; topGov = { m, lc: negLC }; }
+    if ((posLC.Mu_pos ?? 0) > botGovM)     { botGovM = posLC.Mu_pos ?? 0; botGov = { m, lc: posLC }; }
+    if (Math.abs(vLC.Vu ?? 0) > shearGovV) { shearGovV = Math.abs(vLC.Vu ?? 0); shearGov = { m, lc: vLC }; }
+    let r: DesignResults;
+    try {
+      r = runDesign(m.section, m.material, m.rebar, posLC, m.span, code, m.crackParams);
+    } catch (e) {
+      return { error: `Design failed for ${m.label}: ${(e as Error).message}` };
+    }
+    AsMinFloor = Math.max(AsMinFloor, r.As_min);
+    AsMaxCap = Math.min(AsMaxCap, r.As_max);
+    const score = Math.max(posLC.Mu_pos ?? 0, negLC.Mu_neg ?? 0);
+    if (score > govScore) { govScore = score; governing = m; }
+  }
+
+  // Flexural DCR of the governing member for a trial cage. One face's DCR is
+  // (near-)independent of the other face and of the stirrups, so the fixed "other"
+  // rung / seed stirrup below never affects the probed number.
+  const tieSeed = { barSize: STIRRUP_SIZES[0], spacing: STIRRUP_SPACINGS[Math.floor(STIRRUP_SPACINGS.length / 2)], legs: 2 };
+  const probe = (m: Member, lc: LoadCase, top: Rung, bot: Rung): DesignResults | null => {
+    try { return runDesign(m.section, m.material, { topBars: top.layers, botBars: bot.layers, ties: tieSeed }, lc, m.span, code, m.crackParams); }
+    catch { return null; }
+  };
+  const worstFlexNeg = (top: Rung, bot: Rung): number => probe(topGov.m, topGov.lc, top, bot)?.DCR_flex_neg ?? Infinity;
+  const worstFlexPos = (top: Rung, bot: Rung): number => probe(botGov.m, botGov.lc, top, bot)?.DCR_flex_pos ?? Infinity;
+
+  // 2. Flexure: over every common bar size, binary-search each face for the lightest
+  //    rung meeting As,min AND DCR ≤ target, then keep the size giving the lightest
+  //    total steel. Minimising area is self-correcting on layer count — extra layers
+  //    lower the effective depth and therefore RAISE the area needed — so the search
+  //    naturally avoids gratuitous layers and tiny-bar pile-ups. Ties break to fewer
+  //    layers, then smaller bars (better crack distribution).
+  let chosen: { top: Rung; bot: Rung; combinedAs: number; layers: number } | null = null;
+  let sawOverReinforced = false;
+  for (const size of LONG_BAR_SIZES) {
+    const nMax = Math.min(...beams.map(m => maxBarsPerLayer(m, size)));
+    const ladder = faceLadder(size, nMax);
+    if (ladder.length < 1) continue;
+    // Fix the opposite face at the lightest rung while probing one face — a face's
+    // flexural DCR is (near-)independent of the other, and the min rung is always a
+    // valid, non-over-reinforced section (a huge opposite face can make runDesign
+    // return NaN/throw). Conservative if the engine credits compression steel.
+    const fixedOpp = ladder[0];
+    const ti = firstPassing(ladder.length, i => ladder[i].As >= AsMinFloor - EPS && worstFlexNeg(ladder[i], fixedOpp) <= targetDCR + EPS);
+    if (ti < 0) continue;
+    const bi = firstPassing(ladder.length, i => ladder[i].As >= AsMinFloor - EPS && worstFlexPos(fixedOpp, ladder[i]) <= targetDCR + EPS);
+    if (bi < 0) continue;
+    // ρmax gate — refuse an over-reinforced (brittle / non-code) cage.
+    if (ladder[ti].As > AsMaxCap + EPS || ladder[bi].As > AsMaxCap + EPS) { sawOverReinforced = true; continue; }
+    const combinedAs = ladder[ti].As + ladder[bi].As;
+    const layers = ladder[ti].layers.length + ladder[bi].layers.length;
+    if (!chosen || combinedAs < chosen.combinedAs - EPS ||
+        (Math.abs(combinedAs - chosen.combinedAs) <= EPS && layers < chosen.layers)) {
+      chosen = { top: ladder[ti], bot: ladder[bi], combinedAs, layers };
+    }
+  }
+  if (!chosen) {
+    return { error: sawOverReinforced
+      ? 'Flexure would exceed the maximum reinforcement ratio (ρmax / over-reinforced) — enlarge the section.'
+      : 'Flexural demand exceeds the largest practical cage (up to #11/Ø32 in 4 layers) — enlarge the section.' };
+  }
+  const { top: chosenTop, bot: chosenBot } = chosen;
+
+  // 3. Shear: cheapest stirrup layout (by steel rate) whose DCR_shear ≤ target, using
+  //    the chosen flexural cage (so any bottom-steel contribution to V_c is included).
+  //    DCR_shear depends only on the link steel rate (legs·Ab/s), so the rate-sorted
+  //    ladder is monotone → binary-search the lightest passing rung.
+  interface Tie { size: number; legs: number; spacing: number; rate: number; }
+  const tieRungs: Tie[] = [];
+  for (const size of STIRRUP_SIZES)
+    for (const legs of STIRRUP_LEGS)
+      for (const spacing of STIRRUP_SPACINGS)
+        tieRungs.push({ size, legs, spacing, rate: legs * getBarArea(size) / spacing });
+  tieRungs.sort((a, b) => a.rate - b.rate || a.legs - b.legs || b.spacing - a.spacing || Math.abs(a.size) - Math.abs(b.size));
+
+  const shearDCR = (tie: Tie, zones: { spacing: number }[]): number => {
+    try {
+      return runDesign(shearGov.m.section, shearGov.m.material, {
+        topBars: chosenTop.layers, botBars: chosenBot.layers,
+        ties: { barSize: tie.size, spacing: tie.spacing, legs: tie.legs },
+        tieZones: zones as RebarLayout['tieZones'],
+      }, shearGov.lc, shearGov.m.span, code, shearGov.m.crackParams).DCR_shear;
+    } catch { return Infinity; }
+  };
+  const uniform = (t: Tie) => [{ spacing: t.spacing }, { spacing: t.spacing }, { spacing: t.spacing }];
+  const si = firstPassing(tieRungs.length, i => shearDCR(tieRungs[i], uniform(tieRungs[i])) <= targetDCR + EPS);
+  if (si < 0) {
+    // Even the richest catalog layout fails → the section/strut governs, not the links.
+    return { error: isEC2
+      ? "Shear: compression strut V_Rd,max exceeded — widen the web or raise f_ck (more links won't help)."
+      : "Shear: section capacity (V_c + max V_s) exceeded — widen the web or raise f′c (more links won't help)." };
+  }
+  const chosenTie = tieRungs[si];
+  // Relax the middle third one increment when there's slack (nicer, lighter cage).
+  let zones = uniform(chosenTie);
+  const spIdx = STIRRUP_SPACINGS.findIndex(s => Math.abs(s - chosenTie.spacing) < 1e-9);
+  if (spIdx >= 0 && spIdx < STIRRUP_SPACINGS.length - 1) {
+    const relaxed = [{ spacing: chosenTie.spacing }, { spacing: STIRRUP_SPACINGS[spIdx + 1] }, { spacing: chosenTie.spacing }];
+    if (shearDCR(chosenTie, relaxed) <= targetDCR + EPS) zones = relaxed;
+  }
+
+  // 4. Assemble + verify the full cage on EVERY member × EVERY load case (catches
+  //    mixed-section groups a single-member design would miss).
+  const cage: RebarLayout = {
+    topBars: chosenTop.layers,
+    botBars: chosenBot.layers,
+    ties: { barSize: chosenTie.size, spacing: chosenTie.spacing, legs: chosenTie.legs },
+    tieZones: zones as RebarLayout['tieZones'],
+  };
+  let worstFlex = 0, worstShearFinal = 0;
   for (const m of beams) {
     for (const lc of m.loads) {
       let r: DesignResults;
-      try {
-        r = runDesign(m.section, m.material, m.rebar, lc, m.span, code, m.crackParams);
-      } catch (e) {
-        return { error: `Design failed for ${m.label}: ${(e as Error).message}` };
-      }
-      worstAsTop = Math.max(worstAsTop, r.As_req_neg);
-      worstAsBot = Math.max(worstAsBot, r.As_req_pos);
-      worstAsMin = Math.max(worstAsMin, r.As_min);
-      worstAv = Math.max(worstAv, r.Av_req, r.Av_min_per_s);
-      const score = Math.max(r.As_req_pos, r.As_req_neg);
-      if (score > governingScore) { governingScore = score; governing = m; }
+      try { r = runDesign(m.section, m.material, cage, lc, m.span, code, m.crackParams); }
+      catch (e) { return { error: `Verification failed for ${m.label}: ${(e as Error).message}` }; }
+      worstFlex = Math.max(worstFlex, r.DCR_flex_pos, r.DCR_flex_neg);
+      worstShearFinal = Math.max(worstShearFinal, r.DCR_shear);
     }
   }
-
-  const AsTopReq = Math.max(worstAsTop / targetDCR, worstAsMin);
-  const AsBotReq = Math.max(worstAsBot / targetDCR, worstAsMin);
-
-  // Pick the smallest COMMON bar size where both faces have a feasible layout.
-  // Top and bottom must share one bar size (bar count / layers may still differ).
-  const isEC2 = code === 'EN1992-1-1';
-  const LONG_BAR_SIZES    = isEC2 ? LONG_BAR_SIZES_EC2    : LONG_BAR_SIZES_US;
-  const STIRRUP_SPACINGS  = isEC2 ? STIRRUP_SPACINGS_EC2  : STIRRUP_SPACINGS_US;
-  let sizeIdx = -1;
-  let topCands: FaceCandidate[] = [];
-  let botCands: FaceCandidate[] = [];
-  // Prefer ≤2 layers; only fall back to a 3rd layer when NO bar size holds the
-  // demand in two — so "no practical layout" now means even 3 layers won't fit.
-  let maxLayers = 2;
-  for (const ml of [2, 3]) {
-    for (let i = 0; i < LONG_BAR_SIZES.length; i++) {
-      const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i], ml);
-      const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i], ml);
-      if (t.length && b.length) { sizeIdx = i; topCands = t; botCands = b; maxLayers = ml; break; }
-    }
-    if (sizeIdx >= 0) break;
-  }
-  if (sizeIdx < 0) {
-    return { error: 'No practical bar layout fits this section — consider a larger section.' };
-  }
-  const stirrups = stirrupCandidate(worstAv, targetDCR, isEC2);
-  if (!stirrups) {
-    return { error: 'No practical stirrup layout meets the shear demand — consider a wider section.' };
+  if (worstFlex > targetDCR + EPS || worstShearFinal > targetDCR + EPS) {
+    return { error: 'Could not satisfy every member with one common cage at the target — check for mixed sections in this group.' };
   }
 
-  // 2. Verify the layout on every member; bump candidates if DCR exceeds target.
-  //    Bumping a face stays at the current common size (more bars / a layer);
-  //    only when a face is exhausted at this size do we step up to the next
-  //    common size and recompute both faces.
-  let ti = 0, bi = 0;
-  for (let retry = 0; retry <= MAX_VERIFY_RETRIES; retry++) {
-    const candidate: RebarLayout = {
-      topBars: topCands[ti].layers,
-      botBars: botCands[bi].layers,
-      ties: { barSize: stirrups.barSize, spacing: stirrups.spacing, legs: stirrups.legs },
-      tieZones: stirrups.tieZones,
-    };
+  // Longitudinal steel weight for the group (governing per-member length).
+  const steelLb = beams.reduce((s, m) => {
+    const len = m.etabs?.pt1 && m.etabs?.pt2
+      ? Math.hypot(m.etabs.pt2.x - m.etabs.pt1.x, m.etabs.pt2.y - m.etabs.pt1.y, m.etabs.pt2.z - m.etabs.pt1.z)
+      : (m.span ?? 20);
+    return s + memberSteelWeightLb(chosenTop.As + chosenBot.As, len);
+  }, 0);
 
-    let worstFlex = 0, worstShear = 0;
-    let worstFlexFace: 'top' | 'bot' = 'bot';
-    let failed = false;
-    for (const m of beams) {
-      for (const lc of m.loads) {
-        let r: DesignResults;
-        try {
-          r = runDesign(m.section, m.material, candidate, lc, m.span, code, m.crackParams);
-        } catch { failed = true; break; }
-        if (r.DCR_flex_neg > worstFlex) { worstFlex = r.DCR_flex_neg; worstFlexFace = 'top'; }
-        if (r.DCR_flex_pos > worstFlex) { worstFlex = r.DCR_flex_pos; worstFlexFace = 'bot'; }
-        worstShear = Math.max(worstShear, r.DCR_shear);
-      }
-      if (failed) break;
-    }
+  // Deep beams (ACI §9.7.2.3 / EC2 §7.3.3): add code-based skin/side bars (per face).
+  // Side bars don't change flex/shear DCR, so no re-verify. For EC2 the count is
+  // area-driven (As,min = kc·k·fct·Act/σs), so pass the section's fck (MPa).
+  const skin = minSkinReinforcement(governing.section, code, isEC2 ? -12 : 5,
+    isEC2 ? { fckMPa: governing.material.fc * 0.00689476 } : undefined);
 
-    const flexOk = !failed && worstFlex <= targetDCR + 1e-6;
-    const shearOk = !failed && worstShear <= targetDCR + 1e-6;
-    if (flexOk && shearOk) {
-      const lengthFt = governing.span ?? 20;
-      const steelLb = beams.reduce((s, m) => {
-        const len = m.etabs?.pt1 && m.etabs?.pt2
-          ? Math.hypot(m.etabs.pt2.x - m.etabs.pt1.x, m.etabs.pt2.y - m.etabs.pt1.y, m.etabs.pt2.z - m.etabs.pt1.z)
-          : (m.span ?? lengthFt);
-        const As = topCands[ti].As + botCands[bi].As;
-        return s + memberSteelWeightLb(As, len);
-      }, 0);
-      // Deep beams (ACI §9.7.2.3 / EC2 §7.3.3): add code-based skin/side bars
-      // (per face). Side bars don't change flex/shear DCR, so no re-verify. For EC2
-      // the count is area-driven (As,min = kc·k·fct·Act/σs), so pass the section's
-      // fck (MPa) so the minimum matches the EC2/S-CONCRETE crack-control area.
-      const skin = minSkinReinforcement(governing.section, code, isEC2 ? -12 : 5,
-        isEC2 ? { fckMPa: governing.material.fc * 0.00689476 } : undefined);
-      return {
-        rebar: skin ? { ...candidate, sideBars: [skin] } : candidate,
-        worstDCRFlex: worstFlex,
-        worstDCRShear: worstShear,
-        steelLb,
-        governingMemberId: governing.id,
-      };
-    }
-
-    // Bump the failing face's candidate. Prefer bumping within the current
-    // common bar size (more bars / a layer). If both faces are exhausted at
-    // this size, step up to the next common size and recompute both faces so
-    // top and bottom keep a shared bar size.
-    if (!flexOk) {
-      if (worstFlexFace === 'top' && ti < topCands.length - 1) ti++;
-      else if (worstFlexFace === 'bot' && bi < botCands.length - 1) bi++;
-      else if (ti < topCands.length - 1) ti++;
-      else if (bi < botCands.length - 1) bi++;
-      else {
-        // Exhausted at this size — step up to the next common size.
-        let stepped = false;
-        for (let i = sizeIdx + 1; i < LONG_BAR_SIZES.length; i++) {
-          const t = faceCandidatesAtSize(governing, AsTopReq, LONG_BAR_SIZES[i], maxLayers);
-          const b = faceCandidatesAtSize(governing, AsBotReq, LONG_BAR_SIZES[i], maxLayers);
-          if (t.length && b.length) {
-            sizeIdx = i; topCands = t; botCands = b; ti = 0; bi = 0; stepped = true; break;
-          }
-        }
-        if (!stepped) return { error: 'Even the largest practical layout exceeds the target DCR — consider a larger section.' };
-      }
-    } else if (!shearOk) {
-      // tighten end-zone spacing one increment, or add legs via next stirrupCandidate demand bump
-      // Use nearest-index rather than indexOf to avoid floating-point equality failures
-      // with EC2 spacings derived from mm/25.4 (e.g. 100/25.4 ≈ 3.9370…).
-      const idx = STIRRUP_SPACINGS.reduce(
-        (best, s, i) => Math.abs(s - stirrups.spacing) < Math.abs(STIRRUP_SPACINGS[best] - stirrups.spacing) ? i : best, 0,
-      );
-      if (idx > 0) {
-        stirrups.spacing = STIRRUP_SPACINGS[idx - 1];
-        stirrups.tieZones = [{ spacing: stirrups.spacing }, { spacing: STIRRUP_SPACINGS[idx] }, { spacing: stirrups.spacing }];
-      } else {
-        // End-zone spacing already tightest — add legs (step up the ladder) and
-        // reset spacing to the loosest so the next retries can re-tighten.
-        const li = STIRRUP_LEGS.indexOf(stirrups.legs);
-        if (li >= 0 && li < STIRRUP_LEGS.length - 1) {
-          stirrups.legs = STIRRUP_LEGS[li + 1];
-          stirrups.spacing = STIRRUP_SPACINGS[STIRRUP_SPACINGS.length - 1];
-          stirrups.tieZones = [
-            { spacing: stirrups.spacing }, { spacing: stirrups.spacing }, { spacing: stirrups.spacing },
-          ];
-        } else {
-          return { error: 'Shear demand exceeds practical stirrup layouts — consider a wider section.' };
-        }
-      }
-    }
-  }
-  return { error: 'Could not converge on a layout within the retry budget.' };
+  return {
+    rebar: skin ? { ...cage, sideBars: [skin] } : cage,
+    worstDCRFlex: worstFlex,
+    worstDCRShear: worstShearFinal,
+    steelLb,
+    governingMemberId: governing.id,
+  };
 }

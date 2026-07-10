@@ -546,7 +546,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     setSuggestAllNote(
       total === 0
         ? 'No groups with designed beams to suggest.'
-        : `Suggested ${ok}/${total} groups${fail > 0 ? ` · ${fail} need larger sections${firstError ? ` (${firstError})` : ''}` : ''}`
+        : `Suggested ${ok}/${total} groups${fail > 0 ? ` · ${fail} unresolved${firstError ? ` — ${firstError}` : ''}` : ''}`
     );
   }
 

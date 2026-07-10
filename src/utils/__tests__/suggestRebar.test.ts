@@ -63,14 +63,14 @@ describe('suggestGroupRebar', () => {
     expect(r.rebar.sideBars).toBeUndefined();
   });
 
-  it('uses a third bar layer for very high demand instead of erroring', () => {
+  it('stacks extra bar layers for very high demand instead of erroring', () => {
     // A narrow, deep beam with a large sagging moment needs more bottom steel
-    // than two full layers can hold; the 3-layer branch lets it succeed.
+    // than a single layer can hold; the multi-layer ladder lets it succeed.
     const m = makeBeam({ id: 'tall', b: 14, h: 48, MuPos: 1500, MuNeg: 500, Vu: 110 });
     const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
     expect(isSuggestError(r)).toBe(false);
     if (isSuggestError(r)) return;
-    expect(r.rebar.botBars.length).toBe(3);
+    expect(r.rebar.botBars.length).toBeGreaterThanOrEqual(2);
     expect(r.worstDCRFlex).toBeLessThanOrEqual(0.9 + 1e-6);
   });
 
@@ -82,13 +82,13 @@ describe('suggestGroupRebar', () => {
     const allBars = [...r.rebar.topBars, ...r.rebar.botBars];
     for (const g of allBars) {
       expect(g.barSize).toBeGreaterThanOrEqual(5);
-      expect(g.barSize).toBeLessThanOrEqual(9);
+      expect(g.barSize).toBeLessThanOrEqual(11);
       expect(g.numBars).toBeGreaterThanOrEqual(2);
     }
     // Top and bottom faces must share a single bar size.
     const sizes = new Set(allBars.map(g => g.barSize));
     expect(sizes.size).toBe(1);
-    expect([4, 5]).toContain(r.rebar.ties!.barSize);
+    expect([4, 5, 6]).toContain(r.rebar.ties!.barSize);
     expect([4, 6, 8, 10, 12]).toContain(r.rebar.ties!.spacing);
     expect(r.rebar.tieZones).toHaveLength(3);
   });
@@ -139,5 +139,66 @@ describe('suggestGroupRebar', () => {
     const m = makeBeam({ id: 'tiny', b: 10, h: 12, MuPos: 900, MuNeg: 800, Vu: 200 });
     const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
     expect(isSuggestError(r)).toBe(true);
+  });
+});
+
+// Deep, heavily-loaded EC2 beams — the cases the old "linear seed + 5 retries"
+// search abandoned with "needs a larger section" even though a buildable cage
+// exists (bigger bars, extra layers, heavier/tighter links). The capacity-inversion
+// search must now resolve them.
+const MPA = 1 / 0.00689476; // MPa → psi
+const KNM = 1 / 1.35582;    // kN·m → kip-ft
+const KN = 1 / 4.44822;     // kN → kip
+
+function makeEC2Beam(opts: {
+  id: string; b: number; h: number; MuNeg: number; MuPos: number; Vu: number;
+}): Member {
+  return {
+    id: opts.id, label: opts.id, memberType: 'beam',
+    material: { fc: 40 * MPA, fy: 500 * MPA, fyt: 500 * MPA, Es: 200000 * MPA, lambdaConcrete: 1 },
+    section: { type: 'rectangular_beam', b: opts.b / 25.4, h: opts.h / 25.4, coverClear: 40 / 25.4, stirrupDia: -10 },
+    rebar: {
+      topBars: [{ numBars: 3, barSize: -25 }], botBars: [{ numBars: 3, barSize: -25 }],
+      ties: { barSize: -10, spacing: 300 / 25.4, legs: 2 },
+    },
+    loads: [{ id: 'ULS', label: 'ULS', Mu_neg: opts.MuNeg * KNM, Mu_pos: opts.MuPos * KNM, Vu: opts.Vu * KN, Tu: 0, Pu: 0 }],
+    span: 8,
+  };
+}
+
+describe('suggestGroupRebar — deep EC2 beams the old search abandoned', () => {
+  it('resolves a heavily hogging 500×1200 EC2 beam (was "needs larger section")', () => {
+    const m = makeEC2Beam({ id: 'G_500x1200', b: 500, h: 1200, MuNeg: 2000, MuPos: 900, Vu: 550 });
+    const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9);
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    expect(r.worstDCRFlex).toBeLessThanOrEqual(0.9 + 1e-6);
+    expect(r.worstDCRShear).toBeLessThanOrEqual(0.9 + 1e-6);
+    // Independent re-verification with the engine.
+    const chk = runDesign(m.section, m.material, r.rebar, m.loads[0], m.span, 'EN1992-1-1');
+    expect(Math.max(chk.DCR_flex_pos, chk.DCR_flex_neg, chk.DCR_shear)).toBeLessThanOrEqual(0.9 + 1e-6);
+    // It needed the extra bar layers a 2-layer cap could not provide.
+    const topBars = r.rebar.topBars.reduce((s, g) => s + g.numBars, 0);
+    expect(topBars).toBeGreaterThan(6);
+    expect(r.rebar.topBars.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('resolves a shear-heavy 800×1200 EC2 beam with heavier/tighter links', () => {
+    const m = makeEC2Beam({ id: 'H_800x1200', b: 800, h: 1200, MuNeg: 1400, MuPos: 800, Vu: 1300 });
+    const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9);
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    expect(r.worstDCRShear).toBeLessThanOrEqual(0.9 + 1e-6);
+    const chk = runDesign(m.section, m.material, r.rebar, m.loads[0], m.span, 'EN1992-1-1');
+    expect(chk.DCR_shear).toBeLessThanOrEqual(0.9 + 1e-6);
+  });
+
+  it('names the strut limit when shear genuinely cannot be met by links', () => {
+    // Enormous shear on a slender web → V_Ed > V_Rd,max: no link layout can help.
+    const m = makeEC2Beam({ id: 'crush', b: 300, h: 700, MuNeg: 150, MuPos: 150, Vu: 2000 });
+    const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9);
+    expect(isSuggestError(r)).toBe(true);
+    if (!isSuggestError(r)) return;
+    expect(r.error).toMatch(/strut|V_Rd,max|widen/i);
   });
 });
