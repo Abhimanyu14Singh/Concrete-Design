@@ -29,6 +29,10 @@ const STIRRUP_SPACINGS_US    = [4, 6, 8, 10, 12]; // in
 const STIRRUP_SIZES_EC2      = [-8, -10, -12];
 const STIRRUP_SPACINGS_EC2   = [100, 125, 150, 175, 200, 250].map(mm => mm / 25.4); // in
 
+// Leg counts to try, fewest first: a single closed hoop (2), +1 crosstie (3),
+// two hoops / a hoop + 2 crossties (4), then 6 for wide/heavily-loaded webs.
+const STIRRUP_LEGS = [2, 3, 4, 6];
+
 const MAX_VERIFY_RETRIES = 5;
 
 export interface SuggestResult {
@@ -120,7 +124,7 @@ function stirrupCandidate(
   const STIRRUP_SIZES    = isEC2 ? STIRRUP_SIZES_EC2    : STIRRUP_SIZES_US;
   const STIRRUP_SPACINGS = isEC2 ? STIRRUP_SPACINGS_EC2 : STIRRUP_SPACINGS_US;
   const demand = AvReqPerIn / targetDCR;
-  for (const legs of [2, 4]) {
+  for (const legs of STIRRUP_LEGS) {
     for (const size of STIRRUP_SIZES) {
       const Ab = getBarArea(size);
       // largest spacing that still meets demand
@@ -291,14 +295,19 @@ export function suggestGroupRebar(
       if (idx > 0) {
         stirrups.spacing = STIRRUP_SPACINGS[idx - 1];
         stirrups.tieZones = [{ spacing: stirrups.spacing }, { spacing: STIRRUP_SPACINGS[idx] }, { spacing: stirrups.spacing }];
-      } else if (stirrups.legs === 2) {
-        stirrups.legs = 4;
-        stirrups.spacing = STIRRUP_SPACINGS[STIRRUP_SPACINGS.length - 1];
-        stirrups.tieZones = [
-          { spacing: stirrups.spacing }, { spacing: stirrups.spacing }, { spacing: stirrups.spacing },
-        ];
       } else {
-        return { error: 'Shear demand exceeds practical stirrup layouts — consider a wider section.' };
+        // End-zone spacing already tightest — add legs (step up the ladder) and
+        // reset spacing to the loosest so the next retries can re-tighten.
+        const li = STIRRUP_LEGS.indexOf(stirrups.legs);
+        if (li >= 0 && li < STIRRUP_LEGS.length - 1) {
+          stirrups.legs = STIRRUP_LEGS[li + 1];
+          stirrups.spacing = STIRRUP_SPACINGS[STIRRUP_SPACINGS.length - 1];
+          stirrups.tieZones = [
+            { spacing: stirrups.spacing }, { spacing: stirrups.spacing }, { spacing: stirrups.spacing },
+          ];
+        } else {
+          return { error: 'Shear demand exceeds practical stirrup layouts — consider a wider section.' };
+        }
       }
     }
   }

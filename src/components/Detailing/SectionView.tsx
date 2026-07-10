@@ -160,10 +160,14 @@ export default function SectionView({
   // [end · middle · end] spacing layout over the span thirds. Left-click a spacing
   // token tightens it, right-click loosens; the single `ties.spacing` tracks the
   // tightest zone so the shear check keys off the governing (end-zone) spacing.
-  function bumpTie(field: 'size' | 'spacing', dir: 1 | -1, zoneIdx?: number) {
+  function bumpTie(field: 'size' | 'spacing' | 'legs', dir: 1 | -1, zoneIdx?: number) {
     if (!onRebarChange || !rebar.ties) return;
     if (field === 'size') {
       onRebarChange({ ...rebar, ties: { ...rebar.ties, barSize: barSizeStep(rebar.ties.barSize, dir) } });
+      return;
+    }
+    if (field === 'legs') {
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, legs: Math.max(2, rebar.ties.legs + dir) } });
       return;
     }
     if (rebar.tieZones && zoneIdx !== undefined) {
@@ -188,6 +192,29 @@ export default function SectionView({
       const zones: [TieZone, TieZone, TieZone] = [{ spacing: end }, { spacing: s }, { spacing: end }];
       onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: end } });
     }
+  }
+
+  // Skin / face reinforcement (side bars). numBars = bars per side face; spacing =
+  // vertical c/c. Dropping the count to 0 removes the skin entirely.
+  function bumpSide(field: 'count' | 'size' | 'spacing', dir: 1 | -1) {
+    if (!onRebarChange) return;
+    const cur = rebar.sideBars?.[0];
+    if (!cur) return;
+    let newSide: RebarLayout['sideBars'];
+    if (field === 'count') {
+      const n = cur.numBars + dir;
+      newSide = n <= 0 ? undefined : [{ ...cur, numBars: n }];
+    } else if (field === 'size') {
+      newSide = [{ ...cur, barSize: barSizeStep(cur.barSize, dir) }];
+    } else {
+      newSide = [{ ...cur, spacing: Math.max(2, (cur.spacing ?? 6) + dir) }];
+    }
+    onRebarChange({ ...rebar, sideBars: newSide });
+  }
+  function addSkin() {
+    if (!onRebarChange) return;
+    const metric = (rebar.botBars[0]?.barSize ?? rebar.topBars[0]?.barSize ?? 5) < 0;
+    onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: 12 }] });
   }
 
   // pointerEvents:'auto' re-enables hit-testing even when the token sits inside a
@@ -247,9 +274,56 @@ export default function SectionView({
              <tspan key="s2" style={noHit}>/</tspan>,
              spacingTspan(rebar.tieZones[2].spacing, 'z2', 2)]
           : spacingTspan(t.spacing, 'z')}
-        {t.legs > 2 && <tspan style={noHit}> ×{t.legs}L</tspan>}
         <tspan style={{ ...editTspan, fontWeight: 700 }} fill={rebar.tieZones ? '#7c3aed' : '#9ca3af'}
           onClick={e => { e.stopPropagation(); toggleTieZones(); }}> ⅓</tspan>
+      </text>
+    );
+  }
+
+  /** Editable "N legs" line — left-click adds a leg, right-click removes (min 2).
+   *  The section hoop redraws its interior crosstie legs for legs > 2. */
+  function editableLegsLabel(x: number, y: number): ReactElement | null {
+    const t = rebar.ties;
+    if (!t) return null;
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpTie('legs', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('legs', -1); }}
+        >{t.legs}</tspan>
+        <tspan style={noHit}> legs</tspan>
+      </text>
+    );
+  }
+
+  /** Editable skin / face reinforcement: "X-#Y @ Z" (bars per side · size · spacing),
+   *  each token click-editable; when absent, a "＋ skin" affordance to add it. */
+  function editableSkinLabel(x: number, y: number): ReactElement {
+    const s = rebar.sideBars?.[0];
+    if (!s || s.numBars <= 0) {
+      return (
+        <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+          <tspan style={{ ...editTspan, fontWeight: 700 }} textDecoration="underline"
+            onClick={e => { e.stopPropagation(); addSkin(); }}>＋ skin</tspan>
+        </text>
+      );
+    }
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpSide('count', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('count', -1); }}
+        >{s.numBars}</tspan>
+        <tspan style={noHit}>-</tspan>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpSide('size', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('size', -1); }}
+        >{formatBarLabel(s.barSize)}</tspan>
+        <tspan style={noHit}> @ </tspan>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
+        >{fmt(s.spacing ?? 12, 'length', 0)}</tspan>
       </text>
     );
   }
@@ -469,6 +543,9 @@ export default function SectionView({
               {`${rebar.sideBars[0].numBars}-${formatBarLabel(rebar.sideBars[0].barSize)} side`}
             </text>
           )}
+          {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
+              or a "＋ skin" affordance when absent. */}
+          {!isColumn && editStirrup && editableSkinLabel(ox + scaledW + 8, oy + scaledH / 2 - 20)}
           {showDims && result && !isColumn && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;
@@ -488,23 +565,29 @@ export default function SectionView({
           {/* Stirrup label — left-click decreases spacing, right-click increases.
               In editStirrup mode the size is clickable too and a ⅓ toggle enables
               zoned [end · middle · end] spacing over the span thirds. */}
-          {rebar.ties && (
+          {rebar.ties && (editStirrup ? (
             <>
-              {editStirrup
-                ? editableStirrupLabel(ox + scaledW + 8, oy + scaledH / 2 + 4)
-                : (
-                  <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
-                    fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
-                    {...labelEvents('stir')}>
-                    {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
-                  </text>
-                )}
-              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
+              {/* size @ spacing (·⅓) on one line; editable "N legs" underneath. */}
+              {editableStirrupLabel(ox + scaledW + 8, oy + scaledH / 2 + 4)}
+              {editableLegsLabel(ox + scaledW + 8, oy + scaledH / 2 + 16)}
+              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 27}
                 fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-                {editStirrup ? 'size · L−s/R+s · ⅓' : interactive ? 'L−s / R+s' : 'stir'}
+                size · s · legs · ⅓
               </text>
             </>
-          )}
+          ) : (
+            <>
+              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
+                fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
+                {...labelEvents('stir')}>
+                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
+              </text>
+              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
+                fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
+                {interactive ? 'L−s / R+s' : 'stir'}
+              </text>
+            </>
+          ))}
         </>
       )}
     </svg>
