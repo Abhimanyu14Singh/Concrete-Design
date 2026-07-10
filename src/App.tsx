@@ -902,7 +902,9 @@ export default function App() {
             options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => ({ value: c, label: c }))}
             onChange={v => {
               const newCode = v as DesignCode;
+              // Follow the code's native unit system: EC2 → SI, ACI → imperial.
               if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
+              else if (newCode !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
               setProject(p => ({ ...p, code: newCode }));
             }}
             style={{ fontSize: 11, background: ACCENT.softBg, color: ACCENT.primary, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}

@@ -1,4 +1,4 @@
-import { formatBarLabel, barSizeStep } from '../../utils/rebar';
+import { formatBarLabel, barSizeStep, US_BAR_SIZES, METRIC_BAR_SIZES } from '../../utils/rebar';
 import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults, TieZone } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
@@ -36,9 +36,23 @@ export default function SectionView({
   padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
 }: Props) {
-  const { fmt } = useUnits();
+  const { fmt, units } = useUnits();
   const pL = padL, pR = padR, pT = padT, pB = padB;
   const showLabels = barLabels ?? showDims;
+
+  // Bar designation in the ACTIVE unit family: a bar stored in the other family
+  // (e.g. a metric Ø16 left over from an EC2 design) is shown as its nearest US
+  // equivalent when the units are imperial, and vice-versa — so switching the
+  // design code re-labels the reinforcement instead of leaving it in the old units.
+  function displayBar(barSize: number): string {
+    const wantMetric = units === 'si';
+    if ((barSize < 0) === wantMetric) return formatBarLabel(barSize); // already in family
+    const d = getBarDiam(barSize);
+    const family = wantMetric ? METRIC_BAR_SIZES : US_BAR_SIZES;
+    let best = family[0], bestErr = Infinity;
+    for (const c of family) { const e = Math.abs(getBarDiam(c) - d); if (e < bestErr) { bestErr = e; best = c; } }
+    return formatBarLabel(best);
+  }
   const drawW = width - pL - pR;
   const drawH = height - pT - pB;
 
@@ -241,7 +255,7 @@ export default function SectionView({
             <tspan style={editTspan} textDecoration="underline"
               onClick={e => { e.stopPropagation(); bumpBars(face, li, 'size', 1); }}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'size', -1); }}
-            >{formatBarLabel(g.barSize)}</tspan>
+            >{displayBar(g.barSize)}</tspan>
           </tspan>
         ) : null)}
       </text>
@@ -265,7 +279,7 @@ export default function SectionView({
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpTie('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('size', -1); }}
-        >{formatBarLabel(t.barSize)}</tspan>
+        >{displayBar(t.barSize)}</tspan>
         <tspan style={noHit}>@</tspan>
         {rebar.tieZones
           ? [spacingTspan(rebar.tieZones[0].spacing, 'z0', 0),
@@ -318,7 +332,7 @@ export default function SectionView({
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpSide('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('size', -1); }}
-        >{formatBarLabel(s.barSize)}</tspan>
+        >{displayBar(s.barSize)}</tspan>
         <tspan style={noHit}> @ </tspan>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
@@ -463,12 +477,12 @@ export default function SectionView({
           {/* Bar + tie labels */}
           <text x={ox + scaledW + 8} y={cy - 8}
             fontSize="10" fill={BARS.bot} fontFamily={FONT.mono} {...labelEvents('bot')}>
-            {circTotal > 0 ? `${circTotal}-${formatBarLabel(circBarSize)}` : '—'}
+            {circTotal > 0 ? `${circTotal}-${displayBar(circBarSize)}` : '—'}
           </text>
           {rebar.ties && (
             <text x={ox + scaledW + 8} y={cy + 8}
               fontSize="10" fill={BARS.tie} fontFamily={FONT.mono} {...labelEvents('stir')}>
-              {rebar.tieType === 'spiral' ? 'Sp ' : ''}{formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
+              {rebar.tieType === 'spiral' ? 'Sp ' : ''}{displayBar(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
             </text>
           )}
         </>
@@ -504,7 +518,7 @@ export default function SectionView({
               <text x={ox + scaledW + 8} y={topLabelY + 4}
                 fontSize="10" fill={BARS.top} fontFamily={FONT.mono}
                 {...labelEvents('top')}>
-                {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
+                {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ') : '—'}
               </text>
             )}
           <text x={ox + scaledW + 8} y={topLabelY + 16}
@@ -524,7 +538,7 @@ export default function SectionView({
               <text x={ox + scaledW + 8} y={botLabelY + 4}
                 fontSize="10" fill={BARS.bot} fontFamily={FONT.mono}
                 {...labelEvents('bot')}>
-                {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
+                {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ') : '—'}
               </text>
             )}
           <text x={ox + scaledW + 8} y={botLabelY + 16}
@@ -540,7 +554,7 @@ export default function SectionView({
           {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
             <text x={ox + scaledW + 8} y={(topLabelY + botLabelY) / 2 + 18}
               fontSize="10" fill={BARS.side} fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-              {`${rebar.sideBars[0].numBars}-${formatBarLabel(rebar.sideBars[0].barSize)} side`}
+              {`${rebar.sideBars[0].numBars}-${displayBar(rebar.sideBars[0].barSize)} side`}
             </text>
           )}
           {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
@@ -580,7 +594,7 @@ export default function SectionView({
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
                 fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
                 {...labelEvents('stir')}>
-                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
+                {displayBar(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
               </text>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
                 fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>

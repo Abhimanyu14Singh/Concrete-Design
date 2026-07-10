@@ -22,7 +22,6 @@ import { groupColor } from './groupColors';
 import { rampStops } from './colorRamp';
 import SavingsPanel from './SavingsPanel';
 import TakeoffPanel from './TakeoffPanel';
-import ColumnStacksPanel from './ColumnStacksPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import HelpLink from '../Help/HelpLink';
@@ -32,7 +31,7 @@ import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
 import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
 
-type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff' | 'stacks';
+type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff';
 type FlexFace = 'top' | 'bot';
 
 interface Props {
@@ -996,7 +995,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               { value: 'autogroup', label: 'Auto-group' },
               { value: 'savings', label: 'Savings' },
               { value: 'takeoff', label: 'Takeoff' },
-              { value: 'stacks', label: 'Column stacks' },
             ]}
             onChange={v => setRightTab((v || 'groups') as RightTab)}
             style={{ padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, background: 'white', margin: '4px 0' }}
@@ -1073,10 +1071,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
               {rightTab === 'takeoff' && (
                 <TakeoffPanel members={members} />
-              )}
-
-              {rightTab === 'stacks' && (
-                <ColumnStacksPanel members={members} code={project.code} />
               )}
             </div>
           )}
