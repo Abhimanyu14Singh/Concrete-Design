@@ -29,3 +29,18 @@ export function barSizeOptions(units: 'imperial' | 'si', current?: number): numb
   }
   return [...base];
 }
+
+/**
+ * Step a bar size one increment up (dir=+1, larger bar) or down (dir=-1, smaller
+ * bar), staying within the same unit family (US #n vs metric Ø mm, chosen by the
+ * sign of `size`). Clamps at the ends of the family; a size not in the family list
+ * (custom bar) is returned unchanged. Used by the inline click-to-edit bar labels.
+ */
+export function barSizeStep(size: number, dir: 1 | -1): number {
+  const family = size < 0 ? METRIC_BAR_SIZES : US_BAR_SIZES; // metric list is ascending: -8,-10,… (more negative = smaller)
+  const idx = family.indexOf(size);
+  if (idx === -1) return size;
+  const next = idx + dir;
+  if (next < 0 || next >= family.length) return size; // clamp at the ends
+  return family[next];
+}

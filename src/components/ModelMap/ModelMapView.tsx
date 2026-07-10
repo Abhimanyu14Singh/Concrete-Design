@@ -26,6 +26,8 @@ import ColumnStacksPanel from './ColumnStacksPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import HelpLink from '../Help/HelpLink';
+import GroupDashboard from '../Dashboard/GroupDashboard';
+import { buildDashboardPayload } from '../../utils/dashboardPayload';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
 import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
@@ -86,6 +88,15 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
   const [lineWeightScale, setLineWeightScale] = useState(0.4); // feature ④: 0 = uniform 3px
   const [legendKey, setLegendKey] = useState<string | null>(null); // clicked legend row → isolate on plan
+  // In-map Group Dashboard: splits the map area (plan | dashboard) and can pop out.
+  const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [dashboardPoppedOut, setDashboardPoppedOut] = useState(false); // Phase B (Electron window)
+  const [dashboardSelectedGroupId, setDashboardSelectedGroupId] = useState<string | null>(null);
+  const [dashboardSplit, setDashboardSplit] = useState<number>(() => {
+    const v = Number(localStorage.getItem('mapDashboardSplit'));
+    return Number.isFinite(v) && v > 0.15 && v < 0.85 ? v : 0.5;
+  });
+  const dashHostRef = useRef<HTMLDivElement>(null);
   const [rightTab, setRightTab] = useState<RightTab>('groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
@@ -347,6 +358,50 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return { gradeColorMap: map, gradeLegend: legend };
   }, [colorMode, members, units]);
 
+  // ── In-map Group Dashboard: distilled payload + card-selection focus ───────
+  const dashboardPayload = useMemo(
+    () => buildDashboardPayload(groups, members, designResultsById, dcrById, project.code, units),
+    [groups, members, designResultsById, dcrById, project.code, units],
+  );
+
+  // Selecting a dashboard card isolates that group on the plan (same halftone).
+  const dashboardFocusFrames = useMemo(() => {
+    if (!dashboardOpen || !dashboardSelectedGroupId) return null;
+    const g = groups.find(gr => gr.id === dashboardSelectedGroupId);
+    if (!g) return null;
+    const s = new Set<string>();
+    for (const mid of g.memberIds) { const fn = frameByMemberId.get(mid); if (fn) s.add(fn); }
+    return s.size ? s : null;
+  }, [dashboardOpen, dashboardSelectedGroupId, groups, frameByMemberId]);
+
+  // Phase B (Electron window) flips this on via window.electronAPI.openDashboardWindow.
+  const canPopOut = false;
+
+  function applyDashboardRebar(groupId: string, rebar: RebarLayout) {
+    const g = groups.find(gr => gr.id === groupId);
+    handleApplyRebar(groupId, rebar, g?.memberIds ?? []);
+  }
+
+  function onDashDividerDown(e: React.MouseEvent) {
+    e.preventDefault();
+    const host = dashHostRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    const move = (ev: MouseEvent) => {
+      const frac = Math.min(0.75, Math.max(0.25, (ev.clientX - rect.left) / rect.width));
+      setDashboardSplit(frac);
+      localStorage.setItem('mapDashboardSplit', String(frac));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange(prev => ({ ...prev, designGroups: newGroups }));
   }
@@ -551,8 +606,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         />
       )}
 
-      {/* Canvas area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
+      {/* Plan | Dashboard split host */}
+      <div ref={dashHostRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
+      {/* Canvas area (plan pane) */}
+      <div style={dashboardOpen && !dashboardPoppedOut
+        ? { width: `${dashboardSplit * 100}%`, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }
+        : { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
           {/* Story filter */}
@@ -712,7 +771,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             inspectedMemberId={inspectedMemberId}
             showErrors={showErrors}
             errorMemberIds={errorMemberIds}
-            focusFrames={legendFocusFrames ?? focusFrames}
+            focusFrames={dashboardFocusFrames ?? legendFocusFrames ?? focusFrames}
             lineWeightScale={lineWeightScale}
             widthById={widthById}
             gradeColorMap={gradeColorMap}
@@ -767,11 +826,40 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         </div>
       </div>
 
+      {/* Dashboard pane — right half of the split (feature: in-map Group Dashboard) */}
+      {dashboardOpen && !dashboardPoppedOut && (
+        <>
+          <div onMouseDown={onDashDividerDown} title="Drag to resize plan / dashboard"
+            style={{ width: 8, flexShrink: 0, cursor: 'col-resize', background: '#eef2f7', borderLeft: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 3, height: 40, borderRadius: 2, background: '#cbd5e1' }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+            <GroupDashboard
+              payload={dashboardPayload}
+              selectedGroupId={dashboardSelectedGroupId}
+              onSelectGroup={setDashboardSelectedGroupId}
+              onApplyRebar={applyDashboardRebar}
+              canPopOut={canPopOut}
+              onClose={() => setDashboardOpen(false)}
+            />
+          </div>
+        </>
+      )}
+      {dashboardOpen && dashboardPoppedOut && (
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, background: SURFACE.subtle, borderLeft: `1px solid ${BORDER.default}`, color: INK.secondary, fontSize: 13 }}>
+          <span>Dashboard is open in a separate window.</span>
+          <button onClick={() => setDashboardPoppedOut(false)}
+            style={{ padding: '6px 14px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, background: 'white', cursor: 'pointer', fontWeight: 600, color: INK.base }}>Pop in</button>
+        </div>
+      )}
+      </div>
+      {/* end Plan | Dashboard split host */}
+
       {/* Reinforcement editor — slides out as its own column between the map and the
           right panel whenever a group is active, so the cage is visible without
           scrolling the Design pane. Dismiss with ✕ or by re-clicking the group row.
           The map (flex:1) narrows and its ResizeObserver re-fits the canvas. */}
-      {activeGroup && (
+      {!dashboardOpen && activeGroup && (
         <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: SURFACE.raised, overflow: 'hidden', animation: 'slideInCol 160ms ease-out' }}>
           <div style={{ ...sectionHdr, justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeGroup.label} · Reinforcement</span>
@@ -796,12 +884,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       )}
 
       {/* Right panel */}
-      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: dashboardOpen ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
         {/* Tab bar — the workflow (Design + Verify) is primary; read-only
             analytics are tucked behind an "Analyze" picker. */}
         <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6 }}>
           <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}
             title="Group members, design their cage, and verify with S-Concrete">Design + Verify</button>
+          <button style={tabStyle(false)} onClick={() => { setDashboardOpen(true); setRightTab('groups'); }}
+            title="Open the Group Dashboard — section cards + per-group DCR table, split beside the plan">📊 Dashboard</button>
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 10, color: INK.muted, marginRight: 4 }}>Analyze:</span>
           <Dropdown

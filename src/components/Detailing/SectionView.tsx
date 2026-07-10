@@ -1,4 +1,4 @@
-import { formatBarLabel } from '../../utils/rebar';
+import { formatBarLabel, barSizeStep } from '../../utils/rebar';
 import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
@@ -12,6 +12,15 @@ interface Props {
   width?: number;
   height?: number;
   showDims?: boolean;
+  /** Render bar/stirrup labels even when dimension arrows are hidden (thumbnails). Defaults to showDims. */
+  barLabels?: boolean;
+  /** Enable per-layer count AND bar-size stepping on the labels (left = up, right = down). */
+  editBarSize?: boolean;
+  /** SVG paddings; defaults hold the dimension arrows + right-gutter labels. Tighten for a small card. */
+  padL?: number;
+  padR?: number;
+  padT?: number;
+  padB?: number;
   onRebarChange?: (r: RebarLayout) => void;
 }
 
@@ -19,10 +28,14 @@ export default function SectionView({
   section, rebar, result,
   width = 320, height = 270,
   showDims = true,
+  barLabels,
+  editBarSize = false,
+  padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
 }: Props) {
   const { fmt } = useUnits();
-  const pL = 40, pR = 78, pT = 28, pB = 46;
+  const pL = padL, pR = padR, pT = padT, pB = padB;
+  const showLabels = barLabels ?? showDims;
   const drawW = width - pL - pR;
   const drawH = height - pT - pB;
 
@@ -100,6 +113,48 @@ export default function SectionView({
       onClick: (e: React.MouseEvent) => bump(e, key),
       onContextMenu: (e: React.MouseEvent) => bump(e, key),
     };
+  }
+
+  // Per-layer count / bar-size stepping for the editable card labels: left-click
+  // (onClick) = +1 bar / larger size, right-click (onContextMenu) = -1 / smaller.
+  function bumpBars(face: 'top' | 'bot', layer: number, field: 'count' | 'size', dir: 1 | -1) {
+    if (!onRebarChange) return;
+    const arr = face === 'top' ? rebar.topBars : rebar.botBars;
+    const grp = arr[layer];
+    if (!grp) return;
+    const next = field === 'count'
+      ? { ...grp, numBars: Math.max(1, grp.numBars + dir) }
+      : { ...grp, barSize: barSizeStep(grp.barSize, dir) };
+    const newArr = arr.map((g, i) => (i === layer ? next : g));
+    onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
+  }
+
+  const editTspan = { cursor: 'pointer', userSelect: 'none' as const } as React.CSSProperties;
+  const noHit = { pointerEvents: 'none' } as React.CSSProperties;
+
+  /** Editable face label: per-layer clickable count and bar-size tokens (e.g. "3-#8 + 2-#6"). */
+  function editableFaceLabel(face: 'top' | 'bot', x: number, y: number, fill: string): ReactElement {
+    const bars = face === 'top' ? rebar.topBars : rebar.botBars;
+    const firstIdx = bars.findIndex(g => g.numBars > 0);
+    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>;
+    return (
+      <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
+        {bars.map((g, li) => g.numBars > 0 ? (
+          <tspan key={li}>
+            {li > firstIdx && <tspan style={noHit}> + </tspan>}
+            <tspan style={editTspan} textDecoration="underline"
+              onClick={e => { e.stopPropagation(); bumpBars(face, li, 'count', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'count', -1); }}
+            >{g.numBars}</tspan>
+            <tspan style={noHit}>-</tspan>
+            <tspan style={editTspan} textDecoration="underline"
+              onClick={e => { e.stopPropagation(); bumpBars(face, li, 'size', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'size', -1); }}
+            >{formatBarLabel(g.barSize)}</tspan>
+          </tspan>
+        ) : null)}
+      </text>
+    );
   }
 
   const topBarR = Math.max(3, (getBarDiam(rebar.topBars[0]?.barSize ?? 8) / 2) * scale);
@@ -230,6 +285,10 @@ export default function SectionView({
             fontSize="10" fill="#374151" fontFamily={FONT.mono}>
             Ø = {fmt(secW, 'length', 1)}
           </text>
+        </>
+      )}
+      {showLabels && isCircular && (
+        <>
           {/* Bar + tie labels */}
           <text x={ox + scaledW + 8} y={cy - 8}
             fontSize="10" fill={BARS.bot} fontFamily={FONT.mono} {...labelEvents('bot')}>
@@ -262,27 +321,39 @@ export default function SectionView({
             transform={`rotate(-90,${ox - 26},${oy + scaledH / 2})`}>
             h = {fmt(secH, 'length', 1)}
           </text>
+        </>
+      )}
 
-          {/* Top bars — left-click +1 bar, right-click -1 bar */}
-          <text x={ox + scaledW + 8} y={topLabelY + 4}
-            fontSize="10" fill={BARS.top} fontFamily={FONT.mono}
-            {...labelEvents('top')}>
-            {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
-          </text>
+      {showLabels && !isCircular && (
+        <>
+          {/* Top bars — left-click +1, right-click −1 (count and, when editable, size) */}
+          {editBarSize
+            ? editableFaceLabel('top', ox + scaledW + 8, topLabelY + 4, BARS.top)
+            : (
+              <text x={ox + scaledW + 8} y={topLabelY + 4}
+                fontSize="10" fill={BARS.top} fontFamily={FONT.mono}
+                {...labelEvents('top')}>
+                {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
+              </text>
+            )}
           <text x={ox + scaledW + 8} y={topLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-            {interactive ? 'L+1 / R−1' : 'top'}
+            {interactive ? (editBarSize ? 'L+ / R−' : 'L+1 / R−1') : 'top'}
           </text>
 
           {/* Bottom bars */}
-          <text x={ox + scaledW + 8} y={botLabelY + 4}
-            fontSize="10" fill={BARS.bot} fontFamily={FONT.mono}
-            {...labelEvents('bot')}>
-            {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
-          </text>
+          {editBarSize
+            ? editableFaceLabel('bot', ox + scaledW + 8, botLabelY + 4, BARS.bot)
+            : (
+              <text x={ox + scaledW + 8} y={botLabelY + 4}
+                fontSize="10" fill={BARS.bot} fontFamily={FONT.mono}
+                {...labelEvents('bot')}>
+                {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
+              </text>
+            )}
           <text x={ox + scaledW + 8} y={botLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-            {interactive ? 'L+1 / R−1' : 'bot'}
+            {interactive ? (editBarSize ? 'L+ / R−' : 'L+1 / R−1') : 'bot'}
           </text>
           {/* Side bar label (columns) */}
           {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
@@ -291,7 +362,7 @@ export default function SectionView({
               {`${rebar.sideBars[0].numBars}-${formatBarLabel(rebar.sideBars[0].barSize)} side`}
             </text>
           )}
-          {result && !isColumn && (() => {
+          {showDims && result && !isColumn && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;
             const ok = asBot >= reqBot;
