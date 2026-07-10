@@ -142,3 +142,28 @@ export function buildDashboardPayload(
 
   return { code, units, groups: payloadGroups, members: payloadMembers };
 }
+
+/**
+ * Resolve a group's beam rows for the dashboard detail table. Looks members up by
+ * the group's OWN memberIds against the flat members list (which carries one entry
+ * per member) — never a reverse per-member `groupId` tag. A beam that belongs to
+ * more than one design group is tagged in `member.groupId` to only the LAST group
+ * that claimed it, so filtering by that tag empties every earlier group's table
+ * (the "0 beams / No beams in this group" bug). Deduped, order-preserving, and
+ * silently skips members with no design result (not present in `payload.members`).
+ */
+export function membersForGroup(payload: DashboardPayload, groupId: string | null): DashboardMember[] {
+  if (!groupId) return [];
+  const group = payload.groups.find(g => g.id === groupId);
+  if (!group) return [];
+  const byId = new Map(payload.members.map(m => [m.id, m]));
+  const out: DashboardMember[] = [];
+  const seen = new Set<string>();
+  for (const id of group.memberIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const m = byId.get(id);
+    if (m) out.push(m);
+  }
+  return out;
+}

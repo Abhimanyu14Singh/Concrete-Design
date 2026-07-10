@@ -5,9 +5,9 @@
  * Renders identically in-app or in a popped-out window; all data arrives as a plain
  * DashboardPayload and selection/edits flow out through callbacks.
  */
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { RebarLayout } from '../../types';
-import type { DashboardPayload } from '../../utils/dashboardPayload';
+import { membersForGroup, type DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
 import { DCRChip, DcrHistogram } from './dashboardShared';
 import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg } from '../../theme';
@@ -45,7 +45,10 @@ export default function GroupDashboard({
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
-  const selMembers = selGroup ? payload.members.filter(m => m.groupId === selGroup.id) : [];
+  // Resolve the selected group's beams by its own memberIds (overlap-safe) — a beam
+  // shared by several groups is tagged to only one in member.groupId, so filtering
+  // by that tag would empty this table (see membersForGroup).
+  const selMembers = useMemo(() => membersForGroup(payload, selectedGroupId), [payload, selectedGroupId]);
   const govDCRs = selMembers.map(m => m.maxDCR);
   // How many of the group's beams are failing (NG) vs merely warned.
   const ngCount = selMembers.filter(m => m.status === 'NG').length;
