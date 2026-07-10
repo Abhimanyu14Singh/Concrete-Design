@@ -253,8 +253,11 @@ export function suggestGroupRebar(
         return s + memberSteelWeightLb(As, len);
       }, 0);
       // Deep beams (ACI §9.7.2.3 / EC2 §7.3.3): add code-based skin/side bars
-      // (per face). Side bars don't change flex/shear DCR, so no re-verify.
-      const skin = minSkinReinforcement(governing.section, code, isEC2 ? -12 : 5);
+      // (per face). Side bars don't change flex/shear DCR, so no re-verify. For EC2
+      // the count is area-driven (As,min = kc·k·fct·Act/σs), so pass the section's
+      // fck (MPa) so the minimum matches the EC2/S-CONCRETE crack-control area.
+      const skin = minSkinReinforcement(governing.section, code, isEC2 ? -12 : 5,
+        isEC2 ? { fckMPa: governing.material.fc * 0.00689476 } : undefined);
       return {
         rebar: skin ? { ...candidate, sideBars: [skin] } : candidate,
         worstDCRFlex: worstFlex,

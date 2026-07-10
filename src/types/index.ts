@@ -219,6 +219,9 @@ export interface DesignResults {
   wk_top?: number;      // crack width at top face (mm)
   wk_face?: number;     // crack width at side face (mm)
   DCR_crack?: number;   // governing crack-width DCR = wk / w_limit (SLS)
+  // EC2 §7.3.3(3)+§7.3.2(2) minimum skin/side-face area for deep beams (mm², both faces)
+  As_skin_min?: number; // required minimum crack-control skin area
+  As_skin_prov?: number;// provided skin area (2 × per-face side bars)
   warnings: DesignWarning[];
   status: 'OK' | 'NG' | 'Warning';
 }

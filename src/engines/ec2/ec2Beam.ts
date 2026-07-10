@@ -280,6 +280,79 @@ function rebarAs(bars: { numBars: number; barSize: number }[]): number {
   return bars.reduce((sum, g) => sum + g.numBars * getBarArea(g.barSize), 0); // in²
 }
 
+// ── Skin / side-face minimum reinforcement §7.3.2(2) + §7.3.3(3) ──────────────
+
+/**
+ * EN 1992-1-1 Table 7.2N — maximum bar diameters φ*s for crack control — inverted
+ * to give the steel-stress limit σs (MPa) for a chosen skin bar diameter and crack
+ * width wk. Linear interpolation on φ within the wk = 0.2 / 0.3 / 0.4 mm columns.
+ *
+ * S-CONCRETE keys the skin As,min on this crack-limited stress (≈ 273 MPa for
+ * Ø12 / 0.3 mm — this table returns 280) rather than the literal §7.3.3(3) relaxation
+ * σs = fyk, so we follow the same, stricter reading and land within ~3 % of it.
+ */
+export function sigmaSforSkin(barDia_mm: number, wk: number): number {
+  // Rows: [σs, φ*s@0.4, φ*s@0.3, φ*s@0.2] (mm). φ*s decreases as σs increases.
+  const T: [number, number, number, number][] = [
+    [160, 40, 32, 25],
+    [200, 32, 25, 16],
+    [240, 20, 16, 12],
+    [280, 16, 12, 8],
+    [320, 12, 10, 6],
+    [360, 10, 8, 5],
+    [400, 8, 6, 4],
+    [450, 6, 5, 3],
+  ];
+  const col = wk >= 0.35 ? 1 : wk >= 0.25 ? 2 : 3; // nearest wk column
+  const pts = T.map(r => [r[col], r[0]] as [number, number]); // (φ*s, σs), φ descending
+  if (barDia_mm >= pts[0][0]) return pts[0][1];                       // ≥ largest φ → 160
+  if (barDia_mm <= pts[pts.length - 1][0]) return pts[pts.length - 1][1]; // ≤ smallest φ → 450
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [phiHi, sLo] = pts[i];
+    const [phiLo, sHi] = pts[i + 1];
+    if (barDia_mm <= phiHi && barDia_mm >= phiLo) {
+      const t = (phiHi - barDia_mm) / (phiHi - phiLo);
+      return sLo + t * (sHi - sLo);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+/**
+ * Minimum side/skin reinforcement AREA for a deep beam, EN 1992-1-1 §7.3.3(3) +
+ * §7.3.2(2): As,min·σs = kc·k·fct,eff·Act.
+ *   • Act = concrete tensile-zone area at first cracking (extreme fibre = fctm),
+ *     allowing for the axial force NEd — Act = b·yt, yt = fct/(2(fct−σN))·h.
+ *   • kc  = Eq (7.2) stress-distribution coefficient (0.4 in pure bending, raised
+ *     by axial tension through the k1 factor).
+ *   • k   = 0.5 for skin (§7.3.3(3)).
+ *   • σs  = crack-control stress for the bar (Table 7.2N, `sigmaSforSkin`).
+ * All SI (mm, MPa, N); NEd_N is compression-positive. Returns the total (both
+ * faces) As,min in mm² plus intermediates, or null for h < 1000 mm (no skin rule).
+ *
+ * Benchmarked to S-CONCRETE 2026 (500×1500, fck 40, N = 206.9 kN tension):
+ * kc ≈ 0.45, Act ≈ 407 000 mm², As,min ≈ 1140 mm² (report 1177).
+ */
+export function skinMinArea(
+  b_mm: number, h_mm: number, NEd_N: number, fck: number,
+  skinBarDia_mm: number, wLimitFace: number,
+): { AsMin: number; kc: number; k: number; Act: number; sigmaS: number; yt: number } | null {
+  if (h_mm < 1000) return null;
+  const fct = fctm(fck);
+  const sigmaTens = -NEd_N / (b_mm * h_mm);            // mean axial stress, tension +
+  const yt = sigmaTens >= fct
+    ? h_mm                                             // whole section in tension
+    : Math.max(0, Math.min(h_mm, (fct / (2 * (fct - sigmaTens))) * h_mm));
+  const Act = b_mm * yt;
+  const hstar = Math.min(h_mm, 1000);
+  const sigmaC = NEd_N / (b_mm * h_mm);                // compression +
+  const k1 = sigmaC >= 0 ? 1.5 : (2 * hstar) / (3 * h_mm);
+  const kc = Math.max(0, Math.min(1, 0.4 * (1 - sigmaC / (k1 * (h_mm / hstar) * fct))));
+  const k = 0.5;
+  const sigmaS = sigmaSforSkin(skinBarDia_mm, wLimitFace > 0 ? wLimitFace : 0.3);
+  return { AsMin: (kc * k * fct * Act) / sigmaS, kc, k, Act, sigmaS, yt };
+}
+
 export function designMemberEC2(
   section: SectionDimensions,
   material: MaterialProps,
@@ -599,8 +672,26 @@ export function designMemberEC2(
       if (wk_face > crack.wLimitFace)
         warnings.push({ code: 'EC2 §7.3.4', message: `Side face crack width wk ≈ ${wk_face.toFixed(2)} mm > limit ${crack.wLimitFace.toFixed(2)} mm — add/enlarge skin reinforcement`, severity: 'warning' });
     }
-  } else if (h_mm > 1000 && governingMqp > 0) {
-    warnings.push({ code: 'EC2 §7.3.3', message: `h = ${h_mm.toFixed(0)} mm > 1000 mm — skin reinforcement required for side-face crack control (none provided)`, severity: 'warning' });
+  }
+
+  // EC2 §7.3.3(3)+§7.3.2(2) — minimum skin AREA for a deep beam (h ≥ 1000 mm).
+  // This is the criterion that GOVERNS a deep, lightly-loaded section, where the
+  // crack WIDTH above is trivially satisfied (the concrete barely cracks) yet a
+  // minimum crack-control area is still required — the case S-CONCRETE flags as
+  // "Min Crack Control Reinforcement – Skin Region". Independent of M_qp; driven by
+  // the section, fct, the axial force and the chosen skin bar size.
+  let As_skin_min: number | undefined;
+  let As_skin_prov: number | undefined;
+  if (h_mm >= 1000) {
+    const skinDia_mm = getBarDiam(rebar.sideBars?.[0]?.barSize ?? -12) * IN_TO_MM;
+    const skin = skinMinArea(b_mm, h_mm, NEd_N, fck, skinDia_mm, crack.wLimitFace);
+    if (skin) {
+      As_skin_min = skin.AsMin;
+      // sideBars.numBars is PER FACE (beam convention) → ×2 faces for the total.
+      As_skin_prov = 2 * (rebar.sideBars ?? []).reduce((s, g) => s + g.numBars * getBarArea(g.barSize) * IN2_TO_MM2, 0);
+      if (As_skin_prov < skin.AsMin - 1) // 1 mm² tolerance
+        warnings.push({ code: 'EC2 §7.3.3', message: `Skin steel A_s = ${As_skin_prov.toFixed(0)} mm² < A_s,min = ${skin.AsMin.toFixed(0)} mm² (§7.3.2: k_c = ${skin.kc.toFixed(2)}, k = 0.5, A_ct = ${(skin.Act / 1e3).toFixed(0)}×10³ mm², σ_s = ${skin.sigmaS.toFixed(0)} MPa) — add side-face bars`, severity: 'warning' });
+    }
   }
 
   // ── DCRs ──
@@ -661,6 +752,7 @@ export function designMemberEC2(
     Av_req: VEd > VRdc ? (VEd * 1000) / (z * fywd * cotTheta) * IN_TO_MM / IN2_TO_MM2 : 0,
     Av_min_per_s: (0.08 * Math.sqrt(fck) / fywk) * b_mm / IN_TO_MM, // in²/in equivalent
     wk_bot: cw_bot.wk, wk_top: cw_top.wk, wk_face, DCR_crack,
+    As_skin_min, As_skin_prov,
     warnings, status,
   };
 }
