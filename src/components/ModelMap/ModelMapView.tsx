@@ -85,6 +85,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [story, setStory] = useState<string>('All');
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
   const [lineWeightScale, setLineWeightScale] = useState(0.4); // feature ④: 0 = uniform 3px
+  const [legendKey, setLegendKey] = useState<string | null>(null); // clicked legend row → isolate on plan
   const [rightTab, setRightTab] = useState<RightTab>('groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
@@ -282,7 +283,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   // Reset any manual legend bounds when the active metric changes — a range tuned
   // for ρ% would be meaningless for Av/s or weight.
-  useEffect(() => { setMetricOverride(null); }, [colorMode, flexFace]);
+  useEffect(() => { setMetricOverride(null); setLegendKey(null); }, [colorMode, flexFace]);
 
   // Effective ramp bounds handed to the canvas: user override if set, else auto.
   const effectiveMetricRange = metricRange
@@ -310,10 +311,29 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return s;
   }, [activeGroupId, groups, frameByMemberId]);
 
+  // Clicking a categorical legend row isolates that entry on the plan — its frames
+  // are highlighted, everything else halftones (same visual as a group focus).
+  // Resolves the clicked key to member frames for the active mode.
+  const legendFocusFrames = useMemo(() => {
+    if (!legendKey) return null;
+    let memberIds: string[] = [];
+    if (colorMode === 'groupTags') {
+      memberIds = groups.find(g => g.id === legendKey)?.memberIds ?? [];
+    } else if (colorMode === 'concGrade' || colorMode === 'steelGrade') {
+      const valOf = (m: (typeof members)[number]) => colorMode === 'concGrade' ? m.material.fc : m.material.fy;
+      memberIds = members.filter(m => String(valOf(m)) === legendKey).map(m => m.id);
+    } else {
+      return null;
+    }
+    const s = new Set<string>();
+    for (const mid of memberIds) { const fn = frameByMemberId.get(mid); if (fn) s.add(fn); }
+    return s.size ? s : null;
+  }, [legendKey, colorMode, groups, members, frameByMemberId]);
+
   // Feature ②: categorical colour map + legend for Conc grade (f′c) / Steel grade (f_y).
   const { gradeColorMap, gradeLegend } = useMemo(() => {
     if (colorMode !== 'concGrade' && colorMode !== 'steelGrade') {
-      return { gradeColorMap: undefined, gradeLegend: [] as { label: string; color: string; count: number }[] };
+      return { gradeColorMap: undefined, gradeLegend: [] as { key: string; label: string; color: string; count: number }[] };
     }
     const si = units === 'si';
     const valOf = (m: (typeof members)[number]) => colorMode === 'concGrade' ? m.material.fc : m.material.fy;
@@ -323,7 +343,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     distinct.forEach((v, i) => colorByVal.set(v, CATEGORICAL[i % CATEGORICAL.length]));
     const map = new Map<string, string>();
     for (const m of members) map.set(m.id, colorByVal.get(valOf(m))!);
-    const legend = distinct.map(v => ({ label: labelOf(v), color: colorByVal.get(v)!, count: members.filter(m => valOf(m) === v).length }));
+    const legend = distinct.map(v => ({ key: String(v), label: labelOf(v), color: colorByVal.get(v)!, count: members.filter(m => valOf(m) === v).length }));
     return { gradeColorMap: map, gradeLegend: legend };
   }, [colorMode, members, units]);
 
@@ -692,7 +712,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             inspectedMemberId={inspectedMemberId}
             showErrors={showErrors}
             errorMemberIds={errorMemberIds}
-            focusFrames={focusFrames}
+            focusFrames={legendFocusFrames ?? focusFrames}
             lineWeightScale={lineWeightScale}
             widthById={widthById}
             gradeColorMap={gradeColorMap}
@@ -726,14 +746,22 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             />
           )}
 
-          {/* Categorical legend — concrete/steel grade, or numbered design groups. */}
+          {/* Categorical legend — concrete/steel grade, or numbered design groups.
+              Rows are clickable: click one to isolate it on the plan (halftone the rest). */}
           {(colorMode === 'concGrade' || colorMode === 'steelGrade') && gradeLegend.length > 0 && (
-            <CategoricalLegend title={colorMode === 'concGrade' ? 'Concrete grade' : 'Steel grade'} rows={gradeLegend} />
+            <CategoricalLegend
+              title={colorMode === 'concGrade' ? 'Concrete grade' : 'Steel grade'}
+              rows={gradeLegend}
+              activeKey={legendKey}
+              onRowClick={k => setLegendKey(prev => prev === k ? null : k)}
+            />
           )}
           {colorMode === 'groupTags' && (
             <CategoricalLegend
               title="Design groups"
-              rows={groups.map((g, i) => ({ index: i + 1, label: g.label, color: groupColor(g.color, i), count: g.memberIds.length }))}
+              rows={groups.map((g, i) => ({ key: g.id, index: i + 1, label: g.label, color: groupColor(g.color, i), count: g.memberIds.length }))}
+              activeKey={legendKey}
+              onRowClick={k => setLegendKey(prev => prev === k ? null : k)}
             />
           )}
         </div>
@@ -968,23 +996,52 @@ function RangeInput({ value, onCommit }: { value: number; onCommit: (v: number) 
 }
 
 /** Compact top-right legend for categorical color modes (grade / numbered groups). */
-function CategoricalLegend({ title, rows }: { title: string; rows: { label: string; color: string; count: number; index?: number }[] }) {
+function CategoricalLegend({ title, rows, activeKey, onRowClick }: {
+  title: string;
+  rows: { key: string; label: string; color: string; count: number; index?: number }[];
+  activeKey?: string | null;
+  onRowClick?: (key: string) => void;
+}) {
+  const clickable = !!onRowClick;
   return (
     <div style={{
       position: 'absolute', top: 8, right: 8, width: 210, maxHeight: '70%', overflowY: 'auto',
       background: 'white', borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
       boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
     }}>
-      <div style={{ fontWeight: 700, color: INK.strong, marginBottom: 6 }}>{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {rows.map((r, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            {r.index !== undefined && <span style={{ ...MONO_NUM, width: 14, textAlign: 'right', color: INK.muted, fontWeight: 700 }}>{r.index}</span>}
-            <span style={{ width: 14, height: 12, borderRadius: 3, background: r.color, flexShrink: 0 }} />
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
-            <span style={{ color: INK.muted }}>({r.count})</span>
-          </div>
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontWeight: 700, color: INK.strong }}>{title}</span>
+        {clickable && activeKey != null && (
+          <button onClick={() => onRowClick!(activeKey)} title="Show all again"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: ACCENT.primary, fontSize: 10, fontWeight: 600, padding: 0 }}>
+            Clear
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {rows.map(r => {
+          const isActive = activeKey === r.key;
+          const dim = clickable && activeKey != null && !isActive;
+          return (
+            <div key={r.key}
+              onClick={clickable ? () => onRowClick!(r.key) : undefined}
+              title={clickable ? 'Click to isolate on the plan' : undefined}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 7, padding: '2px 4px', borderRadius: 5,
+                cursor: clickable ? 'pointer' : 'default',
+                background: isActive ? ACCENT.softBg : 'transparent',
+                opacity: dim ? 0.45 : 1,
+              }}
+              onMouseEnter={clickable ? e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = SURFACE.subtle; } : undefined}
+              onMouseLeave={clickable ? e => { (e.currentTarget as HTMLDivElement).style.background = isActive ? ACCENT.softBg : 'transparent'; } : undefined}
+            >
+              {r.index !== undefined && <span style={{ ...MONO_NUM, width: 14, textAlign: 'right', color: INK.muted, fontWeight: 700 }}>{r.index}</span>}
+              <span style={{ width: 14, height: 12, borderRadius: 3, background: r.color, flexShrink: 0 }} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+              <span style={{ color: INK.muted }}>({r.count})</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
