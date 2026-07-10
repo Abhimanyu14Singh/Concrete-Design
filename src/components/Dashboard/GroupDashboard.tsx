@@ -22,7 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
-  onSuggestGroup, suggestNote,
+  onSuggestAll,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -40,10 +40,8 @@ export default function GroupDashboard({
   onMoveMember?: (memberId: string, groupId: string) => void;
   /** Right-click → split the beam out into its own new group. */
   onCreateGroupForMember?: (memberId: string) => void;
-  /** Auto-size the selected group's cage to satisfy every DCR / clear errors. */
-  onSuggestGroup?: (groupId: string) => void;
-  /** Transient status line for the last suggest run (e.g. "needs a larger section"). */
-  suggestNote?: string | null;
+  /** Auto-size every group's cage to satisfy DCRs / clear errors. */
+  onSuggestAll?: () => void;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
@@ -65,16 +63,12 @@ export default function GroupDashboard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>Group Dashboard</span>
         <span style={{ fontSize: 11, color: INK.muted }}>{groups.length} group{groups.length === 1 ? '' : 's'}</span>
-        {suggestNote && (
-          <span style={{ fontSize: 11, color: suggestNote.startsWith('⚠') ? STATUS.warn : INK.secondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '40%' }}>{suggestNote}</span>
-        )}
         <div style={{ flex: 1 }} />
-        {onSuggestGroup && (
+        {onSuggestAll && (
           <button
-            onClick={() => selGroup && onSuggestGroup(selGroup.id)}
-            disabled={!selGroup}
-            title={selGroup ? `Auto-size ${selGroup.label} to satisfy every DCR and clear errors` : 'Select a group first, then Suggest a cage for it'}
-            style={{ ...hdrBtn, color: selGroup ? ACCENT.primary : INK.muted, borderColor: selGroup ? ACCENT.primary : BORDER.strong, cursor: selGroup ? 'pointer' : 'not-allowed' }}
+            onClick={onSuggestAll}
+            title="Auto-size every group's cage to satisfy the DCRs and clear errors"
+            style={{ ...hdrBtn, color: ACCENT.primary, borderColor: ACCENT.primary }}
           >✨ Suggest</button>
         )}
         {canPopOut && onPopOut && (
@@ -117,7 +111,7 @@ export default function GroupDashboard({
                     <span style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok }}>✓ all pass</span>
                   )}
                   {ngCount > 0 && (
-                    <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} with errors</span>
+                    <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} ✕</span>
                   )}
                   {warnCount > 0 && (
                     <span title="Beams with warnings" style={{ fontSize: 12, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, padding: '2px 7px', borderRadius: 5 }}>{warnCount} ⚠</span>
