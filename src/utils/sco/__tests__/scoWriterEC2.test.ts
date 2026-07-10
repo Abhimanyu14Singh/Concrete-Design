@@ -109,6 +109,17 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(param(t, 'Bm DT(1,1)')).toBe('9');   // #9 ≈ 28.65 mm → Ø28 (index 9)
     expect(param(t, 'Bm NT(1,2)')).toBe('0');   // 3 top bars fit one layer → 2nd layer empty
     expect(param(t, 'Bm NbmFace')).toBe('2');   // side bars
+    expect(param(t, 'Bm ApplyFace')).toBe('1'); // cage has side bars → design face steel ON
+  });
+
+  it('turns face steel OFF for a beam with no side bars (no S-Concrete-invented skin)', () => {
+    // The template ships Bm ApplyFace = 1, so without honouring the cage S-Concrete
+    // designs face/skin steel even on shallow beams that carry none in the app.
+    const m = beam();
+    m.rebar = { ...m.rebar, sideBars: undefined };
+    const noFace = buildEc2BeamSco(m, project());
+    expect(param(noFace, 'Bm ApplyFace')).toBe('0');
+    expect(param(noFace, 'Bm NbmFace')).toBe('0');
   });
 
   it('splits a face too wide for one row into stacked layers (NB(1,1)+NB(1,2))', () => {

@@ -161,7 +161,12 @@ export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
   };
   t = writeFace(t, 'NT', 'DT', p.topLayers, p.topBarIdx);
   t = writeFace(t, 'NB', 'DB', p.botLayers, p.botBarIdx);
-  // Side / skin face bars
+  // Side / skin face bars. ApplyFace drives whether S-Concrete DESIGNS/imposes face
+  // (skin) steel; the template ships it ON, so without this every beam — including a
+  // shallow 300×700 that is below the EC2 §7.3.3 h ≥ 1000 mm skin threshold and
+  // carries no side bars in the app — gets S-Concrete-invented face steel. Honour the
+  // app's cage: enable it only when the section actually has side bars.
+  t = setParam(t, 'Bm ApplyFace', p.faceCount > 0 ? 1 : 0);
   t = setParam(t, 'Bm NbmFace', p.faceCount);
   t = setParam(t, 'Bm DbmFace', p.faceBarIdx);
   // Stirrups
