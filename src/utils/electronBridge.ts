@@ -15,6 +15,20 @@ declare global {
       offNewProject:  () => void;
       onOpenHelp?:    (cb: (tab: string) => void) => void;
       offOpenHelp?:   () => void;
+      // Group Dashboard pop-out window (desktop only).
+      openDashboardWindow?:   () => Promise<void>;
+      closeDashboardWindow?:  () => Promise<void>;
+      sendDashboardState?:    (p: import('./dashboardPayload').DashboardPayload) => void;
+      onDashboardState?:      (cb: (p: import('./dashboardPayload').DashboardPayload) => void) => void;
+      offDashboardState?:     () => void;
+      sendDashboardCommand?:  (c: import('./dashboardPayload').DashboardCommand) => void;
+      onDashboardCommand?:    (cb: (c: import('./dashboardPayload').DashboardCommand) => void) => void;
+      offDashboardCommand?:   () => void;
+      dashboardReady?:        () => void;
+      onDashboardReady?:      (cb: () => void) => void;
+      offDashboardReady?:     () => void;
+      onDashboardPoppedOut?:  (cb: (v: boolean) => void) => void;
+      offDashboardPoppedOut?: () => void;
     };
   }
 }

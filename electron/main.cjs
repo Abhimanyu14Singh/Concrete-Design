@@ -5,6 +5,12 @@ const { registerEtabsBridge, killHelper } = require('./etabsBridge.cjs');
 const { registerSconcreteBridge } = require('./sconcreteBridge.cjs');
 const isDev = process.env.NODE_ENV === 'development';
 
+// The single main window + an optional popped-out Group Dashboard window. The two
+// renderers can't message each other directly, so the main process relays between
+// them (see the `dashboard:*` IPC handlers below).
+let mainWin = null;
+let dashboardWin = null;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
@@ -23,6 +29,8 @@ function createWindow() {
   });
 
   win.once('ready-to-show', () => win.show());
+  mainWin = win;
+  win.on('closed', () => { mainWin = null; if (dashboardWin && !dashboardWin.isDestroyed()) dashboardWin.close(); });
 
   if (isDev) {
     win.loadURL('http://localhost:5173');
@@ -79,6 +87,51 @@ function createWindow() {
   ]);
   Menu.setApplicationMenu(menu);
 }
+
+// ── Popped-out Group Dashboard window ────────────────────────────────────────
+function createDashboardWindow() {
+  if (dashboardWin && !dashboardWin.isDestroyed()) { dashboardWin.focus(); return; }
+  dashboardWin = new BrowserWindow({
+    width: 960, height: 900, minWidth: 480, minHeight: 400,
+    title: 'Group Dashboard — S-Dashboard',
+    icon: path.join(__dirname, '../public/favicon.svg'),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
+    },
+    backgroundColor: '#f3f4f6',
+    show: false,
+  });
+  dashboardWin.removeMenu();
+  dashboardWin.once('ready-to-show', () => dashboardWin.show());
+  if (isDev) {
+    dashboardWin.loadURL('http://localhost:5173/#dashboard');
+  } else {
+    dashboardWin.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'dashboard' });
+  }
+  dashboardWin.on('closed', () => {
+    dashboardWin = null;
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dashboard-popped-out', false);
+  });
+}
+
+// IPC: pop-out lifecycle + relays. The two windows never talk directly — the main
+// process forwards state (main→dash) and commands (dash→main).
+ipcMain.handle('dashboard:open', () => {
+  createDashboardWindow();
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dashboard-popped-out', true);
+});
+ipcMain.handle('dashboard:close', () => { if (dashboardWin && !dashboardWin.isDestroyed()) dashboardWin.close(); });
+ipcMain.on('dashboard:state', (_e, payload) => {
+  if (dashboardWin && !dashboardWin.isDestroyed()) dashboardWin.webContents.send('dashboard:state', payload);
+});
+ipcMain.on('dashboard:command', (_e, cmd) => {
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dashboard:command', cmd);
+});
+ipcMain.on('dashboard:ready', () => {
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dashboard:ready');
+});
 
 // ── IPC: native file dialogs ─────────────────────────────────────────────────
 

@@ -374,8 +374,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return s.size ? s : null;
   }, [dashboardOpen, dashboardSelectedGroupId, groups, frameByMemberId]);
 
-  // Phase B (Electron window) flips this on via window.electronAPI.openDashboardWindow.
-  const canPopOut = false;
+  // Desktop only — the pop-out opens a real second Electron window.
+  const canPopOut = typeof window !== 'undefined' && !!window.electronAPI?.openDashboardWindow;
 
   function applyDashboardRebar(groupId: string, rebar: RebarLayout) {
     const g = groups.find(gr => gr.id === groupId);
@@ -401,6 +401,42 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
   }
+
+  // ── Pop-out window sync (Electron; no-ops on web) ─────────────────────────
+  // Broadcast the (distilled) payload to the popped-out window whenever it changes.
+  useEffect(() => {
+    if (dashboardPoppedOut) window.electronAPI?.sendDashboardState?.(dashboardPayload);
+  }, [dashboardPoppedOut, dashboardPayload]);
+
+  // The dashboard window asks for a resend when it (re)mounts — send current state.
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onDashboardReady) return;
+    api.onDashboardReady(() => api.sendDashboardState?.(dashboardPayload));
+    return () => api.offDashboardReady?.();
+  }, [dashboardPayload]);
+
+  // Receive commands from the popped-out window (selection / edits / pop-in) and
+  // track when the window closes so the pane flips back in-app.
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onDashboardCommand) return;
+    api.onDashboardCommand(cmd => {
+      if (cmd.type === 'select-group') setDashboardSelectedGroupId(cmd.groupId);
+      else if (cmd.type === 'apply-rebar') {
+        const g = groups.find(gr => gr.id === cmd.groupId);
+        handleApplyRebar(cmd.groupId, cmd.rebar, g?.memberIds ?? []);
+      } else if (cmd.type === 'pop-in') {
+        setDashboardPoppedOut(false);
+        api.closeDashboardWindow?.();
+      }
+    });
+    api.onDashboardPoppedOut?.(v => setDashboardPoppedOut(v));
+    return () => { api.offDashboardCommand?.(); api.offDashboardPoppedOut?.(); };
+  }, [groups]);
+
+  // Close the popped-out window if we leave the Map tab (ModelMapView unmounts).
+  useEffect(() => () => { window.electronAPI?.closeDashboardWindow?.(); }, []);
 
   function handleGroupsChange(newGroups: DesignGroup[]) {
     onProjectChange(prev => ({ ...prev, designGroups: newGroups }));
@@ -607,7 +643,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       )}
 
       {/* Plan | Dashboard split host */}
-      <div ref={dashHostRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
+      <div ref={dashHostRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden', position: 'relative' }}>
       {/* Canvas area (plan pane) */}
       <div style={dashboardOpen && !dashboardPoppedOut
         ? { width: `${dashboardSplit * 100}%`, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }
@@ -840,16 +876,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onSelectGroup={setDashboardSelectedGroupId}
               onApplyRebar={applyDashboardRebar}
               canPopOut={canPopOut}
+              onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}
             />
           </div>
         </>
       )}
       {dashboardOpen && dashboardPoppedOut && (
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, background: SURFACE.subtle, borderLeft: `1px solid ${BORDER.default}`, color: INK.secondary, fontSize: 13 }}>
-          <span>Dashboard is open in a separate window.</span>
-          <button onClick={() => setDashboardPoppedOut(false)}
-            style={{ padding: '6px 14px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, background: 'white', cursor: 'pointer', fontWeight: 600, color: INK.base }}>Pop in</button>
+        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 30, display: 'flex', alignItems: 'center', gap: 8, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '6px 10px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 12, color: INK.secondary }}>
+          <span>📊 Dashboard in a separate window</span>
+          <button onClick={() => { setDashboardPoppedOut(false); window.electronAPI?.closeDashboardWindow?.(); }}
+            style={{ padding: '4px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, background: 'white', cursor: 'pointer', fontWeight: 600, color: INK.base }}>⤡ Pop in</button>
         </div>
       )}
       </div>
