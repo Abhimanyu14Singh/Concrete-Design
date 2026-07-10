@@ -1,6 +1,6 @@
 import { formatBarLabel, barSizeStep } from '../../utils/rebar';
 import type { ReactElement } from 'react';
-import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
+import type { SectionDimensions, RebarLayout, DesignResults, TieZone } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import { BARS, DCR, FONT } from '../../theme';
@@ -16,6 +16,8 @@ interface Props {
   barLabels?: boolean;
   /** Enable per-layer count AND bar-size stepping on the labels (left = up, right = down). */
   editBarSize?: boolean;
+  /** Enable clickable stirrup size + spacing editing and a ⅓ zoned-spacing toggle. */
+  editStirrup?: boolean;
   /** SVG paddings; defaults hold the dimension arrows + right-gutter labels. Tighten for a small card. */
   padL?: number;
   padR?: number;
@@ -30,6 +32,7 @@ export default function SectionView({
   showDims = true,
   barLabels,
   editBarSize = false,
+  editStirrup = false,
   padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
 }: Props) {
@@ -129,6 +132,58 @@ export default function SectionView({
     onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
   }
 
+  // Add / remove a reinforcement layer on a face. Multi-layer cages are modeled as
+  // multiple BarGroup entries; a new layer copies the innermost layer's bar size.
+  function addLayer(face: 'top' | 'bot') {
+    if (!onRebarChange) return;
+    const arr = face === 'top' ? rebar.topBars : rebar.botBars;
+    const last = arr[arr.length - 1];
+    const layer = { numBars: 2, barSize: last?.barSize ?? 8 };
+    const newArr = [...arr, layer];
+    onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
+  }
+  function removeLayer(face: 'top' | 'bot') {
+    if (!onRebarChange) return;
+    const arr = face === 'top' ? rebar.topBars : rebar.botBars;
+    if (arr.length <= 1) return;
+    const newArr = arr.slice(0, -1);
+    onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
+  }
+
+  // Stirrup editing (card): step the tie bar size or spacing, and toggle a zoned
+  // [end · middle · end] spacing layout over the span thirds. Left-click a spacing
+  // token tightens it, right-click loosens; the single `ties.spacing` tracks the
+  // tightest zone so the shear check keys off the governing (end-zone) spacing.
+  function bumpTie(field: 'size' | 'spacing', dir: 1 | -1, zoneIdx?: number) {
+    if (!onRebarChange || !rebar.ties) return;
+    if (field === 'size') {
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, barSize: barSizeStep(rebar.ties.barSize, dir) } });
+      return;
+    }
+    if (rebar.tieZones && zoneIdx !== undefined) {
+      const zones = rebar.tieZones.map((z, i) => (i === zoneIdx ? { spacing: Math.max(2, z.spacing + dir) } : z)) as [TieZone, TieZone, TieZone];
+      const gov = Math.min(...zones.map(z => z.spacing));
+      onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: gov } });
+    } else {
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, spacing: Math.max(2, rebar.ties.spacing + dir) } });
+    }
+  }
+  function toggleTieZones() {
+    if (!onRebarChange || !rebar.ties) return;
+    if (rebar.tieZones) {
+      // Collapse back to a single spacing = the tightest zone.
+      const gov = Math.min(...rebar.tieZones.map(z => z.spacing));
+      const { tieZones: _drop, ...rest } = rebar;
+      void _drop;
+      onRebarChange({ ...rest, ties: { ...rebar.ties, spacing: gov } });
+    } else {
+      const s = rebar.ties.spacing;
+      const end = Math.max(2, Math.round(s / 2)); // denser at the supports by default
+      const zones: [TieZone, TieZone, TieZone] = [{ spacing: end }, { spacing: s }, { spacing: end }];
+      onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: end } });
+    }
+  }
+
   const editTspan = { cursor: 'pointer', userSelect: 'none' as const } as React.CSSProperties;
   const noHit = { pointerEvents: 'none' } as React.CSSProperties;
 
@@ -153,6 +208,39 @@ export default function SectionView({
             >{formatBarLabel(g.barSize)}</tspan>
           </tspan>
         ) : null)}
+      </text>
+    );
+  }
+
+  /** Editable stirrup label: clickable bar-size + spacing tokens and a ⅓ zoned-spacing
+   *  toggle. Zoned mode shows three span-third spacings "end/mid/end". */
+  function editableStirrupLabel(x: number, y: number): ReactElement | null {
+    const t = rebar.ties;
+    if (!t) return null;
+    const dec = rebar.tieZones ? 0 : 1; // three zoned values need to stay compact
+    const spacingTspan = (val: number, key: string, zoneIdx?: number) => (
+      <tspan key={key} style={editTspan} textDecoration="underline"
+        onClick={e => { e.stopPropagation(); bumpTie('spacing', -1, zoneIdx); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('spacing', 1, zoneIdx); }}
+      >{fmt(val, 'length', dec)}</tspan>
+    );
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpTie('size', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('size', -1); }}
+        >{formatBarLabel(t.barSize)}</tspan>
+        <tspan style={noHit}>@</tspan>
+        {rebar.tieZones
+          ? [spacingTspan(rebar.tieZones[0].spacing, 'z0', 0),
+             <tspan key="s1" style={noHit}>/</tspan>,
+             spacingTspan(rebar.tieZones[1].spacing, 'z1', 1),
+             <tspan key="s2" style={noHit}>/</tspan>,
+             spacingTspan(rebar.tieZones[2].spacing, 'z2', 2)]
+          : spacingTspan(t.spacing, 'z')}
+        {t.legs > 2 && <tspan style={noHit}> ×{t.legs}L</tspan>}
+        <tspan style={{ ...editTspan, fontWeight: 700 }} fill={rebar.tieZones ? '#7c3aed' : '#9ca3af'}
+          onClick={e => { e.stopPropagation(); toggleTieZones(); }}> ⅓</tspan>
       </text>
     );
   }
@@ -338,7 +426,12 @@ export default function SectionView({
             )}
           <text x={ox + scaledW + 8} y={topLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-            {interactive ? (editBarSize ? 'L+ / R−' : 'L+1 / R−1') : 'top'}
+            {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'top'}
+            {editBarSize && interactive && (
+              <tspan style={editTspan} fill="#7c3aed" textDecoration="underline"
+                onClick={e => { e.stopPropagation(); addLayer('top'); }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('top'); }}>＋layer</tspan>
+            )}
           </text>
 
           {/* Bottom bars */}
@@ -353,7 +446,12 @@ export default function SectionView({
             )}
           <text x={ox + scaledW + 8} y={botLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-            {interactive ? (editBarSize ? 'L+ / R−' : 'L+1 / R−1') : 'bot'}
+            {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'bot'}
+            {editBarSize && interactive && (
+              <tspan style={editTspan} fill="#7c3aed" textDecoration="underline"
+                onClick={e => { e.stopPropagation(); addLayer('bot'); }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('bot'); }}>＋layer</tspan>
+            )}
           </text>
           {/* Side bar label (columns) */}
           {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
@@ -378,17 +476,23 @@ export default function SectionView({
             );
           })()}
 
-          {/* Stirrup label — left-click decreases spacing, right-click increases */}
+          {/* Stirrup label — left-click decreases spacing, right-click increases.
+              In editStirrup mode the size is clickable too and a ⅓ toggle enables
+              zoned [end · middle · end] spacing over the span thirds. */}
           {rebar.ties && (
             <>
-              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
-                fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
-                {...labelEvents('stir')}>
-                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
-              </text>
+              {editStirrup
+                ? editableStirrupLabel(ox + scaledW + 8, oy + scaledH / 2 + 4)
+                : (
+                  <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
+                    fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
+                    {...labelEvents('stir')}>
+                    {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
+                  </text>
+                )}
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
                 fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-                {interactive ? 'L−s / R+s' : 'stir'}
+                {editStirrup ? 'size · L−s/R+s · ⅓' : interactive ? 'L−s / R+s' : 'stir'}
               </text>
             </>
           )}

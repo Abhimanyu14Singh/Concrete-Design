@@ -1,12 +1,15 @@
 /**
- * SectionCard — one design group's cross-section as a thumbnail with its governing
- * DCR, live ρ / steel weight, and inline bar editing (click a bar count/size to
- * step it; edits apply to the whole group). Clicking the card selects the group.
+ * SectionCard — one design group's cross-section as a thumbnail with its worst
+ * per-mode DCRs (M⁺ / M⁻ / V) on the name row, live ρ / steel weight, and inline
+ * cage editing (click a bar count/size to step it; '＋layer' adds a layer; the
+ * stirrup line is size/spacing-editable with a '⅓' zoned-spacing toggle). Edits
+ * apply to the whole group. Clicking the card selects the group.
  */
 import type { RebarLayout } from '../../types';
 import type { DashboardGroup } from '../../utils/dashboardPayload';
 import SectionView from '../Detailing/SectionView';
-import { dcrColor, dcrBg, BORDER, INK, ACCENT, STATUS, MONO_NUM } from '../../theme';
+import { DCRChip } from './dashboardShared';
+import { BORDER, INK, ACCENT, STATUS, MONO_NUM } from '../../theme';
 
 export default function SectionCard({ group, selected, onSelect, onApplyRebar }: {
   group: DashboardGroup;
@@ -27,20 +30,27 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar }:
         boxShadow: selected ? `0 0 0 1px ${ACCENT.primary}` : 'none',
       }}
     >
+      {/* Name row + the group's worst per-mode DCRs (M⁺ / M⁻ / V). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ width: 10, height: 10, borderRadius: 3, background: group.color ?? INK.muted, flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: INK.strong, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
-        <span style={{ ...MONO_NUM, fontSize: 11, fontWeight: 700, color: dcrColor(group.govDCR), background: dcrBg(group.govDCR), padding: '1px 5px', borderRadius: 4 }}>{group.govDCR.toFixed(2)}</span>
+        <span style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+          <DCRChip label="M⁺" value={group.maxFlexPos} />
+          <DCRChip label="M⁻" value={group.maxFlexNeg} />
+          <DCRChip label="V" value={group.maxShear} />
+        </span>
       </div>
 
-      {/* Section drawing — bars are click-editable; clicking elsewhere selects the group. */}
+      {/* Section drawing — bars + stirrups are click-editable; the '＋layer' token
+          adds a reinforcement layer, the '⅓' token zones the stirrup spacing.
+          Clicking anywhere else on the card selects the group. */}
       <div style={{ display: 'flex', justifyContent: 'center' }}>
         <SectionView
           section={group.section}
           rebar={group.rebar}
-          width={224} height={168}
-          showDims={false} barLabels editBarSize
-          padL={8} padR={82} padT={14} padB={16}
+          width={248} height={168}
+          showDims={false} barLabels editBarSize editStirrup
+          padL={8} padR={104} padT={14} padB={16}
           onRebarChange={r => onApplyRebar(group.id, r)}
         />
       </div>

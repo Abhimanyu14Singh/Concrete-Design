@@ -78,26 +78,40 @@ function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V'): { x: nu
 
 // stationEnvelope is used inside BeamInspectCard too, exported there locally.
 
+/**
+ * Remembers the Map tab's working context across tab switches. Opening a member's
+ * design tab unmounts ModelMapView (App renders the map only when `tab === 'map'`),
+ * so without this the dashboard, selected group and colour mode would be lost.
+ * A module-level cache survives the unmount and is restored on remount, so
+ * returning to the Map lands on the same view the user left.
+ */
+const mapViewCache: {
+  colorMode?: ColorMode; story?: string; flexFace?: FlexFace; diagramMode?: DiagramMode;
+  rightTab?: RightTab; activeGroupId?: string | null;
+  dashboardOpen?: boolean; dashboardSelectedGroupId?: string | null;
+} = {};
+
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
   const { fmtVal, label, units, toDisplay } = useUnits();
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
-  const [colorMode, setColorMode] = useState<ColorMode>('dcr');
-  const [flexFace, setFlexFace] = useState<FlexFace>('bot');
-  const [story, setStory] = useState<string>('All');
-  const [diagramMode, setDiagramMode] = useState<DiagramMode>('off');
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(mapViewCache.activeGroupId ?? null);
+  const [colorMode, setColorMode] = useState<ColorMode>(mapViewCache.colorMode ?? 'dcr');
+  const [flexFace, setFlexFace] = useState<FlexFace>(mapViewCache.flexFace ?? 'bot');
+  const [story, setStory] = useState<string>(mapViewCache.story ?? 'All');
+  const [diagramMode, setDiagramMode] = useState<DiagramMode>(mapViewCache.diagramMode ?? 'off');
   const [lineWeightScale, setLineWeightScale] = useState(0.4); // feature ④: 0 = uniform 3px
   const [legendKey, setLegendKey] = useState<string | null>(null); // clicked legend row → isolate on plan
+  const [dashHoverFrame, setDashHoverFrame] = useState<string | null>(null); // hovered dashboard beam → highlight on plan
   // In-map Group Dashboard: splits the map area (plan | dashboard) and can pop out.
-  const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(mapViewCache.dashboardOpen ?? false);
   const [dashboardPoppedOut, setDashboardPoppedOut] = useState(false); // Phase B (Electron window)
-  const [dashboardSelectedGroupId, setDashboardSelectedGroupId] = useState<string | null>(null);
+  const [dashboardSelectedGroupId, setDashboardSelectedGroupId] = useState<string | null>(mapViewCache.dashboardSelectedGroupId ?? null);
   const [dashboardSplit, setDashboardSplit] = useState<number>(() => {
     const v = Number(localStorage.getItem('mapDashboardSplit'));
     return Number.isFinite(v) && v > 0.15 && v < 0.85 ? v : 0.5;
   });
   const dashHostRef = useRef<HTMLDivElement>(null);
-  const [rightTab, setRightTab] = useState<RightTab>('groups');
+  const [rightTab, setRightTab] = useState<RightTab>(mapViewCache.rightTab ?? 'groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
@@ -136,6 +150,25 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Persist the working context so a member-tab round-trip returns to this view.
+  useEffect(() => {
+    mapViewCache.colorMode = colorMode;
+    mapViewCache.story = story;
+    mapViewCache.flexFace = flexFace;
+    mapViewCache.diagramMode = diagramMode;
+    mapViewCache.rightTab = rightTab;
+    mapViewCache.activeGroupId = activeGroupId;
+    mapViewCache.dashboardOpen = dashboardOpen;
+    mapViewCache.dashboardSelectedGroupId = dashboardSelectedGroupId;
+  }, [colorMode, story, flexFace, diagramMode, rightTab, activeGroupId, dashboardOpen, dashboardSelectedGroupId]);
+
+  // A restored story filter from a previous model would blank a newly-loaded one —
+  // fall back to "All" if the remembered story isn't in the current model.
+  useEffect(() => {
+    const stories = project.modelMap?.stories ?? [];
+    if (story !== 'All' && !stories.includes(story)) setStory('All');
+  }, [story, project.modelMap]);
 
   const map = project.modelMap;
   const groups = project.designGroups ?? [];
@@ -426,6 +459,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       else if (cmd.type === 'apply-rebar') {
         const g = groups.find(gr => gr.id === cmd.groupId);
         handleApplyRebar(cmd.groupId, cmd.rebar, g?.memberIds ?? []);
+      } else if (cmd.type === 'move-member') {
+        handleMoveToGroup(cmd.memberId, cmd.groupId);
+      } else if (cmd.type === 'create-group-for-member') {
+        handleCreateGroupForMember(cmd.memberId);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();
@@ -558,6 +595,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         ? { ...g, memberIds: g.memberIds.includes(memberId) ? g.memberIds : [...g.memberIds, memberId] }
         : { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
     ));
+  }
+
+  // Split an outlier beam out into its own new group (removing it from every other
+  // group). Used by the dashboard right-click "New group from this beam".
+  function handleCreateGroupForMember(memberId: string) {
+    const m = members.find(mm => mm.id === memberId);
+    const newId = `dg-${Date.now()}`;
+    const color = CATEGORICAL[groups.length % CATEGORICAL.length];
+    onProjectChange(prev => {
+      const existing = (prev.designGroups ?? []).map(g => ({ ...g, memberIds: g.memberIds.filter(id => id !== memberId) }));
+      const newGroup: DesignGroup = { id: newId, label: m?.label ?? 'New group', memberIds: [memberId], color, source: 'manual' };
+      return { ...prev, designGroups: [...existing, newGroup] };
+    });
+    setDashboardSelectedGroupId(newId);
   }
 
   function toggleStoryVisibility(s: string) {
@@ -782,7 +833,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             designGroups={groups}
             story={story}
             colorMode={colorMode}
-            selected={new Set([...selectedFrames, ...highlightedFrames])}
+            selected={new Set([...selectedFrames, ...highlightedFrames, ...(dashHoverFrame ? [dashHoverFrame] : [])])}
             onSelectionChange={setSelectedFrames}
             onDoubleClick={onPickMember}
             onFrameClick={activeGroup ? handleFrameClick : undefined}
@@ -875,6 +926,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               selectedGroupId={dashboardSelectedGroupId}
               onSelectGroup={setDashboardSelectedGroupId}
               onApplyRebar={applyDashboardRebar}
+              onOpenMember={onPickMember}
+              onHoverMember={mid => setDashHoverFrame(mid ? (frameByMemberId.get(mid) ?? null) : null)}
+              onMoveMember={handleMoveToGroup}
+              onCreateGroupForMember={handleCreateGroupForMember}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}

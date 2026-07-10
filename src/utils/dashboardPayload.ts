@@ -21,6 +21,10 @@ export interface DashboardGroup {
   rebar: RebarLayout;
   memberIds: string[];
   govDCR: number;
+  /** Worst per-mode DCR across the group's beams (M⁺ / M⁻ / V). */
+  maxFlexPos: number;
+  maxFlexNeg: number;
+  maxShear: number;
   govResult?: DesignResults;
   rhoTop: number;
   rhoBot: number;
@@ -50,6 +54,8 @@ export interface DashboardPayload {
 export type DashboardCommand =
   | { type: 'select-group'; groupId: string | null }
   | { type: 'apply-rebar'; groupId: string; rebar: RebarLayout }
+  | { type: 'move-member'; memberId: string; groupId: string }
+  | { type: 'create-group-for-member'; memberId: string }
   | { type: 'pop-in' }
   | { type: 'ready' };
 
@@ -75,10 +81,20 @@ export function buildDashboardPayload(
     const gMembers = g.memberIds.map(id => memberById.get(id)).filter((m): m is Member => !!m);
     const beams = gMembers.filter(m => m.memberType === 'beam');
     // Governing (worst-DCR) member drives the representative section + metrics.
+    // Alongside it, track the worst per-mode DCR (M⁺ / M⁻ / V) across the group so
+    // the card can surface all three instead of a single governing number.
     let govDCR = 0, govId: string | null = null;
+    let maxFlexPos = 0, maxFlexNeg = 0, maxShear = 0;
     for (const m of gMembers) {
       const d = dcrById[m.id] ?? 0;
       if (d >= govDCR) { govDCR = d; govId = m.id; }
+      const r = designResultsById[m.id];
+      if (r) {
+        const md = modeDCRs(r, code);
+        maxFlexPos = Math.max(maxFlexPos, md.flexPos);
+        maxFlexNeg = Math.max(maxFlexNeg, md.flexNeg);
+        maxShear = Math.max(maxShear, md.shear);
+      }
     }
     const repMember = (govId ? memberById.get(govId) : undefined) ?? beams[0] ?? gMembers[0];
     const section = repMember?.section ?? FALLBACK_SECTION;
@@ -93,6 +109,9 @@ export function buildDashboardPayload(
       rebar,
       memberIds: g.memberIds.slice(),
       govDCR,
+      maxFlexPos,
+      maxFlexNeg,
+      maxShear,
       govResult: govId ? designResultsById[govId] : undefined,
       rhoTop: repMember ? flexSteelRatioPct(repMember, 'top') : 0,
       rhoBot: repMember ? flexSteelRatioPct(repMember, 'bot') : 0,

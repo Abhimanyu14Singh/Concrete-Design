@@ -49,6 +49,8 @@ export default function DashboardWindowRoot() {
         selectedGroupId={selectedGroupId}
         onSelectGroup={id => { setSelectedGroupId(id); api.sendDashboardCommand?.({ type: 'select-group', groupId: id }); }}
         onApplyRebar={apply}
+        onMoveMember={(memberId, groupId) => api.sendDashboardCommand?.({ type: 'move-member', memberId, groupId })}
+        onCreateGroupForMember={memberId => api.sendDashboardCommand?.({ type: 'create-group-for-member', memberId })}
         canPopOut={false}
         onClose={() => api.sendDashboardCommand?.({ type: 'pop-in' })}
         closeLabel="⤡ Pop in"
