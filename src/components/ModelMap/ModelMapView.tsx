@@ -106,6 +106,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [dashboardOpen, setDashboardOpen] = useState(mapViewCache.dashboardOpen ?? false);
   const [dashboardPoppedOut, setDashboardPoppedOut] = useState(false); // Phase B (Electron window)
   const [dashboardSelectedGroupId, setDashboardSelectedGroupId] = useState<string | null>(mapViewCache.dashboardSelectedGroupId ?? null);
+  const [dashboardSuggestNote, setDashboardSuggestNote] = useState<string | null>(null); // ✨ Suggest feedback
   const [dashboardSplit, setDashboardSplit] = useState<number>(() => {
     const v = Number(localStorage.getItem('mapDashboardSplit'));
     return Number.isFinite(v) && v > 0.15 && v < 0.85 ? v : 0.5;
@@ -169,6 +170,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     const stories = project.modelMap?.stories ?? [];
     if (story !== 'All' && !stories.includes(story)) setStory('All');
   }, [story, project.modelMap]);
+
+  // Drop the ✨ Suggest status line when the user switches groups.
+  useEffect(() => { setDashboardSuggestNote(null); }, [dashboardSelectedGroupId]);
 
   const map = project.modelMap;
   const groups = project.designGroups ?? [];
@@ -463,6 +467,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleMoveToGroup(cmd.memberId, cmd.groupId);
       } else if (cmd.type === 'create-group-for-member') {
         handleCreateGroupForMember(cmd.memberId);
+      } else if (cmd.type === 'suggest-group') {
+        handleSuggestGroup(cmd.groupId);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();
@@ -609,6 +615,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       return { ...prev, designGroups: [...existing, newGroup] };
     });
     setDashboardSelectedGroupId(newId);
+  }
+
+  // ✨ Suggest a cage for one dashboard group: auto-size reinforcement to satisfy
+  // every DCR (targetDCR) and clear errors, then fan it out to the group's members.
+  function handleSuggestGroup(groupId: string) {
+    const g = groups.find(gr => gr.id === groupId);
+    if (!g) { setDashboardSuggestNote(null); return; }
+    const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
+    const designed = membersInGroup.filter(m => m.memberType === 'beam' && m.loads.length > 0);
+    if (!designed.length) { setDashboardSuggestNote(`⚠ ${g.label}: no designed beams to size`); return; }
+    const r = suggestGroupRebar(membersInGroup, project.code, project.targetDCR ?? 0.9);
+    if (isSuggestError(r)) { setDashboardSuggestNote(`⚠ ${g.label}: ${r.error}`); return; }
+    handleApplyRebar(groupId, r.rebar, g.memberIds);
+    setDashboardSuggestNote(`✓ ${g.label}: cage suggested for ${designed.length} beam${designed.length === 1 ? '' : 's'}`);
   }
 
   function toggleStoryVisibility(s: string) {
@@ -930,6 +950,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onHoverMember={mid => setDashHoverFrame(mid ? (frameByMemberId.get(mid) ?? null) : null)}
               onMoveMember={handleMoveToGroup}
               onCreateGroupForMember={handleCreateGroupForMember}
+              onSuggestGroup={handleSuggestGroup}
+              suggestNote={dashboardSuggestNote}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}

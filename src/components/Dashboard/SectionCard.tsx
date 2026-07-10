@@ -20,8 +20,8 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar }:
   const ng = group.govDCR > 1.0;
   return (
     <div
-      onClick={onSelect}
-      title="Click to isolate this group on the plan"
+      onDoubleClick={onSelect}
+      title="Double-click to isolate this group on the plan"
       style={{
         border: `1px solid ${selected ? ACCENT.primary : ng ? STATUS.failBorder : BORDER.default}`,
         background: selected ? ACCENT.softBg : ng ? STATUS.failBg : 'white',

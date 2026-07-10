@@ -56,6 +56,7 @@ export type DashboardCommand =
   | { type: 'apply-rebar'; groupId: string; rebar: RebarLayout }
   | { type: 'move-member'; memberId: string; groupId: string }
   | { type: 'create-group-for-member'; memberId: string }
+  | { type: 'suggest-group'; groupId: string }
   | { type: 'pop-in' }
   | { type: 'ready' };
 

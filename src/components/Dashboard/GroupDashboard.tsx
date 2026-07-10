@@ -10,7 +10,7 @@ import type { RebarLayout } from '../../types';
 import type { DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
 import { DCRChip, DcrHistogram } from './dashboardShared';
-import { BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg } from '../../theme';
+import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg } from '../../theme';
 
 const hdrBtn: CSSProperties = {
   padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
@@ -22,6 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
+  onSuggestGroup, suggestNote,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -39,11 +40,18 @@ export default function GroupDashboard({
   onMoveMember?: (memberId: string, groupId: string) => void;
   /** Right-click → split the beam out into its own new group. */
   onCreateGroupForMember?: (memberId: string) => void;
+  /** Auto-size the selected group's cage to satisfy every DCR / clear errors. */
+  onSuggestGroup?: (groupId: string) => void;
+  /** Transient status line for the last suggest run (e.g. "needs a larger section"). */
+  suggestNote?: string | null;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
   const selMembers = selGroup ? payload.members.filter(m => m.groupId === selGroup.id) : [];
   const govDCRs = selMembers.map(m => m.maxDCR);
+  // How many of the group's beams are failing (NG) vs merely warned.
+  const ngCount = selMembers.filter(m => m.status === 'NG').length;
+  const warnCount = selMembers.filter(m => m.status !== 'NG' && (m.status === 'Warning' || m.warnings.length > 0)).length;
 
   // Right-click row menu (move to group / new group). Kept local so the dashboard
   // works the same in-app or popped out; the host decides what the callbacks do.
@@ -57,7 +65,18 @@ export default function GroupDashboard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>Group Dashboard</span>
         <span style={{ fontSize: 11, color: INK.muted }}>{groups.length} group{groups.length === 1 ? '' : 's'}</span>
+        {suggestNote && (
+          <span style={{ fontSize: 11, color: suggestNote.startsWith('⚠') ? STATUS.warn : INK.secondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '40%' }}>{suggestNote}</span>
+        )}
         <div style={{ flex: 1 }} />
+        {onSuggestGroup && (
+          <button
+            onClick={() => selGroup && onSuggestGroup(selGroup.id)}
+            disabled={!selGroup}
+            title={selGroup ? `Auto-size ${selGroup.label} to satisfy every DCR and clear errors` : 'Select a group first, then Suggest a cage for it'}
+            style={{ ...hdrBtn, color: selGroup ? ACCENT.primary : INK.muted, borderColor: selGroup ? ACCENT.primary : BORDER.strong, cursor: selGroup ? 'pointer' : 'not-allowed' }}
+          >✨ Suggest</button>
+        )}
         {canPopOut && onPopOut && (
           <button onClick={onPopOut} title="Open the dashboard in a separate window" style={hdrBtn}>⤢ Pop out</button>
         )}
@@ -89,9 +108,26 @@ export default function GroupDashboard({
             <span style={{ width: 10, height: 10, borderRadius: 3, background: selGroup.color ?? INK.muted }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{selGroup.label}</span>
             <span style={{ fontSize: 11, color: INK.muted }}>{selMembers.length} beam{selMembers.length === 1 ? '' : 's'}</span>
-            <div style={{ marginLeft: 'auto' }}>
-              <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>DCR distribution</div>
-              <DcrHistogram values={govDCRs} />
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 16 }}>
+              {/* Beams with problems in this group, beside the histogram. */}
+              <div>
+                <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>Beams flagged</div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', height: 30 }}>
+                  {ngCount === 0 && warnCount === 0 && (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok }}>✓ all pass</span>
+                  )}
+                  {ngCount > 0 && (
+                    <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} with errors</span>
+                  )}
+                  {warnCount > 0 && (
+                    <span title="Beams with warnings" style={{ fontSize: 12, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, padding: '2px 7px', borderRadius: 5 }}>{warnCount} ⚠</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>DCR distribution</div>
+                <DcrHistogram values={govDCRs} />
+              </div>
             </div>
           </div>
 

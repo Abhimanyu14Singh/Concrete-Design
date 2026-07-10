@@ -125,10 +125,16 @@ export default function SectionView({
     const arr = face === 'top' ? rebar.topBars : rebar.botBars;
     const grp = arr[layer];
     if (!grp) return;
-    const next = field === 'count'
-      ? { ...grp, numBars: Math.max(1, grp.numBars + dir) }
-      : { ...grp, barSize: barSizeStep(grp.barSize, dir) };
-    const newArr = arr.map((g, i) => (i === layer ? next : g));
+    let newArr: typeof arr;
+    if (field === 'count') {
+      const nextCount = grp.numBars + dir;
+      // Decrementing the last bar (1 → 0) drops the whole layer.
+      newArr = nextCount <= 0
+        ? arr.filter((_, i) => i !== layer)
+        : arr.map((g, i) => (i === layer ? { ...g, numBars: nextCount } : g));
+    } else {
+      newArr = arr.map((g, i) => (i === layer ? { ...g, barSize: barSizeStep(g.barSize, dir) } : g));
+    }
     onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
   }
 
@@ -184,7 +190,10 @@ export default function SectionView({
     }
   }
 
-  const editTspan = { cursor: 'pointer', userSelect: 'none' as const } as React.CSSProperties;
+  // pointerEvents:'auto' re-enables hit-testing even when the token sits inside a
+  // parent <text> that set pointer-events:none (e.g. the '＋layer' token on the
+  // hint line) — otherwise the click passes through to the card and never fires.
+  const editTspan = { cursor: 'pointer', userSelect: 'none' as const, pointerEvents: 'auto' as const } as React.CSSProperties;
   const noHit = { pointerEvents: 'none' } as React.CSSProperties;
 
   /** Editable face label: per-layer clickable count and bar-size tokens (e.g. "3-#8 + 2-#6"). */
