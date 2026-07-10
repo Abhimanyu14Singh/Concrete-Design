@@ -11,7 +11,6 @@ import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils
 import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
-import GroupActionsPanel from './GroupActionsPanel';
 import GroupRebarEditor from './GroupRebarEditor';
 import ColumnForceGrid from './ColumnForceGrid';
 import AutoGroupPanel from './AutoGroupPanel';
@@ -26,6 +25,7 @@ import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
 import HelpLink from '../Help/HelpLink';
 import GroupDashboard from '../Dashboard/GroupDashboard';
+import SconcreteDashboard from '../Dashboard/SconcreteDashboard';
 import { buildDashboardPayload } from '../../utils/dashboardPayload';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
@@ -88,6 +88,7 @@ const mapViewCache: {
   colorMode?: ColorMode; story?: string; flexFace?: FlexFace; diagramMode?: DiagramMode;
   rightTab?: RightTab; activeGroupId?: string | null;
   dashboardOpen?: boolean; dashboardSelectedGroupId?: string | null;
+  sconcreteOpen?: boolean; sconcreteSelectedGroupId?: string | null;
 } = {};
 
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
@@ -105,6 +106,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [dashboardOpen, setDashboardOpen] = useState(mapViewCache.dashboardOpen ?? false);
   const [dashboardPoppedOut, setDashboardPoppedOut] = useState(false); // Phase B (Electron window)
   const [dashboardSelectedGroupId, setDashboardSelectedGroupId] = useState<string | null>(mapViewCache.dashboardSelectedGroupId ?? null);
+  // In-map S-Concrete "Verify" dashboard — a parallel split (plan | S-Concrete). Only
+  // one split (Dashboard or Verify) is open at a time; opening one closes the other.
+  const [sconcreteOpen, setSconcreteOpen] = useState(mapViewCache.sconcreteOpen ?? false);
+  const [sconcreteSelectedGroupId, setSconcreteSelectedGroupId] = useState<string | null>(mapViewCache.sconcreteSelectedGroupId ?? null);
   const [dashboardSplit, setDashboardSplit] = useState<number>(() => {
     const v = Number(localStorage.getItem('mapDashboardSplit'));
     return Number.isFinite(v) && v > 0.15 && v < 0.85 ? v : 0.5;
@@ -160,7 +165,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     mapViewCache.activeGroupId = activeGroupId;
     mapViewCache.dashboardOpen = dashboardOpen;
     mapViewCache.dashboardSelectedGroupId = dashboardSelectedGroupId;
-  }, [colorMode, story, flexFace, diagramMode, rightTab, activeGroupId, dashboardOpen, dashboardSelectedGroupId]);
+    mapViewCache.sconcreteOpen = sconcreteOpen;
+    mapViewCache.sconcreteSelectedGroupId = sconcreteSelectedGroupId;
+  }, [colorMode, story, flexFace, diagramMode, rightTab, activeGroupId, dashboardOpen, dashboardSelectedGroupId, sconcreteOpen, sconcreteSelectedGroupId]);
 
   // A restored story filter from a previous model would blank a newly-loaded one —
   // fall back to "All" if the remembered story isn't in the current model.
@@ -396,15 +403,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     [groups, members, designResultsById, dcrById, project.code, units],
   );
 
-  // Selecting a dashboard card isolates that group on the plan (same halftone).
+  // Selecting a card in either split (Dashboard or S-Concrete) isolates that group
+  // on the plan (same halftone). Only one split is open at a time.
+  const splitFocusGroupId = sconcreteOpen ? sconcreteSelectedGroupId : dashboardOpen ? dashboardSelectedGroupId : null;
   const dashboardFocusFrames = useMemo(() => {
-    if (!dashboardOpen || !dashboardSelectedGroupId) return null;
-    const g = groups.find(gr => gr.id === dashboardSelectedGroupId);
+    if (!splitFocusGroupId) return null;
+    const g = groups.find(gr => gr.id === splitFocusGroupId);
     if (!g) return null;
     const s = new Set<string>();
     for (const mid of g.memberIds) { const fn = frameByMemberId.get(mid); if (fn) s.add(fn); }
     return s.size ? s : null;
-  }, [dashboardOpen, dashboardSelectedGroupId, groups, frameByMemberId]);
+  }, [splitFocusGroupId, groups, frameByMemberId]);
 
   // Desktop only — the pop-out opens a real second Electron window.
   const canPopOut = typeof window !== 'undefined' && !!window.electronAPI?.openDashboardWindow;
@@ -556,6 +565,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }
 
   const activeGroup = activeGroupId ? groups.find(g => g.id === activeGroupId) : null;
+  // A split pane (Dashboard or S-Concrete Verify) occupies the right half of the map;
+  // while open, the plan narrows and the 320px right panel + slide-out editor hide.
+  const splitPaneOpen = (dashboardOpen && !dashboardPoppedOut) || sconcreteOpen;
   const allStories = map ? map.stories : [];
   const storyDropdownOptions = map ? ['All', ...map.stories] : ['All'];
   const frames = enrichedFrames;
@@ -697,7 +709,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       {/* Plan | Dashboard split host */}
       <div ref={dashHostRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden', position: 'relative' }}>
       {/* Canvas area (plan pane) */}
-      <div style={dashboardOpen && !dashboardPoppedOut
+      <div style={splitPaneOpen
         ? { width: `${dashboardSplit * 100}%`, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }
         : { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
@@ -946,6 +958,28 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             style={{ padding: '4px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, background: 'white', cursor: 'pointer', fontWeight: 600, color: INK.base }}>⤡ Pop in</button>
         </div>
       )}
+
+      {/* S-Concrete Verify pane — right half of the split (mirrors the Group Dashboard) */}
+      {sconcreteOpen && (
+        <>
+          <div onMouseDown={onDashDividerDown} title="Drag to resize plan / S-Concrete"
+            style={{ width: 8, flexShrink: 0, cursor: 'col-resize', background: '#eef2f7', borderLeft: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 3, height: 40, borderRadius: 2, background: '#cbd5e1' }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+            <SconcreteDashboard
+              payload={dashboardPayload}
+              project={project}
+              frameByMemberId={frameByMemberId}
+              onProjectChange={onProjectChange}
+              selectedGroupId={sconcreteSelectedGroupId}
+              onSelectGroup={setSconcreteSelectedGroupId}
+              onOpenMember={onPickMember}
+              onClose={() => setSconcreteOpen(false)}
+            />
+          </div>
+        </>
+      )}
       </div>
       {/* end Plan | Dashboard split host */}
 
@@ -953,7 +987,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           right panel whenever a group is active, so the cage is visible without
           scrolling the Design pane. Dismiss with ✕ or by re-clicking the group row.
           The map (flex:1) narrows and its ResizeObserver re-fits the canvas. */}
-      {!dashboardOpen && activeGroup && (
+      {!dashboardOpen && !sconcreteOpen && activeGroup && (
         <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: SURFACE.raised, overflow: 'hidden', animation: 'slideInCol 160ms ease-out' }}>
           <div style={{ ...sectionHdr, justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeGroup.label} · Reinforcement</span>
@@ -978,14 +1012,16 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       )}
 
       {/* Right panel */}
-      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: dashboardOpen ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
-        {/* Tab bar — the workflow (Design + Verify) is primary; read-only
-            analytics are tucked behind an "Analyze" picker. */}
+      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: (dashboardOpen || sconcreteOpen) ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+        {/* Tab bar — the workflow (Design, then the two split dashboards) is primary;
+            read-only analytics are tucked behind an "Analyze" picker. */}
         <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6 }}>
           <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}
-            title="Group members, design their cage, and verify with S-Concrete">Design + Verify</button>
-          <button style={tabStyle(false)} onClick={() => { setDashboardOpen(true); setRightTab('groups'); }}
+            title="Group members on the map and design their cage">① Design</button>
+          <button style={tabStyle(false)} onClick={() => { setDashboardOpen(true); setSconcreteOpen(false); setRightTab('groups'); }}
             title="Open the Group Dashboard — section cards + per-group DCR table, split beside the plan">📊 Dashboard</button>
+          <button style={tabStyle(false)} onClick={() => { setSconcreteOpen(true); setDashboardOpen(false); setRightTab('groups'); }}
+            title="Open the S-Concrete Verify dashboard — push & run the batch, read results per group, split beside the plan">🔬 Verify</button>
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 10, color: INK.muted, marginRight: 4 }}>Analyze:</span>
           <Dropdown
@@ -1003,48 +1039,41 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {rightTab === 'groups' && (
-            /* ① Design and ② Verify are split by a draggable divider so the user
-               can grow the Verify results by dragging the boundary up. Each pane
-               scrolls independently; the split height is remembered. */
-            <VerticalSplit
-              storageKey="designVerifySplit"
-              top={
-                <>
-                  {/* ① DESIGN — group members, then set or ✨-suggest the cage. The
-                      active group's rebar editor opens as a slide-out column beside
-                      this panel (the {activeGroup && …} block just before the right panel). */}
-                  <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span><div style={{ flex: 1 }} /><HelpLink section="design" title="How grouping & the cage work" /></div>
-                  <GroupPanel
-                    groups={groups}
-                    frames={frames}
-                    selected={selectedFrames}
-                    activeGroupId={activeGroupId}
-                    onGroupsChange={handleGroupsChange}
-                    onActiveGroupChange={setActiveGroupId}
-                    onSelectionChange={setSelectedFrames}
-                    dcrById={dcrById}
-                    designResultsById={designResultsById}
-                    members={members}
-                    onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
-                    onSuggestAll={handleSuggestAllGroups}
-                    suggestAllNote={suggestAllNote}
-                  />
-                </>
-              }
-              bottom={
-                <>
-                  {/* ② VERIFY — run S-Concrete on the designed groups. */}
-                  <div style={sectionHdr}>② Verify<span style={sectionHint}>run the S-Concrete batch · governing result per group</span><div style={{ flex: 1 }} /><HelpLink section="verify" title="How S-Concrete verification works" /></div>
-                  <GroupActionsPanel
-                    groups={groups}
-                    members={members}
-                    project={project}
-                    frameByMemberId={frameByMemberId}
-                    onProjectChange={onProjectChange}
-                  />
-                </>
-              }
-            />
+            /* ① Design fills the pane; ② Verify (the S-Concrete batch) now lives in the
+               🔬 Verify split dashboard, reached from the footer button below or the tab. */
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                {/* ① DESIGN — group members, then set or ✨-suggest the cage. The active
+                    group's rebar editor opens as a slide-out column beside this panel. */}
+                <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span><div style={{ flex: 1 }} /><HelpLink section="design" title="How grouping & the cage work" /></div>
+                <GroupPanel
+                  groups={groups}
+                  frames={frames}
+                  selected={selectedFrames}
+                  activeGroupId={activeGroupId}
+                  onGroupsChange={handleGroupsChange}
+                  onActiveGroupChange={setActiveGroupId}
+                  onSelectionChange={setSelectedFrames}
+                  dcrById={dcrById}
+                  designResultsById={designResultsById}
+                  members={members}
+                  onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
+                  onSuggestAll={handleSuggestAllGroups}
+                  suggestAllNote={suggestAllNote}
+                />
+              </div>
+              {/* ② VERIFY — opens the S-Concrete dashboard split beside the plan. */}
+              <button
+                onClick={() => { setSconcreteOpen(true); setDashboardOpen(false); }}
+                title="Open the S-Concrete Verify dashboard beside the plan — push & run the batch, read results per group"
+                style={{ display: 'flex', alignItems: 'baseline', gap: 6, width: '100%', textAlign: 'left', border: 'none', borderTop: `1px solid ${BORDER.default}`, background: SURFACE.subtle, padding: '9px 10px', cursor: 'pointer', flexShrink: 0 }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 700, color: INK.strong }}>② Verify</span>
+                <span style={sectionHint}>run the S-Concrete batch · results per group</span>
+                <div style={{ flex: 1 }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: ACCENT.primary }}>🔬 Open →</span>
+              </button>
+            </div>
           )}
 
           {rightTab !== 'groups' && (
@@ -1076,77 +1105,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * VerticalSplit — two stacked panes with a draggable divider between them. The
- * top pane's height is user-adjustable (drag the grip) and remembered in
- * localStorage; each pane scrolls independently. Used to let the ② Verify results
- * be stretched by dragging the ① Design / ② Verify boundary.
- */
-function VerticalSplit({ top, bottom, storageKey, initialTop = 360, minTop = 120, minBottom = 140 }: {
-  top: React.ReactNode; bottom: React.ReactNode; storageKey: string;
-  initialTop?: number; minTop?: number; minBottom?: number;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [topH, setTopH] = useState<number>(() => {
-    const v = Number(localStorage.getItem(storageKey));
-    return Number.isFinite(v) && v > 0 ? v : initialTop;
-  });
-  // Latest height, written only from the drag handler (never during render) so
-  // the mouseup persist reads a current value without a stale closure.
-  const topHRef = useRef(topH);
-  const dragging = useRef(false);
-
-  // Handlers live in useCallback (not the effect body) so the drag's setState is
-  // an event-handler update, not a synchronous-in-effect one.
-  const onMove = useCallback((e: MouseEvent) => {
-    const el = containerRef.current;
-    if (!dragging.current || !el) return;
-    const rect = el.getBoundingClientRect();
-    const h = Math.min(Math.max(minTop, e.clientY - rect.top), rect.height - minBottom);
-    topHRef.current = h;
-    setTopH(h);
-  }, [minTop, minBottom]);
-
-  const onUp = useCallback(() => {
-    if (!dragging.current) return;
-    dragging.current = false;
-    document.body.style.userSelect = '';
-    document.body.style.cursor = '';
-    localStorage.setItem(storageKey, String(Math.round(topHRef.current)));
-  }, [storageKey]);
-
-  useEffect(() => {
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  }, [onMove, onUp]);
-
-  function startDrag(e: React.MouseEvent) {
-    e.preventDefault();
-    dragging.current = true;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'row-resize';
-  }
-
-  return (
-    <div ref={containerRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ height: topH, minHeight: minTop, overflow: 'auto' }}>{top}</div>
-      <div
-        onMouseDown={startDrag}
-        title="Drag to resize ① Design / ② Verify"
-        style={{
-          height: 9, flexShrink: 0, cursor: 'row-resize', background: '#eef2f7',
-          borderTop: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        <div style={{ width: 44, height: 3, borderRadius: 2, background: '#cbd5e1' }} />
-      </div>
-      <div style={{ flex: 1, minHeight: minBottom, overflow: 'auto' }}>{bottom}</div>
     </div>
   );
 }
