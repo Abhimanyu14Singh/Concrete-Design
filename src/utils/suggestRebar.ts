@@ -20,7 +20,7 @@
  * strut governs (shear), it returns a specific, honest error naming the limit.
  *
  * Practical envelope (typical office detailing):
- *   longitudinal #5–#11 (EC2 Ø10–Ø32), 2–4 layers, ≥2 bars/layer, outer ≥ inner;
+ *   longitudinal #5–#11 (EC2 Ø10–Ø32), up to 3 layers, ≥2 bars/layer, outer ≥ inner;
  *   stirrups #4/#5/#6 (EC2 Ø8/10/12), 2/3/4/6 legs, spacings {4,6,8,10,12} in
  *   (EC2 100–250 mm), zoned [end, mid, end] with the mid third relaxed when slack.
  */
@@ -46,9 +46,10 @@ const STIRRUP_SPACINGS_EC2   = [100, 125, 150, 175, 200, 250].map(mm => mm / 25.
 // two hoops / a hoop + 2 crossties (4), then 6 for wide/heavily-loaded webs.
 const STIRRUP_LEGS = [2, 3, 4, 6];
 
-// Longitudinal layers allowed. 3–4 layers only appear when fewer can't hold the
-// demand; a 4-layer cage pushes x/d up, which the engine flags (§5.5 / brittle).
-const MAX_LAYERS = 4;
+// Longitudinal layers allowed. A 3rd layer only appears when 1–2 can't hold the
+// demand; a deep cage pushes x/d up, which the engine flags (§5.5 / brittle).
+// 3 is the practical detailing cap — beyond it, enlarge the section instead.
+const MAX_LAYERS = 3;
 
 const EPS = 1e-6;
 
@@ -219,7 +220,7 @@ export function suggestGroupRebar(
   if (!chosen) {
     return { error: sawOverReinforced
       ? 'Flexure would exceed the maximum reinforcement ratio (ρmax / over-reinforced) — enlarge the section.'
-      : 'Flexural demand exceeds the largest practical cage (up to #11/Ø32 in 4 layers) — enlarge the section.' };
+      : 'Flexural demand exceeds the largest practical cage (up to #11/Ø32 in 3 layers) — enlarge the section.' };
   }
   const { top: chosenTop, bot: chosenBot } = chosen;
 
