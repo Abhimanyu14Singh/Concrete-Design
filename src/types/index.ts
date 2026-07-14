@@ -105,6 +105,31 @@ export interface MapFrame {
 
 export interface Point3D { x: number; y: number; z: number; }
 
+/** A wall/slab area element captured from the ETABS model (planar polygon). */
+export interface MapWall {
+  id: string;             // ETABS unique area object name
+  story: string;
+  points: Point3D[];      // ordered corner ring (ft, model coords), ≥ 3
+  kind?: 'wall' | 'slab'; // from Design Orientation / plane-normal
+  sectionName?: string;   // area section property (optional)
+  memberId?: string;      // linked Member if designed (optional, future)
+}
+
+/** A grid line captured from the ETABS model (map reference / labelling). */
+export interface MapGrid {
+  id: string;
+  label: string;          // "A", "1", …
+  p1: Point3D;            // grid line start (ft, model coords)
+  p2: Point3D;            // grid line end
+}
+
+/** An opening (penetration) in a wall or slab. */
+export interface MapOpening {
+  id: string;
+  story: string;
+  points: Point3D[];      // ordered corner ring (ft, model coords), ≥ 3
+}
+
 /** Persistent connectivity snapshot of the ETABS model, saved in .scdb. */
 export interface ModelMap {
   source: 'com' | 'file' | 'mock' | 'bridge';
@@ -112,6 +137,9 @@ export interface ModelMap {
   importedAt: string;
   stories: string[];
   frames: MapFrame[];
+  walls?: MapWall[];        // optional — area/wall elements
+  grids?: MapGrid[];        // optional — grid lines
+  openings?: MapOpening[];  // optional — wall/slab openings
 }
 
 /** One point on a column P-M interaction curve. */

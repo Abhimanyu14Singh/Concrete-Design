@@ -23,6 +23,7 @@ import type { ComboForces, StationForce } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
   EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter, UnitInfo,
+  EtabsAreaGeom, EtabsGridGeom, EtabsOpeningGeom,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -134,6 +135,23 @@ function str(r: TableRow, ...names: string[]): string {
   return v === undefined || v === null ? '' : String(v);
 }
 
+/** ETABS boolean cells arrive as "Yes"/"True"/1 depending on build. */
+function isTruthy(v: string): boolean {
+  return /^(y|yes|true|1)$/i.test(v.trim());
+}
+
+/** True when an area polygon's plane normal is ~horizontal, i.e. the area is a
+ *  vertical wall (fallback classifier when "Design Orientation" is absent). */
+function isVerticalArea(pts: { x: number; y: number; z: number }[]): boolean {
+  if (pts.length < 3) return false;
+  const a = pts[0], b = pts[1], c = pts[2];
+  const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+  const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const mag = Math.hypot(nx, ny, nz) || 1;
+  return Math.abs(nz) / mag < 0.5;   // normal ~horizontal ⇒ vertical plane ⇒ wall
+}
+
 export abstract class TableConnection implements EtabsConnection {
   abstract readonly kind: 'com' | 'bridge';
 
@@ -174,6 +192,9 @@ export abstract class TableConnection implements EtabsConnection {
   private lastForceTable = '';
   private beamsCache: EtabsBeamGeom[] | null = null;
   private columnsCache: EtabsColumnGeom[] | null = null;
+  private areasCache: EtabsAreaGeom[] | null = null;
+  private openingsCache: EtabsOpeningGeom[] | null = null;
+  private gridsCache: EtabsGridGeom[] | null = null;
   private sectionNamesUsed = new Set<string>();
   private storiesCache: string[] = [];
   private groupNames: string[] = [];
@@ -280,6 +301,9 @@ export abstract class TableConnection implements EtabsConnection {
   private invalidateModelCaches(): void {
     this.beamsCache = null;
     this.columnsCache = null;
+    this.areasCache = null;
+    this.openingsCache = null;
+    this.gridsCache = null;
     this.ctxCache = null;
     this.forcesCache = null;
     this.forcesCacheKey = '';
@@ -422,6 +446,112 @@ export abstract class TableConnection implements EtabsConnection {
   async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
     await this.loadColumns();
     return this.columnsCache!.filter(c => matchesFilter(c, filter));
+  }
+
+  /**
+   * Load area objects ("Area Object Connectivity") → walls, slabs and openings.
+   * Corner point names resolve through the shared joint-coordinate map so areas
+   * register to the same plan as frames. Opening rows (an Opening flag) split off
+   * into their own list; wall-vs-slab comes from the Design Orientation column,
+   * falling back to the polygon's plane normal. A missing table yields empty lists.
+   *
+   * The table/column spellings vary across ETABS builds (live-model-verify items);
+   * every fetch degrades to [] so import never breaks.
+   */
+  private async loadAreas(): Promise<void> {
+    if (this.areasCache && this.openingsCache) return;
+    const [connectivity, ctx] = await Promise.all([
+      this.fetchTable('Area Object Connectivity').catch(() => [] as TableRow[]),
+      this.loadFrameContext(),
+    ]);
+    const sectionByArea = new Map<string, string>();
+    try {
+      for (const a of await this.fetchTable('Area Assignments - Section Properties')) {
+        const un = str(a, 'UniqueName');
+        const sect = str(a, 'SectProp', 'Section', 'AreaSect', 'AnalysisSect');
+        if (un && sect && sect.toLowerCase() !== 'none') sectionByArea.set(un, sect);
+      }
+    } catch { /* no area-section table */ }
+
+    const areas: EtabsAreaGeom[] = [];
+    const openings: EtabsOpeningGeom[] = [];
+    for (const row of connectivity) {
+      const un = str(row, 'UniqueName');
+      if (!un) continue;
+      const declared = num(row, 'NumberPoints', 'NumPoints', 'NumPts');
+      const maxN = declared > 0 ? declared : 16;
+      const points: { x: number; y: number; z: number }[] = [];
+      for (let i = 1; i <= maxN; i++) {
+        const pn = str(row, `UniquePt${i}`, `Point${i}`, `Pt${i}`, `UniquePoint${i}`);
+        if (!pn) continue;
+        const c = ctx.coords.get(pn);
+        if (c) points.push(c);
+      }
+      if (points.length < 3) continue;
+      const story = str(row, 'Story');
+      if (isTruthy(str(row, 'Opening', 'IsOpening', 'Openings'))) { openings.push({ name: un, story, points }); continue; }
+      const orient = str(row, 'DesignOrientation', 'Design Orientation', 'Orientation').toLowerCase();
+      const kind: 'wall' | 'slab' = orient.includes('wall') ? 'wall'
+        : (orient.includes('floor') || orient.includes('slab')) ? 'slab'
+        : (isVerticalArea(points) ? 'wall' : 'slab');
+      const section = sectionByArea.get(un) ?? '';
+      if (section) this.sectionNamesUsed.add(section);
+      areas.push({ name: un, story, points, kind, section, groups: ctx.groupsByObject.get(un) ?? [] });
+    }
+    this.areasCache = areas;
+    this.openingsCache = openings;
+  }
+
+  /**
+   * Load grid lines ("Grid Definitions - Grid Lines"). X/Y ordinate lines are
+   * spanned across the model extent (from joint coords); a general grid line uses
+   * its explicit endpoints. Missing table → no grid layer.
+   */
+  private async loadGrids(): Promise<void> {
+    if (this.gridsCache) return;
+    const [rows, ctx] = await Promise.all([
+      this.fetchTable('Grid Definitions - Grid Lines').catch(() => [] as TableRow[]),
+      this.loadFrameContext(),
+    ]);
+    const lf = this.units.lengthToFt;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const c of ctx.coords.values()) {
+      minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
+      minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
+    }
+    if (!Number.isFinite(minX)) { minX = 0; maxX = 1; minY = 0; maxY = 1; }
+    const grids: EtabsGridGeom[] = [];
+    rows.forEach((row, i) => {
+      const label = str(row, 'GridID', 'GridLineID', 'ID', 'Name');
+      const dir = str(row, 'GridDir', 'Direction', 'AxisDir', 'LineType').toUpperCase();
+      const ord = num(row, 'Ordinate', 'Coordinate', 'GridOrdinate') * lf;
+      let p1: { x: number; y: number; z: number }, p2: { x: number; y: number; z: number };
+      if (dir.startsWith('X')) { p1 = { x: ord, y: minY, z: 0 }; p2 = { x: ord, y: maxY, z: 0 }; }
+      else if (dir.startsWith('Y')) { p1 = { x: minX, y: ord, z: 0 }; p2 = { x: maxX, y: ord, z: 0 }; }
+      else {
+        const x1 = num(row, 'X1', 'GridX1') * lf, y1 = num(row, 'Y1', 'GridY1') * lf;
+        const x2 = num(row, 'X2', 'GridX2') * lf, y2 = num(row, 'Y2', 'GridY2') * lf;
+        if (!(x1 || y1 || x2 || y2)) return;
+        p1 = { x: x1, y: y1, z: 0 }; p2 = { x: x2, y: y2, z: 0 };
+      }
+      grids.push({ id: `${label || 'G'}-${i}`, label: label || `G${i}`, p1, p2 });
+    });
+    this.gridsCache = grids;
+  }
+
+  async getAreas(filter: BeamFilter): Promise<EtabsAreaGeom[]> {
+    await this.loadAreas();
+    return this.areasCache!.filter(a => matchesFilter(a, filter));
+  }
+
+  async getOpenings(filter: BeamFilter): Promise<EtabsOpeningGeom[]> {
+    await this.loadAreas();
+    return this.openingsCache!.filter(o => !filter.stories?.length || filter.stories.includes(o.story));
+  }
+
+  async getGrids(): Promise<EtabsGridGeom[]> {
+    await this.loadGrids();
+    return this.gridsCache!;
   }
 
   async getFrameSections(): Promise<EtabsSectionInfo[]> {

@@ -356,8 +356,18 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       }
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
-      // Build modelMap from all beam + column geometry
-      const uniqueStories = [...new Set([...allBeams.map(b => b.story), ...allColumns.map(c => c.story)])].sort();
+      // Optional geometry layers (walls / grids / openings). Sources without an
+      // area/grid table simply omit the method; a source-side error degrades to an
+      // empty layer so the import never breaks.
+      const areas    = conn.getAreas    ? await conn.getAreas({}).catch(() => [])    : [];
+      const grids    = conn.getGrids    ? await conn.getGrids().catch(() => [])      : [];
+      const openings = conn.getOpenings ? await conn.getOpenings({}).catch(() => []) : [];
+
+      // Build modelMap from all beam + column geometry (+ area/grid/opening layers)
+      const uniqueStories = [...new Set([
+        ...allBeams.map(b => b.story), ...allColumns.map(c => c.story),
+        ...areas.map(a => a.story), ...openings.map(o => o.story),
+      ])].sort();
       const frames: MapFrame[] = [
         ...allBeams.map(b => ({
           frameName: b.name, story: b.story, sectionName: b.section, pt1: b.pt1, pt2: b.pt2,
@@ -374,6 +384,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
         importedAt: new Date().toISOString(),
         stories: uniqueStories,
         frames,
+        walls: areas.map(a => ({ id: a.name, story: a.story, points: a.points, kind: a.kind, sectionName: a.section || undefined })),
+        grids: grids.map(g => ({ id: g.id, label: g.label, p1: g.p1, p2: g.p2 })),
+        openings: openings.map(o => ({ id: o.name, story: o.story, points: o.points })),
       };
       setCapturedModelMap(modelMap);
 

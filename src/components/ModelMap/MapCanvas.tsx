@@ -84,6 +84,14 @@ interface Props {
   dcrThresholds?: [number, number, number];
   /** Persist a new set of cut-points from the editable legend. */
   onDcrThresholdsChange?: (t: [number, number, number]) => void;
+  /** Optional imported geometry layers (walls / grids / openings), drawn behind
+   *  the frames. Each is opt-in via the matching show* flag. */
+  walls?: { id: string; story: string; points: { x: number; y: number }[]; kind?: 'wall' | 'slab'; memberId?: string }[];
+  grids?: { id: string; label: string; p1: { x: number; y: number }; p2: { x: number; y: number }; story?: string }[];
+  openings?: { id: string; story: string; points: { x: number; y: number }[]; memberId?: string }[];
+  showWalls?: boolean;
+  showGrids?: boolean;
+  showOpenings?: boolean;
 }
 
 export default function MapCanvas({
@@ -98,6 +106,7 @@ export default function MapCanvas({
   showErrors = false, errorMemberIds = new Set(),
   focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
   dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange,
+  walls = [], grids = [], openings = [], showWalls = false, showGrids = false, showOpenings = false,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -112,9 +121,24 @@ export default function MapCanvas({
     !hiddenStories.has(f.story) &&
     !(f.memberId && hiddenMemberIds.has(f.memberId))
   );
+  // Layers reuse the same story/hidden predicate as frames; grid axes are model-
+  // global (story-agnostic).
+  const visibleWalls = walls.filter(w =>
+    (story === 'All' || w.story === story) && !hiddenStories.has(w.story) &&
+    !(w.memberId && hiddenMemberIds.has(w.memberId)));
+  const visibleOpenings = openings.filter(o =>
+    (story === 'All' || o.story === story) && !hiddenStories.has(o.story) &&
+    !(o.memberId && hiddenMemberIds.has(o.memberId)));
+  const visibleGrids = grids;
 
-  // Compute bounds
-  const pts = visibleFrames.flatMap(f => [f.pt1, f.pt2]);
+  // Compute bounds — include visible layer geometry so they register to the same
+  // plan and drive fit-to-view (frame-only bounds would clip walls/grids).
+  const pts = [
+    ...visibleFrames.flatMap(f => [f.pt1, f.pt2]),
+    ...(showWalls ? visibleWalls.flatMap(w => w.points) : []),
+    ...(showOpenings ? visibleOpenings.flatMap(o => o.points) : []),
+    ...(showGrids ? visibleGrids.flatMap(g => [g.p1, g.p2]) : []),
+  ];
   const xs = pts.map(p => p.x);
   const ys = pts.map(p => p.y);
   const minX = xs.length ? Math.min(...xs) : 0;
@@ -333,6 +357,32 @@ export default function MapCanvas({
     });
   })();
 
+  // Imported geometry layers (walls / grids / openings), built with tx()/ty() so
+  // they register to the same plan. pointerEvents:'none' + no data-framename keeps
+  // lasso / click / context-menu behaviour untouched.
+  const wallLayer = visibleWalls.map(w => (
+    <polygon key={w.id}
+      points={w.points.map(p => `${tx(p.x)},${ty(p.y)}`).join(' ')}
+      fill={w.kind === 'slab' ? 'url(#wallhatch)' : 'rgba(148,163,184,0.28)'}
+      stroke="#94a3b8" strokeWidth={1} style={{ pointerEvents: 'none' }} />
+  ));
+  const gridLayer = visibleGrids.flatMap(g => {
+    const a = { x: tx(g.p1.x), y: ty(g.p1.y) }, b = { x: tx(g.p2.x), y: ty(g.p2.y) };
+    return [
+      <line key={g.id + 'l'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+        stroke="#cbd5e1" strokeWidth={1} strokeDasharray="4 4" style={{ pointerEvents: 'none' }} />,
+      <g key={g.id + 'b'} style={{ pointerEvents: 'none' }}>
+        <circle cx={a.x} cy={a.y} r={8} fill="white" stroke="#cbd5e1" />
+        <text x={a.x} y={a.y + 3} textAnchor="middle" fontSize={9} fill="#64748b">{g.label}</text>
+      </g>,
+    ];
+  });
+  const openingLayer = visibleOpenings.map(o => (
+    <polygon key={o.id}
+      points={o.points.map(p => `${tx(p.x)},${ty(p.y)}`).join(' ')}
+      fill="none" stroke="#64748b" strokeWidth={1.5} strokeDasharray="6 4" style={{ pointerEvents: 'none' }} />
+  ));
+
   return (
     <div style={{ position: 'relative', userSelect: 'none' }}>
       <svg
@@ -357,8 +407,16 @@ export default function MapCanvas({
           <pattern id="mmgrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#eef2f7" strokeWidth="1" />
           </pattern>
+          <pattern id="wallhatch" width="6" height="6" patternUnits="userSpaceOnUse">
+            <path d="M0,6 l6,-6" stroke="#94a3b8" strokeWidth="1" />
+          </pattern>
         </defs>
         <rect width={width} height={height} fill="url(#mmgrid)" rx="10" />
+
+        {/* Imported geometry layers — behind every frame (walls → grids → openings) */}
+        {showWalls && <g style={{ pointerEvents: 'none' }}>{wallLayer}</g>}
+        {showGrids && <g style={{ pointerEvents: 'none' }}>{gridLayer}</g>}
+        {showOpenings && <g style={{ pointerEvents: 'none' }}>{openingLayer}</g>}
 
         {/* Diagram overlays (below beams) */}
         {diagramPolygons}

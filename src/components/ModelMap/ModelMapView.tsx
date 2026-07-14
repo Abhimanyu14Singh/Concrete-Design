@@ -148,6 +148,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
   const [hiddenGroupIds, setHiddenGroupIds] = useState<Set<string>>(new Set());
   const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set());
+  // Imported non-frame layers (walls/grids/openings) — default hidden (opt-in),
+  // matching MapCanvas's opt-in show* defaults.
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(() => new Set(['walls', 'grids', 'openings']));
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
@@ -589,6 +592,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const allStories = map ? map.stories : [];
   const frames = enrichedFrames;
 
+  // Imported geometry layers → plain {x,y} for the canvas (z unused in plan).
+  const mapWalls = useMemo(() => (project.modelMap?.walls ?? []).map(w =>
+    ({ id: w.id, story: w.story, kind: w.kind, memberId: w.memberId, points: w.points.map(p => ({ x: p.x, y: p.y })) })), [project.modelMap]);
+  const mapGrids = useMemo(() => (project.modelMap?.grids ?? []).map(g =>
+    ({ id: g.id, label: g.label, p1: { x: g.p1.x, y: g.p1.y }, p2: { x: g.p2.x, y: g.p2.y } })), [project.modelMap]);
+  const mapOpenings = useMemo(() => (project.modelMap?.openings ?? []).map(o =>
+    ({ id: o.id, story: o.story, points: o.points.map(p => ({ x: p.x, y: p.y })) })), [project.modelMap]);
+
   // ── Plan Filter → members hidden by the Filter menu (never deleted) ──────────
   const sectionNames = useMemo(
     () => [...new Set(frames.map(f => f.sectionName).filter((s): s is string => !!s))].sort(),
@@ -623,10 +634,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     [hiddenMemberIds, filterHiddenMemberIds],
   );
   const toggleIn = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; };
-  const TYPE_LABEL: Record<string, string> = { beam: 'Beams', column: 'Columns', wall: 'Walls' };
+  const TYPE_LABEL: Record<string, string> = { beam: 'Beams', column: 'Columns' };
+  // Imported layers appear in the "Show" section (only when present), keyed
+  // 'layer:*' so their toggles route to hiddenLayers, not member types.
+  const layerItems = [
+    ...(mapWalls.length ? [{ key: 'layer:walls', label: 'Walls' }] : []),
+    ...(mapGrids.length ? [{ key: 'layer:grids', label: 'Grids' }] : []),
+    ...(mapOpenings.length ? [{ key: 'layer:openings', label: 'Openings' }] : []),
+  ];
   const filterSections: FilterSection[] = [
-    { title: 'Show', items: presentTypes.map(t => ({ key: t, label: TYPE_LABEL[t] ?? t })), hidden: hiddenTypes,
-      onToggle: k => setHiddenTypes(s => toggleIn(s, k)), onAll: show => setHiddenTypes(show ? new Set() : new Set(presentTypes)) },
+    { title: 'Show',
+      items: [...presentTypes.map(t => ({ key: t, label: TYPE_LABEL[t] ?? t })), ...layerItems],
+      hidden: new Set([...hiddenTypes, ...[...hiddenLayers].map(l => 'layer:' + l)]),
+      onToggle: k => k.startsWith('layer:') ? setHiddenLayers(s => toggleIn(s, k.slice(6))) : setHiddenTypes(s => toggleIn(s, k)),
+      onAll: show => { setHiddenTypes(show ? new Set() : new Set(presentTypes)); setHiddenLayers(show ? new Set() : new Set(['walls', 'grids', 'openings'])); } },
     { title: 'Floors', items: allStories.map(s => ({ key: s, label: s })), hidden: hiddenStories,
       onToggle: toggleStoryVisibility, onAll: show => onProjectChange(prev => ({ ...prev, hiddenStories: show ? [] : [...allStories] })) },
     { title: 'Groups', items: groups.map((g, i) => ({ key: g.id, label: g.label, color: groupColor(g.color, i) })), hidden: hiddenGroupIds,
@@ -634,9 +655,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     { title: 'Sections', items: sectionNames.map(s => ({ key: s, label: s })), hidden: hiddenSections,
       onToggle: k => setHiddenSections(s => toggleIn(s, k)), onAll: show => setHiddenSections(show ? new Set() : new Set(sectionNames)) },
   ];
+  // Badge counts things hidden FROM the default (on-by-default) view. Layers are
+  // opt-in OFF, so they don't inflate the count.
   const filterHiddenCount = hiddenTypes.size + hiddenStories.size + hiddenGroupIds.size + hiddenSections.size;
   const clearAllFilters = () => {
     setHiddenTypes(new Set()); setHiddenGroupIds(new Set()); setHiddenSections(new Set());
+    setHiddenLayers(new Set(['walls', 'grids', 'openings']));
     onProjectChange(prev => ({ ...prev, hiddenStories: [] }));
   };
 
@@ -917,6 +941,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             dcrBands={dcrBands}
             dcrThresholds={dcrThresholds}
             onDcrThresholdsChange={setDcrThresholds}
+            walls={mapWalls}
+            grids={mapGrids}
+            openings={mapOpenings}
+            showWalls={mapWalls.length > 0 && !hiddenLayers.has('walls')}
+            showGrids={mapGrids.length > 0 && !hiddenLayers.has('grids')}
+            showOpenings={mapOpenings.length > 0 && !hiddenLayers.has('openings')}
           />
 
           {/* Beam inspect card */}

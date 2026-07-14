@@ -7,6 +7,7 @@ import type { ComboForces } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
   EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter, UnitInfo,
+  EtabsAreaGeom, EtabsGridGeom, EtabsOpeningGeom,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -80,6 +81,64 @@ function buildColumns(): EtabsColumnGeom[] {
 
 const COLUMNS = buildColumns();
 
+const GRID_LABELS_X = ['A', 'B', 'C', 'D'];
+const GRID_LABELS_Y = ['1', '2', '3'];
+
+/** Grid lines spanning the plan — one per column line, both directions. */
+function buildGrids(): EtabsGridGeom[] {
+  const grids: EtabsGridGeom[] = [];
+  GRID_X.forEach((x, i) => grids.push({
+    id: `GX${i}`, label: GRID_LABELS_X[i] ?? `X${i}`,
+    p1: { x, y: GRID_Y[0], z: 0 }, p2: { x, y: GRID_Y[GRID_Y.length - 1], z: 0 },
+  }));
+  GRID_Y.forEach((y, j) => grids.push({
+    id: `GY${j}`, label: GRID_LABELS_Y[j] ?? `Y${j}`,
+    p1: { x: GRID_X[0], y, z: 0 }, p2: { x: GRID_X[GRID_X.length - 1], y, z: 0 },
+  }));
+  return grids;
+}
+const GRIDS = buildGrids();
+
+/** Per-story floor slab + two perimeter shear walls (thin plan footprints). */
+function buildAreas(): EtabsAreaGeom[] {
+  const x0 = GRID_X[0], x1 = GRID_X[GRID_X.length - 1];
+  const y0 = GRID_Y[0], y1 = GRID_Y[GRID_Y.length - 1];
+  const areas: EtabsAreaGeom[] = [];
+  let n = 1;
+  for (const story of STORIES) {
+    const z = STORY_Z[story];
+    // Floor slab — full-footprint rectangle.
+    areas.push({
+      name: `F${n++}`, story, kind: 'slab', section: 'Slab8', groups: ['Slabs'],
+      points: [{ x: x0, y: y0, z }, { x: x1, y: y0, z }, { x: x1, y: y1, z }, { x: x0, y: y1, z }],
+    });
+    // Perimeter shear walls along grid lines A and D — thin plan footprints.
+    for (const gx of [x0, x1]) {
+      areas.push({
+        name: `W${n++}`, story, kind: 'wall', section: 'W300', groups: ['Walls'],
+        points: [{ x: gx - 0.5, y: y0, z }, { x: gx + 0.5, y: y0, z }, { x: gx + 0.5, y: y1, z }, { x: gx - 0.5, y: y1, z }],
+      });
+    }
+  }
+  return areas;
+}
+const AREAS = buildAreas();
+
+/** One rectangular opening (stair/shaft) cut into each floor slab. */
+function buildOpenings(): EtabsOpeningGeom[] {
+  const openings: EtabsOpeningGeom[] = [];
+  let n = 1;
+  for (const story of STORIES) {
+    const z = STORY_Z[story];
+    openings.push({
+      name: `O${n++}`, story,
+      points: [{ x: 24, y: 28, z }, { x: 36, y: 28, z }, { x: 36, y: 44, z }, { x: 24, y: 44, z }],
+    });
+  }
+  return openings;
+}
+const OPENINGS = buildOpenings();
+
 /**
  * Simply-supported-with-end-restraint force pattern: linear shear,
  * parabolic moment with hogging at the ends. Magnitude scales with span
@@ -148,6 +207,19 @@ export class MockConnection implements EtabsConnection {
 
   async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
     return COLUMNS.filter(c => matchesFilter(c, filter));
+  }
+
+  async getAreas(filter: BeamFilter): Promise<EtabsAreaGeom[]> {
+    return AREAS.filter(a => matchesFilter(a, filter));
+  }
+
+  async getGrids(): Promise<EtabsGridGeom[]> {
+    return [...GRIDS];
+  }
+
+  async getOpenings(filter: BeamFilter): Promise<EtabsOpeningGeom[]> {
+    // Openings carry only a story — scope by it (no section/group filter).
+    return OPENINGS.filter(o => !filter.stories?.length || filter.stories.includes(o.story));
   }
 
   async getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>> {

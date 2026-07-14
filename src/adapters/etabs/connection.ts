@@ -71,6 +71,31 @@ export interface EtabsColumnGeom {
   heightFt: number;
 }
 
+/** A wall/slab area object — a planar polygon of corner nodes. */
+export interface EtabsAreaGeom {
+  name: string;
+  story: string;
+  points: Point3D[];  // ordered corner ring (ft), ≥ 3
+  kind: 'wall' | 'slab';
+  section: string;    // area section property name ('' if none)
+  groups: string[];
+}
+
+/** A grid line — two endpoints spanning the plan, plus a label. */
+export interface EtabsGridGeom {
+  id: string;
+  label: string;
+  p1: Point3D;        // ft
+  p2: Point3D;        // ft
+}
+
+/** An opening (penetration) in a wall or slab — a planar polygon. */
+export interface EtabsOpeningGeom {
+  name: string;
+  story: string;
+  points: Point3D[];  // ordered corner ring (ft), ≥ 3
+}
+
 export interface BeamFilter {
   stories?: string[];   // empty/undefined = all
   sections?: string[];
@@ -111,6 +136,13 @@ export interface EtabsConnection {
   /** Columns in the model (optional — sources without a column table omit it).
    *  Used to show columns on the model map and, in future, design them. */
   getColumns?(filter: BeamFilter): Promise<EtabsColumnGeom[]>;
+  /** Wall/slab area objects (optional — sources without an area table omit it).
+   *  Shown as filterable map layers. */
+  getAreas?(filter: BeamFilter): Promise<EtabsAreaGeom[]>;
+  /** Grid lines (optional). Grid axes are model-global, so no filter arg. */
+  getGrids?(): Promise<EtabsGridGeom[]>;
+  /** Opening area objects (optional — penetrations in walls/slabs). */
+  getOpenings?(filter: BeamFilter): Promise<EtabsOpeningGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
   getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
   /** Column design forces per frame for the selected combos, enveloped per combo
