@@ -1272,7 +1272,8 @@ function CategoricalLegend({ title, rows, activeKey, onRowClick }: {
   const clickable = !!onRowClick;
   return (
     <div style={{
-      position: 'absolute', top: 8, right: 8, width: 210, maxHeight: '70%', overflowY: 'auto',
+      // Bottom-left so it never overlaps the beam summary card (top-right).
+      position: 'absolute', bottom: 8, left: 8, width: 210, maxHeight: '70%', overflowY: 'auto',
       background: 'white', borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
       boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
     }}>

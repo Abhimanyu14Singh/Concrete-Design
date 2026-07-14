@@ -109,6 +109,9 @@ export default function MapCanvas({
   walls = [], grids = [], openings = [], showWalls = false, showGrids = false, showOpenings = false,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
+  // Pinned member — the last single-clicked frame. Its summary card stays up
+  // (survives hover-out) until another beam is clicked or the plan is cleared.
+  const [pinned, setPinned] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
   const [lasso, setLasso] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -150,6 +153,14 @@ export default function MapCanvas({
   const scaleX = (width - 2 * pad) / Math.max(maxX - minX, 1);
   const scaleY = (height - 2 * pad) / Math.max(maxY - minY, 1);
   const scale = Math.min(scaleX, scaleY);
+
+  // Bounds of the structure alone (frames), used to park grid-line labels a clear
+  // distance OUTSIDE the members so the bubbles don't clutter the plan itself.
+  const fpts = visibleFrames.flatMap(f => [f.pt1, f.pt2]);
+  const fMinX = fpts.length ? Math.min(...fpts.map(p => p.x)) : minX;
+  const fMaxX = fpts.length ? Math.max(...fpts.map(p => p.x)) : maxX;
+  const fMinY = fpts.length ? Math.min(...fpts.map(p => p.y)) : minY;
+  const fMaxY = fpts.length ? Math.max(...fpts.map(p => p.y)) : maxY;
 
   useEffect(() => {
     setViewBox({ x: 0, y: 0, w: width, h: height });
@@ -266,8 +277,10 @@ export default function MapCanvas({
           }
         }
         onSelectionChange(e.shiftKey ? new Set([...selected, ...hit]) : hit);
+        setPinned(null); // a box-select isn't a single-beam pin
       } else if (!e.shiftKey && !e.ctrlKey && !e.metaKey && lassoBgOnly.current) {
         onSelectionChange(new Set());
+        setPinned(null); // clicking empty space dismisses the pinned card
       }
       setLasso(null);
     }
@@ -279,7 +292,7 @@ export default function MapCanvas({
       setLasso(l => (l ? null : l));
     };
     const onWinKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onSelectionChange(new Set());
+      if (e.key === 'Escape') { onSelectionChange(new Set()); setPinned(null); }
     };
     window.addEventListener('mouseup', onWinMouseUp);
     window.addEventListener('keydown', onWinKeyDown);
@@ -294,7 +307,18 @@ export default function MapCanvas({
   }
 
   const hovered = hover ? visibleFrames.find(f => f.frameName === hover) : null;
-  const hoveredInfo = hovered?.memberId ? infoById[hovered.memberId] : null;
+  // The summary card follows the hovered beam, and when nothing is hovered it
+  // falls back to the pinned (last-clicked) beam so the card stays put.
+  const pinnedFrame = pinned ? visibleFrames.find(f => f.frameName === pinned) : null;
+  const cardFrame = hovered ?? pinnedFrame;
+  const cardInfo = cardFrame?.memberId ? infoById[cardFrame.memberId] : null;
+  const cardPinned = !hovered && !!pinnedFrame; // showing the pinned card (not a hover)
+
+  // Group-tag labels are drawn in SVG user space, which magnifies with the zoom
+  // viewBox. Counter-scale them by the zoom factor so each number stays a roughly
+  // constant screen size: as you zoom in, members spread apart but the numbers do
+  // not grow, so the dense clusters stop overlapping. (viewBox.w === width at fit.)
+  const tagScale = viewBox.w / width;
 
   // ── V/M diagram overlay ────────────────────────────────────────────────────
   // For each visible linked frame with diagram data, render a filled polygon
@@ -366,14 +390,33 @@ export default function MapCanvas({
       fill={w.kind === 'slab' ? 'url(#wallhatch)' : 'rgba(148,163,184,0.28)'}
       stroke="#94a3b8" strokeWidth={1} style={{ pointerEvents: 'none' }} />
   ));
+  // Grid bubbles are parked well clear of the structure so their text never
+  // overlaps the members: vertical grid lines (constant X, spanning Y) get their
+  // label above the plan; horizontal grid lines (constant Y, spanning X) get it to
+  // the left. The dashed line is extended so the bubble still reads as its endpoint.
+  const GRID_LABEL_GAP = 30; // user-space px of clearance beyond the structure edge
   const gridLayer = visibleGrids.flatMap(g => {
-    const a = { x: tx(g.p1.x), y: ty(g.p1.y) }, b = { x: tx(g.p2.x), y: ty(g.p2.y) };
+    const dx = Math.abs(g.p2.x - g.p1.x), dy = Math.abs(g.p2.y - g.p1.y);
+    const vertical = dx <= dy;
+    let bubble: { x: number; y: number };
+    let line: { x1: number; y1: number; x2: number; y2: number };
+    if (vertical) {
+      const cx = tx((g.p1.x + g.p2.x) / 2);
+      const topY = ty(fMaxY) - GRID_LABEL_GAP;      // above the top of the structure
+      bubble = { x: cx, y: topY };
+      line = { x1: cx, y1: ty(fMinY), x2: cx, y2: topY };
+    } else {
+      const cy = ty((g.p1.y + g.p2.y) / 2);
+      const leftX = tx(fMinX) - GRID_LABEL_GAP;     // left of the structure
+      bubble = { x: leftX, y: cy };
+      line = { x1: leftX, y1: cy, x2: tx(fMaxX), y2: cy };
+    }
     return [
-      <line key={g.id + 'l'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+      <line key={g.id + 'l'} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
         stroke="#cbd5e1" strokeWidth={1} strokeDasharray="4 4" style={{ pointerEvents: 'none' }} />,
       <g key={g.id + 'b'} style={{ pointerEvents: 'none' }}>
-        <circle cx={a.x} cy={a.y} r={8} fill="white" stroke="#cbd5e1" />
-        <text x={a.x} y={a.y + 3} textAnchor="middle" fontSize={9} fill="#64748b">{g.label}</text>
+        <circle cx={bubble.x} cy={bubble.y} r={8} fill="white" stroke="#cbd5e1" />
+        <text x={bubble.x} y={bubble.y + 3} textAnchor="middle" fontSize={9} fill="#64748b">{g.label}</text>
       </g>,
     ];
   });
@@ -459,6 +502,7 @@ export default function MapCanvas({
                 } else {
                   onSelectionChange(new Set([f.frameName]));
                 }
+                setPinned(f.frameName); // keep this beam's summary card up
               }}
               onDoubleClick={() => f.memberId && onDoubleClick?.(f.memberId)}
             >
@@ -483,16 +527,20 @@ export default function MapCanvas({
                     strokeDasharray={linked ? undefined : '6 4'}
                     opacity={baseOpacity}
                   />
-                  {colorMode === 'groupTags' && f.memberId && groupIndexMap.has(f.memberId) && (
-                    <>
-                      <rect x={(x1 + x2) / 2 - 7} y={(y1 + y2) / 2 - 7} width={14} height={14} rx={2.5}
-                        fill="white" stroke={BORDER.default} opacity={dimmed ? 0.3 : 0.95} style={{ pointerEvents: 'none' }} />
-                      <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 3.5} fontSize={10} fontWeight={800}
-                        textAnchor="middle" fill={INK.strong} opacity={dimmed ? 0.3 : 1} style={{ pointerEvents: 'none' }}>
-                        {(groupIndexMap.get(f.memberId) ?? 0) + 1}
-                      </text>
-                    </>
-                  )}
+                  {colorMode === 'groupTags' && f.memberId && groupIndexMap.has(f.memberId) && (() => {
+                    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+                    const half = 7 * tagScale;
+                    return (
+                      <>
+                        <rect x={cx - half} y={cy - half} width={half * 2} height={half * 2} rx={2.5 * tagScale}
+                          fill="white" stroke={BORDER.default} strokeWidth={tagScale} opacity={dimmed ? 0.3 : 0.95} style={{ pointerEvents: 'none' }} />
+                        <text x={cx} y={cy + 3.5 * tagScale} fontSize={10 * tagScale} fontWeight={800}
+                          textAnchor="middle" fill={INK.strong} opacity={dimmed ? 0.3 : 1} style={{ pointerEvents: 'none' }}>
+                          {(groupIndexMap.get(f.memberId) ?? 0) + 1}
+                        </text>
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </g>
@@ -517,20 +565,25 @@ export default function MapCanvas({
         <button onClick={fitView} style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: INK.base }} title="Fit to view">⊡ Fit</button>
       </div>
 
-      {/* Hover tooltip — suppressed for the beam currently shown in the rich card. */}
-      {hovered && !(inspectMode && hovered.memberId === inspectedMemberId) && (
+      {/* Summary card — follows the hovered beam, and stays pinned to the last
+          clicked beam once nothing is hovered. Suppressed for the beam already
+          shown in the rich inspect card. */}
+      {cardFrame && !(inspectMode && cardFrame.memberId === inspectedMemberId) && (
         <div style={{
           position: 'absolute', top: 8, right: 8, background: 'white',
-          border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
+          border: `1px solid ${cardPinned ? ACCENT.primary : BORDER.default}`, borderRadius: 8, padding: '8px 12px',
           fontSize: 11, color: INK.base, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
           pointerEvents: 'none', maxWidth: 280,
         }}>
-          <div style={{ fontWeight: 700, color: INK.strong, marginBottom: 3 }}>{hovered.frameName}</div>
-          <div style={{ color: INK.secondary, marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+            {cardPinned && <span title="Pinned" style={{ fontSize: 10 }}>📌</span>}
+            <span style={{ fontWeight: 700, color: INK.strong }}>{cardFrame.frameName}</span>
+          </div>
+          <div style={{ color: INK.secondary, marginBottom: 4 }}>{cardFrame.story} · {cardFrame.sectionName}</div>
           {(() => {
             // Feature ⑤: show which design group this beam belongs to.
-            const g = hovered.memberId ? designGroups.find(gr => gr.memberIds.includes(hovered.memberId!)) : undefined;
-            const col = hovered.memberId ? groupColorMap.get(hovered.memberId) : undefined;
+            const g = cardFrame.memberId ? designGroups.find(gr => gr.memberIds.includes(cardFrame.memberId!)) : undefined;
+            const col = cardFrame.memberId ? groupColorMap.get(cardFrame.memberId) : undefined;
             return (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: col ?? MAP_GRAY.unassigned }} />
@@ -538,21 +591,21 @@ export default function MapCanvas({
               </div>
             );
           })()}
-          {hoveredInfo ? (
-            hoveredInfo.error ? (
-              <div style={{ color: STATUS.fail, fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>
+          {cardInfo ? (
+            cardInfo.error ? (
+              <div style={{ color: STATUS.fail, fontSize: 10 }}>DCR unavailable: {cardInfo.error}</div>
             ) : (
               <>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
-                  <span>Flex <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(3)}</span></span>
-                  <span>Shear <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(3)}</span></span>
+                  <span>Flex <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(cardInfo.dcrFlex) }}>{cardInfo.dcrFlex.toFixed(3)}</span></span>
+                  <span>Shear <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(cardInfo.dcrShear) }}>{cardInfo.dcrShear.toFixed(3)}</span></span>
                 </div>
                 <div style={{ fontSize: 10, color: INK.secondary, lineHeight: 1.6 }}>
-                  <div>Top: <span style={{ color: INK.strong }}>{hoveredInfo.top}</span></div>
-                  <div>Bot: <span style={{ color: INK.strong }}>{hoveredInfo.bot}</span></div>
-                  <div>Stirrups: <span style={{ color: INK.strong }}>{hoveredInfo.stirrups}</span></div>
-                  {hoveredInfo.weight && (
-                    <div>Steel: <span style={{ color: INK.strong, ...MONO_NUM }}>{hoveredInfo.weight}</span></div>
+                  <div>Top: <span style={{ color: INK.strong }}>{cardInfo.top}</span></div>
+                  <div>Bot: <span style={{ color: INK.strong }}>{cardInfo.bot}</span></div>
+                  <div>Stirrups: <span style={{ color: INK.strong }}>{cardInfo.stirrups}</span></div>
+                  {cardInfo.weight && (
+                    <div>Steel: <span style={{ color: INK.strong, ...MONO_NUM }}>{cardInfo.weight}</span></div>
                   )}
                 </div>
               </>
@@ -560,8 +613,8 @@ export default function MapCanvas({
           ) : (
             <div style={{ color: INK.muted }}>No results — run design first</div>
           )}
-          {hoveredInfo?.warnings && hoveredInfo.warnings.length > 0 && (() => {
-            const sorted = [...hoveredInfo.warnings].sort((a, b) =>
+          {cardInfo?.warnings && cardInfo.warnings.length > 0 && (() => {
+            const sorted = [...cardInfo.warnings].sort((a, b) =>
               (a.severity === 'error' ? 0 : 1) - (b.severity === 'error' ? 0 : 1));
             const shown = sorted.slice(0, 3);
             const extra = sorted.length - shown.length;
@@ -580,13 +633,15 @@ export default function MapCanvas({
               </div>
             );
           })()}
-          {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
+          {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && cardFrame?.memberId && metricById[cardFrame.memberId] !== undefined && (
             <div style={{ marginTop: 4, fontSize: 10 }}>
               <span style={{ color: INK.base }}>{metricLabel ?? 'Metric'}: </span>
-              <span style={{ ...MONO_NUM, fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
+              <span style={{ ...MONO_NUM, fontWeight: 700 }}>{metricById[cardFrame.memberId].toFixed(3)}</span>
             </div>
           )}
-          <div style={{ color: INK.muted, marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
+          <div style={{ color: INK.muted, marginTop: 4, fontSize: 10 }}>
+            {cardPinned ? 'pinned · dbl=open · click empty space to dismiss' : 'click=select · dbl=open · shift+click=add'}
+          </div>
         </div>
       )}
 
