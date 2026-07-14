@@ -30,6 +30,7 @@ import { buildDashboardPayload } from '../../utils/dashboardPayload';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
 import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE, dcrBandsFrom, DEFAULT_DCR_THRESHOLDS } from '../../theme';
+import MapFilterMenu, { type FilterSection } from './MapFilterMenu';
 
 type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff';
 type FlexFace = 'top' | 'bot';
@@ -142,6 +143,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   });
   useEffect(() => { localStorage.setItem('mapDcrThresholds', JSON.stringify(dcrThresholds)); }, [dcrThresholds]);
   const dcrBands = useMemo(() => dcrBandsFrom(dcrThresholds), [dcrThresholds]);
+  // Plan filter facets (member type, design group, section). Floors reuse the
+  // project's hiddenStories. These hide members from the canvas without deleting.
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
+  const [hiddenGroupIds, setHiddenGroupIds] = useState<Set<string>>(new Set());
+  const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set());
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
@@ -581,8 +587,58 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // while open, the plan narrows and the 320px right panel + slide-out editor hide.
   const splitPaneOpen = (dashboardOpen && !dashboardPoppedOut) || sconcreteOpen;
   const allStories = map ? map.stories : [];
-  const storyDropdownOptions = map ? ['All', ...map.stories] : ['All'];
   const frames = enrichedFrames;
+
+  // ── Plan Filter → members hidden by the Filter menu (never deleted) ──────────
+  const sectionNames = useMemo(
+    () => [...new Set(frames.map(f => f.sectionName).filter((s): s is string => !!s))].sort(),
+    [frames],
+  );
+  const presentTypes = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of members) s.add(m.memberType);
+    return [...s].sort();
+  }, [members]);
+  const memberToGroupId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) for (const id of g.memberIds) m.set(id, g.id);
+    return m;
+  }, [groups]);
+  const filterHiddenMemberIds = useMemo(() => {
+    const hidden = new Set<string>();
+    if (hiddenTypes.size || hiddenGroupIds.size) {
+      for (const m of members) {
+        if (hiddenTypes.has(m.memberType)) { hidden.add(m.id); continue; }
+        const gid = memberToGroupId.get(m.id);
+        if (gid && hiddenGroupIds.has(gid)) hidden.add(m.id);
+      }
+    }
+    if (hiddenSections.size) {
+      for (const f of frames) if (f.memberId && f.sectionName && hiddenSections.has(f.sectionName)) hidden.add(f.memberId);
+    }
+    return hidden;
+  }, [members, frames, hiddenTypes, hiddenGroupIds, hiddenSections, memberToGroupId]);
+  const mapHiddenMemberIds = useMemo(
+    () => filterHiddenMemberIds.size ? new Set([...hiddenMemberIds, ...filterHiddenMemberIds]) : hiddenMemberIds,
+    [hiddenMemberIds, filterHiddenMemberIds],
+  );
+  const toggleIn = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; };
+  const TYPE_LABEL: Record<string, string> = { beam: 'Beams', column: 'Columns', wall: 'Walls' };
+  const filterSections: FilterSection[] = [
+    { title: 'Show', items: presentTypes.map(t => ({ key: t, label: TYPE_LABEL[t] ?? t })), hidden: hiddenTypes,
+      onToggle: k => setHiddenTypes(s => toggleIn(s, k)), onAll: show => setHiddenTypes(show ? new Set() : new Set(presentTypes)) },
+    { title: 'Floors', items: allStories.map(s => ({ key: s, label: s })), hidden: hiddenStories,
+      onToggle: toggleStoryVisibility, onAll: show => onProjectChange(prev => ({ ...prev, hiddenStories: show ? [] : [...allStories] })) },
+    { title: 'Groups', items: groups.map((g, i) => ({ key: g.id, label: g.label, color: groupColor(g.color, i) })), hidden: hiddenGroupIds,
+      onToggle: k => setHiddenGroupIds(s => toggleIn(s, k)), onAll: show => setHiddenGroupIds(show ? new Set() : new Set(groups.map(g => g.id))) },
+    { title: 'Sections', items: sectionNames.map(s => ({ key: s, label: s })), hidden: hiddenSections,
+      onToggle: k => setHiddenSections(s => toggleIn(s, k)), onAll: show => setHiddenSections(show ? new Set() : new Set(sectionNames)) },
+  ];
+  const filterHiddenCount = hiddenTypes.size + hiddenStories.size + hiddenGroupIds.size + hiddenSections.size;
+  const clearAllFilters = () => {
+    setHiddenTypes(new Set()); setHiddenGroupIds(new Set()); setHiddenSections(new Set());
+    onProjectChange(prev => ({ ...prev, hiddenStories: [] }));
+  };
 
   function handleFrameClick(frameName: string): boolean {
     if (!activeGroupId) return false;
@@ -726,13 +782,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         : { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
-          {/* Story filter */}
-          <Dropdown
-            value={story}
-            options={storyDropdownOptions.map(s => ({ value: s, label: s }))}
-            onChange={setStory}
-            style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, background: 'white' }}
-          />
+          {/* Plan filter — member type / floors / groups / sections
+              (replaces the old story dropdown + "Floors:" chip row) */}
+          <MapFilterMenu sections={filterSections} hiddenCount={filterHiddenCount} onClearAll={clearAllFilters} />
 
           <div style={toolSep} />
 
@@ -810,28 +862,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           </button>
         </div>
 
-        {/* Story visibility chips */}
-        {allStories.length > 1 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flexShrink: 0, alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: INK.muted, marginRight: 2 }}>Floors:</span>
-            {allStories.map(s => {
-              const hidden = hiddenStories.has(s);
-              return (
-                <button key={s} onClick={() => toggleStoryVisibility(s)}
-                  style={{ padding: '2px 8px', borderRadius: 12, border: `1px solid ${BORDER.strong}`, fontSize: 10, cursor: 'pointer', background: hidden ? '#f3f4f6' : ACCENT.softBg, color: hidden ? INK.muted : ACCENT.primary, fontWeight: hidden ? 400 : 600, textDecoration: hidden ? 'line-through' : 'none' }}>
-                  {s}
-                </button>
-              );
-            })}
-            {hiddenStories.size > 0 && (
-              <button onClick={() => onProjectChange(prev => ({ ...prev, hiddenStories: [] }))}
-                style={{ padding: '2px 6px', borderRadius: 12, border: '1px solid #fca5a5', fontSize: 10, cursor: 'pointer', background: '#fee2e2', color: STATUS.fail }}>
-                Show all
-              </button>
-            )}
-          </div>
-        )}
-
         {/* Group-edit mode banner */}
         {activeGroup && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, flexShrink: 0 }}>
@@ -853,7 +883,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             dcrById={dcrById}
             infoById={infoById}
             designGroups={groups}
-            story={story}
+            story="All"
             colorMode={colorMode}
             selected={new Set([...selectedFrames, ...highlightedFrames, ...(dashHoverFrame ? [dashHoverFrame] : [])])}
             onSelectionChange={setSelectedFrames}
@@ -874,7 +904,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             metricLabel={metricLabel}
             scoStatusById={scoStatusById}
             autoGroupOverlay={autoGroupOverlay}
-            hiddenMemberIds={hiddenMemberIds}
+            hiddenMemberIds={mapHiddenMemberIds}
             hiddenStories={hiddenStories}
             inspectMode={inspectMode}
             inspectedMemberId={inspectedMemberId}
