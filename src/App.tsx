@@ -49,6 +49,10 @@ export default function App() {
   const sidebarDragging = useRef(false);
   const sidebarDragStartX = useRef(0);
   const sidebarDragStartW = useRef(220);
+  // The Map tab has its own right-hand group panel, so the left member list is
+  // redundant there and eats canvas width — auto-collapse it on Map, keep it open
+  // on the member/dashboard tabs. The manual ◀/▶ toggle still works within a tab.
+  useEffect(() => { setSidebarOpen(tab !== 'map'); }, [tab]);
   const [zoom, setZoom] = useState<number>(() => {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;

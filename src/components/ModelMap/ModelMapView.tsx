@@ -29,7 +29,7 @@ import SconcreteDashboard from '../Dashboard/SconcreteDashboard';
 import { buildDashboardPayload } from '../../utils/dashboardPayload';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
-import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
+import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE, dcrBandsFrom, DEFAULT_DCR_THRESHOLDS } from '../../theme';
 
 type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff';
 type FlexFace = 'top' | 'bot';
@@ -130,6 +130,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // null = auto (data min/max). Lets the user refine the legend to highlight a band.
   const [metricOverride, setMetricOverride] = useState<{ min: number; max: number } | null>(null);
   const [showMetricHistogram, setShowMetricHistogram] = useState(true);
+  // User-editable DCR colour scale (the 3 band cut-points), persisted. Drives both
+  // the plan fills and the legend so they can never drift apart.
+  const [dcrThresholds, setDcrThresholds] = useState<[number, number, number]>(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('mapDcrThresholds') ?? '');
+      if (Array.isArray(s) && s.length === 3 && s.every((n: unknown) => typeof n === 'number' && Number.isFinite(n)))
+        return s as [number, number, number];
+    } catch { /* fall through to default */ }
+    return [...DEFAULT_DCR_THRESHOLDS] as [number, number, number];
+  });
+  useEffect(() => { localStorage.setItem('mapDcrThresholds', JSON.stringify(dcrThresholds)); }, [dcrThresholds]);
+  const dcrBands = useMemo(() => dcrBandsFrom(dcrThresholds), [dcrThresholds]);
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
@@ -791,9 +803,6 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           </button>
 
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 11, color: INK.muted }}>
-            {map.modelName} · {frames.length} frames
-          </span>
           <button onClick={onOpenEtabsImport}
             title="Re-import / re-sync from ETABS"
             style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: INK.base, fontWeight: 600 }}>
@@ -875,6 +884,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             lineWeightScale={lineWeightScale}
             widthById={widthById}
             gradeColorMap={gradeColorMap}
+            dcrBands={dcrBands}
+            dcrThresholds={dcrThresholds}
+            onDcrThresholdsChange={setDcrThresholds}
           />
 
           {/* Beam inspect card */}

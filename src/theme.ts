@@ -92,14 +92,28 @@ export const STATUS_DARK = {
 } as const;
 
 // ── Map + dataviz ─────────────────────────────────────────────────────────────
-/** Map DCR bands. The lime 0.70–0.90 "headroom" band is a map-only refinement;
- *  tables and chips stay three-tone via dcrColor(). */
-export const MAP_DCR_BANDS = [
-  { max: 0.7, color: STATUS.ok, label: '< 0.70' },
-  { max: 0.9, color: '#84cc16', label: '0.70–0.90' },
-  { max: 1.0, color: STATUS.warn, label: '0.90–1.00' },
-  { max: Infinity, color: STATUS.fail, label: '≥ 1.00' },
-] as const;
+export interface DcrBand { max: number; color: string; label: string }
+
+/** The four map DCR colors, in order (green → lime → amber → red). The lime
+ *  "headroom" band is a map-only refinement; tables and chips stay three-tone
+ *  via dcrColor(). */
+export const MAP_DCR_COLORS = [STATUS.ok, '#84cc16', STATUS.warn, STATUS.fail] as const;
+
+/** Build the four DCR bands from three ascending cut-points [t1, t2, t3]. The
+ *  Map legend is user-editable, so the fills and legend both derive from this. */
+export function dcrBandsFrom(t: readonly [number, number, number]): DcrBand[] {
+  const f = (v: number) => v.toFixed(2);
+  return [
+    { max: t[0], color: MAP_DCR_COLORS[0], label: `< ${f(t[0])}` },
+    { max: t[1], color: MAP_DCR_COLORS[1], label: `${f(t[0])}–${f(t[1])}` },
+    { max: t[2], color: MAP_DCR_COLORS[2], label: `${f(t[1])}–${f(t[2])}` },
+    { max: Infinity, color: MAP_DCR_COLORS[3], label: `≥ ${f(t[2])}` },
+  ];
+}
+
+/** Default DCR cut-points and the bands built from them (the app-wide default). */
+export const DEFAULT_DCR_THRESHOLDS: [number, number, number] = [0.7, 0.9, 1.0];
+export const MAP_DCR_BANDS: DcrBand[] = dcrBandsFrom(DEFAULT_DCR_THRESHOLDS);
 
 export const MAP_GRAY = {
   unlinked: '#d1d5db',   // frame with no designed member

@@ -1,11 +1,12 @@
-import { MAP_DCR_BANDS, MAP_GRAY } from '../../theme';
+import { MAP_DCR_BANDS, MAP_GRAY, type DcrBand } from '../../theme';
 
-/** Plan-map DCR color scale — the shared MAP_DCR_BANDS, so every legend and
- *  fill uses the same status hues. */
-export function dcrToColor(dcr: number): string {
+/** Plan-map DCR color scale — every legend and fill uses the same status hues.
+ *  Pass custom `bands` (from the Map's editable scale) to recolor; defaults to the
+ *  shared MAP_DCR_BANDS. */
+export function dcrToColor(dcr: number, bands: readonly DcrBand[] = MAP_DCR_BANDS): string {
   if (!Number.isFinite(dcr)) return MAP_GRAY.unassigned;
-  for (const band of MAP_DCR_BANDS) {
+  for (const band of bands) {
     if (dcr < band.max) return band.color;
   }
-  return MAP_DCR_BANDS[MAP_DCR_BANDS.length - 1].color;
+  return bands[bands.length - 1].color;
 }

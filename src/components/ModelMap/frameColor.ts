@@ -7,7 +7,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { valueToRampColor } from './colorRamp';
 import { groupColor } from './groupColors';
-import { MAP_GRAY, STATUS } from '../../theme';
+import { MAP_GRAY, STATUS, type DcrBand } from '../../theme';
 
 export type ColorMode =
   | 'dcr' | 'group' | 'groupTags' | 'section' | 'flexSteel' | 'stirrups' | 'weight'
@@ -65,11 +65,13 @@ export interface FrameColorContext {
   gradeColorMap?: Map<string, string>;
   /** Persisted S-Concrete pass/fail per member (for the 'sconcrete' mode). */
   scoStatusById?: Record<string, 'OK' | 'NG'>;
+  /** The Map's (possibly user-edited) DCR bands. Defaults to MAP_DCR_BANDS. */
+  dcrBands?: readonly DcrBand[];
 }
 
 /** Color a frame for the current mode. Mirrors the original MapCanvas logic 1:1. */
 export function frameColorFor(f: Pick<MapFrame, 'memberId' | 'sectionName'>, ctx: FrameColorContext): string {
-  const { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById } = ctx;
+  const { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, dcrBands } = ctx;
   if (colorMode === 'sconcrete') {
     if (f.memberId) {
       const s = scoStatusById?.[f.memberId];
@@ -109,7 +111,7 @@ export function frameColorFor(f: Pick<MapFrame, 'memberId' | 'sectionName'>, ctx
   }
   if (f.memberId) {
     const dcr = dcrById[f.memberId] ?? 0;
-    return dcrToColor(dcr);
+    return dcrToColor(dcr, dcrBands);
   }
   return UNLINKED;
 }

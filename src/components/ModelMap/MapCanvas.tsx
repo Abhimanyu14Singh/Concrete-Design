@@ -8,7 +8,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
-import { BORDER, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK } from '../../theme';
+import { ACCENT, BORDER, DEFAULT_DCR_THRESHOLDS, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK, type DcrBand } from '../../theme';
 
 export type { ColorMode };
 export type DiagramMode = 'off' | 'moment' | 'shear';
@@ -78,6 +78,12 @@ interface Props {
   widthById?: Record<string, number>;
   /** memberId → categorical color for the 'concGrade' / 'steelGrade' modes. */
   gradeColorMap?: Map<string, string>;
+  /** The (user-edited) DCR colour bands driving fills + legend. Defaults to MAP_DCR_BANDS. */
+  dcrBands?: readonly DcrBand[];
+  /** The 3 editable DCR cut-points behind `dcrBands` (for the legend's slider). */
+  dcrThresholds?: [number, number, number];
+  /** Persist a new set of cut-points from the editable legend. */
+  onDcrThresholdsChange?: (t: [number, number, number]) => void;
 }
 
 export default function MapCanvas({
@@ -91,6 +97,7 @@ export default function MapCanvas({
   inspectMode = false, inspectedMemberId = null,
   showErrors = false, errorMemberIds = new Set(),
   focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
+  dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -132,7 +139,7 @@ export default function MapCanvas({
   const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
   const groupIndexMap = buildGroupIndexMap(designGroups);
   const frameColor = (f: MapFrame): string =>
-    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById });
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, dcrBands });
 
   // Proportional line weight (feature ④): scale a beam's stroke by its width. At
   // lineWeightScale 0 this collapses to the constant 3px (today's look); higher
@@ -533,17 +540,10 @@ export default function MapCanvas({
         </div>
       )}
 
-      {/* DCR legend when in DCR mode — rendered from the shared bands so the
-          legend can never drift from the fill colors */}
+      {/* DCR legend when in DCR mode — rendered from the (editable) bands so the
+          legend can never drift from the fill colors. Click ✎ to reband. */}
       {colorMode === 'dcr' && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
-          {[...MAP_DCR_BANDS.map((b) => [b.label, b.color] as const), ['Unlinked', MAP_GRAY.unlinked] as const].map(([l, c]) => (
-            <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
-              {l}
-            </span>
-          ))}
-        </div>
+        <DcrScaleLegend bands={dcrBands} thresholds={dcrThresholds} onChange={onDcrThresholdsChange} />
       )}
 
       {/* S-Concrete pass/fail legend */}
@@ -588,6 +588,57 @@ export default function MapCanvas({
       {diagramMode !== 'off' && (
         <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: diagramMode === 'moment' ? '#7c3aed' : '#0891b2' }}>
           {diagramMode === 'moment' ? '▮ Moment envelope (max |M|)' : '▮ Shear envelope (max |V|)'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** DCR-scale legend for the plan. Read-only chips by default; when the Map passes
+ *  editable thresholds + an onChange it also offers a ✎ slider panel to move the
+ *  green/lime/amber/red cut-points, recolouring the whole plan live. */
+function DcrScaleLegend({ bands, thresholds, onChange }: {
+  bands: readonly DcrBand[];
+  thresholds?: [number, number, number];
+  onChange?: (t: [number, number, number]) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const editable = !!thresholds && !!onChange;
+  const setT = (i: number, v: number) => {
+    if (!thresholds || !onChange) return;
+    const lo = i === 0 ? 0.1 : thresholds[i - 1] + 0.05;
+    const hi = i === 2 ? 3 : thresholds[i + 1] - 0.05;
+    const t = [...thresholds] as [number, number, number];
+    t[i] = Math.min(hi, Math.max(lo, Math.round(v * 20) / 20));
+    onChange(t);
+  };
+  return (
+    <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        {[...bands.map(b => [b.label, b.color] as const), ['Unlinked', MAP_GRAY.unlinked] as const].map(([l, c]) => (
+          <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
+            {l}
+          </span>
+        ))}
+        {editable && (
+          <button onClick={() => setEditing(e => !e)} title="Edit the DCR colour scale"
+            style={{ border: 'none', background: 'none', cursor: 'pointer', color: editing ? ACCENT.primary : INK.muted, fontSize: 12, lineHeight: 1, padding: 0, marginLeft: 2 }}>✎</button>
+        )}
+      </div>
+      {editable && editing && thresholds && (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
+          {([0, 1, 2] as const).map(i => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ display: 'inline-block', width: 12, height: 3, background: bands[i].color, borderRadius: 2, flexShrink: 0 }} />
+              <input type="range" min={0.1} max={2} step={0.05} value={thresholds[i]}
+                onChange={e => setT(i, parseFloat(e.target.value))}
+                style={{ flex: 1, cursor: 'pointer', accentColor: bands[i].color }} />
+              <span style={{ ...MONO_NUM, width: 32, textAlign: 'right' }}>{thresholds[i].toFixed(2)}</span>
+            </div>
+          ))}
+          <button onClick={() => onChange!([...DEFAULT_DCR_THRESHOLDS] as [number, number, number])}
+            style={{ alignSelf: 'flex-start', marginTop: 2, fontSize: 9, color: INK.muted, background: 'none', border: `1px solid ${BORDER.default}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>Reset</button>
         </div>
       )}
     </div>
