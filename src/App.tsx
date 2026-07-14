@@ -43,16 +43,11 @@ export default function App() {
   // ── Core state ────────────────────────────────────────────────────────────
   const [project, setProjectRaw] = useState<Project>(defaultProject);
   const [activeMemberId, setActiveMemberId] = useState<string>(project.members[0].id);
-  const [tab, setTab] = useState<Tab>('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarW, setSidebarW] = useState(220);
-  const sidebarDragging = useRef(false);
-  const sidebarDragStartX = useRef(0);
-  const sidebarDragStartW = useRef(220);
-  // The Map tab has its own right-hand group panel, so the left member list is
-  // redundant there and eats canvas width — auto-collapse it on Map, keep it open
-  // on the member/dashboard tabs. The manual ◀/▶ toggle still works within a tab.
-  useEffect(() => { setSidebarOpen(tab !== 'map'); }, [tab]);
+  const [tab, setTab] = useState<Tab>('map');
+  // The member list is a pull-down overlay (a "Members" button in the header) rather
+  // than a docked column, so no view loses canvas width to it. Closed by default;
+  // opened on demand and dismissed by clicking outside.
+  const [membersOpen, setMembersOpen] = useState(false);
   const [zoom, setZoom] = useState<number>(() => {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
@@ -230,16 +225,17 @@ export default function App() {
 
   // ── Click outside to close popovers ───────────────────────────────────────
   useEffect(() => {
-    if (!showPrefs && !showExport) return;
+    if (!showPrefs && !showExport && !membersOpen) return;
     function close(e: MouseEvent) {
       if (!(e.target as Element).closest('[data-popover]')) {
         setShowPrefs(false);
         setShowExport(false);
+        setMembersOpen(false);
       }
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
-  }, [showPrefs, showExport]);
+  }, [showPrefs, showExport, membersOpen]);
 
   // ── A1: Split-pane drag ───────────────────────────────────────────────────
   function onSplitMouseDown(e: React.MouseEvent) {
@@ -501,33 +497,22 @@ export default function App() {
       {showReport && (
         <ReportModal project={project} onClose={() => setShowReport(false)} />
       )}
-      {/* Sidebar */}
-      <aside id="app-sidebar" style={{ width: sidebarOpen ? sidebarW : 48, flexShrink: 0, background: 'white', borderRight: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: `1px solid ${BORDER.default}` }}>
-          <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
-            SD
+      {/* Members pull-down overlay — opened from the header "Members" button; a
+          floating panel (not a docked column) so no view loses canvas width. */}
+      {membersOpen && (
+        <aside id="app-sidebar" data-popover="" style={{ position: 'fixed', top: 52, left: 12, bottom: 12, width: 288, zIndex: 300, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, boxShadow: '0 16px 40px rgba(15,23,42,0.20)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Heading */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: `1px solid ${BORDER.default}` }}>
+          <span style={{ fontWeight: 700, fontSize: 13, color: INK.strong }}>Members</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
+            <button onClick={() => setMembersOpen(false)} style={{ color: INK.muted, fontSize: 15, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Close">✕</button>
           </div>
-          {sidebarOpen && (
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong }}>S-Dashboard</div>
-              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
-            </div>
-          )}
-          <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: INK.muted, fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
-            {sidebarOpen ? '◀' : '▶'}
-          </button>
         </div>
 
         {/* Members list — grouped sections */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {sidebarOpen && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 6px' }}>
-              <span style={LABEL_STYLE}>Members</span>
-              <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
-            </div>
-          )}
-          {sidebarOpen ? buildSidebarSections().map(section => {
+          {buildSidebarSections().map(section => {
             const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
             const ngCount = section.members.filter(m => badgeById[m.id] === 'NG').length;
             const warnCount = section.members.filter(m => badgeById[m.id] === 'warn').length;
@@ -614,60 +599,52 @@ export default function App() {
                 ))}
               </div>
             );
-          }) : (
-            // Collapsed sidebar — just member dots
-            project.members.map(m => (
-              <button key={m.id} onClick={() => handleSelectMember(m.id)}
-                style={{ display: 'block', width: '100%', padding: '8px 0', background: 'none', border: 'none', cursor: 'pointer' }}
-                title={m.id}
-              >
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam, margin: '0 auto' }} />
-              </button>
-            ))
-          )}
+          })}
         </div>
 
-        {/* Resize handle */}
-        {sidebarOpen && (
-          <div
-            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, cursor: 'col-resize', zIndex: 10, background: 'transparent' }}
-            onMouseDown={e => {
-              sidebarDragging.current = true;
-              sidebarDragStartX.current = e.clientX;
-              sidebarDragStartW.current = sidebarW;
-              const onMove = (me: MouseEvent) => {
-                if (!sidebarDragging.current) return;
-                const dx = me.clientX - sidebarDragStartX.current;
-                setSidebarW(Math.max(160, Math.min(480, sidebarDragStartW.current + dx)));
-              };
-              const onUp = () => { sidebarDragging.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-              window.addEventListener('mousemove', onMove);
-              window.addEventListener('mouseup', onUp);
-              e.preventDefault();
-            }}
-            title="Drag to resize"
-          />
-        )}
-
-        {sidebarOpen && (
-          <div style={{ padding: '10px 12px', borderTop: `1px solid ${BORDER.default}` }}>
-            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
-              <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
-                <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </aside>
+        {/* Legend footer */}
+        <div style={{ padding: '10px 14px', borderTop: `1px solid ${BORDER.default}` }}>
+          {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
+            <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
+              <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
+            </div>
+          ))}
+        </div>
+        </aside>
+      )}
 
       {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Top bar */}
         <header id="app-header" style={{ background: 'white', borderBottom: `1px solid ${BORDER.default}`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+          {/* Brand */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 2 }}>
+            <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
+              SD
+            </div>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong, lineHeight: 1.15 }}>S-Dashboard</div>
+              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
+            </div>
+          </div>
+
+          {/* Members pull-down toggle (replaces the old docked member column) */}
+          <div data-popover="" style={{ position: 'relative' }}>
+            <button
+              onClick={() => { setMembersOpen(v => !v); setShowExport(false); setShowPrefs(false); }}
+              style={{ ...hdrBtn, background: membersOpen ? ACCENT.softBg : 'white', color: membersOpen ? ACCENT.primary : INK.base }}
+              title="Show the member list"
+            >
+              ☰ Members
+            </button>
+          </div>
+
+          <div style={{ width: 1, height: 20, background: BORDER.default }} />
+
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
+            {([['map', '🗺 Viewer'], ['dashboard', 'Dashboard'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
@@ -711,10 +688,8 @@ export default function App() {
 
           <div style={{ width: 1, height: 20, background: BORDER.default }} />
 
-          {/* File actions */}
-          <button onClick={handleNewProject} style={hdrBtn} title="New project (Ctrl+N)">New</button>
-          <button onClick={handleOpen}       style={hdrBtn} title="Open project (Ctrl+O)">Open</button>
-          <button onClick={handleSave}       style={hdrBtn} title="Save project (Ctrl+S)">Save</button>
+          {/* File actions (New / Open / Save) live in the native File menu and the
+              Ctrl+N/O/S shortcuts — no header buttons. */}
           <button
             onClick={() => setShowEtabsImport(true)}
             style={{ ...hdrBtn, borderColor: ACCENT.primary, color: ACCENT.primary }}

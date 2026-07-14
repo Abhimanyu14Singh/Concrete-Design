@@ -115,6 +115,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     const v = Number(localStorage.getItem('mapDashboardSplit'));
     return Number.isFinite(v) && v > 0.15 && v < 0.85 ? v : 0.5;
   });
+  // Width of the right Design/Verify panel — draggable by its left edge, persisted.
+  const [rightPanelW, setRightPanelW] = useState<number>(() => {
+    const v = Number(localStorage.getItem('mapRightPanelW'));
+    return Number.isFinite(v) && v >= 280 && v <= 680 ? v : 320;
+  });
   const dashHostRef = useRef<HTMLDivElement>(null);
   const [rightTab, setRightTab] = useState<RightTab>(mapViewCache.rightTab ?? 'groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
@@ -464,6 +469,27 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     window.addEventListener('mouseup', up);
   }
 
+  // Drag the right panel's LEFT edge: moving left grows the panel (its right edge is
+  // pinned to the window), moving right shrinks it. Width clamped [280, 680].
+  function onRightPanelDividerDown(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = rightPanelW;
+    const move = (ev: MouseEvent) => {
+      const w = Math.min(680, Math.max(280, startW - (ev.clientX - startX)));
+      setRightPanelW(w);
+      localStorage.setItem('mapRightPanelW', String(w));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   // ── Pop-out window sync (Electron; no-ops on web) ─────────────────────────
   // Broadcast the (distilled) payload to the popped-out window whenever it changes.
   useEffect(() => {
@@ -642,7 +668,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     ...(mapGrids.length ? [{ key: 'layer:grids', label: 'Grids' }] : []),
     ...(mapOpenings.length ? [{ key: 'layer:openings', label: 'Openings' }] : []),
   ];
-  const filterSections: FilterSection[] = [
+  // Two toolbar dropdowns. The 👁 "eye" governs plan *visibility* (what's drawn —
+  // member categories, imported walls/grids/openings, and floors); the ⧩ "filter"
+  // governs the design *facets* (groups, sections).
+  const visibilitySections: FilterSection[] = [
     { title: 'Show',
       items: [...presentTypes.map(t => ({ key: t, label: TYPE_LABEL[t] ?? t })), ...layerItems],
       hidden: new Set([...hiddenTypes, ...[...hiddenLayers].map(l => 'layer:' + l)]),
@@ -650,19 +679,24 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       onAll: show => { setHiddenTypes(show ? new Set() : new Set(presentTypes)); setHiddenLayers(show ? new Set() : new Set(['walls', 'grids', 'openings'])); } },
     { title: 'Floors', items: allStories.map(s => ({ key: s, label: s })), hidden: hiddenStories,
       onToggle: toggleStoryVisibility, onAll: show => onProjectChange(prev => ({ ...prev, hiddenStories: show ? [] : [...allStories] })) },
+  ];
+  const filterSections: FilterSection[] = [
     { title: 'Groups', items: groups.map((g, i) => ({ key: g.id, label: g.label, color: groupColor(g.color, i) })), hidden: hiddenGroupIds,
       onToggle: k => setHiddenGroupIds(s => toggleIn(s, k)), onAll: show => setHiddenGroupIds(show ? new Set() : new Set(groups.map(g => g.id))) },
     { title: 'Sections', items: sectionNames.map(s => ({ key: s, label: s })), hidden: hiddenSections,
       onToggle: k => setHiddenSections(s => toggleIn(s, k)), onAll: show => setHiddenSections(show ? new Set() : new Set(sectionNames)) },
   ];
-  // Badge counts things hidden FROM the default (on-by-default) view. Layers are
-  // opt-in OFF, so they don't inflate the count.
-  const filterHiddenCount = hiddenTypes.size + hiddenStories.size + hiddenGroupIds.size + hiddenSections.size;
-  const clearAllFilters = () => {
-    setHiddenTypes(new Set()); setHiddenGroupIds(new Set()); setHiddenSections(new Set());
+  // Eye badge counts hidden member categories + floors (imported layers are opt-in
+  // OFF by default, so they never inflate the count).
+  const visibilityHiddenCount = hiddenTypes.size + hiddenStories.size;
+  const clearVisibility = () => {
+    setHiddenTypes(new Set());
     setHiddenLayers(new Set(['walls', 'grids', 'openings']));
     onProjectChange(prev => ({ ...prev, hiddenStories: [] }));
   };
+  // Filter badge counts hidden groups + sections.
+  const filterHiddenCount = hiddenGroupIds.size + hiddenSections.size;
+  const clearAllFilters = () => { setHiddenGroupIds(new Set()); setHiddenSections(new Set()); };
 
   function handleFrameClick(frameName: string): boolean {
     if (!activeGroupId) return false;
@@ -806,8 +840,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         : { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
-          {/* Plan filter — member type / floors / groups / sections
-              (replaces the old story dropdown + "Floors:" chip row) */}
+          {/* 👁 Visibility — show/hide member categories, imported layers, floors */}
+          <MapFilterMenu sections={visibilitySections} hiddenCount={visibilityHiddenCount} onClearAll={clearVisibility}
+            icon="👁" label="Show" title="Show or hide what's drawn on the plan — members, walls, grids, openings, floors" />
+
+          {/* ⧩ Filter — narrow the plan by design group / section */}
           <MapFilterMenu sections={filterSections} hiddenCount={filterHiddenCount} onClearAll={clearAllFilters} />
 
           <div style={toolSep} />
@@ -949,6 +986,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             showOpenings={mapOpenings.length > 0 && !hiddenLayers.has('openings')}
           />
 
+          {/* ETABS model filename — bottom-right of the plan, so the analyzed
+              model that produced these members is always identifiable. */}
+          {map?.modelName && (
+            <div
+              title={`ETABS model: ${map.modelName}`}
+              style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 5, maxWidth: '60%', display: 'flex', alignItems: 'center', gap: 5, padding: '3px 9px', background: 'rgba(255,255,255,0.92)', border: `1px solid ${BORDER.default}`, borderRadius: 6, fontSize: 11, color: INK.secondary, pointerEvents: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
+            >
+              <span aria-hidden style={{ fontSize: 11 }}>⇪</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{map.modelName}</span>
+            </div>
+          )}
+
           {/* Beam inspect card */}
           {inspectMode && inspectedMember && (
             <BeamInspectCard
@@ -1083,8 +1132,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         </div>
       )}
 
+      {/* Right-panel resize handle — drag its left edge to grow/shrink the panel.
+          Hidden while a split dashboard owns the right half. */}
+      {!dashboardOpen && !sconcreteOpen && (
+        <div onMouseDown={onRightPanelDividerDown} title="Drag to resize the panel"
+          style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: SURFACE.subtle, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 3, height: 40, borderRadius: 2, background: BORDER.strong }} />
+        </div>
+      )}
+
       {/* Right panel */}
-      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: (dashboardOpen || sconcreteOpen) ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+      <div style={{ width: rightPanelW, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: (dashboardOpen || sconcreteOpen) ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
         {/* Tab bar — the workflow (Design, then the two split dashboards) is primary;
             read-only analytics are tucked behind an "Analyze" picker. */}
         <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6 }}>
