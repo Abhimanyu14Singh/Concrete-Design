@@ -1,11 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Project, Member, ModelMap, DesignGroup } from './types';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { Project, Member, ModelMap, DesignGroup, DesignCode } from './types';
 import { defaultProject } from './utils/sampleData';
+import { runDesign } from './engines';
+import { resolveCrack } from './utils/resolveCrack';
+import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
 import { exportExcel } from './utils/export/excelExport';
 import { buildSchedulePDF } from './utils/export/schedulePdfExport';
 import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
+import HelpView from './components/Help/HelpView';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
@@ -13,14 +17,27 @@ import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import Dropdown from './components/common/Dropdown';
 import { useUnits } from './contexts/UnitsContext';
-import { MEMBER_COLOR } from './theme';
+import { MEMBER_COLOR, FONT, SURFACE, STATUS, INK, BORDER, ACCENT, LABEL_STYLE } from './theme';
 
-type Tab = 'dashboard' | 'map' | 'member';
+type Tab = 'dashboard' | 'map' | 'member' | 'help';
 
 const hdrBtn: React.CSSProperties = {
-  padding: '5px 10px', border: '1px solid #d1d5db', borderRadius: 6,
-  background: 'white', fontSize: 12, cursor: 'pointer', color: '#374151', fontWeight: 600,
+  padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
+  background: 'white', fontSize: 12, cursor: 'pointer', color: INK.base, fontWeight: 600,
 };
+
+/** Governing status for a member (respecting engineer overrides), used for the
+ *  sidebar group NG/warn badges. 'Warning' → near-capacity, 'NG' → inadequate. */
+function memberBadge(m: Member, code: DesignCode, slsCombo?: string): 'OK' | 'warn' | 'NG' {
+  let sawNG = false, sawWarn = false;
+  for (const l of m.loads) {
+    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo));
+    const st = effectiveStatus(r, m.overrides);
+    if (st === 'NG') sawNG = true;
+    else if (st !== 'OK') sawWarn = true;
+  }
+  return sawNG ? 'NG' : sawWarn ? 'warn' : 'OK';
+}
 
 export default function App() {
   // ── Core state ────────────────────────────────────────────────────────────
@@ -32,6 +49,10 @@ export default function App() {
   const sidebarDragging = useRef(false);
   const sidebarDragStartX = useRef(0);
   const sidebarDragStartW = useRef(220);
+  // The Map tab has its own right-hand group panel, so the left member list is
+  // redundant there and eats canvas width — auto-collapse it on Map, keep it open
+  // on the member/dashboard tabs. The manual ◀/▶ toggle still works within a tab.
+  useEffect(() => { setSidebarOpen(tab !== 'map'); }, [tab]);
   const [zoom, setZoom] = useState<number>(() => {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
@@ -39,6 +60,7 @@ export default function App() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [helpTarget, setHelpTarget] = useState<{ tab?: string; section?: string } | null>(null);
   const { units, setUnits, fmt } = useUnits();
 
   // B5: dirty indicator
@@ -73,6 +95,19 @@ export default function App() {
   const splitStartPos = useRef(360);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
+
+  // Per-member governing status → sidebar group NG/warn badges (memoized so the
+  // design engine only re-runs when members / code / SLS combo actually change).
+  const badgeById = useMemo(() => {
+    const out: Record<string, 'OK' | 'warn' | 'NG'> = {};
+    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo);
+    return out;
+  }, [project.members, project.code, project.slsCombo]);
+
+  // Workflow progress for the ribbon: import → design → verify.
+  const hasImport = !!project.modelMap;
+  const hasGroups = (project.designGroups?.length ?? 0) > 0;
+  const hasVerify = (project.sconcreteResults?.length ?? 0) > 0;
 
   // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
   function setProject(p: Project | ((prev: Project) => Project)) {
@@ -229,6 +264,33 @@ export default function App() {
 
   // ── ETABS import ───────────────────────────────────────────────────────────
   const [showEtabsImport, setShowEtabsImport] = useState(false);
+
+  // Open the Help tab, closing any open dialog first so the guide is visible.
+  // Two entry points funnel here: a panel's "?" (HelpLink → window `open-help`
+  // event, carries a doc section) and the native Help menu (Electron IPC, carries
+  // a sub-tab). HelpView reads `target` to pick the sub-tab / scroll to a section.
+  const openHelpTarget = useCallback((t: { tab?: string; section?: string }) => {
+    setShowEtabsImport(false); setShowReport(false); setShowExport(false); setShowPrefs(false);
+    setHelpTarget(t);
+    setTab('help');
+  }, []);
+
+  useEffect(() => {
+    const onOpenHelp = (e: Event) => {
+      const section = (e as CustomEvent).detail as string | undefined;
+      openHelpTarget(section ? { section } : {});
+    };
+    window.addEventListener('open-help', onOpenHelp);
+    return () => window.removeEventListener('open-help', onOpenHelp);
+  }, [openHelpTarget]);
+
+  // Native Help menu (desktop) → open the matching Help sub-tab.
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onOpenHelp) return;
+    api.onOpenHelp(tab => openHelpTarget({ tab }));
+    return () => api.offOpenHelp?.();
+  }, [openHelpTarget]);
 
   function handleEtabsImport(
     members: Member[],
@@ -428,7 +490,7 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" style={{ display: 'flex', height: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
+    <div id="app-root" style={{ display: 'flex', height: '100vh', background: SURFACE.app, fontFamily: FONT.ui, overflow: 'hidden' }}>
       {showEtabsImport && (
         <EtabsImportWizard
           code={project.code}
@@ -440,19 +502,19 @@ export default function App() {
         <ReportModal project={project} onClose={() => setShowReport(false)} />
       )}
       {/* Sidebar */}
-      <aside id="app-sidebar" style={{ width: sidebarOpen ? sidebarW : 48, flexShrink: 0, background: 'white', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+      <aside id="app-sidebar" style={{ width: sidebarOpen ? sidebarW : 48, flexShrink: 0, background: 'white', borderRight: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
         {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ width: 28, height: 28, background: '#2563eb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', color: 'white', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: `1px solid ${BORDER.default}` }}>
+          <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
             SD
           </div>
           {sidebarOpen && (
             <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: '#111827' }}>S-Dashboard</div>
-              <div style={{ color: '#9ca3af', fontSize: 10, whiteSpace: 'nowrap' }}>{project.code}</div>
+              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong }}>S-Dashboard</div>
+              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
             </div>
           )}
-          <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
+          <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: INK.muted, fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
             {sidebarOpen ? '◀' : '▶'}
           </button>
         </div>
@@ -461,12 +523,14 @@ export default function App() {
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           {sidebarOpen && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 6px' }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 1 }}>Members</span>
-              <button onClick={addMember} style={{ color: '#2563eb', fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
+              <span style={LABEL_STYLE}>Members</span>
+              <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
             </div>
           )}
           {sidebarOpen ? buildSidebarSections().map(section => {
             const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
+            const ngCount = section.members.filter(m => badgeById[m.id] === 'NG').length;
+            const warnCount = section.members.filter(m => badgeById[m.id] === 'warn').length;
             return (
               <div key={section.groupId ?? '__ungrouped'}>
                 {/* Section header */}
@@ -474,7 +538,7 @@ export default function App() {
                   onClick={() => section.groupId && toggleGroupCollapse(section.groupId)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 10px',
-                    background: '#f9fafb', borderTop: '1px solid #f3f4f6',
+                    background: SURFACE.subtle, borderTop: '1px solid #f3f4f6',
                     cursor: section.groupId ? 'pointer' : 'default',
                   }}
                 >
@@ -486,19 +550,21 @@ export default function App() {
                       onBlur={renameGroupCommit}
                       onKeyDown={e => { if (e.key === 'Enter') renameGroupCommit(); if (e.key === 'Escape') setEditingGroupId(null); }}
                       onClick={e => e.stopPropagation()}
-                      style={{ flex: 1, fontSize: 11, fontWeight: 700, border: '1px solid #2563eb', borderRadius: 3, padding: '1px 4px', minWidth: 0 }}
+                      style={{ flex: 1, fontSize: 11, fontWeight: 700, border: `1px solid ${ACCENT.primary}`, borderRadius: 3, padding: '1px 4px', minWidth: 0 }}
                     />
                   ) : (
                     <span
                       onDoubleClick={e => { e.stopPropagation(); const g = (project.designGroups ?? []).find(g => g.id === section.groupId); if (g) renameGroupStart(g); }}
-                      style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                      style={{ flex: 1, fontSize: 11, fontWeight: 700, color: INK.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                       title={section.groupId ? 'Double-click to rename' : undefined}
                     >
                       {section.label}
                     </span>
                   )}
-                  <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>{section.members.length}</span>
-                  {section.groupId && <span style={{ fontSize: 9, color: '#9ca3af' }}>{collapsed ? '▸' : '▾'}</span>}
+                  {ngCount > 0 && <span title={`${ngCount} inadequate`} style={{ fontSize: 10, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{ngCount} NG</span>}
+                  {warnCount > 0 && <span title={`${warnCount} near capacity`} style={{ fontSize: 10, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{warnCount}⚠</span>}
+                  <span style={{ fontSize: 10, color: INK.muted, flexShrink: 0 }}>{section.members.length}</span>
+                  {section.groupId && <span style={{ fontSize: 10, color: INK.muted }}>{collapsed ? '▸' : '▾'}</span>}
                 </div>
                 {/* Member rows */}
                 {!collapsed && section.members.map(m => (
@@ -511,38 +577,38 @@ export default function App() {
                     onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
                     style={{
                       display: 'flex', alignItems: 'center',
-                      borderTop: dragOverId === m.id && dragSrcId !== m.id ? '2px solid #2563eb' : '2px solid transparent',
+                      borderTop: dragOverId === m.id && dragSrcId !== m.id ? `2px solid ${ACCENT.primary}` : '2px solid transparent',
                       opacity: dragSrcId === m.id ? 0.5 : 1,
                       paddingLeft: section.groupId ? 8 : 0,
                     }}
                   >
-                    <span style={{ fontSize: 14, color: '#d1d5db', cursor: 'grab', padding: '0 4px 0 4px', flexShrink: 0 }}>⠿</span>
+                    <span style={{ fontSize: 14, color: BORDER.strong, cursor: 'grab', padding: '0 4px 0 4px', flexShrink: 0 }}>⠿</span>
                     <button
                       onClick={() => handleSelectMember(m.id)}
                       style={{
                         flex: 1, textAlign: 'left', padding: '6px 6px', display: 'flex', alignItems: 'center', gap: 5,
-                        background: activeMemberId === m.id ? '#eff6ff' : 'none',
-                        borderRight: `3px solid ${activeMemberId === m.id ? '#2563eb' : 'transparent'}`,
+                        background: activeMemberId === m.id ? ACCENT.softBg : 'none',
+                        borderRight: `3px solid ${activeMemberId === m.id ? ACCENT.primary : 'transparent'}`,
                         border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
                         cursor: 'pointer', minWidth: 0,
                       }}
                     >
                       <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>{m.id}</span>
-                      <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span style={{ fontSize: 11, color: INK.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {m.label}
                       </span>
                     </button>
                     <button
                       onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
                       title="Duplicate member"
-                      style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+                      style={{ fontSize: 12, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
                     >⧉</button>
                     <button
                       onClick={e => { e.stopPropagation(); deleteMember(m.id); }}
                       title="Delete member"
-                      style={{ fontSize: 12, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
-                      onMouseEnter={e => { (e.target as HTMLElement).style.color = '#dc2626'; }}
-                      onMouseLeave={e => { (e.target as HTMLElement).style.color = '#9ca3af'; }}
+                      style={{ fontSize: 12, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
+                      onMouseEnter={e => { (e.target as HTMLElement).style.color = STATUS.fail; }}
+                      onMouseLeave={e => { (e.target as HTMLElement).style.color = INK.muted; }}
                     >🗑</button>
                   </div>
                 ))}
@@ -558,11 +624,6 @@ export default function App() {
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam, margin: '0 auto' }} />
               </button>
             ))
-          )}
-          {sidebarOpen && (
-            <button onClick={addMember} style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', gap: 6 }}>
-              <span>+</span><span>Add Member</span>
-            </button>
           )}
         </div>
 
@@ -589,11 +650,11 @@ export default function App() {
         )}
 
         {sidebarOpen && (
-          <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb' }}>
-            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column], ['Wall', MEMBER_COLOR.wall]].map(([t, c]) => (
+          <div style={{ padding: '10px 12px', borderTop: `1px solid ${BORDER.default}` }}>
+            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
               <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
-                <span style={{ fontSize: 10, color: '#9ca3af' }}>{t}</span>
+                <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
               </div>
             ))}
           </div>
@@ -603,17 +664,17 @@ export default function App() {
       {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Top bar */}
-        <header id="app-header" style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+        <header id="app-header" style={{ background: 'white', borderBottom: `1px solid ${BORDER.default}`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member']] as [Tab, string][]).map(([key, label]) => (
+            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
                 style={{
                   padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
-                  background: tab === key ? '#2563eb' : 'transparent',
-                  color: tab === key ? 'white' : '#6b7280',
+                  background: tab === key ? ACCENT.primary : 'transparent',
+                  color: tab === key ? 'white' : INK.secondary,
                 }}
               >
                 {label}
@@ -626,21 +687,21 @@ export default function App() {
           {/* Member selector */}
           {tab === 'member' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: '#6b7280' }}>Member:</span>
+              <span style={{ fontSize: 11, color: INK.secondary }}>Member:</span>
               <Dropdown
                 value={activeMemberId}
                 options={project.members.map(m => ({ value: m.id, label: `${m.id} — ${m.label}` }))}
                 onChange={setActiveMemberId}
-                style={{ background: 'white', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', fontSize: 12, color: '#111827' }}
+                style={{ background: 'white', border: `1px solid ${BORDER.strong}`, borderRadius: 6, padding: '4px 8px', fontSize: 12, color: INK.strong }}
               />
             </div>
           )}
 
           {/* Separator */}
-          <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
+          <div style={{ width: 1, height: 20, background: BORDER.default }} />
 
           {/* B5: Dirty indicator */}
-          <span style={{ fontSize: 11, color: isDirty ? '#dc2626' : '#9ca3af', fontWeight: 600, minWidth: 70 }}>
+          <span style={{ fontSize: 11, color: isDirty ? STATUS.fail : INK.muted, fontWeight: 600, minWidth: 70 }}>
             {isDirty ? '● Unsaved' : '✓ Saved'}
           </span>
 
@@ -648,7 +709,7 @@ export default function App() {
           <button onClick={undo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Undo (Ctrl+Z)">↩</button>
           <button onClick={redo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Redo (Ctrl+Y)">↪</button>
 
-          <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
+          <div style={{ width: 1, height: 20, background: BORDER.default }} />
 
           {/* File actions */}
           <button onClick={handleNewProject} style={hdrBtn} title="New project (Ctrl+N)">New</button>
@@ -656,7 +717,7 @@ export default function App() {
           <button onClick={handleSave}       style={hdrBtn} title="Save project (Ctrl+S)">Save</button>
           <button
             onClick={() => setShowEtabsImport(true)}
-            style={{ ...hdrBtn, borderColor: '#7c3aed', color: '#7c3aed' }}
+            style={{ ...hdrBtn, borderColor: ACCENT.primary, color: ACCENT.primary }}
             title="Import beams from an ETABS model (CSI API or tables file)"
           >
             ⇪ ETABS
@@ -666,19 +727,19 @@ export default function App() {
           <div data-popover="" style={{ position: 'relative' }}>
             <button
               onClick={() => { setShowExport(v => !v); setShowPrefs(false); }}
-              style={{ ...hdrBtn, background: showExport ? '#eff6ff' : 'white', color: showExport ? '#2563eb' : '#374151' }}
+              style={{ ...hdrBtn, background: showExport ? ACCENT.softBg : 'white', color: showExport ? ACCENT.primary : INK.base }}
             >
               Export ▾
             </button>
             {showExport && (
               <div style={{
                 position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
-                background: 'white', border: '1px solid #e5e7eb', borderRadius: 10,
+                background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '6px', minWidth: 160,
               }}>
                 <button
                   onClick={() => { setShowReport(true); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
@@ -686,7 +747,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => { exportExcel(project); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
@@ -704,7 +765,7 @@ export default function App() {
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
@@ -722,15 +783,15 @@ export default function App() {
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6 }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
-                  Beam Schedule PDF <span style={{ fontSize: 10, color: '#9ca3af' }}>(full)</span>
+                  Beam Schedule PDF <span style={{ fontSize: 10, color: INK.muted }}>(full)</span>
                 </button>
                 <button
                   onClick={() => { window.print(); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: '#374151', borderRadius: 6, fontWeight: 600 }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
@@ -744,7 +805,7 @@ export default function App() {
           <div data-popover="" style={{ position: 'relative' }}>
             <button
               onClick={() => { setShowPrefs(v => !v); setShowExport(false); }}
-              style={{ ...hdrBtn, background: showPrefs ? '#eff6ff' : 'white', color: showPrefs ? '#2563eb' : '#374151' }}
+              style={{ ...hdrBtn, background: showPrefs ? ACCENT.softBg : 'white', color: showPrefs ? ACCENT.primary : INK.base }}
               title="Preferences"
             >
               ⚙
@@ -752,10 +813,10 @@ export default function App() {
             {showPrefs && (
               <div style={{
                 position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
-                background: 'white', border: '1px solid #e5e7eb', borderRadius: 10,
+                background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '12px 8px', minWidth: 190,
               }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, padding: '0 8px', marginBottom: 8 }}>
+                <div style={{ ...LABEL_STYLE, padding: '0 8px', marginBottom: 8 }}>
                   Display Scale
                 </div>
                 {[0.75, 0.9, 1.0, 1.1, 1.25, 1.5].map(z => (
@@ -766,8 +827,8 @@ export default function App() {
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
                       cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                      background: zoom === z ? '#eff6ff' : 'none',
-                      color: zoom === z ? '#2563eb' : '#374151',
+                      background: zoom === z ? ACCENT.softBg : 'none',
+                      color: zoom === z ? ACCENT.primary : INK.base,
                       fontWeight: zoom === z ? 700 : 400,
                     }}
                   >
@@ -775,7 +836,7 @@ export default function App() {
                     {zoom === z && <span style={{ fontSize: 11 }}>✓</span>}
                   </button>
                 ))}
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, padding: '0 8px', margin: '12px 0 8px', borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
+                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
                   Units
                 </div>
                 {([['imperial', 'US (in, psi, kips)'], ['si', 'SI (mm, MPa, kN)']] as const).map(([u, label]) => (
@@ -786,8 +847,8 @@ export default function App() {
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
                       cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                      background: units === u ? '#eff6ff' : 'none',
-                      color: units === u ? '#2563eb' : '#374151',
+                      background: units === u ? ACCENT.softBg : 'none',
+                      color: units === u ? ACCENT.primary : INK.base,
                       fontWeight: units === u ? 700 : 400,
                     }}
                   >
@@ -800,18 +861,59 @@ export default function App() {
           </div>
 
           {/* Project info */}
-          <div style={{ fontSize: 11, color: '#6b7280' }}>{project.name}</div>
+          <div style={{ fontSize: 11, color: INK.secondary }}>{project.name}</div>
+        </header>
+
+        {/* Workflow ribbon — Import → Design → Verify, always visible so the
+            S-Concrete verification step is reachable from any screen. The design
+            code lives here because it drives the .SCO handed to S-Concrete. */}
+        <div id="app-ribbon" style={{ background: SURFACE.subtle, borderBottom: `1px solid ${BORDER.default}`, padding: '5px 16px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+          {([
+            { key: 'import', num: '1', label: 'Import', hint: 'from ETABS', done: hasImport, onClick: () => setShowEtabsImport(true) },
+            { key: 'design', num: '2', label: 'Design', hint: 'group & rebar', done: hasGroups, onClick: () => setTab('map') },
+            { key: 'verify', num: '3', label: 'Verify', hint: '⚙ S-Concrete', done: hasVerify, onClick: () => setTab('map') },
+          ] as const).map((stage, i, arr) => {
+            // Current stage = the first not-yet-done step (all done ⇒ Verify).
+            const firstTodo = arr.find(s => !s.done)?.key ?? 'verify';
+            const current = stage.key === firstTodo;
+            return (
+              <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={stage.onClick}
+                  title={`${stage.label} — ${stage.hint}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 14, cursor: 'pointer',
+                    border: `1px solid ${current ? ACCENT.primary : stage.done ? STATUS.okBorder : BORDER.default}`,
+                    background: current ? ACCENT.softBg : stage.done ? STATUS.okBg : 'white',
+                  }}
+                >
+                  <span style={{
+                    width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, fontWeight: 700, color: 'white',
+                    background: stage.done ? STATUS.ok : current ? ACCENT.primary : INK.muted,
+                  }}>{stage.done ? '✓' : stage.num}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: current ? ACCENT.primary : stage.done ? STATUS.ok : INK.secondary }}>{stage.label}</span>
+                  <span style={{ fontSize: 11, color: INK.muted }}>{stage.hint}</span>
+                </button>
+                {i < arr.length - 1 && <span style={{ color: BORDER.strong, fontSize: 12 }}>→</span>}
+              </div>
+            );
+          })}
+          <div style={{ flex: 1 }} />
+          <span style={LABEL_STYLE}>Design code</span>
           <Dropdown
             value={project.code}
-            options={(['ACI318-19', 'ACI318-14', 'ACI318-25', 'EN1992-1-1'] as import('./types').DesignCode[]).map(c => ({ value: c, label: c }))}
+            options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => ({ value: c, label: c }))}
             onChange={v => {
-              const newCode = v as import('./types').DesignCode;
+              const newCode = v as DesignCode;
+              // Follow the code's native unit system: EC2 → SI, ACI → imperial.
               if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
+              else if (newCode !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
               setProject(p => ({ ...p, code: newCode }));
             }}
-            style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
+            style={{ fontSize: 11, background: ACCENT.softBg, color: ACCENT.primary, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
           />
-        </header>
+        </div>
 
         {/* Content */}
         <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>
@@ -828,7 +930,7 @@ export default function App() {
               <Dashboard
                 project={project}
                 onSelectMember={handleSelectMember}
-                onProjectUpdate={p => setProject(p)}
+                onProjectUpdate={setProject}
                 collapsedGroups={collapsedGroups}
                 setCollapsedGroups={setCollapsedGroups}
               />
@@ -838,7 +940,7 @@ export default function App() {
                 <ErrorBoundary area="the model map">
                   <ModelMapView
                     project={project}
-                    onProjectChange={p => setProject(p)}
+                    onProjectChange={setProject}
                     onOpenEtabsImport={() => setShowEtabsImport(true)}
                     onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
                     onDeleteMember={id => deleteMember(id)}
@@ -852,8 +954,8 @@ export default function App() {
                 {/* Left: Input editor */}
                 <div style={{ width: splitPos, flexShrink: 0, minWidth: 0, paddingRight: 8 }}>
                   <div style={{ marginBottom: 10 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>Input</h2>
-                    <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>Edit geometry, materials, reinforcement, loads</p>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: INK.strong }}>Input</h2>
+                    <p style={{ fontSize: 11, color: INK.secondary, margin: '2px 0 0' }}>Edit geometry, materials, reinforcement, loads</p>
                   </div>
                   <MemberEditor
                     key={activeMember.id}
@@ -872,14 +974,14 @@ export default function App() {
                     alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >
-                  <div style={{ width: 3, borderRadius: 2, height: '40px', background: '#d1d5db' }} />
+                  <div style={{ width: 3, borderRadius: 2, height: '40px', background: BORDER.strong }} />
                 </div>
 
                 {/* Right: Results */}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ marginBottom: 10 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#111827' }}>{activeMember.label}</h2>
-                    <p style={{ fontSize: 11, color: '#6b7280', margin: '2px 0 0' }}>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: INK.strong }}>{activeMember.label}</h2>
+                    <p style={{ fontSize: 11, color: INK.secondary, margin: '2px 0 0' }}>
                       {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
                       f'c = {fmt(activeMember.material.fc, 'stress')} &bull; fy = {fmt(activeMember.material.fy / 1000, 'stressKsi')}
                     </p>
@@ -889,12 +991,16 @@ export default function App() {
                       member={activeMember}
                       code={project.code}
                       slsCombo={project.slsCombo}
+                      engineer={project.engineer}
+                      sconcreteResults={project.sconcreteResults}
+                      sconcreteRanAt={project.sconcreteRanAt}
                       onRebarChange={handleUpdateMember}
                     />
                   </ErrorBoundary>
                 </div>
               </div>
             )}
+            {tab === 'help' && <HelpView target={helpTarget} />}
           </div>
         </main>
       </div>

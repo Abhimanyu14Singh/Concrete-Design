@@ -3,13 +3,15 @@ import { PDFDocument, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, DesignResults, LoadCase, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
-import { designWallACI } from '../wallDesign';
 import { getBarDiam, zoneShearDemands } from '../concreteDesign';
 import { generateBreakdown, type CalcSection } from '../calcBreakdown';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
+import { resolveCrack } from '../resolveCrack';
 import { generateColumnBreakdown } from '../calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../calcBreakdownColumnEC2';
-import { generateWallBreakdown } from '../calcBreakdownWall';
+import {
+  OVERRIDE_KEY_LABEL, isOverridden, visibleWarnings, overrideEntries, effectiveStatus,
+} from '../overrides';
 
 /** What goes into the report and how it is scoped. */
 export interface ReportOptions {
@@ -33,6 +35,10 @@ export interface ReportOptions {
   reportEngineer?: string;
   /** Override date on cover page. */
   reportDate?: string;
+  /** Honor engineer overrides — suppress reviewed warnings, show review stamps,
+   *  and green the overridden DCR bars. When false, raw results are shown.
+   *  Optional; defaults to true via DEFAULT_REPORT_OPTIONS. */
+  includeOverrides?: boolean;
 }
 
 export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
@@ -40,6 +46,7 @@ export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
   includeDiagrams: true,
   includeCalcs: true,
   includeCrack: true,
+  includeOverrides: true,
 };
 
 /** Dimension/force/moment labels and value formatters keyed on unit system. */
@@ -82,18 +89,21 @@ function makeU(isEC2: boolean): UCtx {
   };
 }
 
+// Project-level SLS quasi-permanent combo for the current report; set by
+// buildReportBytes so the EC2 crack-width sheet + design results honour it
+// (mirrors the module-level _resultCache lifecycle).
+let _slsCombo: string | undefined;
+
 function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] {
-  const isWall = m.memberType === 'wall' && !!m.wallRebar;
   const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
   const isEC2 = code === 'EN1992-1-1';
-  if (isWall) return generateWallBreakdown(m.section, m.material, m.wallRebar!, lc);
   if (isColumn) {
     return isEC2
       ? generateColumnBreakdownEC2(m.section, m.material, m.rebar, lc)
       : generateColumnBreakdown(m.section, m.material, m.rebar, lc);
   }
   return isEC2
-    ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, m.crackParams)
+    ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, resolveCrack(m, code, _slsCombo), _slsCombo)
     : generateBreakdown(
         m.section, m.material, m.rebar, lc, m.span,
         m.rebar.tieZones && m.stationForces?.length
@@ -190,19 +200,16 @@ function line(ctx: DrawCtx, x1: number, y1: number, x2: number, y2: number, thic
 function worstDCROf(r: DesignResults): number {
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
     r.DCR_PM ?? 0, r.DCR_axial ?? 0,
-    r.DCR_shear_wall ?? 0, r.DCR_flex_wall ?? 0, r.DCR_sbzAsh ?? 0,
     r.DCR_crack ?? 0);
 }
 
-/** Routes walls to the wall engine (same branch as the results screen). */
+/** Runs the design engine for a member/load-case (same branch as the results screen). */
 const _resultCache = new Map<string, DesignResults>();
 function memberResult(m: Member, lc: LoadCase, code?: string): DesignResults {
   const key = `${m.id}|${lc.id}|${code ?? ''}`;
   const hit = _resultCache.get(key);
   if (hit) return hit;
-  const r = m.memberType === 'wall' && m.wallRebar
-    ? designWallACI(m.section, m.material, m.wallRebar, lc)
-    : runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
+  const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, resolveCrack(m, code ?? '', _slsCombo));
   _resultCache.set(key, r);
   return r;
 }
@@ -223,8 +230,7 @@ function circle(ctx: DrawCtx, x: number, y: number, r: number, fill = C.dark) {
 /**
  * Vector sketch of the member cross-section (bottom-left anchored box).
  * Ports the SectionView geometry: concrete outline, stirrup inset, bar
- * circles per layer; circular columns pool bars on a ring; walls draw a
- * plan view with SBZ end zones.
+ * circles per layer; circular columns pool bars on a ring.
  */
 function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: number, boxH: number, u: UCtx = makeU(false)): void {
   const s = m.section;
@@ -252,36 +258,6 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
       }
     }
     text(ctx, `dia ${u.dim(D)}${u.dimSfx}`, cx - 14, y + 4, 7, C.mid);
-    return;
-  }
-
-  if (s.type === 'shear_wall') {
-    const lw = s.lw ?? s.b, tw = s.tw ?? s.h ?? 12;
-    const scale = Math.min(innerW / lw, innerH / tw);
-    const planW = lw * scale, planH = Math.max(8, tw * scale);
-    const px = x + (boxW - planW) / 2, py = y + pad + (innerH - planH) / 2;
-    ctx.page.drawRectangle({ x: px, y: py, width: planW, height: planH, borderColor: C.dark, borderWidth: 1, color: C.white });
-    const wr = m.wallRebar;
-    const sbzLen = 0.15 * lw * scale; // sketch-level approximation of lbe
-    for (const ex of [px, px + planW - sbzLen]) {
-      ctx.page.drawRectangle({ x: ex, y: py, width: sbzLen, height: planH, color: rgb(0.99, 0.93, 0.78) });
-      ctx.page.drawRectangle({ x: ex, y: py, width: sbzLen, height: planH, borderColor: C.amber, borderWidth: 0.7, color: undefined });
-      const nb = Math.max(2, Math.round((wr?.sbzNumBars ?? 8) / 2));
-      for (let i = 0; i < nb; i++) {
-        const bx = ex + sbzLen * (i + 0.5) / nb;
-        circle(ctx, bx, py + planH * 0.25, 1.3);
-        circle(ctx, bx, py + planH * 0.75, 1.3);
-      }
-    }
-    if (wr) {
-      const webX0 = px + sbzLen + 4, webX1 = px + planW - sbzLen - 4;
-      const nWeb = Math.max(2, Math.floor((webX1 - webX0) / Math.max(4, wr.vertSpacing * scale)));
-      const curtainYs = wr.numCurtains === 2 ? [py + planH * 0.25, py + planH * 0.75] : [py + planH * 0.5];
-      for (const cyW of curtainYs)
-        for (let i = 0; i <= nWeb; i++)
-          circle(ctx, webX0 + (webX1 - webX0) * (i / nWeb), cyW, 1, C.mid);
-    }
-    text(ctx, `lw=${u.dim(lw)}${u.dimSfx}  tw=${u.dim(tw)}${u.dimSfx}  (plan, SBZ ends shaded)`, px, y + 4, 7, C.mid);
     return;
   }
 
@@ -319,15 +295,17 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
 }
 
 /** Horizontal DCR bar with a marker at 1.0; track spans dcr 0–1.5. */
-function drawDCRBar(ctx: DrawCtx, label: string, dcr: number, x: number, y: number, w: number): void {
+function drawDCRBar(ctx: DrawCtx, label: string, dcr: number, x: number, y: number, w: number, overridden = false): void {
   const trackW = w - 100;
+  // An engineer-overridden check renders green regardless of its true DCR.
+  const clr = overridden ? C.green : dcrColor(dcr);
   text(ctx, label, x, y, 8, C.dark);
   rect(ctx, x + 60, y - 1, trackW, 8, C.light);
   const fillW = Math.min(Math.max(dcr, 0), 1.5) / 1.5 * trackW;
-  if (fillW > 0) rect(ctx, x + 60, y - 1, fillW, 8, dcrColor(dcr));
+  if (fillW > 0) rect(ctx, x + 60, y - 1, fillW, 8, clr);
   const oneX = x + 60 + (1.0 / 1.5) * trackW;
   line(ctx, oneX, y - 3, oneX, y + 9, 0.8, C.dark);
-  text(ctx, dcr.toFixed(2), x + 60 + trackW + 6, y, 8, dcrColor(dcr), ctx.bold);
+  text(ctx, overridden ? `${dcr.toFixed(2)} ✓` : dcr.toFixed(2), x + 60 + trackW + 6, y, 8, clr, ctx.bold);
 }
 
 async function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont): Promise<DrawCtx> {
@@ -539,6 +517,7 @@ export async function buildReportBytes(
   project: Project, options: ReportOptions = DEFAULT_REPORT_OPTIONS,
 ): Promise<Uint8Array> {
   _resultCache.clear();
+  _slsCombo = project.slsCombo;
   const opts = { ...DEFAULT_REPORT_OPTIONS, ...options };
   const members = opts.memberIds
     ? project.members.filter(m => opts.memberIds!.includes(m.id))
@@ -590,24 +569,24 @@ export async function buildReportBytes(
   for (const m of members) {
     const r = worstResult(m, project.code);
     if (!r) continue;
+    const summaryStatus = opts.includeOverrides ? effectiveStatus(r, m.overrides) : r.status;
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
     const bg = members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
     const sec = m.section.type === 'circular_column'
       ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
       : `${u.dim(m.section.b)}${u.dimSfx}x${u.dim(m.section.h)}${u.dimSfx}`;
-    const wall = m.memberType === 'wall' && !!m.wallRebar;
     const fcLabel = isEC2 ? `${(m.material.fc * 0.00689476).toFixed(0)}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
     const dp2 = (n: number) => n.toFixed(2);
     const vals = [clipText(font, m.label, 8, 116), m.memberType, clipText(font, sec, 8, 76),
       fcLabel,
-      dp2(wall ? (r.DCR_flex_wall ?? 0) : r.DCR_flex_pos),
-      wall ? '-' : dp2(r.DCR_flex_neg),
-      dp2(wall ? (r.DCR_shear_wall ?? 0) : r.DCR_shear),
-      wall ? '-' : dp2(r.DCR_torsion), r.status];
+      dp2(r.DCR_flex_pos),
+      dp2(r.DCR_flex_neg),
+      dp2(r.DCR_shear),
+      dp2(r.DCR_torsion), summaryStatus];
     vals.forEach((v, i) => {
       let clr = C.dark;
-      if (i === 8) clr = statusColor(r.status);
+      if (i === 8) clr = statusColor(summaryStatus);
       else if (i >= 4 && i <= 7) clr = dcrColor(parseFloat(v));
       text(ctx, v, margin + cols[i], row, 8, clr);
     });
@@ -648,18 +627,13 @@ export async function buildReportBytes(
     // Load case results table
     text(ctx, 'Design Results by Load Case', margin, y - 8, 10, C.dark, bold);
     y -= 20;
-    const isWall = m.memberType === 'wall' && !!m.wallRebar;
     const isBeam = m.memberType === 'beam';
     const M = u.moment, F = u.force;
-    // Beam gets an extra DCR Torsion column; wall and column share a simpler layout.
-    const lcHdrs = isWall
-      ? ['Load Case', `Mu (${M})`, `Vu (${F})`, `Pu (${F})`, `phiMn (${M})`, `phiVn (${F})`, 'DCR P-M', 'DCR V', 'DCR Ash', 'SBZ', 'Status']
-      : isBeam
+    // Beam gets an extra DCR Torsion column; column shares a simpler layout.
+    const lcHdrs = isBeam
       ? ['Load Case', `Mu+ (${M})`, `Mu- (${M})`, `Vu (${F})`, `phiMn+ (${M})`, `phiMn- (${M})`, `phiVn (${F})`, 'DCR Fl+', 'DCR Fl-', 'DCR V', 'DCR Tor.', 'Status']
       : ['Load Case', `Mu+ (${M})`, `Mu- (${M})`, `Vu (${F})`, `phiMn+ (${M})`, `phiMn- (${M})`, `phiVn (${F})`, 'DCR Fl+', 'DCR Fl-', 'DCR V', 'Status'];
-    const lcCols = isWall
-      ? [0, 72, 118, 164, 200, 252, 304, 352, 384, 416, 445]
-      : isBeam
+    const lcCols = isBeam
       ? [0, 68, 112, 156, 196, 243, 290, 334, 366, 398, 428, 458]
       : [0, 72, 118, 164, 200, 252, 304, 352, 384, 416, 445];
     rect(ctx, margin, y - 4, w - 2 * margin, 14, C.navy);
@@ -668,31 +642,26 @@ export async function buildReportBytes(
 
     for (const lc of lcsToShow) {
       const r = memberResult(m, lc, project.code);
+      const dispStatus = opts.includeOverrides ? effectiveStatus(r, m.overrides) : r.status;
       const bg = lcsToShow.indexOf(lc) % 2 === 0 ? C.light : C.white;
       rect(ctx, margin, y - 2, w - 2 * margin, 12, bg);
       const lcLabel = clipText(font, lc.label, 7, lcCols[1] - 4);
-      const lcVals = isWall
-        ? [lcLabel,
-            u.moment_(Math.max(lc.Mu_pos, lc.Mu_neg)), u.force_(lc.Vu), u.force_(lc.Pu),
-            u.moment_(r.phi_Mn_wall ?? 0), u.force_(r.phi_Vn_wall ?? 0),
-            (r.DCR_flex_wall ?? 0).toFixed(2), (r.DCR_shear_wall ?? 0).toFixed(2),
-            (r.DCR_sbzAsh ?? 0).toFixed(2), r.sbzRequired ? 'Yes' : 'No', r.status]
-        : isBeam
+      const lcVals = isBeam
         ? [lcLabel,
             u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
             u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
             r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2),
-            r.DCR_torsion.toFixed(2), r.status]
+            r.DCR_torsion.toFixed(2), dispStatus]
         : [lcLabel,
             u.moment_(lc.Mu_pos), u.moment_(lc.Mu_neg), u.force_(lc.Vu),
             u.moment_(r.phi_Mn_pos), u.moment_(r.phi_Mn_neg), u.force_(r.phi_Vn),
-            r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2), r.status];
+            r.DCR_flex_pos.toFixed(2), r.DCR_flex_neg.toFixed(2), r.DCR_shear.toFixed(2), dispStatus];
       const statusIdx = lcVals.length - 1;
-      const dcrStart = isWall ? 6 : 7;
-      const dcrEnd   = isWall ? 8 : isBeam ? 10 : 9;
+      const dcrStart = 7;
+      const dcrEnd   = isBeam ? 10 : 9;
       lcVals.forEach((v, i) => {
         let clr = C.dark;
-        if (i === statusIdx) clr = statusColor(r.status);
+        if (i === statusIdx) clr = statusColor(dispStatus);
         else if (i >= dcrStart && i <= dcrEnd) clr = dcrColor(parseFloat(v));
         text(ctx, v, margin + lcCols[i], y, 7, clr);
       });
@@ -706,24 +675,21 @@ export async function buildReportBytes(
       text(ctx, 'DCR Summary (governing)', margin, y - 8, 10, C.dark, bold);
       y -= 22;
       const barW = (w - 2 * margin) * 0.7;
-      const dcrRows: [string, number][] = isWall
-        ? [['P-M', worst.DCR_flex_wall ?? 0], ['Shear', worst.DCR_shear_wall ?? 0], ['SBZ Ash', worst.DCR_sbzAsh ?? 0]]
-        : m.memberType === 'column'
+      const dcrRows: [string, number][] = m.memberType === 'column'
         ? [['P-M', worst.DCR_PM ?? 0], ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion]]
         : [['Flexure +', worst.DCR_flex_pos], ['Flexure -', worst.DCR_flex_neg],
            ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion],
            ...(worst.DCR_crack != null && worst.DCR_crack > 0
              ? [['Crack (SLS)', worst.DCR_crack] as [string, number]] : [])];
+      const ovr = opts.includeOverrides ? m.overrides : undefined;
+      const BAR_LABEL_KEY: Record<string, Parameters<typeof isOverridden>[1]> = {
+        'Flexure +': 'DCR_flex_pos', 'Flexure -': 'DCR_flex_neg',
+        'Shear': 'DCR_shear', 'Torsion': 'DCR_torsion',
+        'Crack (SLS)': 'DCR_crack', 'P-M': 'DCR_PM',
+      };
       for (const [lbl, dcr] of dcrRows) {
-        drawDCRBar(ctx, lbl, dcr, margin, y, barW);
-        y -= 14;
-      }
-      if (isWall) {
-        // sbzLength is stored in inches internally; convert to display units
-        const sbzLenStr = worst.sbzLength != null
-          ? `lbe=${u.dim(worst.sbzLength)}${u.dimSfx}` : '';
-        text(ctx, `rho_l=${((worst.rhoL ?? 0) * 100).toFixed(2)}%  rho_t=${((worst.rhoT ?? 0) * 100).toFixed(2)}%  SBZ ${worst.sbzRequired ? `required, ${sbzLenStr}` : 'not required'}`,
-          margin, y - 2, 8, C.mid);
+        const key = BAR_LABEL_KEY[lbl];
+        drawDCRBar(ctx, lbl, dcr, margin, y, barW, key ? isOverridden(ovr, key) : false);
         y -= 14;
       }
       // EC2 SLS crack-width check (wk vs limit)
@@ -736,8 +702,10 @@ export async function buildReportBytes(
         const wLim = botGoverns
           ? (m.crackParams?.wLimitBot ?? 0.3)
           : (m.crackParams?.wLimitTop ?? 0.3);
-        const okCrack = wk <= wLim;
-        text(ctx, `Crack width wk = ${wk.toFixed(3)} mm  /  limit ${wLim.toFixed(2)} mm  ${okCrack ? '(OK)' : '(EXCEEDS)'}  [EC2 §7.3.4]`,
+        const crackOverridden = opts.includeOverrides && isOverridden(m.overrides, 'DCR_crack');
+        const okCrack = wk <= wLim || crackOverridden;
+        const crackTag = wk <= wLim ? '(OK)' : crackOverridden ? '(reviewed)' : '(EXCEEDS)';
+        text(ctx, `Crack width wk = ${wk.toFixed(3)} mm  /  limit ${wLim.toFixed(2)} mm  ${crackTag}  [EC2 §7.3.4]`,
           margin, y - 2, 8, okCrack ? C.green : C.red, bold);
         y -= 14;
       }
@@ -753,7 +721,28 @@ export async function buildReportBytes(
       y -= consumed + 6;
     }
 
-    // Warnings
+    // Engineer review stamps — printed before warnings so accepted checks are
+    // clearly attributed. Honored only when opts.includeOverrides is true.
+    const overrides = opts.includeOverrides ? m.overrides : undefined;
+    const reviews = overrideEntries(overrides);
+    if (reviews.length > 0) {
+      if (y < margin + 40) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+      text(ctx, 'Engineer Review', margin, y - 8, 10, C.green, bold);
+      y -= 18;
+      for (const [key, ov] of reviews) {
+        if (y < margin + 28) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
+        const line1 = `[OK] Member reviewed & accepted by engineer`;
+        text(ctx, line1, margin, y, 8, C.green, bold);
+        y -= 12;
+        if (ov.note) {
+          text(ctx, `Note: ${ov.note}`, margin + 12, y, 8, C.dark);
+          y -= 12;
+        }
+      }
+      y -= 4;
+    }
+
+    // Warnings — suppress those covered by an engineer override.
     const allWarnings: { code: string; message: string; severity: string }[] = [];
     for (const lc of m.loads) {
       const r = memberResult(m, lc, project.code);
@@ -761,12 +750,15 @@ export async function buildReportBytes(
         if (!allWarnings.find(x => x.message === w.message))
           allWarnings.push(w);
     }
+    const shownWarnings = opts.includeOverrides
+      ? visibleWarnings(allWarnings as { code: string; message: string; severity: 'error' | 'warning' }[], overrides)
+      : allWarnings;
 
-    if (allWarnings.length > 0) {
+    if (shownWarnings.length > 0) {
       if (y < margin + 40) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
       text(ctx, 'Code Warnings', margin, y - 8, 10, C.dark, bold);
       y -= 20;
-      for (const w of allWarnings) {
+      for (const w of shownWarnings) {
         if (y < margin + 20) { ctx = await addPage(doc, font, bold); y = ctx.h - margin; }
         const clr = w.severity === 'error' ? C.red : C.amber;
         text(ctx, `[${w.code}]`, margin, y, 8, clr, bold);

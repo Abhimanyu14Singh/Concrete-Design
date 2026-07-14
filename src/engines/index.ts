@@ -2,9 +2,7 @@
  * Engine barrel — imports all engines, registers them, and re-exports
  * the public registry API.
  *
- * To add a new engine:
- *   import { WallDesignEngine } from './wall';
- *   registerEngine(new WallDesignEngine());
+ * To add a new engine: import it and call registerEngine(new XDesignEngine()).
  */
 
 export { registerEngine, getEngine, listEngines } from './registry';
@@ -25,7 +23,6 @@ import type {
 // Register all available engines at module load time
 registerEngine(new BeamDesignEngine());
 registerEngine(new ColumnDesignEngine());
-// registerEngine(new WallDesignEngine());    // uncomment when implemented
 
 /**
  * Code-aware design dispatcher. Column section types route to the column
@@ -46,7 +43,7 @@ export function runDesign(
   if (isColumn) {
     return code === 'EN1992-1-1'
       ? designColumnEC2(section, material, rebar, load)
-      : designColumnACI(section, material, rebar, load);
+      : designColumnACI(section, material, rebar, load, span);
   }
   if (code === 'EN1992-1-1') {
     return designMemberEC2(section, material, rebar, load, span, crack);

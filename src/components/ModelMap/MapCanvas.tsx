@@ -6,10 +6,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
-import { valueToRampColor, rampStops } from './colorRamp';
-import { groupColor } from './groupColors';
+import { rampStops } from './colorRamp';
+import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
+import { ACCENT, BORDER, DEFAULT_DCR_THRESHOLDS, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK, type DcrBand } from '../../theme';
 
-export type ColorMode = 'dcr' | 'group' | 'section' | 'flexSteel' | 'stirrups' | 'weight' | 'autoGroup';
+export type { ColorMode };
 export type DiagramMode = 'off' | 'moment' | 'shear';
 
 /** Rich per-member info shown in the tooltip. */
@@ -53,6 +54,8 @@ interface Props {
   metricById?: Record<string, number>;
   metricRange?: { min: number; max: number };
   metricLabel?: string;
+  /** Persisted S-Concrete pass/fail per member (for 'sconcrete' color mode). */
+  scoStatusById?: Record<string, 'OK' | 'NG'>;
   /** Auto-group overlay bins for 'autoGroup' color mode. */
   autoGroupOverlay?: AutoGroupBin[];
   /** Member ids to hide from the canvas. */
@@ -67,6 +70,28 @@ interface Props {
   showErrors?: boolean;
   /** Member ids flagged as having errors. */
   errorMemberIds?: Set<string>;
+  /** Frames of the active design group — highlighted; all others halftone. Empty = no focus. */
+  focusFrames?: Set<string>;
+  /** 0 = uniform line weight (today's look); >0 scales stroke by member width. */
+  lineWeightScale?: number;
+  /** memberId → section width (in), for proportional line weight. */
+  widthById?: Record<string, number>;
+  /** memberId → categorical color for the 'concGrade' / 'steelGrade' modes. */
+  gradeColorMap?: Map<string, string>;
+  /** The (user-edited) DCR colour bands driving fills + legend. Defaults to MAP_DCR_BANDS. */
+  dcrBands?: readonly DcrBand[];
+  /** The 3 editable DCR cut-points behind `dcrBands` (for the legend's slider). */
+  dcrThresholds?: [number, number, number];
+  /** Persist a new set of cut-points from the editable legend. */
+  onDcrThresholdsChange?: (t: [number, number, number]) => void;
+  /** Optional imported geometry layers (walls / grids / openings), drawn behind
+   *  the frames. Each is opt-in via the matching show* flag. */
+  walls?: { id: string; story: string; points: { x: number; y: number }[]; kind?: 'wall' | 'slab'; memberId?: string }[];
+  grids?: { id: string; label: string; p1: { x: number; y: number }; p2: { x: number; y: number }; story?: string }[];
+  openings?: { id: string; story: string; points: { x: number; y: number }[]; memberId?: string }[];
+  showWalls?: boolean;
+  showGrids?: boolean;
+  showOpenings?: boolean;
 }
 
 export default function MapCanvas({
@@ -75,10 +100,13 @@ export default function MapCanvas({
   onBeamInspect, onBeamContextMenu,
   width = 640, height = 480,
   diagramMode = 'off', diagramDataById = {},
-  metricById = {}, metricRange, metricLabel,
+  metricById = {}, metricRange, metricLabel, scoStatusById = {},
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
   showErrors = false, errorMemberIds = new Set(),
+  focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
+  dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange,
+  walls = [], grids = [], openings = [], showWalls = false, showGrids = false, showOpenings = false,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
@@ -93,9 +121,24 @@ export default function MapCanvas({
     !hiddenStories.has(f.story) &&
     !(f.memberId && hiddenMemberIds.has(f.memberId))
   );
+  // Layers reuse the same story/hidden predicate as frames; grid axes are model-
+  // global (story-agnostic).
+  const visibleWalls = walls.filter(w =>
+    (story === 'All' || w.story === story) && !hiddenStories.has(w.story) &&
+    !(w.memberId && hiddenMemberIds.has(w.memberId)));
+  const visibleOpenings = openings.filter(o =>
+    (story === 'All' || o.story === story) && !hiddenStories.has(o.story) &&
+    !(o.memberId && hiddenMemberIds.has(o.memberId)));
+  const visibleGrids = grids;
 
-  // Compute bounds
-  const pts = visibleFrames.flatMap(f => [f.pt1, f.pt2]);
+  // Compute bounds — include visible layer geometry so they register to the same
+  // plan and drive fit-to-view (frame-only bounds would clip walls/grids).
+  const pts = [
+    ...visibleFrames.flatMap(f => [f.pt1, f.pt2]),
+    ...(showWalls ? visibleWalls.flatMap(w => w.points) : []),
+    ...(showOpenings ? visibleOpenings.flatMap(o => o.points) : []),
+    ...(showGrids ? visibleGrids.flatMap(g => [g.p1, g.p2]) : []),
+  ];
   const xs = pts.map(p => p.x);
   const ys = pts.map(p => p.y);
   const minX = xs.length ? Math.min(...xs) : 0;
@@ -115,52 +158,30 @@ export default function MapCanvas({
   const tx = (x: number) => pad + (x - minX) * scale;
   const ty = (y: number) => height - pad - (y - minY) * scale;
 
-  // Group color lookup (by memberId)
-  const groupColorMap = new Map<string, string>();
-  designGroups.forEach((g, i) => {
-    const color = groupColor(g.color, i);
-    g.memberIds.forEach(mid => groupColorMap.set(mid, color));
-  });
+  // Shared coloring: group / auto-group lookups + the per-frame color for the mode.
+  const groupColorMap = buildGroupColorMap(designGroups);
+  const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
+  const groupIndexMap = buildGroupIndexMap(designGroups);
+  const frameColor = (f: MapFrame): string =>
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, dcrBands });
 
-  // Auto-group overlay color lookup
-  const autoGroupColorMap = new Map<string, string>();
-  autoGroupOverlay.forEach(bin => {
-    bin.memberIds.forEach(mid => autoGroupColorMap.set(mid, bin.color));
-  });
-
-  function frameColor(f: MapFrame): string {
-    if (colorMode === 'autoGroup') {
-      if (f.memberId) {
-        const c = autoGroupColorMap.get(f.memberId);
-        if (c) return c;
-      }
-      return '#9ca3af';
+  // Proportional line weight (feature ④): scale a beam's stroke by its width. At
+  // lineWeightScale 0 this collapses to the constant 3px (today's look); higher
+  // values spread strokes across ~2–10px in proportion to width, so wider beams
+  // read as heavier lines. Halos add a fixed offset so they track the line.
+  const wVals = Object.values(widthById);
+  const minW = wVals.length ? Math.min(...wVals) : 0;
+  const maxW = wVals.length ? Math.max(...wVals) : 1;
+  const strokeFor = (memberId: string | undefined, hov: boolean): number => {
+    const base = 3;
+    const w = memberId ? widthById[memberId] : undefined;
+    let px = base;
+    if (lineWeightScale > 0 && w !== undefined && maxW > minW) {
+      const t = (w - minW) / (maxW - minW);              // 0..1 across the width range
+      px = base + lineWeightScale * (2 + t * 6 - base);  // blend base → 2..8px band
     }
-    if (colorMode === 'group') {
-      if (f.memberId) {
-        const c = groupColorMap.get(f.memberId);
-        if (c) return c;
-      }
-      return '#9ca3af';
-    }
-    if ((colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && f.memberId) {
-      const v = metricById[f.memberId];
-      if (v !== undefined && metricRange) {
-        return valueToRampColor(v, metricRange.min, metricRange.max);
-      }
-      return '#d1d5db';
-    }
-    if (colorMode === 'section') {
-      let h = 0;
-      for (const ch of f.sectionName) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
-      return `hsl(${(h * 137) % 360},60%,45%)`;
-    }
-    if (f.memberId) {
-      const dcr = dcrById[f.memberId] ?? 0;
-      return dcrToColor(dcr);
-    }
-    return '#d1d5db';
-  }
+    return px + (hov ? 2 : 0);
+  };
 
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -336,13 +357,39 @@ export default function MapCanvas({
     });
   })();
 
+  // Imported geometry layers (walls / grids / openings), built with tx()/ty() so
+  // they register to the same plan. pointerEvents:'none' + no data-framename keeps
+  // lasso / click / context-menu behaviour untouched.
+  const wallLayer = visibleWalls.map(w => (
+    <polygon key={w.id}
+      points={w.points.map(p => `${tx(p.x)},${ty(p.y)}`).join(' ')}
+      fill={w.kind === 'slab' ? 'url(#wallhatch)' : 'rgba(148,163,184,0.28)'}
+      stroke="#94a3b8" strokeWidth={1} style={{ pointerEvents: 'none' }} />
+  ));
+  const gridLayer = visibleGrids.flatMap(g => {
+    const a = { x: tx(g.p1.x), y: ty(g.p1.y) }, b = { x: tx(g.p2.x), y: ty(g.p2.y) };
+    return [
+      <line key={g.id + 'l'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+        stroke="#cbd5e1" strokeWidth={1} strokeDasharray="4 4" style={{ pointerEvents: 'none' }} />,
+      <g key={g.id + 'b'} style={{ pointerEvents: 'none' }}>
+        <circle cx={a.x} cy={a.y} r={8} fill="white" stroke="#cbd5e1" />
+        <text x={a.x} y={a.y + 3} textAnchor="middle" fontSize={9} fill="#64748b">{g.label}</text>
+      </g>,
+    ];
+  });
+  const openingLayer = visibleOpenings.map(o => (
+    <polygon key={o.id}
+      points={o.points.map(p => `${tx(p.x)},${ty(p.y)}`).join(' ')}
+      fill="none" stroke="#64748b" strokeWidth={1.5} strokeDasharray="6 4" style={{ pointerEvents: 'none' }} />
+  ));
+
   return (
     <div style={{ position: 'relative', userSelect: 'none' }}>
       <svg
         ref={svgRef}
         width={width} height={height}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-        style={{ background: '#f8fafc', borderRadius: 10, border: '1px solid #e5e7eb', cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : inspectMode ? 'zoom-in' : 'default', display: 'block' }}
+        style={{ background: '#f8fafc', borderRadius: 10, border: `1px solid ${BORDER.default}`, cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : inspectMode ? 'zoom-in' : 'default', display: 'block' }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
@@ -360,8 +407,16 @@ export default function MapCanvas({
           <pattern id="mmgrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#eef2f7" strokeWidth="1" />
           </pattern>
+          <pattern id="wallhatch" width="6" height="6" patternUnits="userSpaceOnUse">
+            <path d="M0,6 l6,-6" stroke="#94a3b8" strokeWidth="1" />
+          </pattern>
         </defs>
         <rect width={width} height={height} fill="url(#mmgrid)" rx="10" />
+
+        {/* Imported geometry layers — behind every frame (walls → grids → openings) */}
+        {showWalls && <g style={{ pointerEvents: 'none' }}>{wallLayer}</g>}
+        {showGrids && <g style={{ pointerEvents: 'none' }}>{gridLayer}</g>}
+        {showOpenings && <g style={{ pointerEvents: 'none' }}>{openingLayer}</g>}
 
         {/* Diagram overlays (below beams) */}
         {diagramPolygons}
@@ -374,6 +429,13 @@ export default function MapCanvas({
           const color = frameColor(f);
           const linked = !!f.memberId;
           const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);
+          // Feature ①: when a group is active, halftone every frame not in it.
+          const dimmed = !!focusFrames && focusFrames.size > 0 && !focusFrames.has(f.frameName);
+          const baseOpacity = dimmed ? 0.12 : (linked ? 1 : 0.6);
+          // A (near-)vertical member — a column — projects to a single point in
+          // plan; draw it as a square marker instead of a zero-length line.
+          const isColumn = Math.hypot(f.pt2.x - f.pt1.x, f.pt2.y - f.pt1.y) < 0.5;
+          const r = isHov ? 5 : 4;
           return (
             <g key={f.frameName}
               data-framename={f.frameName}
@@ -400,16 +462,39 @@ export default function MapCanvas({
               }}
               onDoubleClick={() => f.memberId && onDoubleClick?.(f.memberId)}
             >
-              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={12} />
-              {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#dc2626" strokeWidth={isHov ? 9 : 7} opacity={0.45} strokeLinecap="round" />}
-              {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={9} opacity={0.35} strokeLinecap="round" />}
-              <line x1={x1} y1={y1} x2={x2} y2={y2}
-                stroke={color}
-                strokeWidth={isHov ? 5 : 3}
-                strokeLinecap="round"
-                strokeDasharray={linked ? undefined : '6 4'}
-                opacity={linked ? 1 : 0.6}
-              />
+              {isColumn ? (
+                <>
+                  <rect x={x1 - 7} y={y1 - 7} width={14} height={14} fill="transparent" />
+                  {flagged && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke={STATUS.fail} strokeWidth={2} opacity={0.5} />}
+                  {isSel && <rect x={x1 - r - 1} y={y1 - r - 1} width={2 * r + 2} height={2 * r + 2} fill="none" stroke="#2563eb" strokeWidth={2} />}
+                  <rect x={x1 - r} y={y1 - r} width={2 * r} height={2 * r} rx={1.5}
+                    fill={color} stroke="#0b1220" strokeWidth={0.5}
+                    strokeDasharray={linked ? undefined : '3 2'} opacity={baseOpacity} />
+                </>
+              ) : (
+                <>
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(12, strokeFor(f.memberId, isHov) + 8)} />
+                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={strokeFor(f.memberId, isHov) + 4} opacity={0.45} strokeLinecap="round" />}
+                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={strokeFor(f.memberId, isHov) + 6} opacity={0.35} strokeLinecap="round" />}
+                  <line x1={x1} y1={y1} x2={x2} y2={y2}
+                    stroke={color}
+                    strokeWidth={strokeFor(f.memberId, isHov)}
+                    strokeLinecap="round"
+                    strokeDasharray={linked ? undefined : '6 4'}
+                    opacity={baseOpacity}
+                  />
+                  {colorMode === 'groupTags' && f.memberId && groupIndexMap.has(f.memberId) && (
+                    <>
+                      <rect x={(x1 + x2) / 2 - 7} y={(y1 + y2) / 2 - 7} width={14} height={14} rx={2.5}
+                        fill="white" stroke={BORDER.default} opacity={dimmed ? 0.3 : 0.95} style={{ pointerEvents: 'none' }} />
+                      <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 3.5} fontSize={10} fontWeight={800}
+                        textAnchor="middle" fill={INK.strong} opacity={dimmed ? 0.3 : 1} style={{ pointerEvents: 'none' }}>
+                        {(groupIndexMap.get(f.memberId) ?? 0) + 1}
+                      </text>
+                    </>
+                  )}
+                </>
+              )}
             </g>
           );
         })}
@@ -429,40 +514,51 @@ export default function MapCanvas({
 
       {/* Toolbar overlay */}
       <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
-        <button onClick={fitView} style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: '#374151' }} title="Fit to view">⊡ Fit</button>
+        <button onClick={fitView} style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: INK.base }} title="Fit to view">⊡ Fit</button>
       </div>
 
       {/* Hover tooltip — suppressed for the beam currently shown in the rich card. */}
       {hovered && !(inspectMode && hovered.memberId === inspectedMemberId) && (
         <div style={{
           position: 'absolute', top: 8, right: 8, background: 'white',
-          border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px',
-          fontSize: 11, color: '#374151', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
+          fontSize: 11, color: INK.base, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
           pointerEvents: 'none', maxWidth: 280,
         }}>
-          <div style={{ fontWeight: 700, color: '#111827', marginBottom: 3 }}>{hovered.frameName}</div>
-          <div style={{ color: '#6b7280', marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
+          <div style={{ fontWeight: 700, color: INK.strong, marginBottom: 3 }}>{hovered.frameName}</div>
+          <div style={{ color: INK.secondary, marginBottom: 4 }}>{hovered.story} · {hovered.sectionName}</div>
+          {(() => {
+            // Feature ⑤: show which design group this beam belongs to.
+            const g = hovered.memberId ? designGroups.find(gr => gr.memberIds.includes(hovered.memberId!)) : undefined;
+            const col = hovered.memberId ? groupColorMap.get(hovered.memberId) : undefined;
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: col ?? MAP_GRAY.unassigned }} />
+                <span style={{ color: g ? INK.strong : INK.muted, fontWeight: 600 }}>{g ? g.label : 'Ungrouped'}</span>
+              </div>
+            );
+          })()}
           {hoveredInfo ? (
             hoveredInfo.error ? (
-              <div style={{ color: '#dc2626', fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>
+              <div style={{ color: STATUS.fail, fontSize: 10 }}>DCR unavailable: {hoveredInfo.error}</div>
             ) : (
               <>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
-                  <span>Flex <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(3)}</span></span>
-                  <span>Shear <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(3)}</span></span>
+                  <span>Flex <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrFlex) }}>{hoveredInfo.dcrFlex.toFixed(3)}</span></span>
+                  <span>Shear <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(hoveredInfo.dcrShear) }}>{hoveredInfo.dcrShear.toFixed(3)}</span></span>
                 </div>
-                <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.6 }}>
-                  <div>Top: <span style={{ color: '#111827' }}>{hoveredInfo.top}</span></div>
-                  <div>Bot: <span style={{ color: '#111827' }}>{hoveredInfo.bot}</span></div>
-                  <div>Stirrups: <span style={{ color: '#111827' }}>{hoveredInfo.stirrups}</span></div>
+                <div style={{ fontSize: 10, color: INK.secondary, lineHeight: 1.6 }}>
+                  <div>Top: <span style={{ color: INK.strong }}>{hoveredInfo.top}</span></div>
+                  <div>Bot: <span style={{ color: INK.strong }}>{hoveredInfo.bot}</span></div>
+                  <div>Stirrups: <span style={{ color: INK.strong }}>{hoveredInfo.stirrups}</span></div>
                   {hoveredInfo.weight && (
-                    <div>Steel: <span style={{ color: '#111827', fontFamily: 'monospace' }}>{hoveredInfo.weight}</span></div>
+                    <div>Steel: <span style={{ color: INK.strong, ...MONO_NUM }}>{hoveredInfo.weight}</span></div>
                   )}
                 </div>
               </>
             )
           ) : (
-            <div style={{ color: '#9ca3af' }}>No results — run design first</div>
+            <div style={{ color: INK.muted }}>No results — run design first</div>
           )}
           {hoveredInfo?.warnings && hoveredInfo.warnings.length > 0 && (() => {
             const sorted = [...hoveredInfo.warnings].sort((a, b) =>
@@ -475,37 +571,43 @@ export default function MapCanvas({
                   const txt = `${w.code}: ${w.message}`;
                   return (
                     <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 4, fontSize: 10 }}>
-                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginTop: 3, flexShrink: 0, background: w.severity === 'error' ? '#dc2626' : '#d97706' }} />
+                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginTop: 3, flexShrink: 0, background: w.severity === 'error' ? STATUS.fail : STATUS.warn }} />
                       <span style={{ color: '#4b5563' }}>{txt.length > 60 ? txt.slice(0, 60) + '…' : txt}</span>
                     </div>
                   );
                 })}
-                {extra > 0 && <div style={{ fontSize: 9, color: '#9ca3af' }}>+{extra} more</div>}
+                {extra > 0 && <div style={{ fontSize: 10, color: INK.muted }}>+{extra} more</div>}
               </div>
             );
           })()}
           {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && hovered?.memberId && metricById[hovered.memberId] !== undefined && (
             <div style={{ marginTop: 4, fontSize: 10 }}>
-              <span style={{ color: '#374151' }}>{metricLabel ?? 'Metric'}: </span>
-              <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
+              <span style={{ color: INK.base }}>{metricLabel ?? 'Metric'}: </span>
+              <span style={{ ...MONO_NUM, fontWeight: 700 }}>{metricById[hovered.memberId].toFixed(3)}</span>
             </div>
           )}
-          <div style={{ color: '#9ca3af', marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
+          <div style={{ color: INK.muted, marginTop: 4, fontSize: 10 }}>click=select · dbl=open · shift+click=add</div>
         </div>
       )}
 
       {/* Error highlight hint */}
       {showErrors && (
-        <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#dc2626' }}>
-          <span style={{ display: 'inline-block', width: 14, height: 3, background: '#dc2626', borderRadius: 2, opacity: 0.45 }} />
+        <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: STATUS.fail }}>
+          <span style={{ display: 'inline-block', width: 14, height: 3, background: STATUS.fail, borderRadius: 2, opacity: 0.45 }} />
           ⚠ has errors
         </div>
       )}
 
-      {/* DCR legend when in DCR mode */}
+      {/* DCR legend when in DCR mode — rendered from the (editable) bands so the
+          legend can never drift from the fill colors. Click ✎ to reband. */}
       {colorMode === 'dcr' && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280' }}>
-          {[['<0.70','#16a34a'],['0.70–0.90','#84cc16'],['0.90–1.00','#f59e0b'],['≥1.00','#dc2626'],['Unlinked','#d1d5db']].map(([l, c]) => (
+        <DcrScaleLegend bands={dcrBands} thresholds={dcrThresholds} onChange={onDcrThresholdsChange} />
+      )}
+
+      {/* S-Concrete pass/fail legend */}
+      {colorMode === 'sconcrete' && (
+        <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 10, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
+          {([['OK', STATUS.ok], ['Overstressed', STATUS.fail], ['Not run', MAP_GRAY.notRun]] as const).map(([l, c]) => (
             <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
               {l}
@@ -516,8 +618,8 @@ export default function MapCanvas({
 
       {/* Auto-group overlay legend — family + group # with matching colors */}
       {colorMode === 'autoGroup' && autoGroupOverlay.length > 0 && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#374151', maxHeight: 180, overflow: 'auto', maxWidth: 260 }}>
-          <div style={{ fontWeight: 700, color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Auto-group preview</div>
+        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.base, maxHeight: 180, overflow: 'auto', maxWidth: 260 }}>
+          <div style={{ fontWeight: 700, color: INK.secondary, marginBottom: 4, textTransform: 'uppercase', letterSpacing: TRACK.wide }}>Auto-group preview</div>
           {autoGroupOverlay.map(bin => (
             <div key={bin.binKey} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
               <span style={{ display: 'inline-block', width: 12, height: 4, background: bin.color, borderRadius: 2, flexShrink: 0 }} />
@@ -529,7 +631,7 @@ export default function MapCanvas({
 
       {/* Metric ramp legend */}
       {(colorMode === 'flexSteel' || colorMode === 'stirrups' || colorMode === 'weight') && metricRange && (
-        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: '#6b7280', minWidth: 140 }}>
+        <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '6px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary, minWidth: 140 }}>
           <div style={{ marginBottom: 4, fontWeight: 600 }}>{metricLabel ?? ''}</div>
           <div style={{ position: 'relative', height: 10, borderRadius: 4, overflow: 'hidden', background: `linear-gradient(to right, ${rampStops(metricRange.min, metricRange.max).map(s => s.color).join(',')})` }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
@@ -542,8 +644,59 @@ export default function MapCanvas({
 
       {/* Diagram legend */}
       {diagramMode !== 'off' && (
-        <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: '1px solid #e5e7eb', fontSize: 10, color: diagramMode === 'moment' ? '#7c3aed' : '#0891b2' }}>
+        <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: diagramMode === 'moment' ? '#7c3aed' : '#0891b2' }}>
           {diagramMode === 'moment' ? '▮ Moment envelope (max |M|)' : '▮ Shear envelope (max |V|)'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** DCR-scale legend for the plan. Read-only chips by default; when the Map passes
+ *  editable thresholds + an onChange it also offers a ✎ slider panel to move the
+ *  green/lime/amber/red cut-points, recolouring the whole plan live. */
+function DcrScaleLegend({ bands, thresholds, onChange }: {
+  bands: readonly DcrBand[];
+  thresholds?: [number, number, number];
+  onChange?: (t: [number, number, number]) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const editable = !!thresholds && !!onChange;
+  const setT = (i: number, v: number) => {
+    if (!thresholds || !onChange) return;
+    const lo = i === 0 ? 0.1 : thresholds[i - 1] + 0.05;
+    const hi = i === 2 ? 3 : thresholds[i + 1] - 0.05;
+    const t = [...thresholds] as [number, number, number];
+    t[i] = Math.min(hi, Math.max(lo, Math.round(v * 20) / 20));
+    onChange(t);
+  };
+  return (
+    <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        {[...bands.map(b => [b.label, b.color] as const), ['Unlinked', MAP_GRAY.unlinked] as const].map(([l, c]) => (
+          <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 14, height: 3, background: c, borderRadius: 2 }} />
+            {l}
+          </span>
+        ))}
+        {editable && (
+          <button onClick={() => setEditing(e => !e)} title="Edit the DCR colour scale"
+            style={{ border: 'none', background: 'none', cursor: 'pointer', color: editing ? ACCENT.primary : INK.muted, fontSize: 12, lineHeight: 1, padding: 0, marginLeft: 2 }}>✎</button>
+        )}
+      </div>
+      {editable && editing && thresholds && (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
+          {([0, 1, 2] as const).map(i => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ display: 'inline-block', width: 12, height: 3, background: bands[i].color, borderRadius: 2, flexShrink: 0 }} />
+              <input type="range" min={0.1} max={2} step={0.05} value={thresholds[i]}
+                onChange={e => setT(i, parseFloat(e.target.value))}
+                style={{ flex: 1, cursor: 'pointer', accentColor: bands[i].color }} />
+              <span style={{ ...MONO_NUM, width: 32, textAlign: 'right' }}>{thresholds[i].toFixed(2)}</span>
+            </div>
+          ))}
+          <button onClick={() => onChange!([...DEFAULT_DCR_THRESHOLDS] as [number, number, number])}
+            style={{ alignSelf: 'flex-start', marginTop: 2, fontSize: 9, color: INK.muted, background: 'none', border: `1px solid ${BORDER.default}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>Reset</button>
         </div>
       )}
     </div>

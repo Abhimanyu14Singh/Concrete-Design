@@ -6,6 +6,7 @@
  */
 import { Component } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
+import { FONT, STATUS } from '../../theme';
 
 interface Props {
   children: ReactNode;
@@ -37,7 +38,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     return (
       <div style={{
         margin: 24, padding: 24, borderRadius: 12,
-        background: '#fef2f2', border: '1px solid #fca5a5', color: '#7f1d1d',
+        background: STATUS.failBg, border: `1px solid ${STATUS.failBorder}`, color: '#7f1d1d',
         maxWidth: 640,
       }}>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
@@ -50,13 +51,13 @@ export default class ErrorBoundary extends Component<Props, State> {
           value can trigger this).
         </p>
         <pre style={{
-          fontSize: 11, fontFamily: 'monospace', background: 'white',
-          border: '1px solid #fecaca', borderRadius: 6, padding: '8px 10px',
-          overflowX: 'auto', margin: '0 0 12px', color: '#b91c1c',
+          fontSize: 11, fontFamily: FONT.mono, background: 'white',
+          border: `1px solid ${STATUS.failBorder}`, borderRadius: 6, padding: '8px 10px',
+          overflowX: 'auto', margin: '0 0 12px', color: STATUS.fail,
         }}>{error.message}</pre>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={this.reset}
-            style={{ padding: '7px 14px', background: '#dc2626', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+            style={{ padding: '7px 14px', background: STATUS.fail, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
             Dismiss & continue
           </button>
           <button onClick={() => window.location.reload()}

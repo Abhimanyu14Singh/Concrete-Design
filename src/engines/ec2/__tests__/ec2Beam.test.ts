@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, designMemberEC2 } from '../ec2Beam';
 import { designMember } from '../../../utils/concreteDesign';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../../types';
@@ -321,5 +321,110 @@ describe('designMemberEC2 crack width integration', () => {
     const strict = { ...DEFAULT_CRACK_PARAMS, wLimitFace: 0.001 };
     const r = designMemberEC2(section, material, withSide, load, 20, strict);
     expect(r.warnings.some(w => w.message.includes('Side face'))).toBe(true);
+  });
+});
+
+// ── S-CONCRETE 2026 large-beam benchmark (500×1200 mm) ───────────────────────
+// Reference: S-CONCRETE report for 500×1200mm rectangular beam, fck=40MPa,
+// fyk=500MPa, cover=50mm, Ø12@200 2-leg stirrups, top 7+7-Ø25 (two layers),
+// bottom 6+6-Ø25 (two layers), skin 8-Ø16@180mm vertical spacing.
+// Expected: shear DCR≈0.629, wk_face≈0.596mm, wk_top≈0.415mm, wk_bot≈0.181mm.
+describe('S-CONCRETE 500×1200mm large-beam benchmark', () => {
+  const MM  = 1 / 25.4;           // mm → in
+  const MPA = 1 / 0.00689476;    // MPa → psi  (1 MPa = 145.038 psi)
+  const KNM = 1 / 1.35582;       // kN·m → kip-ft
+  const KN  = 1 / 4.44822;       // kN → kip
+
+  // Geometry
+  const bm_section: SectionDimensions = {
+    type: 'rectangular_beam',
+    b:  500 * MM,   // 500 mm web / total width
+    h: 1200 * MM,   // 1200 mm
+    coverClear: 50 * MM,
+    stirrupDia: -12, // Ø12 = metric bar #12 (diameter 12 mm in negative-size convention)
+  };
+
+  // Material: fck=40 MPa → psi, fyk=500 MPa → psi
+  const bm_material: MaterialProps = {
+    fc:  40  * MPA,
+    fy:  500 * MPA,
+    fyt: 500 * MPA,
+    Es:  29_000_000,  // 200 GPa ≈ 29,000 ksi = 29,000,000 psi
+    lambdaConcrete: 1.0,
+  };
+
+  // Reinforcement
+  // Top: 7+7-Ø25 (two layers)  As_top = 14 × 490.9 = 6872 mm²
+  // Bot: 6+6-Ø25 (two layers)  As_bot = 12 × 490.9 = 5890 mm²
+  // Skin: 8-Ø16 @ 180mm        As_skin = 8 × 201.1 = 1608 mm²
+  const bm_rebar: RebarLayout = {
+    topBars: [
+      { numBars: 7, barSize: -25 },
+      { numBars: 7, barSize: -25 },
+    ],
+    botBars: [
+      { numBars: 6, barSize: -25 },
+      { numBars: 6, barSize: -25 },
+    ],
+    sideBars: [
+      { numBars: 8, barSize: -16, spacing: 180 * MM },
+    ],
+    ties: { barSize: -12, spacing: 200 * MM, legs: 2 },
+    layerClearSpacing: 25 * MM, // 25mm clear between layers
+  };
+
+  // Loads from S-CONCRETE report: shear Vu≈768kN, moments ~1930 kN·m pos / neg
+  // (These are ULS; qpFactor scales to SLS)
+  const bm_load: LoadCase = {
+    id: 'uls', label: 'ULS',
+    Mu_pos: 1930 * KNM,
+    Mu_neg: 1930 * KNM,
+    Vu: 768 * KNM * 0,  // placeholder — set shear directly below
+    Tu: 0, Pu: 0,
+  };
+  const bm_load_fixed: LoadCase = { ...bm_load, Vu: 768 * KN };
+
+  // The S-CONCRETE reference uses specific M_qp values that differ between
+  // positive and negative faces. Mqp_neg drives top-face (≈ full ULS);
+  // Mqp_pos drives bottom-face (≈ 41% of ULS for this loading scenario).
+  // We set each directly in crack params to replicate the reference conditions.
+  const Mqp_neg_ref = 1930 * KNM;           // kip-ft — reproduces wk_top ≈ 0.415
+  const Mqp_pos_ref = 1930 * 0.41 * KNM;   // kip-ft — reproduces wk_bot ≈ 0.181
+
+  const bm_crack: import('../../../types').CrackControlParams = {
+    ...DEFAULT_CRACK_PARAMS,
+    qpFactor: 0.41,       // base factor; Mqp_neg/pos override below
+    Mqp_pos: Mqp_pos_ref,
+    Mqp_neg: Mqp_neg_ref,
+    wLimitBot: 0.3,
+    wLimitTop: 0.3,
+    wLimitFace: 0.3,
+    kt: 0.4,
+  };
+
+  let result: ReturnType<typeof designMemberEC2>;
+  beforeAll(() => {
+    result = designMemberEC2(bm_section, bm_material, bm_rebar, bm_load_fixed, 20, bm_crack);
+  });
+
+  it('shear DCR ≈ 0.629 (±5%)', () => {
+    expect(result.DCR_shear).toBeGreaterThan(0.629 * 0.95);
+    expect(result.DCR_shear).toBeLessThan(0.629 * 1.05);
+  });
+
+  it('wk_bot ≈ 0.181 mm (±20%)', () => {
+    expect(result.wk_bot).toBeGreaterThan(0.181 * 0.80);
+    expect(result.wk_bot).toBeLessThan(0.181 * 1.20);
+  });
+
+  it('wk_top ≈ 0.415 mm (±20%)', () => {
+    expect(result.wk_top).toBeGreaterThan(0.415 * 0.80);
+    expect(result.wk_top).toBeLessThan(0.415 * 1.20);
+  });
+
+  it('wk_face ≈ 0.596 mm (±20%)', () => {
+    expect(result.wk_face).toBeDefined();
+    expect(result.wk_face!).toBeGreaterThan(0.596 * 0.80);
+    expect(result.wk_face!).toBeLessThan(0.596 * 1.20);
   });
 });

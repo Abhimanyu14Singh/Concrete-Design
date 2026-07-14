@@ -12,6 +12,7 @@ import type { Member, DesignResults, DesignCode } from '../../types';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { useUnits } from '../../contexts/UnitsContext';
+import { DIAGRAM, LABEL_STYLE, STATUS } from '../../theme';
 
 interface Props {
   member: Member;
@@ -102,7 +103,7 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
 
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>
+      <div style={LABEL_STYLE}>
         Shear Diagram — envelope of imported combos ({label('force')})
       </div>
       <ResponsiveContainer width="100%" height={height}>
@@ -112,14 +113,14 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
           <YAxis tick={axisTick} width={45} />
           <Tooltip contentStyle={tooltipStyle} />
           <ReferenceLine y={0} stroke="#9ca3af" />
-          <Area dataKey="Vmax" stroke="#f59e0b" fill="#fde68a" fillOpacity={0.5} isAnimationActive={false} name="V max" />
-          <Area dataKey="Vmin" stroke="#f59e0b" fill="#fde68a" fillOpacity={0.5} isAnimationActive={false} name="V min" />
-          <Line dataKey="phiVn" stroke="#dc2626" strokeDasharray="6 3" dot={false} isAnimationActive={false} name="φVn" type="stepAfter" />
-          <Line dataKey="phiVnNeg" stroke="#dc2626" strokeDasharray="6 3" dot={false} isAnimationActive={false} name="−φVn" type="stepAfter" legendType="none" />
+          <Area dataKey="Vmax" stroke={DIAGRAM.shear} fill="#cffafe" fillOpacity={0.5} isAnimationActive={false} name="V max" />
+          <Area dataKey="Vmin" stroke={DIAGRAM.shear} fill="#cffafe" fillOpacity={0.5} isAnimationActive={false} name="V min" />
+          <Line dataKey="phiVn" stroke={STATUS.fail} strokeDasharray="6 3" dot={false} isAnimationActive={false} name="φVn" type="stepAfter" />
+          <Line dataKey="phiVnNeg" stroke={STATUS.fail} strokeDasharray="6 3" dot={false} isAnimationActive={false} name="−φVn" type="stepAfter" legendType="none" />
         </ComposedChart>
       </ResponsiveContainer>
 
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 }}>
+      <div style={{ ...LABEL_STYLE, marginTop: 4 }}>
         Moment Diagram — envelope of imported combos ({label('moment')}, sagging plotted down)
       </div>
       <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 2 }}>
@@ -133,8 +134,8 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
           <YAxis tick={axisTick} width={45} reversed />
           <Tooltip contentStyle={tooltipStyle} />
           <ReferenceLine y={0} stroke="#9ca3af" />
-          <ReferenceLine y={phiMnPos} stroke="#16a34a" strokeDasharray="6 3"
-            label={{ value: 'φMn⁺', fontSize: 9, fill: '#16a34a', position: 'insideBottomRight' }} />
+          <ReferenceLine y={phiMnPos} stroke={STATUS.ok} strokeDasharray="6 3"
+            label={{ value: 'φMn⁺', fontSize: 9, fill: STATUS.ok, position: 'insideBottomRight' }} />
           <ReferenceLine y={-phiMnNeg} stroke="#7c3aed" strokeDasharray="6 3"
             label={{ value: 'φMn⁻', fontSize: 9, fill: '#7c3aed', position: 'insideTopRight' }} />
           <Area dataKey="Mmax" stroke="#3b82f6" fill="#bfdbfe" fillOpacity={0.5} isAnimationActive={false} name="M max" />

@@ -1,5 +1,5 @@
 /**
- * Shared primitive types used across all member types (beam, column, wall).
+ * Shared primitive types used across all member types (beam, column).
  * Nothing in here is member-type-specific.
  */
 

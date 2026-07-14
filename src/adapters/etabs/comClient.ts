@@ -11,6 +11,7 @@
  * with a clear message so the wizard can offer the demo model.
  */
 import { TableConnection, type TableRow } from './tableConnection';
+import type { PushGroupResult } from './connection';
 
 type EtabsIpc = (method: string, args?: unknown) => Promise<unknown>;
 
@@ -52,5 +53,21 @@ export class ComConnection extends TableConnection {
 
   protected async selectCombosAtSource(combos: string[]): Promise<void> {
     try { await ipc()('selectCombos', { combos }); } catch { /* best effort */ }
+  }
+
+  /** Create each named group in ETABS and assign its member frames. */
+  async pushGroups(groups: Array<{ name: string; frameNames: string[] }>): Promise<PushGroupResult[]> {
+    const results: PushGroupResult[] = [];
+    for (const g of groups) {
+      const r = await ipc()('setGroupAssign', { groupName: g.name, frameNames: g.frameNames }) as
+        { groupName?: string; assigned?: number; total?: number; failures?: string[] };
+      results.push({
+        groupName: r?.groupName ?? g.name,
+        assigned: r?.assigned ?? 0,
+        total: r?.total ?? g.frameNames.length,
+        failures: r?.failures,
+      });
+    }
+    return results;
   }
 }

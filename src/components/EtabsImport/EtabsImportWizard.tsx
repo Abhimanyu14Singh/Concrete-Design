@@ -7,11 +7,11 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import type { Member, DesignGroup, DesignCode, ModelMap, MapFrame } from '../../types';
-import { DEFAULT_CRACK_PARAMS } from '../../types';
-import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo } from '../../adapters/etabs/connection';
+import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo, UnitInfo } from '../../adapters/etabs/connection';
+import { FORCE_UNITS, LENGTH_UNITS, STRESS_UNITS } from '../../adapters/etabs/tableConnection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
-import { buildMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
+import { buildMembers, buildColumnMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
@@ -19,6 +19,7 @@ import { useUnits } from '../../contexts/UnitsContext';
 import PlanMap from './PlanMap';
 import { dcrToColor } from './dcrColors';
 import Dropdown from '../common/Dropdown';
+import { ACCENT, BORDER, INK, LABEL_STYLE, MONO_NUM, STATUS, SURFACE } from '../../theme';
 
 interface Props {
   code: DesignCode;
@@ -39,13 +40,27 @@ type SourceKind = 'com' | 'mock';
 
 const STEPS = ['Connect', 'Filter', 'Rebar Defaults', 'Review & Import'];
 
+/** "All" / "None" quick-select buttons for a multi-select category header. */
+function AllNone({ onAll, onNone }: { onAll: () => void; onNone: () => void }) {
+  const s: React.CSSProperties = {
+    fontSize: 11, color: ACCENT.primary, background: 'none', border: 'none',
+    cursor: 'pointer', fontWeight: 600, padding: '0 4px',
+  };
+  return (
+    <>
+      <button type="button" onClick={onAll} style={s}>All</button>
+      <button type="button" onClick={onNone} style={s}>None</button>
+    </>
+  );
+}
+
 function worstDCR(m: Member, code: DesignCode): number {
   const r = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span, code);
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
-  const { units, fmt, fmtVal, label } = useUnits();
+  const { units } = useUnits();
   const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -59,6 +74,12 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [source, setSource] = useState<SourceKind>(window.electronAPI?.etabs ? 'com' : 'mock');
   const connRef = useRef<EtabsConnection | null>(null);
   const [connInfo, setConnInfo] = useState<EtabsConnectInfo | null>(null);
+  // How raw ETABS values are being read (force/length/stress). Seeded from the
+  // connection's auto-detection on connect; the user can correct it if ETABS
+  // reported — or the app fell back to — the wrong unit system. This is the
+  // fix for the silent kip-ft fallback that mis-scales a locked SI model.
+  const [unitInfo, setUnitInfo] = useState<UnitInfo | null>(null);
+  const [stressOverride, setStressOverride] = useState<string | null>(null); // null = derive from force/length
 
   // step 2 — model lists + selections
   const [stories, setStories] = useState<string[]>([]);
@@ -74,6 +95,19 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [selCombos, setSelCombos] = useState<Set<string>>(new Set());
   const [slsComboId, setSlsComboId] = useState<string>('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  // Which ETABS force table to import. 'design' = the concrete Design Forces
+  // (design stations / face-of-support). 'element' = raw per-combo Element
+  // (analysis) forces — what "Display → Forces → Frames" shows. Switch to
+  // 'element' to match the numbers you read off the ETABS model directly.
+  const [forceSource, setForceSource] = useState<'design' | 'element'>('design');
+  // Member scope — the first decision in the filter step: beams (default),
+  // columns, or both. Columns need a connection that supports getColumns; the
+  // selector disables them and falls back to beams-only otherwise. Column design
+  // forces start at zero (entered after import).
+  const [scope, setScope] = useState<'beams' | 'columns' | 'both'>('beams');
+  const [hasColumns, setHasColumns] = useState(false); // connection supports getColumns
+  const includeColumns = hasColumns && scope !== 'beams';
+  const includeBeams = !includeColumns || scope === 'both';
 
   // step 3 — stirrup size defaults to Ø10 in SI, #4 in imperial (display only;
   // spacings are stored in inches and converted for display when SI)
@@ -83,8 +117,23 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     imposeSkinReinf: true, skinBarSize: units === 'si' ? -12 : 5,
   }));
 
-  // When the user switches units inside the wizard, reset bar size defaults
+  // 1 MPa = 145.0377 psi — the single stress conversion used across the wizard.
+  const PSI_PER_MPA = 145.0377;
+
+  // When the user switches the display units inside the wizard: reset bar-size
+  // defaults AND convert any entered material-strength overrides so the numbers
+  // keep their physical meaning (e.g. 5000 psi ⇄ 34.5 MPa), rather than being
+  // silently relabelled (5000 psi → "5000 MPa").
   function handleWizardUnitsChange(u: 'imperial' | 'si') {
+    if (u !== wizardUnits) {
+      const conv = (s: string) => {
+        const n = parseFloat(s);
+        if (!Number.isFinite(n)) return s; // keep blanks/partial input as typed
+        const v = u === 'si' ? n / PSI_PER_MPA : n * PSI_PER_MPA;
+        return String(+v.toFixed(u === 'si' ? 1 : 0));
+      };
+      setMatOverride(m => ({ ...m, fck: conv(m.fck), fyLong: conv(m.fyLong), fyTie: conv(m.fyTie) }));
+    }
     setWizardUnits(u);
     setSeed(s => ({
       ...s,
@@ -92,6 +141,31 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       skinBarSize: u === 'si' ? -12 : 5,
     }));
   }
+
+  // Section dimensions in the wizard follow the WIZARD's units (which default to
+  // the model's unit system on connect), so the sizes shown next to each section
+  // read in the units the user selects here — independent of the app's global
+  // toggle. Section widths/depths are stored in inches.
+  const wLen = (inches: number) => wizardUnits === 'si' ? Math.round(inches * IN_TO_MM) : +inches.toFixed(1);
+  const wLenUnit = wizardUnits === 'si' ? 'mm' : 'in';
+
+  // Stress (f'c / fy) in the WIZARD's display units: MPa when SI, ksi when
+  // imperial. Values are stored in psi. Keeps the materials preview consistent
+  // with the Display toggle instead of the app's global unit system.
+  const wStress = (psi: number) => wizardUnits === 'si'
+    ? `${(psi / PSI_PER_MPA).toFixed(1)} MPa`
+    : `${(psi / 1000).toFixed(1)} ksi`;
+
+  // Sanity of the imported model under the CURRENT unit interpretation. If a beam
+  // comes in a few tenths of an inch tall, or f'c reads ~20,000 ksi, the units are
+  // wrong — the tables came back in a different system than we detected. Bounds are
+  // deliberately generous (internal in / psi): 2–300 in, f'c 0.5–20 ksi, fy 20–120 ksi.
+  const sampleSec = sections[0];
+  const sampleConc = materials.find(m => m.fc != null);
+  const unitsImplausible =
+    sections.some(s => s.width < 2 || s.width > 300 || s.depth < 2 || s.depth > 300) ||
+    materials.some(m => (m.fc != null && (m.fc < 500 || m.fc > 20000)) ||
+                        (m.fy != null && (m.fy < 20000 || m.fy > 120000)));
 
   const [applyToProject, setApplyToProject] = useState(true);
 
@@ -118,6 +192,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, wizardCode, dcrVersion]);
 
+  // Review-step tallies (members holds both beams + any imported columns).
+  const beamCount = members.filter(m => m.memberType === 'beam').length;
+  const colCount = members.filter(m => m.memberType === 'column').length;
+
   const filter = useMemo(() => ({
     stories: selStory ? [selStory] : undefined,
     sections: selSections.size ? [...selSections] : undefined,
@@ -136,6 +214,15 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       const info = await conn.connect();
       connRef.current = conn;
       setConnInfo(info);
+      // Surface the detected unit interpretation so the user can see/correct it.
+      setUnitInfo(conn.getUnitInfo?.() ?? null);
+      setStressOverride(null);
+      // Adopt the model's unit SYSTEM so imported sizes read in the model's units
+      // (SI model → mm, imperial model → in), matching what ETABS shows. The units
+      // label is "force-length" (e.g. "kn-m", "kip-ft"); the length part decides.
+      const lenPart = info.units.split('-')[1]?.trim().toLowerCase() ?? '';
+      setWizardUnits(['mm', 'cm', 'm'].includes(lenPart) ? 'si' : 'imperial');
+      setHasColumns(!!conn.getColumns);
       const [st, gr, sec, mat, cmb] = await Promise.all([
         conn.getStories(), conn.getGroups(), conn.getFrameSections(),
         conn.getMaterials(), conn.getCombos(),
@@ -154,6 +241,34 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     return connectWith(new ComConnection());
   }
 
+  const canOverrideUnits = !!connRef.current?.setUnitSystem;
+
+  /**
+   * Re-interpret the model under an explicit force/length/stress unit system and
+   * refresh the unit-dependent previews (section sizes, material strengths). The
+   * corrected units then flow through to the forces imported in buildAndReview.
+   */
+  async function applyModelUnits(next: { forceKey?: string; lengthKey?: string; stress?: string | null }) {
+    const conn = connRef.current;
+    if (!conn || !unitInfo) return;
+    await run(async () => {
+      if ((next.forceKey !== undefined || next.lengthKey !== undefined) && conn.setUnitSystem) {
+        conn.setUnitSystem(next.forceKey ?? unitInfo.forceKey, next.lengthKey ?? unitInfo.lengthKey);
+      }
+      if (next.stress !== undefined && conn.setStressUnit) {
+        conn.setStressUnit(next.stress);
+        setStressOverride(next.stress);
+      }
+      // Re-read only the unit-dependent lists; keep the user's section selection.
+      const [sec, mat] = await Promise.all([conn.getFrameSections(), conn.getMaterials()]);
+      setSections(sec);
+      setMaterials(mat);
+      setUnitInfo(conn.getUnitInfo?.() ?? unitInfo);
+      setMatchCount(null);
+      return true;
+    });
+  }
+
   async function refreshMatchCount() {
     const conn = connRef.current;
     if (!conn) return;
@@ -165,21 +280,60 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     const conn = connRef.current;
     if (!conn) return;
     const ok = await run(async () => {
-      // Get all beams (no filter) for the connectivity map snapshot
+      // Import forces from the table the user chose (design vs raw analysis).
+      conn.setForceSource?.(forceSource);
+      // Get all beams (no filter) for the connectivity map snapshot — always
+      // captured so the plan map shows the full model as context.
       const allBeams = await conn.getBeams({});
-      // Get filtered beams for design
-      const beams = await conn.getBeams(filter);
-      if (!beams.length) throw new Error('No beams match the current filter.');
+      // Get filtered beams for design (only when beams are in scope).
+      const beams = includeBeams ? await conn.getBeams(filter) : [];
+      if (includeBeams && !beams.length) throw new Error('No beams match the current filter.');
       const sourceGroup = selGroups.size === 1 ? [...selGroups][0] : undefined;
       // Always fetch the SLS combo's forces too, even if it wasn't selected for
       // ULS import, so per-beam crack-width resolution from stationForces works.
       const forceCombos = new Set(selCombos);
       if (slsComboId) forceCombos.add(slsComboId);
-      const forces = await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup);
+      const forces = beams.length
+        ? await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup)
+        : {};
       let built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
+      // Columns (optional): bring in geometry + section so they appear on the map
+      // and can be grouped/designed. Forces start at zero (entered after import).
+      let allColumns: import('../../adapters/etabs/connection').EtabsColumnGeom[] = [];
+      if (includeColumns && conn.getColumns) {
+        allColumns = await conn.getColumns({});
+        const filteredCols = await conn.getColumns(filter);
+        let colMembers = buildColumnMembers(filteredCols, sections, materials, seed);
+        // Import column design forces (read-only, enveloped per combo) so columns
+        // don't land at zero. Maps ETABS → app: Pu = −P (compression positive),
+        // Mux = M3, Muy = M2, Vu = max(|V2|,|V3|), Tu = T. Falls back to the zero
+        // placeholder (entered later in the force grid) if the source has no column
+        // force table or the analysis wasn't run.
+        if (conn.getColumnForces && filteredCols.length) {
+          try {
+            const colForces = await conn.getColumnForces(filteredCols.map((c) => c.name), [...forceCombos], sourceGroup);
+            colMembers = colMembers.map((m) => {
+              const cfs = colForces[m.id];
+              if (!cfs || !cfs.length) return m;
+              return {
+                ...m,
+                loads: cfs.map((cf, i) => ({
+                  id: cf.combo || `LC${i + 1}`, label: cf.combo || `LC${i + 1}`,
+                  // Vu keeps the enveloped max for the app's single-shear engine;
+                  // Vu2/Vu3 preserve both directions for the biaxial S-Concrete .SCO.
+                  Pu: -cf.P, Mux: cf.M3, Muy: cf.M2, Vu: Math.max(cf.V2, cf.V3), Tu: cf.T,
+                  Vu2: cf.V2, Vu3: cf.V3,
+                  Mu_pos: 0, Mu_neg: 0,
+                })),
+              };
+            });
+          } catch { /* leave columns at zero — the user can enter forces in the grid */ }
+        }
+        built = [...built, ...colMembers];
+      }
+      if (!built.length) throw new Error('No members match the current filter.');
       // Apply global material overrides if the user enabled them.
       if (matOverride.enabled) {
-        const PSI_PER_MPA = 145.038;
         const toInternal = (v: string) => {
           const n = parseFloat(v);
           if (!Number.isFinite(n) || n <= 0) return null;
@@ -202,22 +356,37 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       }
       const builtById = new Map(built.map(m => [m.etabs?.frameName, m.id]));
 
-      // Build modelMap from all beams geometry
-      const uniqueStories = [...new Set(allBeams.map(b => b.story))].sort();
-      const frames: MapFrame[] = allBeams.map(b => ({
-        frameName: b.name,
-        story: b.story,
-        sectionName: b.section,
-        pt1: b.pt1,
-        pt2: b.pt2,
-        memberId: builtById.get(b.name),
-      }));
+      // Optional geometry layers (walls / grids / openings). Sources without an
+      // area/grid table simply omit the method; a source-side error degrades to an
+      // empty layer so the import never breaks.
+      const areas    = conn.getAreas    ? await conn.getAreas({}).catch(() => [])    : [];
+      const grids    = conn.getGrids    ? await conn.getGrids().catch(() => [])      : [];
+      const openings = conn.getOpenings ? await conn.getOpenings({}).catch(() => []) : [];
+
+      // Build modelMap from all beam + column geometry (+ area/grid/opening layers)
+      const uniqueStories = [...new Set([
+        ...allBeams.map(b => b.story), ...allColumns.map(c => c.story),
+        ...areas.map(a => a.story), ...openings.map(o => o.story),
+      ])].sort();
+      const frames: MapFrame[] = [
+        ...allBeams.map(b => ({
+          frameName: b.name, story: b.story, sectionName: b.section, pt1: b.pt1, pt2: b.pt2,
+          memberId: builtById.get(b.name),
+        })),
+        ...allColumns.map(c => ({
+          frameName: c.name, story: c.story, sectionName: c.section, pt1: c.pt1, pt2: c.pt2,
+          memberId: builtById.get(c.name),
+        })),
+      ];
       const modelMap: ModelMap = {
         source,
         modelName: connInfo?.modelName ?? 'ETABS model',
         importedAt: new Date().toISOString(),
         stories: uniqueStories,
         frames,
+        walls: areas.map(a => ({ id: a.name, story: a.story, points: a.points, kind: a.kind, sectionName: a.section || undefined })),
+        grids: grids.map(g => ({ id: g.id, label: g.label, p1: g.p1, p2: g.p2 })),
+        openings: openings.map(o => ({ id: o.name, story: o.story, points: o.points })),
       };
       setCapturedModelMap(modelMap);
 
@@ -272,10 +441,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     // refresh envelope load labels with the chosen combos before handing off.
     // The SLS quasi-permanent combo is stored at PROJECT level (project.slsCombo)
     // and resolved per beam from stationForces at design time — no per-member id.
-    const labeled = members.map(m => ({
-      ...m,
-      loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)],
-    }));
+    const labeled = members.map(m => m.memberType === 'beam'
+      ? { ...m, loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)] }
+      : m); // columns keep their (user-entered / placeholder) loads
     onImport(
       labeled, designGroups, pickId, capturedModelMap ?? undefined,
       slsComboId || undefined,
@@ -285,18 +453,19 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   }
 
   // ── styles ──────────────────────────────────────────────────────────────────
-  const card: React.CSSProperties = { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px' };
-  const lbl: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 };
-  const inp: React.CSSProperties = { padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', outline: 'none', fontFamily: 'monospace' };
+  const card: React.CSSProperties = { background: SURFACE.subtle, border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '12px 14px' };
+  const lbl: React.CSSProperties = { ...LABEL_STYLE, marginBottom: 6 };
+  const unitField: React.CSSProperties = { fontSize: 11, color: INK.secondary, fontWeight: 600, display: 'flex', flexDirection: 'column', gap: 3 };
+  const inp: React.CSSProperties = { padding: '5px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', outline: 'none', ...MONO_NUM };
   const btn = (primary = false): React.CSSProperties => ({
     padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-    background: primary ? '#2563eb' : 'white', color: primary ? 'white' : '#374151',
-    border: primary ? 'none' : '1px solid #d1d5db',
+    background: primary ? ACCENT.primary : 'white', color: primary ? 'white' : INK.base,
+    border: primary ? 'none' : `1px solid ${BORDER.strong}`,
   });
   const chip = (active: boolean): React.CSSProperties => ({
     padding: '3px 10px', borderRadius: 12, fontSize: 11, cursor: 'pointer',
-    border: `1px solid ${active ? '#2563eb' : '#d1d5db'}`,
-    background: active ? '#eff6ff' : 'white', color: active ? '#2563eb' : '#6b7280',
+    border: `1px solid ${active ? ACCENT.primary : BORDER.strong}`,
+    background: active ? ACCENT.softBg : 'white', color: active ? ACCENT.primary : INK.secondary,
     fontWeight: active ? 700 : 400,
   });
 
@@ -310,20 +479,20 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{
-        background: 'white', border: '1px solid #e5e7eb', borderRadius: 16,
+        background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 16,
         width: '100%', maxWidth: 980, maxHeight: '92vh', display: 'flex',
         flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
       }}>
         {/* Header with step progress */}
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb', borderRadius: '16px 16px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, borderRadius: '16px 16px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>Import Beams from ETABS</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: INK.strong }}>Import from ETABS</h2>
             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
               {STEPS.map((s, i) => (
                 <span key={s} style={{
                   fontSize: 10, padding: '2px 10px', borderRadius: 10, fontWeight: 600,
-                  background: i === step ? '#2563eb' : i < step ? '#dbeafe' : '#f3f4f6',
-                  color: i === step ? 'white' : i < step ? '#2563eb' : '#9ca3af',
+                  background: i === step ? ACCENT.primary : i < step ? '#dbeafe' : '#f3f4f6',
+                  color: i === step ? 'white' : i < step ? ACCENT.primary : INK.muted,
                 }}>
                   {i + 1}. {s}
                 </span>
@@ -334,7 +503,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
         </div>
 
         {error && (
-          <div style={{ margin: '12px 20px 0', padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, fontSize: 12, color: '#dc2626' }}>
+          <div style={{ margin: '12px 20px 0', padding: '8px 12px', background: STATUS.failBg, border: `1px solid ${STATUS.failBorder}`, borderRadius: 8, fontSize: 12, color: STATUS.fail }}>
             {error}
           </div>
         )}
@@ -351,15 +520,15 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 <label key={kind} style={{
                   ...card, display: 'flex', gap: 10, cursor: disabled ? 'not-allowed' : 'pointer',
                   opacity: disabled ? 0.55 : 1,
-                  border: `1px solid ${source === kind ? '#2563eb' : '#e5e7eb'}`,
-                  background: source === kind ? '#eff6ff' : '#f9fafb',
+                  border: `1px solid ${source === kind ? ACCENT.primary : BORDER.default}`,
+                  background: source === kind ? ACCENT.softBg : SURFACE.subtle,
                 }}>
                   <input type="radio" checked={source === kind} disabled={disabled}
                     onChange={() => setSource(kind)} style={{ marginTop: 2 }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{title}</div>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{desc}</div>
-                    {disabled && <div style={{ fontSize: 10, color: '#d97706', marginTop: 2 }}>Requires the Windows desktop app with ETABS running</div>}
+                    <div style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{title}</div>
+                    <div style={{ fontSize: 11, color: INK.secondary, marginTop: 2 }}>{desc}</div>
+                    {disabled && <div style={{ fontSize: 10, color: STATUS.warn, marginTop: 2 }}>Requires the Windows desktop app with ETABS running</div>}
                   </div>
                 </label>
               ))}
@@ -372,9 +541,118 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
           {/* ── Step 2: Filter ── */}
           {step === 1 && connInfo && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>
-                ✓ Connected: {connInfo.modelName} <span style={{ color: '#9ca3af' }}>({connInfo.units})</span>
+              <div style={{ fontSize: 12, color: STATUS.ok, fontWeight: 600 }}>
+                ✓ Connected: {connInfo.modelName} <span style={{ color: INK.muted }}>({connInfo.units})</span>
               </div>
+
+              {/* Model units — how raw ETABS values are interpreted. Every imported
+                  force, moment, size and material strength is scaled by these, so a
+                  wrong detection mis-scales the whole model. Shown here (and made
+                  editable) so the user can verify/correct it before importing. */}
+              {unitInfo && (
+                <div style={{
+                  ...card,
+                  display: 'flex', flexDirection: 'column', gap: 10,
+                  borderColor: unitInfo.assumed ? STATUS.warnBorder : BORDER.default,
+                  background: unitInfo.assumed ? STATUS.warnBg : SURFACE.subtle,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Model units — how ETABS values are read</div>
+                    {unitInfo.assumed
+                      ? <span style={{ fontSize: 10, fontWeight: 700, color: STATUS.warn }}>⚠ Not auto-detected — assuming {unitInfo.label}. Verify below.</span>
+                      : <span style={{ fontSize: 10, color: STATUS.ok, fontWeight: 600 }}>✓ Detected {unitInfo.label}</span>}
+                  </div>
+                  {canOverrideUnits ? (
+                    <>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <label style={unitField}>
+                          Force
+                          <Dropdown style={{ ...inp, width: 92 }} value={unitInfo.forceKey}
+                            options={FORCE_UNITS.map(u => ({ value: u.key, label: u.label }))}
+                            onChange={v => applyModelUnits({ forceKey: v })} />
+                        </label>
+                        <label style={unitField}>
+                          Length
+                          <Dropdown style={{ ...inp, width: 92 }} value={unitInfo.lengthKey}
+                            options={LENGTH_UNITS.map(u => ({ value: u.key, label: u.label }))}
+                            onChange={v => applyModelUnits({ lengthKey: v })} />
+                        </label>
+                        <label style={unitField}>
+                          Material f′c / fy
+                          <Dropdown style={{ ...inp, width: 148 }} value={stressOverride ?? 'auto'}
+                            options={[
+                              { value: 'auto', label: `Auto (${unitInfo.forceKey}/${unitInfo.lengthKey}²)` },
+                              ...STRESS_UNITS.map(u => ({ value: u.key, label: u.label })),
+                            ]}
+                            onChange={v => applyModelUnits({ stress: v === 'auto' ? null : v })} />
+                        </label>
+                      </div>
+                      {/* Derived read-outs so the user sees exactly what each quantity comes in as. */}
+                      <div style={{ display: 'flex', gap: 18, rowGap: 4, flexWrap: 'wrap', fontSize: 11, color: INK.secondary }}>
+                        <span>Forces V·P → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.forceKey}</b></span>
+                        <span>Moments M·T → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.forceKey}·{unitInfo.lengthKey}</b></span>
+                        <span>Sizes b·h·L → <b style={{ color: INK.base, ...MONO_NUM }}>{unitInfo.lengthKey}</b></span>
+                        <span>Strength f′c·fy → <b style={{ color: INK.base, ...MONO_NUM }}>{stressOverride ? (STRESS_UNITS.find(s => s.key === stressOverride)?.label ?? stressOverride) : `${unitInfo.forceKey}/${unitInfo.lengthKey}²`}</b></span>
+                      </div>
+
+                      {/* Live "as read" sample — the surest sanity check: does a real
+                          section + material land at a sensible size/strength? */}
+                      {(sampleSec || sampleConc) && (
+                        <div style={{ display: 'flex', gap: 18, rowGap: 4, flexWrap: 'wrap', fontSize: 11, color: INK.secondary, paddingTop: 6, borderTop: `1px solid ${BORDER.subtle}` }}>
+                          <span style={{ fontWeight: 700, color: INK.base }}>Reads as:</span>
+                          {sampleSec && <span><span style={{ ...MONO_NUM, color: ACCENT.primary }}>{sampleSec.name}</span> → <b style={{ color: INK.base }}>{wLen(sampleSec.width)}×{wLen(sampleSec.depth)} {wLenUnit}</b></span>}
+                          {sampleConc && <span><span style={{ ...MONO_NUM, color: ACCENT.primary }}>{sampleConc.name}</span> → <b style={{ color: INK.base }}>f′c {wStress(sampleConc.fc!)}</b></span>}
+                        </div>
+                      )}
+
+                      {unitsImplausible ? (
+                        <div style={{ fontSize: 11, color: STATUS.fail, fontWeight: 600, background: STATUS.failBg, border: `1px solid ${STATUS.failBorder}`, borderRadius: 6, padding: '6px 10px' }}>
+                          ⚠ These values look wrong — the model units above don't match the data ETABS returned.
+                          Adjust Force / Length until the sizes and f′c read sensibly (e.g. a real beam, not a fraction of an inch).
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 10, color: INK.muted }}>
+                          Every imported value is scaled by these into the app's internal units (kip, kip-ft, in, psi). Change them only if the “Reads as” sizes/strengths above look wrong.
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 11, color: INK.secondary }}>
+                      Demo model — values are authored directly in kip, kip-ft, in, psi. Connect to a live ETABS model to adjust unit interpretation.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* First decision: what to import. Columns are disabled when the
+                  source can't expose them (keeps the choice honest). */}
+              <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ ...lbl, marginBottom: 0 }}>Import</div>
+                {([
+                  ['beams', 'Beams', true],
+                  ['columns', 'Columns', hasColumns],
+                  ['both', 'Beams + Columns', hasColumns],
+                ] as [typeof scope, string, boolean][]).map(([val, text, enabled]) => (
+                  <button key={val} disabled={!enabled} onClick={() => setScope(val)}
+                    style={{ ...btn(scope === val), padding: '5px 16px', opacity: enabled ? 1 : 0.4, cursor: enabled ? 'pointer' : 'not-allowed' }}>
+                    {text}
+                  </button>
+                ))}
+                {!hasColumns
+                  ? <span style={{ fontSize: 10, color: INK.muted }}>This source doesn't expose columns.</span>
+                  : includeColumns && <span style={{ fontSize: 10, color: INK.secondary }}>Columns import with geometry + section; enter design forces after import.</span>}
+                <div style={{ flex: 1 }} />
+                {/* How the section sizes below are DISPLAYED (mm vs in) — a view
+                    toggle only, independent of the model-unit interpretation above. */}
+                <div style={{ ...lbl, marginBottom: 0 }}>Display</div>
+                {(['si', 'imperial'] as const).map(u => (
+                  <button key={u} onClick={() => handleWizardUnitsChange(u)}
+                    style={{ ...btn(wizardUnits === u), padding: '5px 12px', fontSize: 12 }}>
+                    {u === 'si' ? 'SI · mm' : 'Imperial · in'}
+                  </button>
+                ))}
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div style={card}>
                   <div style={lbl}>Story / floor</div>
@@ -384,22 +662,32 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
                 <div style={card}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <div style={lbl}>Beam sections</div>
+                    <div style={lbl}>{!includeBeams ? 'Column sections' : includeColumns ? 'Sections' : 'Beam sections'}</div>
                     {(selSections.size > 0 || selGroups.size > 0) && (
-                      <span style={{ fontSize: 10, color: '#6b7280' }}>sections ∪ groups — beams matching either are imported</span>
+                      <span style={{ fontSize: 10, color: INK.secondary }}>sections ∪ groups — members matching either are imported</span>
                     )}
+                    <div style={{ flex: 1 }} />
+                    {sections.length > 0 && <AllNone
+                      onAll={() => { setSelSections(new Set(sections.map(s => s.name))); setMatchCount(null); }}
+                      onNone={() => { setSelSections(new Set()); setMatchCount(null); }} />}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {sections.map(s => (
                       <span key={s.name} style={chip(selSections.has(s.name))}
                         onClick={() => { setSelSections(prev => { const n = new Set(prev); if (n.has(s.name)) n.delete(s.name); else n.add(s.name); return n; }); setMatchCount(null); }}>
-                        {s.name} <span style={{ opacity: 0.7 }}>({fmtVal(s.width, 'length')}×{fmtVal(s.depth, 'length')} {label('length')})</span>
+                        {s.name} <span style={{ opacity: 0.7 }}>({wLen(s.width)}×{wLen(s.depth)} {wLenUnit})</span>
                       </span>
                     ))}
                   </div>
                 </div>
                 <div style={card}>
-                  <div style={lbl}>ETABS groups (empty = all)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>ETABS groups (empty = all)</div>
+                    <div style={{ flex: 1 }} />
+                    {groups.length > 0 && <AllNone
+                      onAll={() => { setSelGroups(new Set(groups)); setMatchCount(null); }}
+                      onNone={() => { setSelGroups(new Set()); setMatchCount(null); }} />}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {groups.map(g => (
                       <span key={g} style={chip(selGroups.has(g))}
@@ -407,11 +695,17 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                         {g}
                       </span>
                     ))}
-                    {!groups.length && <span style={{ fontSize: 11, color: '#9ca3af' }}>No groups defined in model</span>}
+                    {!groups.length && <span style={{ fontSize: 11, color: INK.muted }}>No groups defined in model</span>}
                   </div>
                 </div>
                 <div style={card}>
-                  <div style={lbl}>Design groups from ETABS (empty = story · section)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Design groups from ETABS (empty = story · section)</div>
+                    <div style={{ flex: 1 }} />
+                    {groups.length > 0 && <AllNone
+                      onAll={() => setMirrorGroups(new Set(groups))}
+                      onNone={() => setMirrorGroups(new Set())} />}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {groups.map(g => (
                       <span key={g} style={chip(mirrorGroups.has(g))}
@@ -419,35 +713,53 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                         {g}
                       </span>
                     ))}
-                    {!groups.length && <span style={{ fontSize: 11, color: '#9ca3af' }}>No groups defined in model</span>}
+                    {!groups.length && <span style={{ fontSize: 11, color: INK.muted }}>No groups defined in model</span>}
                   </div>
-                  <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                  <div style={{ fontSize: 10, color: INK.muted, marginTop: 4 }}>
                     Selected ETABS groups become design groups with the same name; remaining beams group by story · section.
                   </div>
                 </div>
-                <div style={card}>
+                {includeBeams && <div style={card}>
+                  {/* Force source — which ETABS table the imported moments/shears come
+                      from. Switch to Analysis to match the numbers you read directly off
+                      the ETABS frame-force display. */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Force source</div>
+                    {([
+                      ['design', 'Design forces', 'ETABS concrete Design Forces (design stations / face of support)'],
+                      ['element', 'Analysis (element)', 'Raw per-combo Element Forces — matches ETABS Display → Forces → Frames'],
+                    ] as ['design' | 'element', string, string][]).map(([val, text, title]) => (
+                      <button key={val} title={title} onClick={() => setForceSource(val)}
+                        style={{ ...btn(forceSource === val), padding: '5px 14px', fontSize: 12 }}>
+                        {text}
+                      </button>
+                    ))}
+                    <span style={{ fontSize: 10, color: INK.muted, flex: 1, minWidth: 180 }}>
+                      Use <b>Analysis</b> if imported M/V don't match what you read in ETABS.
+                    </span>
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     <div style={lbl}>Load combinations to import</div>
-                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                    <span style={{ fontSize: 10, color: INK.muted }}>
                       {selCombos.size} of {combos.length} selected
                     </span>
                     <div style={{ flex: 1 }} />
                     <button onClick={() => setSelCombos(new Set(combos))}
-                      style={{ fontSize: 11, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '0 4px' }}>
+                      style={{ fontSize: 11, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '0 4px' }}>
                       All
                     </button>
                     <button onClick={() => setSelCombos(new Set())}
-                      style={{ fontSize: 11, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '0 4px' }}>
+                      style={{ fontSize: 11, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '0 4px' }}>
                       None
                     </button>
                   </div>
                   {/* Scrollable checkbox list */}
-                  <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 6, background: 'white' }}>
+                  <div style={{ maxHeight: 180, overflowY: 'auto', border: `1px solid ${BORDER.default}`, borderRadius: 6, background: 'white' }}>
                     {combos.map((c, i) => (
                       <label key={c} style={{
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '5px 10px', cursor: 'pointer', fontSize: 12,
-                        background: selCombos.has(c) ? '#eff6ff' : 'transparent',
+                        background: selCombos.has(c) ? ACCENT.softBg : 'transparent',
                         borderBottom: i < combos.length - 1 ? '1px solid #f3f4f6' : 'none',
                       }}>
                         <input
@@ -458,19 +770,19 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                             if (n.has(c)) n.delete(c); else n.add(c);
                             return n;
                           })}
-                          style={{ accentColor: '#2563eb' }}
+                          style={{ accentColor: ACCENT.primary }}
                         />
-                        <span style={{ color: selCombos.has(c) ? '#1d4ed8' : '#374151', fontFamily: 'monospace' }}>{c}</span>
+                        <span style={{ color: selCombos.has(c) ? ACCENT.primaryHover : INK.base, ...MONO_NUM }}>{c}</span>
                       </label>
                     ))}
                   </div>
                   {selCombos.size === 0 && (
-                    <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>
+                    <div style={{ fontSize: 11, color: STATUS.fail, marginTop: 4 }}>
                       Select at least one combination to continue.
                     </div>
                   )}
                   {selCombos.size > 0 && (
-                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4 }}>
+                    <div style={{ fontSize: 10, color: INK.secondary, marginTop: 4 }}>
                       Only the selected combinations are requested from ETABS.
                     </div>
                   )}
@@ -482,32 +794,35 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       options={[{ value: '', label: '— none / use M_qp ratio —' }, ...combos.map(c => ({ value: c, label: c }))]}
                       onChange={setSlsComboId}
                     />
-                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                    <div style={{ fontSize: 10, color: INK.muted, marginTop: 3 }}>
                       If selected, this combo's moments are used as M_qp for EC2 §7.3.4 crack width checks.
                     </div>
                   </div>
-                </div>
+                </div>}
               </div>
-              <div style={card}>
-                <div style={lbl}>Materials (imported with sections)</div>
-                <table style={{ fontSize: 11, borderCollapse: 'collapse' }}>
+              {/* Materials preview folded into Advanced to keep the filter step light. */}
+              <details style={card}>
+                <summary style={{ ...lbl, marginBottom: 0, cursor: 'pointer' }}>
+                  Advanced — materials imported with sections ({materials.length})
+                </summary>
+                <table style={{ fontSize: 11, borderCollapse: 'collapse', marginTop: 8 }}>
                   <tbody>
                     {materials.map(m => (
                       <tr key={m.name}>
-                        <td style={{ padding: '2px 16px 2px 0', fontFamily: 'monospace', color: '#2563eb' }}>{m.name}</td>
-                        <td style={{ padding: '2px 16px 2px 0', color: '#6b7280' }}>{m.fc ? `f'c = ${fmt(m.fc / 1000, 'stressKsi')}` : ''}</td>
-                        <td style={{ color: '#6b7280' }}>{m.fy ? `fy = ${fmt(m.fy / 1000, 'stressKsi')}` : ''}</td>
+                        <td style={{ padding: '2px 16px 2px 0', ...MONO_NUM, color: ACCENT.primary }}>{m.name}</td>
+                        <td style={{ padding: '2px 16px 2px 0', color: INK.secondary }}>{m.fc ? `f'c = ${wStress(m.fc)}` : ''}</td>
+                        <td style={{ color: INK.secondary }}>{m.fy ? `fy = ${wStress(m.fy)}` : ''}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </details>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <button style={btn()} onClick={() => setStep(0)}>← Back</button>
-                <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>
-                {matchCount != null && <span style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>{matchCount} beams match</span>}
+                {includeBeams && <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>}
+                {includeBeams && matchCount != null && <span style={{ fontSize: 12, color: INK.base, fontWeight: 600 }}>{matchCount} beams match</span>}
                 <div style={{ flex: 1 }} />
-                <button style={btn(true)} disabled={busy || selCombos.size === 0} onClick={() => setStep(2)}>
+                <button style={btn(true)} disabled={busy || (includeBeams && selCombos.size === 0)} onClick={() => setStep(2)}>
                   Next: Rebar defaults →
                 </button>
               </div>
@@ -550,9 +865,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       checked={applyToProject}
                       onChange={e => setApplyToProject(e.target.checked)}
                     />
-                    <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>Apply to project</span>
+                    <span style={{ fontSize: 11, color: INK.secondary, fontWeight: 600 }}>Apply to project</span>
                   </label>
-                  <div style={{ fontSize: 11, color: '#9ca3af', maxWidth: 240 }}>
+                  <div style={{ fontSize: 11, color: INK.muted, maxWidth: 240 }}>
                     Sets the project's design code and unit system to match these wizard selections on import.
                   </div>
                 </div>
@@ -561,7 +876,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 <div style={lbl}>Typical longitudinal steel (% of b·d)</div>
                 <div style={{ display: 'flex', gap: 18 }}>
                   {([['rhoTopPct', 'Top bars ρ'], ['rhoBotPct', 'Bottom bars ρ']] as const).map(([key, label]) => (
-                    <label key={key} style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <label key={key} style={{ fontSize: 12, color: INK.secondary, display: 'flex', alignItems: 'center', gap: 6 }}>
                       {label}
                       <input type="number" step={0.05} min={0.1} max={2.5} style={{ ...inp, width: 70 }}
                         value={seed[key]}
@@ -574,7 +889,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 <div style={lbl}>Stirrup spacing by zone — thirds of span ({wizardUnits === 'si' ? 'mm' : 'in'})</div>
                 <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
                   {['End (0–L/3)', 'Middle (L/3–2L/3)', 'End (2L/3–L)'].map((zl, i) => (
-                    <label key={zl} style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <label key={zl} style={{ fontSize: 12, color: INK.secondary, display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {zl}
                       <input type="number"
                         step={wizardUnits === 'si' ? 10 : 0.5} min={wizardUnits === 'si' ? 50 : 2}
@@ -588,7 +903,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                         })} />
                     </label>
                   ))}
-                  <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <label style={{ fontSize: 12, color: INK.secondary, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     Stirrup size
                     <Dropdown style={inp} value={seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)}
                       options={barSizeOptions(wizardUnits, seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4))
@@ -598,19 +913,19 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     />
                   </label>
                 </div>
-                <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
+                <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 0' }}>
                   Bar sizes/counts are auto-selected per section to meet the target steel area; you can edit any beam afterwards.
                 </p>
               </div>
               <div style={card}>
                 <div style={lbl}>Minimum face / skin reinforcement</div>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <label style={{ fontSize: 12, color: '#374151', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <label style={{ fontSize: 12, color: INK.base, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                     <input type="checkbox" checked={!!seed.imposeSkinReinf}
                       onChange={e => setSeed(s => ({ ...s, imposeSkinReinf: e.target.checked }))} />
                     Auto-impose per {wizardCode === 'EN1992-1-1' ? 'EC2' : 'ACI'}
                   </label>
-                  <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3, opacity: seed.imposeSkinReinf ? 1 : 0.4 }}>
+                  <label style={{ fontSize: 12, color: INK.secondary, display: 'flex', flexDirection: 'column', gap: 3, opacity: seed.imposeSkinReinf ? 1 : 0.4 }}>
                     Skin bar size
                     <Dropdown style={inp} value={seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)}
                       disabled={!seed.imposeSkinReinf}
@@ -621,7 +936,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     />
                   </label>
                 </div>
-                <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 0' }}>
+                <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 0' }}>
                   {wizardCode === 'EN1992-1-1'
                     ? 'EC2 §7.3.3: surface reinforcement on deep beams (h > 1000 mm), distributed over the tension half at ≤ 300 mm.'
                     : 'ACI 318 §9.7.2.3: skin reinforcement where h > 36 in, distributed over the lower h/2 at ≤ 12 in.'}
@@ -632,7 +947,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div style={card}>
                 <div style={lbl}>Clear cover to stirrup face ({wizardUnits === 'si' ? 'mm' : 'in'})</div>
                 <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-                  <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: INK.secondary, display: 'flex', alignItems: 'center', gap: 6 }}>
                     Cover
                     <input
                       type="number"
@@ -649,7 +964,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       }}
                     />
                   </label>
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>
+                  <span style={{ fontSize: 11, color: INK.muted }}>
                     Applies to all imported beams (default {wizardUnits === 'si' ? '38 mm' : '1.5 in'}).
                     Affects effective depth and bar placement.
                   </span>
@@ -666,14 +981,14 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     onClick={e => e.stopPropagation()}
                     onChange={e => setMatOverride(s => ({ ...s, enabled: e.target.checked, collapsed: !e.target.checked ? s.collapsed : false }))}
                   />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#374151', flex: 1 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: INK.base, flex: 1 }}>
                     Override material properties (global)
                   </span>
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{matOverride.collapsed ? '▾' : '▴'}</span>
+                  <span style={{ fontSize: 11, color: INK.muted }}>{matOverride.collapsed ? '▾' : '▴'}</span>
                 </div>
                 {!matOverride.collapsed && (
                   <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: INK.secondary, marginBottom: 8 }}>
                       Overrides apply to all imported beams. Leave blank to keep per-section values from ETABS.
                       Values in {wizardUnits === 'si' ? 'MPa' : 'psi'}.
                     </div>
@@ -683,7 +998,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                         ['fyLong', wizardUnits === 'si' ? 'fy long (MPa)' : 'fy long (psi)', 'Longitudinal steel yield strength'],
                         ['fyTie', wizardUnits === 'si' ? 'fy tie (MPa)' : 'fyt (psi)', 'Transverse steel yield strength'],
                       ] as const).map(([key, labelText, title]) => (
-                        <label key={key} title={title} style={{ fontSize: 12, color: '#6b7280', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <label key={key} title={title} style={{ fontSize: 12, color: INK.secondary, display: 'flex', flexDirection: 'column', gap: 3 }}>
                           {labelText}
                           <input
                             type="number"
@@ -716,11 +1031,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
             <div style={{ display: 'flex', gap: 16 }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
-                    {members.length} beams · {selStory || 'all stories'}
+                  <span style={{ fontSize: 12, fontWeight: 700, color: INK.strong }}>
+                    {beamCount} beams{colCount ? ` · ${colCount} columns` : ''} · {selStory || 'all stories'}
                   </span>
                   <div style={{ flex: 1 }} />
-                  <label style={{ fontSize: 11, color: '#6b7280' }}>
+                  <label style={{ fontSize: 11, color: INK.secondary }}>
                     Show DCR ≥{' '}
                     <Dropdown style={inp} value={minDCR}
                       options={[{ value: 0, label: 'all' }, { value: 0.7, label: '0.70' }, { value: 0.9, label: '0.90' }, { value: 1.0, label: '1.00 (failing)' }]}
@@ -746,10 +1061,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       return (
                         <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
                           <span style={{ width: 8, height: 8, borderRadius: 4, background: dcrToColor(w), flexShrink: 0 }} />
-                          <span style={{ flex: 1, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {g.label} <span style={{ color: '#9ca3af' }}>({g.memberIds.length})</span>
+                          <span style={{ flex: 1, color: INK.base, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {g.label} <span style={{ color: INK.muted }}>({g.memberIds.length})</span>
                           </span>
-                          <span style={{ fontFamily: 'monospace', fontWeight: 700, color: dcrToColor(w) }}>{w.toFixed(2)}</span>
+                          <span style={{ ...MONO_NUM, fontWeight: 700, color: dcrToColor(w) }}>{w.toFixed(2)}</span>
                           <button title="Add one bottom bar to every beam in this group"
                             style={{ ...btn(), padding: '1px 7px', fontSize: 11 }} onClick={() => bumpGroupBars(g.id, +1)}>+bar</button>
                           <button title="Remove one bottom bar from every beam in this group"
@@ -762,18 +1077,27 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     disabled={selected.size < 2} onClick={mergeSelectedIntoGroup}>
                     Merge {selected.size || ''} selected into new group
                   </button>
-                  <p style={{ fontSize: 10, color: '#9ca3af', margin: '6px 0 0' }}>
+                  <p style={{ fontSize: 10, color: INK.muted, margin: '6px 0 0' }}>
                     Shift-click beams on the map to multi-select. Auto-groups = story × section.
                   </p>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* Next-steps summary — closes the wizard by naming the workflow. */}
+                  <div style={{ background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#1e40af', lineHeight: 1.5 }}>
+                    <b>Next:</b> group members → design rebar → run S-Concrete to verify.
+                    {colCount > 0 && (
+                      <div style={{ marginTop: 4, color: '#b45309' }}>
+                        ⚠ {colCount} column{colCount === 1 ? '' : 's'} imported with zero forces — enter Pu / Mux / Muy in Map → ① Design before running S-Concrete.
+                      </div>
+                    )}
+                  </div>
                   <button style={btn()} onClick={() => setStep(2)}>← Back to rebar</button>
                   <button style={btn(true)} onClick={() => commit()}>
-                    Import {members.length} beams into project
+                    Import {members.length} member{members.length === 1 ? '' : 's'} into project
                   </button>
-                  <p style={{ fontSize: 10, color: '#9ca3af', margin: 0, textAlign: 'center' }}>
-                    Double-click a beam to import everything and open that beam.
+                  <p style={{ fontSize: 10, color: INK.muted, margin: 0, textAlign: 'center' }}>
+                    Double-click a member to import everything and open it.
                   </p>
                 </div>
               </div>

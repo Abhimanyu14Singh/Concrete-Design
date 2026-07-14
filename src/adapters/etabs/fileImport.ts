@@ -14,7 +14,7 @@ import * as XLSX from 'xlsx';
 import type { ComboForces } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, BeamFilter,
+  EtabsBeamGeom, EtabsColumnGeom, BeamFilter,
 } from './connection';
 import { matchesFilter } from './connection';
 
@@ -24,20 +24,37 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-/** Find the first sheet whose headers include all of `required` (normalized). */
-function findSheet(wb: XLSX.WorkBook, required: string[]): Row[] | null {
+function rekey(rows: Row[]): Row[] {
+  return rows.map(r => {
+    const o: Row = {};
+    for (const [k, v] of Object.entries(r)) o[norm(k)] = v;
+    return o;
+  });
+}
+
+/** Find the first sheet whose headers include all of `required` (normalized),
+ *  optionally skipping any sheet whose NAME contains `excludeNameSubstr` — used so
+ *  the beam parse never accidentally grabs the "Columns" sheet when it comes first. */
+function findSheet(wb: XLSX.WorkBook, required: string[], excludeNameSubstr?: string): Row[] | null {
   for (const name of wb.SheetNames) {
+    if (excludeNameSubstr && norm(name).includes(norm(excludeNameSubstr))) continue;
     const rows = XLSX.utils.sheet_to_json<Row>(wb.Sheets[name], { defval: null });
     if (!rows.length) continue;
     const headers = Object.keys(rows[0]).map(norm);
-    if (required.every(r => headers.includes(r))) {
-      // Re-key rows by normalized header for tolerant access
-      return rows.map(r => {
-        const o: Row = {};
-        for (const [k, v] of Object.entries(r)) o[norm(k)] = v;
-        return o;
-      });
-    }
+    if (required.every(r => headers.includes(r))) return rekey(rows);
+  }
+  return null;
+}
+
+/** Find a sheet whose NAME contains `substr` (case-insensitive) and has all
+ *  `required` headers — used to pick the explicit "Columns" sheet. */
+function findNamedSheet(wb: XLSX.WorkBook, substr: string, required: string[]): Row[] | null {
+  for (const name of wb.SheetNames) {
+    if (!norm(name).includes(norm(substr))) continue;
+    const rows = XLSX.utils.sheet_to_json<Row>(wb.Sheets[name], { defval: null });
+    if (!rows.length) continue;
+    const headers = Object.keys(rows[0]).map(norm);
+    if (required.every(r => headers.includes(r))) return rekey(rows);
   }
   return null;
 }
@@ -49,6 +66,7 @@ export class FileConnection implements EtabsConnection {
   readonly kind = 'file' as const;
 
   private beams: EtabsBeamGeom[] = [];
+  private columns: EtabsColumnGeom[] = [];
   private sections: EtabsSectionInfo[] = [];
   private materials: EtabsMaterialInfo[] = [];
   private forces = new Map<string, Map<string, ComboForces>>(); // frame → combo → forces
@@ -63,7 +81,10 @@ export class FileConnection implements EtabsConnection {
   async connect(): Promise<EtabsConnectInfo> {
     const wb = XLSX.read(this.data, { type: 'array' });
 
-    const beamRows = findSheet(wb, ['story', 'frame', 'section', 'x1', 'y1', 'z1', 'x2', 'y2', 'z2']);
+    const geomHeaders = ['story', 'frame', 'section', 'x1', 'y1', 'z1', 'x2', 'y2', 'z2'];
+    // Prefer an explicit "Beams" sheet; otherwise the first geometry sheet that
+    // ISN'T the columns sheet (so sheet order can't swap beams and columns).
+    const beamRows = findNamedSheet(wb, 'beam', geomHeaders) ?? findSheet(wb, geomHeaders, 'column');
     if (!beamRows) throw new Error('No "Beams" sheet found (needs Story, Frame, Section, X1..Z2 columns).');
     this.beams = beamRows.map(r => {
       const pt1 = { x: num(r.x1), y: num(r.y1), z: num(r.z1) };
@@ -77,6 +98,21 @@ export class FileConnection implements EtabsConnection {
         lengthFt: Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
       };
     });
+
+    // Columns are OPTIONAL: an explicit "Columns"-named sheet with the same
+    // geometry columns. Only genuinely vertical members are kept.
+    const colRows = findNamedSheet(wb, 'column', ['story', 'frame', 'section', 'x1', 'y1', 'z1', 'x2', 'y2', 'z2']) ?? [];
+    this.columns = colRows
+      .map(r => {
+        const pt1 = { x: num(r.x1), y: num(r.y1), z: num(r.z1) };
+        const pt2 = { x: num(r.x2), y: num(r.y2), z: num(r.z2) };
+        return {
+          name: str(r.frame), story: str(r.story), section: str(r.section), pt1, pt2,
+          groups: str(r.groups).split(';').map(g => g.trim()).filter(Boolean),
+          heightFt: Math.abs(pt2.z - pt1.z) || Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
+        };
+      })
+      .filter(c => Math.abs(c.pt2.z - c.pt1.z) >= Math.hypot(c.pt2.x - c.pt1.x, c.pt2.y - c.pt1.y));
 
     const secRows = findSheet(wb, ['name', 'material', 'depth', 'width']);
     this.sections = (secRows ?? []).map(r => ({
@@ -115,11 +151,11 @@ export class FileConnection implements EtabsConnection {
   }
 
   async getStories(): Promise<string[]> {
-    return [...new Set(this.beams.map(b => b.story))];
+    return [...new Set([...this.beams.map(b => b.story), ...this.columns.map(c => c.story)])];
   }
 
   async getGroups(): Promise<string[]> {
-    return [...new Set(this.beams.flatMap(b => b.groups))];
+    return [...new Set([...this.beams.flatMap(b => b.groups), ...this.columns.flatMap(c => c.groups)])];
   }
 
   async getFrameSections(): Promise<EtabsSectionInfo[]> {
@@ -139,6 +175,10 @@ export class FileConnection implements EtabsConnection {
 
   async getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]> {
     return this.beams.filter(b => matchesFilter(b, filter));
+  }
+
+  async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
+    return this.columns.filter(c => matchesFilter(c, filter));
   }
 
   async getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>> {

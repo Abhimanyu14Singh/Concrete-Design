@@ -1,6 +1,6 @@
 /**
  * Beam-specific types (ACI 318-19 §9).
- * Import shared primitives from ./common — never import from column.ts or wall.ts here.
+ * Import shared primitives from ./common — never import from column.ts here.
  */
 
 import type { BaseMember, BaseLoadCase, BaseDesignResults, BarGroup, TieLayout } from './common';

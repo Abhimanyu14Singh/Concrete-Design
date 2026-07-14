@@ -1,4 +1,4 @@
-import { codeAccent, codeBg } from '../../theme';
+import { codeAccent, codeBg, TRACK } from '../../theme';
 
 interface Props {
   code: string;
@@ -24,7 +24,7 @@ export default function CodeBadge({ code, size = 'sm' }: Props) {
       borderRadius: 12,
       padding: size === 'sm' ? '2px 8px' : '3px 12px',
       whiteSpace: 'nowrap',
-      letterSpacing: 0.3,
+      letterSpacing: TRACK.wide,
     }}>
       {DISPLAY[code] ?? code}
     </span>

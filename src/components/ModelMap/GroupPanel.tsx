@@ -6,6 +6,7 @@ import { useState, useMemo } from 'react';
 import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { GROUP_PALETTE as PALETTE, groupColor } from './groupColors';
+import { ACCENT, BORDER, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
 
 interface Props {
   groups: DesignGroup[];
@@ -174,11 +175,11 @@ export default function GroupPanel({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 12 }}>
       {/* Header actions */}
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER.default}`, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button
           onClick={createGroupFromSelection}
           disabled={selected.size === 0}
-          style={{ flex: 1, padding: '6px 8px', background: selected.size ? '#2563eb' : '#e5e7eb', color: selected.size ? 'white' : '#9ca3af', border: 'none', borderRadius: 6, cursor: selected.size ? 'pointer' : 'default', fontWeight: 600, fontSize: 11 }}
+          style={{ flex: 1, padding: '6px 8px', background: selected.size ? ACCENT.primary : BORDER.default, color: selected.size ? 'white' : INK.muted, border: 'none', borderRadius: 6, cursor: selected.size ? 'pointer' : 'default', fontWeight: 600, fontSize: 11 }}
         >
           + Group selection ({selected.size})
         </button>
@@ -187,7 +188,7 @@ export default function GroupPanel({
             onClick={onSuggestAll}
             disabled={groups.length === 0}
             title="Suggest the lightest practical rebar for every group at once"
-            style={{ flexShrink: 0, padding: '6px 8px', background: groups.length ? 'white' : '#f3f4f6', color: groups.length ? '#7c3aed' : '#9ca3af', border: `1px solid ${groups.length ? '#c4b5fd' : '#e5e7eb'}`, borderRadius: 6, cursor: groups.length ? 'pointer' : 'default', fontWeight: 700, fontSize: 11 }}
+            style={{ flexShrink: 0, padding: '6px 8px', background: groups.length ? 'white' : '#f3f4f6', color: groups.length ? '#7c3aed' : INK.muted, border: `1px solid ${groups.length ? '#c4b5fd' : BORDER.default}`, borderRadius: 6, cursor: groups.length ? 'pointer' : 'default', fontWeight: 700, fontSize: 11 }}
           >
             ✨ Suggest all groups
           </button>
@@ -203,7 +204,7 @@ export default function GroupPanel({
               if (checkedGroups.has(activeGroupId ?? '')) onActiveGroupChange(null);
               setCheckedGroups(new Set());
             }}
-            style={{ flexShrink: 0, padding: '6px 8px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 11 }}
+            style={{ flexShrink: 0, padding: '6px 8px', background: '#fee2e2', color: STATUS.fail, border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 11 }}
           >
             🗑 Delete {checkedGroups.size}
           </button>
@@ -212,8 +213,8 @@ export default function GroupPanel({
 
       {/* Selection chips — per-frame add/remove buttons */}
       {selectionChips.length > 0 && activeGroupId && (
-        <div style={{ padding: '6px 12px', borderBottom: '1px solid #f3f4f6', background: '#f9fafb' }}>
-          <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 4, textTransform: 'uppercase' }}>
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: INK.muted, marginBottom: 4, textTransform: 'uppercase' }}>
             Selected frames
           </div>
           {(selectionChips.length > 8 ? selectionChips.slice(0, 8) : selectionChips).map(chip => {
@@ -221,15 +222,15 @@ export default function GroupPanel({
             const inGroup = grp?.memberIds.includes(chip.memberId) ?? false;
             return (
               <div key={chip.frameName} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', fontSize: 11 }}>
-                <span style={{ flex: 1, fontFamily: 'monospace', color: '#374151' }}>{chip.frameName}</span>
+                <span style={{ flex: 1, ...MONO_NUM, color: INK.base }}>{chip.frameName}</span>
                 {inGroup ? (
                   <button onClick={() => removeMemberFromGroup(activeGroupId, chip.memberId)}
-                    style={{ padding: '2px 7px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    style={{ padding: '2px 7px', background: '#fee2e2', color: STATUS.fail, border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
                     − Remove
                   </button>
                 ) : (
                   <button onClick={() => addMemberToGroup(activeGroupId, chip.memberId)}
-                    style={{ padding: '2px 7px', background: '#dcfce7', color: '#16a34a', border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    style={{ padding: '2px 7px', background: '#dcfce7', color: STATUS.ok, border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
                     + Add
                   </button>
                 )}
@@ -237,7 +238,7 @@ export default function GroupPanel({
             );
           })}
           {selectionChips.length > 8 && (
-            <div style={{ fontSize: 10, color: '#9ca3af' }}>+{selectionChips.length - 8} more selected</div>
+            <div style={{ fontSize: 10, color: INK.muted }}>+{selectionChips.length - 8} more selected</div>
           )}
         </div>
       )}
@@ -245,7 +246,7 @@ export default function GroupPanel({
       {/* Group list */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
         {groups.length === 0 && (
-          <div style={{ padding: 20, color: '#9ca3af', textAlign: 'center' }}>
+          <div style={{ padding: 20, color: INK.muted, textAlign: 'center' }}>
             No groups yet. Select members on the map and click "+ Group selection".
           </div>
         )}
@@ -262,8 +263,8 @@ export default function GroupPanel({
               onClick={() => selectGroup(g)}
               style={{
                 padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-                background: isActive ? '#eff6ff' : 'white',
-                borderLeft: `3px solid ${isActive ? '#2563eb' : 'transparent'}`,
+                background: isActive ? ACCENT.softBg : 'white',
+                borderLeft: `3px solid ${isActive ? ACCENT.primary : 'transparent'}`,
                 borderBottom: statsOpen ? 'none' : '1px solid #f3f4f6',
               }}
             >
@@ -291,15 +292,15 @@ export default function GroupPanel({
                     onBlur={renameCommit}
                     onKeyDown={e => { if (e.key === 'Enter') renameCommit(); if (e.key === 'Escape') setEditingId(null); }}
                     onClick={e => e.stopPropagation()}
-                    style={{ width: '100%', border: '1px solid #2563eb', borderRadius: 4, padding: '2px 4px', fontSize: 12 }}
+                    style={{ width: '100%', border: `1px solid ${ACCENT.primary}`, borderRadius: 4, padding: '2px 4px', fontSize: 12 }}
                   />
                 ) : (
                   <span onDoubleClick={e => { e.stopPropagation(); renameStart(g); }}
-                    style={{ fontWeight: 600, color: '#111827' }}>
+                    style={{ fontWeight: 600, color: INK.strong }}>
                     {g.label}
                   </span>
                 )}
-                <div style={{ color: '#6b7280', fontSize: 10, marginTop: 1 }}>{g.memberIds.length} member{g.memberIds.length !== 1 ? 's' : ''}</div>
+                <div style={{ color: INK.secondary, fontSize: 10, marginTop: 1 }}>{g.memberIds.length} member{g.memberIds.length !== 1 ? 's' : ''}</div>
               </div>
 
               {/* Worst DCR badge */}
@@ -307,7 +308,7 @@ export default function GroupPanel({
                 <span style={{
                   padding: '2px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
                   background: dcr >= 1 ? '#fee2e2' : dcr >= 0.9 ? '#fef3c7' : '#dcfce7',
-                  color: dcr >= 1 ? '#dc2626' : dcr >= 0.9 ? '#b45309' : '#16a34a',
+                  color: dcr >= 1 ? STATUS.fail : dcr >= 0.9 ? '#b45309' : STATUS.ok,
                 }}>
                   {dcr.toFixed(2)}
                 </span>
@@ -317,7 +318,7 @@ export default function GroupPanel({
               {stats && (
                 <button
                   onClick={e => { e.stopPropagation(); setExpandedStats(statsOpen ? null : g.id); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 10, padding: '0 2px' }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 10, padding: '0 2px' }}
                   title="Show group statistics"
                 >{statsOpen ? '▾' : '▸'}</button>
               )}
@@ -326,7 +327,7 @@ export default function GroupPanel({
               {onDeleteGroupWithMembers && (
                 <button
                   onClick={e => { e.stopPropagation(); deleteGroupWithMembers(g); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 12, padding: '0 2px' }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: STATUS.fail, fontSize: 12, padding: '0 2px' }}
                   title="Delete group AND its beams permanently"
                 >🗑</button>
               )}
@@ -334,22 +335,22 @@ export default function GroupPanel({
               {/* Dissolve */}
               <button
                 onClick={e => { e.stopPropagation(); dissolveGroup(g.id); }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14, padding: '0 2px' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14, padding: '0 2px' }}
                 title="Dissolve group (keep beams)"
               >×</button>
             </div>
 
             {/* Expandable stats */}
             {statsOpen && stats && (
-              <div style={{ padding: '4px 12px 6px 28px', background: '#f8fafc', borderLeft: `3px solid ${isActive ? '#2563eb' : 'transparent'}`, borderBottom: '1px solid #f3f4f6', fontSize: 10, color: '#374151', lineHeight: 1.7 }}>
+              <div style={{ padding: '4px 12px 6px 28px', background: '#f8fafc', borderLeft: `3px solid ${isActive ? ACCENT.primary : 'transparent'}`, borderBottom: '1px solid #f3f4f6', fontSize: 10, color: INK.base, lineHeight: 1.7 }}>
                 <div>
-                  <span style={{ color: '#9ca3af' }}>Flex+:</span> {stats.posM.toFixed(2)} ±{stats.posS.toFixed(2)}
-                  {' '}<span style={{ color: '#9ca3af' }}>Flex−:</span> {stats.negM.toFixed(2)} ±{stats.negS.toFixed(2)}
-                  {' '}<span style={{ color: '#9ca3af' }}>V:</span> {stats.shM.toFixed(2)} ±{stats.shS.toFixed(2)}
+                  <span style={{ color: INK.muted }}>Flex+:</span> {stats.posM.toFixed(2)} ±{stats.posS.toFixed(2)}
+                  {' '}<span style={{ color: INK.muted }}>Flex−:</span> {stats.negM.toFixed(2)} ±{stats.negS.toFixed(2)}
+                  {' '}<span style={{ color: INK.muted }}>V:</span> {stats.shM.toFixed(2)} ±{stats.shS.toFixed(2)}
                 </div>
                 <div>
-                  <span style={{ color: '#9ca3af' }}>ρ top:</span> {stats.rhoTop.toFixed(2)}%
-                  {'  '}<span style={{ color: '#9ca3af' }}>ρ bot:</span> {stats.rhoBot.toFixed(2)}%
+                  <span style={{ color: INK.muted }}>ρ top:</span> {stats.rhoTop.toFixed(2)}%
+                  {'  '}<span style={{ color: INK.muted }}>ρ bot:</span> {stats.rhoBot.toFixed(2)}%
                 </div>
               </div>
             )}
@@ -359,7 +360,7 @@ export default function GroupPanel({
       </div>
 
       {/* Footer stats */}
-      <div style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', color: '#6b7280', fontSize: 10, display: 'flex', gap: 12 }}>
+      <div style={{ padding: '8px 12px', borderTop: `1px solid ${BORDER.default}`, color: INK.secondary, fontSize: 10, display: 'flex', gap: 12 }}>
         <span>{selected.size} selected</span>
         <span>{groups.length} group{groups.length !== 1 ? 's' : ''}</span>
         <span>{unassignedCount} unassigned</span>

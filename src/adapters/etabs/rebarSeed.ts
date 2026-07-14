@@ -5,6 +5,7 @@
  */
 import type { RebarLayout, SectionDimensions, TieZone, DesignCode, BarGroup } from '../../types';
 import { getBarArea, getBarDiam, effectiveDepth } from '../../utils/concreteDesign';
+import { skinMinArea } from '../../engines/ec2/ec2Beam';
 
 export interface SeedOptions {
   rhoTopPct: number;             // top steel, % of b·d (e.g. 0.4)
@@ -21,29 +22,46 @@ export interface SeedOptions {
 }
 
 const IN_TO_MM = 25.4;
+const IN2_TO_MM2 = 645.16;
 
 /**
- * Code-based minimum side/skin reinforcement for a deep beam.
- *  - ACI 318 §9.7.2.3: required when h > 36 in, distributed over the lower h/2
- *    of the web at ≤ 12 in spacing.
- *  - EC2 §7.3.3: surface/skin reinforcement when h > 1000 mm, at ≤ 300 mm.
- * Returns the total side bars (both faces) and bar size, or undefined when the
- * section is too shallow to require skin steel.
+ * Code-based minimum side/skin reinforcement for a deep beam. Returns the side
+ * bars PER FACE and bar size, or undefined when the section is too shallow to
+ * require skin steel. (Beam convention — the section drawing, the crack engine,
+ * and the .SCO all count skin bars per face; the column seed doubles this to a
+ * both-faces total since columns pool their side bars.)
+ *
+ *  - ACI 318 §9.7.2.3: required when h > 36 in, distributed over the lower h/2 of
+ *    the web at ≤ 12 in spacing (geometric).
+ *  - EC2 §7.3.3(3)+§7.3.2(2): required when h > 1000 mm, and — crucially — sized to
+ *    the minimum crack-control AREA As,min = kc·k·fct·Act/σs (not just a spacing
+ *    rule). This is what governs a deep, lightly-loaded beam, and matches
+ *    S-CONCRETE. The ≤300 mm spacing rule is kept as a lower-bound floor. Pass the
+ *    section's fck (MPa) and any axial NEd for an accurate area; without them a
+ *    representative fck and pure bending are assumed.
  */
 export function minSkinReinforcement(
   section: SectionDimensions,
   code: DesignCode | string,
   barSize: number,
+  opts?: { fckMPa?: number; NEd_N?: number; wLimitFace?: number },
 ): BarGroup | undefined {
   const isEC2 = code === 'EN1992-1-1';
   const thresholdIn = isEC2 ? 1000 / IN_TO_MM : 36;
   const h = section.h;
   if (h <= thresholdIn) return undefined;
-  const sMaxIn = isEC2 ? 300 / IN_TO_MM : 12;
   const cover = section.coverClear ?? 1.5;
-  const region = Math.max(0, h / 2 - cover); // lower (tension) half of the web
-  const perFace = Math.max(1, Math.ceil(region / sMaxIn));
-  return { numBars: 2 * perFace, barSize }; // both faces
+  const bySpacing = Math.max(1, Math.ceil(Math.max(0, h / 2 - cover) / (isEC2 ? 300 / IN_TO_MM : 12)));
+  if (isEC2) {
+    // Area-driven per EC2 (see doc): enough bars to meet As,min, ≥ the spacing floor.
+    const b_mm = (section.bw ?? section.b) * IN_TO_MM;
+    const dia_mm = getBarDiam(barSize) * IN_TO_MM;
+    const skin = skinMinArea(b_mm, h * IN_TO_MM, opts?.NEd_N ?? 0, opts?.fckMPa ?? 30, dia_mm, opts?.wLimitFace ?? 0.3);
+    const areaOne_mm2 = getBarArea(barSize) * IN2_TO_MM2;
+    const byArea = skin && areaOne_mm2 > 0 ? Math.ceil(skin.AsMin / areaOne_mm2 / 2) : 0; // per face
+    return { numBars: Math.max(byArea, bySpacing), barSize };
+  }
+  return { numBars: bySpacing, barSize }; // ACI — bars PER FACE (beam convention)
 }
 
 // US bars (#5–#11) and metric bars (Ø16–Ø32, stored negative). pickBars
@@ -111,10 +129,15 @@ export function seedRebar(section: SectionDimensions, opts: SeedOptions, code?: 
     { spacing: opts.stirrupSpacings[2] },
   ];
 
-  // Code-based minimum skin reinforcement for deep beams (opt-in via wizard)
-  const skin = opts.imposeSkinReinf && code
+  // Code-based minimum skin reinforcement for deep members (opt-in via wizard).
+  // minSkinReinforcement returns bars PER FACE (beam convention); columns pool
+  // their side bars as a both-faces total, so double for column sections.
+  const skinPerFace = opts.imposeSkinReinf && code
     ? minSkinReinforcement(section, code, opts.skinBarSize ?? (isEC2 ? -12 : 5))
     : undefined;
+  const skin = skinPerFace && section.type.endsWith('_column')
+    ? { ...skinPerFace, numBars: skinPerFace.numBars * 2 }
+    : skinPerFace;
 
   return {
     topBars: [pickBars(AsTop, section, stirrupBarSize, code)],

@@ -1,6 +1,6 @@
-export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column' | 'shear_wall';
-export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'ACI318-25' | 'EN1992-1-1';
-export type MemberType = 'beam' | 'column' | 'wall';
+export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column';
+export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1';
+export type MemberType = 'beam' | 'column';
 export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
 
 export interface DesignWarning {
@@ -19,32 +19,13 @@ export interface MaterialProps {
 
 export interface SectionDimensions {
   type: SectionType;
-  b: number;        // Width (in); for walls = lw (wall length)
-  h: number;        // Total height/depth (in); for walls = tw (wall thickness)
+  b: number;        // Width (in)
+  h: number;        // Total height/depth (in)
   bw?: number;      // Web width for T/L beam (in)
   hf?: number;      // Flange thickness (in)
   diameter?: number; // Circular section diameter (in)
   coverClear: number; // Clear cover to stirrups (in)
   stirrupDia: number; // Stirrup bar diameter (in)
-  // Wall-specific
-  lw?: number;      // Wall length (in) — alias for b on shear_wall
-  hw?: number;      // Wall height (in)
-  tw?: number;      // Wall thickness (in) — alias for h on shear_wall
-}
-
-// Wall reinforcement layout (separate from beam/column RebarLayout)
-export interface WallRebarLayout {
-  vertBarSize: number;     // #bar size for distributed vertical bars
-  vertSpacing: number;     // spacing of vert bars in each curtain (in)
-  horizBarSize: number;    // #bar size for distributed horizontal bars
-  horizSpacing: number;    // spacing of horiz bars in each curtain (in)
-  numCurtains: 1 | 2;     // single or double curtain
-  sbzBarSize?: number;     // SBZ boundary longitudinal bar size
-  sbzNumBars?: number;     // number of SBZ bars per boundary (each end)
-  sbzTieBarSize?: number;  // SBZ confinement tie bar size
-  sbzTieSpacing?: number;  // SBZ confinement tie spacing (in)
-  sbzTieLegs?: number;     // SBZ tie legs per set
-  driftRatio?: number;     // δu/hw design drift ratio (default 0.015)
 }
 
 export interface RebarLayout {
@@ -124,6 +105,31 @@ export interface MapFrame {
 
 export interface Point3D { x: number; y: number; z: number; }
 
+/** A wall/slab area element captured from the ETABS model (planar polygon). */
+export interface MapWall {
+  id: string;             // ETABS unique area object name
+  story: string;
+  points: Point3D[];      // ordered corner ring (ft, model coords), ≥ 3
+  kind?: 'wall' | 'slab'; // from Design Orientation / plane-normal
+  sectionName?: string;   // area section property (optional)
+  memberId?: string;      // linked Member if designed (optional, future)
+}
+
+/** A grid line captured from the ETABS model (map reference / labelling). */
+export interface MapGrid {
+  id: string;
+  label: string;          // "A", "1", …
+  p1: Point3D;            // grid line start (ft, model coords)
+  p2: Point3D;            // grid line end
+}
+
+/** An opening (penetration) in a wall or slab. */
+export interface MapOpening {
+  id: string;
+  story: string;
+  points: Point3D[];      // ordered corner ring (ft, model coords), ≥ 3
+}
+
 /** Persistent connectivity snapshot of the ETABS model, saved in .scdb. */
 export interface ModelMap {
   source: 'com' | 'file' | 'mock' | 'bridge';
@@ -131,6 +137,9 @@ export interface ModelMap {
   importedAt: string;
   stories: string[];
   frames: MapFrame[];
+  walls?: MapWall[];        // optional — area/wall elements
+  grids?: MapGrid[];        // optional — grid lines
+  openings?: MapOpening[];  // optional — wall/slab openings
 }
 
 /** One point on a column P-M interaction curve. */
@@ -151,6 +160,10 @@ export interface BarGroup {
   rows?: number;
   /** @deprecated unused — see RebarLayout.layerClearSpacing */
   rowSpacing?: number;
+  /** Vertical centre-to-centre spacing of skin bars (inches). Used for EC2
+   *  side-face crack width ρ_eff = As_bar / (spacing × hc,eff). When absent,
+   *  a uniform spacing over the available web height is assumed. */
+  spacing?: number;
 }
 
 export interface TieLayout {
@@ -164,11 +177,19 @@ export interface LoadCase {
   label: string;
   Mu_pos: number;  // Positive moment (kip-ft)
   Mu_neg: number;  // Negative moment (kip-ft)
-  Vu: number;      // Shear (kips)
+  Vu: number;      // Shear (kips) — beams; columns use the biaxial Vu2/Vu3 below
   Tu: number;      // Torsion (kip-ft)
   Pu: number;      // Axial (kips, + compression)
   Mux?: number;    // Moment about x for column (kip-ft)
   Muy?: number;    // Moment about y for column (kip-ft)
+  /**
+   * Biaxial column shears (kips), preserved separately for the S-Concrete .SCO so
+   * both faces are checked instead of collapsing to a single Vu. ETABS V2 pairs
+   * with the strong-axis moment (Mux/M3 → S-Concrete Vfz) and V3 with the
+   * weak-axis moment (Muy/M2 → Vfy). Absent for beams and hand-entered members.
+   */
+  Vu2?: number;    // ETABS V2, strong-direction shear (kips)
+  Vu3?: number;    // ETABS V3, weak-direction shear (kips)
 }
 
 export interface DesignResults {
@@ -199,6 +220,21 @@ export interface DesignResults {
   phi_Mnx?: number;     // moment capacity about x at Pu (kip-ft)
   phi_Mny?: number;     // moment capacity about y at Pu (kip-ft)
   interaction?: InteractionPoint[]; // P-M curve (about x) for chart/calc sheet
+  // Extended column outputs — ported target from Column_Design_DW
+  // design_engine.compute_all_outputs(). Optional so beam/wall paths are unaffected.
+  theta_deg?: number;          // governing resultant-moment vector angle (deg)
+  NM_util?: number;            // governing combined axial + biaxial-moment utilization
+  DCR_axial_tens?: number;     // axial tension utilization = Pu / φ(As·fy)
+  phi_Vnz?: number;            // shear capacity, z-direction / strong face (kips)
+  phi_Vny?: number;            // shear capacity, y-direction / weak face (kips)
+  DCR_Vz?: number;             // shear DCR, z-direction
+  DCR_Vy?: number;             // shear DCR, y-direction
+  VT_util?: number;            // governing shear+torsion utilization
+  Sreq_z?: number;             // required tie spacing from z-shear (in)
+  Sreq_y?: number;             // required tie spacing from y-shear (in)
+  Sreq?: number;               // governing required tie spacing (in)
+  phi_Tcr?: number;            // torsion cracking threshold φTcr (kip-ft)
+  governingLoadCaseId?: string;
   // Additional
   As_req_pos: number;   // Required steel (in²)
   As_req_neg: number;
@@ -211,20 +247,9 @@ export interface DesignResults {
   wk_top?: number;      // crack width at top face (mm)
   wk_face?: number;     // crack width at side face (mm)
   DCR_crack?: number;   // governing crack-width DCR = wk / w_limit (SLS)
-  // Wall-specific results (ACI 318-25)
-  phi_Vn_wall?: number;
-  phi_Mn_wall?: number;
-  DCR_shear_wall?: number;
-  DCR_flex_wall?: number;
-  rhoL?: number;
-  rhoT?: number;
-  sbzRequired?: boolean;
-  sbzLength?: number;
-  sbzAshRequired?: number;
-  sbzAshProvided?: number;
-  DCR_sbzAsh?: number;
-  alphaC?: number;
-  wallVnMax?: number;
+  // EC2 §7.3.3(3)+§7.3.2(2) minimum skin/side-face area for deep beams (mm², both faces)
+  As_skin_min?: number; // required minimum crack-control skin area
+  As_skin_prov?: number;// provided skin area (2 × per-face side bars)
   warnings: DesignWarning[];
   status: 'OK' | 'NG' | 'Warning';
 }
@@ -258,6 +283,27 @@ export interface Project {
    * beam from stationForces. Chosen in the ETABS import wizard.
    */
   slsCombo?: string;
+  /** Last S-Concrete batch results, persisted so they survive tab switches and
+   *  colour the model map by pass/fail. */
+  sconcreteResults?: SconcreteResult[];
+  /** ISO timestamp of the last S-Concrete batch run. */
+  sconcreteRanAt?: string;
+}
+
+/**
+ * A persisted S-Concrete batch result, carrying the .SCRS values PLUS the linkage
+ * back to the app: which members it covers (for map colouring) and what it checks.
+ */
+export interface SconcreteResult {
+  name: string;            // .SCRS key (group label or member name)
+  status: string | null;   // 'OK' | 'OVERSTRESSED' | ...
+  nmUtil: number | null;   // N-M utilization
+  vtUtil: number | null;   // shear+torsion utilization
+  kind?: 'uls' | 'crack' | 'single';
+  groupLabel?: string;
+  memberIds: string[];     // members this result applies to
+  warnings?: string[];     // S-Concrete "Msg" lines from the .SCRS (warnings/notes)
+  cage?: string;           // longitudinal cage the .SCO used (e.g. "3-#10 top / 3-#10 bot")
 }
 
 /** EC2 crack width check inputs (EN 1992-1-1 §7.3.4) — all in mm / unitless. */
@@ -277,6 +323,20 @@ export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
   wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4,
 };
 
+/** Engineer override — stamps a failing member as reviewed & accepted. */
+export interface MemberOverride {
+  note?: string;
+}
+
+/** Keys identifying which design check an override applies to. 'all'
+ *  suppresses every failing check on the member. */
+export type OverrideKey =
+  | 'DCR_crack' | 'DCR_shear' | 'DCR_flex_pos' | 'DCR_flex_neg'
+  | 'DCR_torsion' | 'DCR_axial' | 'DCR_PM' | 'all';
+
+/** Map of override keys → MemberOverride. */
+export type MemberOverrides = Partial<Record<OverrideKey, MemberOverride>>;
+
 export interface Member {
   id: string;
   label: string;
@@ -284,11 +344,13 @@ export interface Member {
   material: MaterialProps;
   section: SectionDimensions;
   rebar: RebarLayout;
-  wallRebar?: WallRebarLayout;  // used when memberType === 'wall'
   loads: LoadCase[];
   results?: DesignResults[];
   span?: number;  // ft
   crackParams?: CrackControlParams; // EC2 crack width check inputs
   etabs?: EtabsLink;             // present when imported from an ETABS model
   stationForces?: ComboForces[]; // analysis forces along the span (per combo)
+  /** Engineer overrides — manually accepted failing checks (display only;
+   *  engine results retain their true DCR values). */
+  overrides?: MemberOverrides;
 }

@@ -274,27 +274,30 @@ describe('ComConnection: selectCombos called before force table fetch', () => {
   });
 });
 
-describe('ComConnection: enum-based units override Program Control', () => {
-  it('uses kip-ft when getUnits returns 4, ignoring kN-m Program Control', async () => {
-    // Tables still report kN-m in Program Control, but getUnits returns 4 (kip-ft)
-    // because the sidecar called SetPresentUnits(4) — so table data is already in kip-ft.
-    const kipFtTables = {
-      ...TABLES,
-      // Section dims now in ft (since display units = kip-ft): 0.3m=0.984ft, 0.6m=1.969ft
-      'Frame Section Property Definitions - Concrete Rectangular': [
-        { Name: 'B300X600', Material: 'C30', t3: 0.3 / 0.3048, t2: 0.6 / (0.3048 * 2) },
-      ],
-    };
-    mockIpc(kipFtTables, 4); // getUnits returns 4 = kip-ft
+describe('ComConnection: units come from the present-units enum (authoritative for tables)', () => {
+  it('trusts a valid GetPresentUnits enum over the Program Control GUI string', async () => {
+    // GetTableForDisplayArray returns every table in the API "present units",
+    // which GetPresentUnits (the enum) reports. Program Control CurrUnits is the
+    // model's GUI/saved units and can DIFFER on a locked model — so a valid enum
+    // wins. Here the GUI says kip-ft but the tables (and the enum) are kN-m.
+    const guiKipFt = { ...TABLES, 'Program Control': [{ CurrUnits: 'kip, ft, F' }] };
+    mockIpc(guiKipFt, 6); // enum 6 = kN_m
     const conn = new ComConnection();
     const info = await conn.connect();
-    expect(info.units).toBe('kip-ft');
+    expect(info.units).toBe('kn-m');
   });
 
-  it('falls back to Program Control when getUnits throws', async () => {
-    mockIpc(TABLES); // getUnits throws (no enum provided)
+  it('falls back to Program Control CurrUnits when the enum is unavailable', async () => {
+    mockIpc(TABLES); // getUnits throws → no enum → use CurrUnits (kN-m)
     const conn = new ComConnection();
     const info = await conn.connect();
-    expect(info.units).toBe('kn-m'); // parsed from Program Control CurrUnits
+    expect(info.units).toBe('kn-m');
+  });
+
+  it('ignores the sidecar -1 "unavailable" sentinel and uses CurrUnits', async () => {
+    mockIpc(TABLES, -1); // enum unavailable (-1) → CurrUnits (kN-m)
+    const conn = new ComConnection();
+    const info = await conn.connect();
+    expect(info.units).toBe('kn-m');
   });
 });

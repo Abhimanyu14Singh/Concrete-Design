@@ -10,6 +10,8 @@ import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
+import HelpLink from '../Help/HelpLink';
+import { ACCENT, BORDER, INK, MONO_NUM, STATUS, TRACK } from '../../theme';
 
 interface Props {
   group: DesignGroup;
@@ -55,16 +57,16 @@ function BarGroupRow({ bg, onChange, label, units }: {
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
-      <span style={{ fontSize: 11, color: '#6b7280', width: 60, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 11, color: INK.secondary, width: 60, flexShrink: 0 }}>{label}</span>
       <NumberField value={bg.numBars} min={1} max={20}
         onChange={v => onChange({ ...bg, numBars: Math.round(v) })}
-        style={{ width: 44, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
-      <span style={{ fontSize: 11, color: '#9ca3af' }}>×</span>
+        style={{ width: 44, padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12, ...MONO_NUM }} />
+      <span style={{ fontSize: 11, color: INK.muted }}>×</span>
       <Dropdown
         value={bg.barSize}
         options={barSizeOptions(units, bg.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
         onChange={v => onChange({ ...bg, barSize: parseInt(v) })}
-        style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}
+        style={{ padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12 }}
       />
     </div>
   );
@@ -99,9 +101,12 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       return;
     }
     setRebar(r.rebar);
+    const summary = r.kind === 'column'
+      ? `P-M ${r.worstDCRFlex.toFixed(2)} · Axial ${(r.worstDCRAxial ?? 0).toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)} · ρ ${(r.rhoPct ?? 0).toFixed(2)}%`
+      : `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)}`;
     setSuggestNote({
       kind: 'ok',
-      text: `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)} at target ${targetDCR.toFixed(2)} — review, then Apply.`,
+      text: `${summary} at target ${targetDCR.toFixed(2)} — review, then Apply.`,
     });
   }
 
@@ -131,17 +136,18 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   const rhoTop = repMember ? flexSteelRatioPct({ ...repMember, rebar }, 'top') : 0;
   const rhoBot = repMember ? flexSteelRatioPct({ ...repMember, rebar }, 'bot') : 0;
   const rhoChipStyle: React.CSSProperties = {
-    marginLeft: 'auto', fontSize: 9, fontWeight: 700, fontFamily: 'monospace',
+    marginLeft: 'auto', fontSize: 10, fontWeight: 700, ...MONO_NUM,
     color: '#0369a1', background: '#e0f2fe', borderRadius: 3, padding: '1px 5px',
     textTransform: 'none', letterSpacing: 0,
   };
 
   return (
-    <div style={{ padding: '10px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
+    <div style={{ padding: '10px 12px', borderTop: `1px solid ${BORDER.default}`, background: '#f8fafc' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: 11, color: '#374151', textTransform: 'uppercase', letterSpacing: 0.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontWeight: 700, fontSize: 11, color: INK.base, textTransform: 'uppercase', letterSpacing: TRACK.wide, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {group.label} — Rebar Template
         </div>
+        <HelpLink section="suggest" title="How Suggest sizes the cage" />
         <button
           onClick={handleSuggest}
           title={`Pick the lightest practical layout meeting the group's worst demand at target DCR ${targetDCR.toFixed(2)}`}
@@ -152,16 +158,16 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       {suggestNote && (
         <div style={{
           fontSize: 10, marginBottom: 8, padding: '4px 8px', borderRadius: 5,
-          background: suggestNote.kind === 'ok' ? '#f5f3ff' : '#fef2f2',
-          color: suggestNote.kind === 'ok' ? '#6d28d9' : '#dc2626',
-          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe' : '#fecaca'}`,
+          background: suggestNote.kind === 'ok' ? '#f5f3ff' : STATUS.failBg,
+          color: suggestNote.kind === 'ok' ? '#6d28d9' : STATUS.fail,
+          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe' : STATUS.failBorder}`,
         }}>
           {suggestNote.text}
         </div>
       )}
 
       <div style={{ marginBottom: 6 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: INK.muted, marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
           Top bars
           <InfoTooltip text="Hogging (negative moment) reinforcement placed near the top face. Used to compute φMn− capacity. Also contributes to compression in sagging regions." />
           <span style={rhoChipStyle} title="Top reinforcement ratio ρ = As,top / (bw · d) for this template">ρ {rhoTop.toFixed(2)}%</span>
@@ -170,15 +176,15 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} units={units} />
             {rebar.topBars.length > 1 && (
-              <button onClick={() => removeLayer('top', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14 }}>×</button>
+              <button onClick={() => removeLayer('top', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
             )}
           </div>
         ))}
-        <button onClick={() => addLayer('top')} style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>+ layer</button>
+        <button onClick={() => addLayer('top')} style={{ fontSize: 10, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>+ layer</button>
       </div>
 
       <div style={{ marginBottom: 6 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: INK.muted, marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
           Bottom bars
           <InfoTooltip text="Sagging (positive moment) reinforcement placed near the bottom face. Primary tension steel. As_req+ must be ≤ As_prov for status OK." />
           <span style={rhoChipStyle} title="Bottom reinforcement ratio ρ = As,bot / (bw · d) for this template">ρ {rhoBot.toFixed(2)}%</span>
@@ -187,18 +193,18 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} units={units} />
             {rebar.botBars.length > 1 && (
-              <button onClick={() => removeLayer('bot', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14 }}>×</button>
+              <button onClick={() => removeLayer('bot', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
             )}
           </div>
         ))}
-        <button onClick={() => addLayer('bot')} style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>+ layer</button>
+        <button onClick={() => addLayer('bot')} style={{ fontSize: 10, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>+ layer</button>
       </div>
 
       {/* Skin / side-face reinforcement */}
       <div style={{ marginBottom: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-          <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', flex: 1 }}>Skin bars (each face)</div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#6b7280', cursor: 'pointer' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: INK.muted, textTransform: 'uppercase', flex: 1 }}>Skin bars (each face)</div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: INK.secondary, cursor: 'pointer' }}>
             <input
               type="checkbox"
               checked={!!(rebar.sideBars && rebar.sideBars.length > 0)}
@@ -220,20 +226,20 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <BarGroupRow bg={bg} onChange={bg => setRebar(r => ({ ...r, sideBars: r.sideBars!.map((b, j) => j === i ? bg : b) }))} label={`Row ${i + 1}`} units={units} />
                 {rebar.sideBars!.length > 1 && (
-                  <button onClick={() => setRebar(r => ({ ...r, sideBars: r.sideBars!.filter((_, j) => j !== i) }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 14 }}>×</button>
+                  <button onClick={() => setRebar(r => ({ ...r, sideBars: r.sideBars!.filter((_, j) => j !== i) }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
                 )}
               </div>
             ))}
             <button
               onClick={() => { const defBar = units === 'si' ? -12 : 4; setRebar(r => ({ ...r, sideBars: [...(r.sideBars ?? []), { numBars: 2, barSize: defBar }] })); }}
-              style={{ fontSize: 10, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+              style={{ fontSize: 10, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
             >+ row</button>
           </div>
         )}
       </div>
 
       <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: INK.muted, marginBottom: 3, textTransform: 'uppercase', display: 'flex', alignItems: 'center' }}>
           Stirrups
           <InfoTooltip text="Transverse reinforcement (links) resisting shear and torsion. Vs = Av·fy·d/s (ACI) or V_Rd,s = Asw/s·z·fywd·cotθ (EC2). Spacing must also satisfy maximum spacing limits." />
         </div>
@@ -242,25 +248,25 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
             value={ties.barSize}
             options={barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 8 : -s <= 20)).map(s => ({ value: s, label: formatBarLabel(s) }))}
             onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(v) } }))}
-            style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }}
+            style={{ padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12 }}
           />
           {!rebar.tieZones && (
             <>
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>@</span>
+              <span style={{ fontSize: 11, color: INK.muted }}>@</span>
               <NumberField value={+toDisplay(ties.spacing, 'length').toFixed(units === 'si' ? 0 : 2)} min={1} max={spacingMax}
                 onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), spacing: fromDisplay(v, 'length') } }))}
-                style={{ width: 50, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>{units === 'si' ? 'mm,' : 'in,'}</span>
+                style={{ width: 50, padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12, ...MONO_NUM }} />
+              <span style={{ fontSize: 11, color: INK.muted }}>{units === 'si' ? 'mm,' : 'in,'}</span>
             </>
           )}
           <NumberField value={ties.legs} min={2} max={8}
             onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), legs: Math.round(v) } }))}
-            style={{ width: 40, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>legs</span>
+            style={{ width: 40, padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12, ...MONO_NUM }} />
+          <span style={{ fontSize: 11, color: INK.muted }}>legs</span>
         </div>
 
         {/* Zoned stirrups — three spacings over thirds of span, as in the member screen */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#6b7280', padding: '6px 0 0', cursor: 'pointer' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: INK.secondary, padding: '6px 0 0', cursor: 'pointer' }}>
           <input type="checkbox" checked={!!rebar.tieZones}
             onChange={e => {
               if (e.target.checked) {
@@ -276,7 +282,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
             {(['End (0–L/3)', 'Middle', 'End (2L/3–L)'] as const).map((zl, i) => (
               <div key={zl} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontSize: 9, color: '#9ca3af' }}>{zl}</span>
+                <span style={{ fontSize: 10, color: INK.muted }}>{zl}</span>
                 <NumberField value={+toDisplay(rebar.tieZones![i].spacing, 'length').toFixed(units === 'si' ? 0 : 2)} min={1} max={spacingMax}
                   onChange={v => setRebar(r => {
                     const inches = fromDisplay(v, 'length');
@@ -284,7 +290,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
                     // keep the single-spacing path governed by the tightest zone
                     return { ...r, tieZones: zones, ties: { ...(r.ties ?? ties), spacing: Math.min(...zones.map(z => z.spacing)) } };
                   })}
-                  style={{ width: 56, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, fontFamily: 'monospace' }} />
+                  style={{ width: 56, padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12, ...MONO_NUM }} />
               </div>
             ))}
           </div>
@@ -294,7 +300,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       <button
         onClick={() => onApply(group.id, rebar, group.memberIds)}
         style={{
-          width: '100%', padding: '8px', background: '#2563eb', color: 'white',
+          width: '100%', padding: '8px', background: ACCENT.primary, color: 'white',
           border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 12,
         }}
       >

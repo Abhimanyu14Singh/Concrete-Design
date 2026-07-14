@@ -5,6 +5,8 @@
  *
  * Renders nothing when `active` is false.
  */
+import { ACCENT } from '../../theme';
+
 interface Props {
   active: boolean;
   /** Optional label shown as a small badge on the right. */
@@ -25,17 +27,17 @@ export default function TopProgressBar({ active, label = 'Recalculating…' }: P
       `}</style>
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 3,
-        background: '#e0e7ff', overflow: 'hidden', zIndex: 50,
+        background: ACCENT.softBg, overflow: 'hidden', zIndex: 50,
       }}>
         <div style={{
           position: 'absolute', top: 0, height: '100%',
-          background: '#4f46e5', borderRadius: 2,
+          background: ACCENT.primary, borderRadius: 2,
           animation: 'tpb-slide 1.1s ease-in-out infinite',
         }} />
       </div>
       <div style={{
         position: 'absolute', top: 8, right: 12, zIndex: 51,
-        background: '#4f46e5', color: 'white', fontSize: 10, fontWeight: 600,
+        background: ACCENT.primary, color: 'white', fontSize: 10, fontWeight: 600,
         padding: '3px 9px', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
         display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none',
       }}>

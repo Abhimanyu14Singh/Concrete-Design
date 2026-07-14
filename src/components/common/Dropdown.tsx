@@ -16,6 +16,7 @@
  */
 import { useState, useEffect, useRef, useId, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { ACCENT, BORDER, INK, SURFACE } from '../../theme';
 
 export interface DropdownOption {
   value: string | number;
@@ -36,7 +37,7 @@ interface Props {
 }
 
 /** Rect of the trigger button, updated on open. */
-interface ListPos { top: number; bottom: number; left: number; width: number; viewH: number }
+interface ListPos { top: number; bottom: number; left: number; width: number; viewH: number; viewW: number }
 
 export default function Dropdown({
   value, options, onChange, style, disabled, title, ariaLabel, openUp,
@@ -52,7 +53,7 @@ export default function Dropdown({
     if (disabled) return;
     const rect = ref.current?.getBoundingClientRect();
     if (rect) {
-      setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight });
+      setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight, viewW: window.innerWidth });
     }
     setOpen(o => !o);
   }, [disabled]);
@@ -62,7 +63,7 @@ export default function Dropdown({
     if (!open) return;
     function reposition() {
       const rect = ref.current?.getBoundingClientRect();
-      if (rect) setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight });
+      if (rect) setListPos({ top: rect.bottom, bottom: rect.top, left: rect.left, width: rect.width, viewH: window.innerHeight, viewW: window.innerWidth });
     }
     window.addEventListener('scroll', reposition, true);
     window.addEventListener('resize', reposition);
@@ -110,7 +111,7 @@ export default function Dropdown({
   const TRIGGER: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
     width: '100%', textAlign: 'left',
-    background: disabled ? '#f9fafb' : 'white',
+    background: disabled ? SURFACE.subtle : 'white',
     cursor: disabled ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.6 : 1,
     ...style,
@@ -120,16 +121,22 @@ export default function Dropdown({
   const goUp = listPos
     ? (openUp || (listPos.viewH - listPos.top < 200 && listPos.bottom > 200))
     : !!openUp;
+  // Flip horizontally (right-align to the trigger) when the trigger sits too
+  // close to the right edge for the menu to open rightward without clipping —
+  // the list is content-width (nowrap) and can be wider than the trigger.
+  const goLeft = listPos ? (listPos.viewW - listPos.left < 220) : false;
   const LIST: React.CSSProperties = listPos ? {
     position: 'fixed',
     top: goUp ? undefined : listPos.top + 2,
     bottom: goUp ? (listPos.viewH - listPos.bottom + 2) : undefined,
-    left: listPos.left,
+    left: goLeft ? undefined : listPos.left,
+    right: goLeft ? Math.max(8, listPos.viewW - (listPos.left + listPos.width)) : undefined,
     minWidth: listPos.width,
+    maxWidth: listPos.viewW - 16,
     maxHeight: 220,
     overflowY: 'auto',
     background: 'white',
-    border: '1px solid #d1d5db',
+    border: `1px solid ${BORDER.strong}`,
     borderRadius: 6,
     boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
     zIndex: 9999,
@@ -151,7 +158,7 @@ export default function Dropdown({
         style={TRIGGER}
       >
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-        <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
+        <span style={{ fontSize: 8, color: INK.muted, flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && listPos && createPortal(
@@ -171,14 +178,14 @@ export default function Dropdown({
                 style={{
                   padding: '5px 10px',
                   cursor: opt.disabled ? 'not-allowed' : 'pointer',
-                  background: selected ? '#eff6ff' : 'white',
-                  color: opt.disabled ? '#9ca3af' : selected ? '#2563eb' : '#111827',
+                  background: selected ? ACCENT.softBg : 'white',
+                  color: opt.disabled ? INK.muted : selected ? ACCENT.primary : INK.strong,
                   fontWeight: selected ? 600 : 400,
                   fontSize: 'inherit',
                   whiteSpace: 'nowrap',
                 }}
-                onMouseEnter={e => { if (!opt.disabled) (e.currentTarget as HTMLDivElement).style.background = selected ? '#eff6ff' : '#f9fafb'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = selected ? '#eff6ff' : 'white'; }}
+                onMouseEnter={e => { if (!opt.disabled) (e.currentTarget as HTMLDivElement).style.background = selected ? ACCENT.softBg : SURFACE.subtle; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = selected ? ACCENT.softBg : 'white'; }}
               >
                 {opt.label}
               </div>

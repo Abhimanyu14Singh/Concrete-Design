@@ -4,32 +4,35 @@ import { generateBreakdown } from '../../utils/calcBreakdown';
 import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
 import { generateColumnBreakdown } from '../../utils/calcBreakdownColumn';
 import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
-import { generateWallBreakdown } from '../../utils/calcBreakdownWall';
 import { zoneShearDemands } from '../../adapters/etabs';
+import { resolveCrack } from '../../utils/resolveCrack';
 import type { CalcSection } from '../../utils/calcBreakdown';
 import { useUnits } from '../../contexts/UnitsContext';
+import { ACCENT, BORDER, INK, MONO_NUM, STATUS, SURFACE, TRACK } from '../../theme';
 
 interface Props {
   member: Member;
   loadId: string;
   code?: DesignCode;
+  /** Project-level EC2 SLS quasi-permanent combo name (drives §7.3.4 M_qp). */
+  slsCombo?: string;
   onClose: () => void;
 }
 
-export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', onClose }: Props) {
+export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, onClose }: Props) {
   const { fmt } = useUnits();
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
-  const isWall = member.memberType === 'wall' && !!member.wallRebar;
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
   const isEC2 = code === 'EN1992-1-1';
-  const sections: CalcSection[] = isWall
-    ? generateWallBreakdown(member.section, member.material, member.wallRebar!, load)
-    : isColumn
+  // Resolve crack params so the §7.3.4 sheet uses the selected SLS combo's
+  // moments (Mqp_pos/Mqp_neg) — same resolution the on-screen design path uses.
+  const crackParams = isEC2 ? resolveCrack(member, code, slsCombo) : member.crackParams;
+  const sections: CalcSection[] = isColumn
     ? (isEC2
         ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
         : generateColumnBreakdown(member.section, member.material, member.rebar, load))
     : (isEC2
-        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, member.crackParams)
+        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, crackParams, slsCombo)
         : generateBreakdown(
             member.section, member.material, member.rebar, load, member.span,
             member.rebar.tieZones && member.stationForces?.length
@@ -63,41 +66,41 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{
-        background: 'white', border: '1px solid #e5e7eb', borderRadius: 16,
+        background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 16,
         width: '100%', maxWidth: 860, maxHeight: '90vh', display: 'flex', flexDirection: 'column',
         boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
       }}>
         {/* Header */}
         <div style={{
-          padding: '16px 20px', borderBottom: '1px solid #e5e7eb',
+          padding: '16px 20px', borderBottom: `1px solid ${BORDER.default}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          flexShrink: 0, background: '#f9fafb', borderRadius: '16px 16px 0 0',
+          flexShrink: 0, background: SURFACE.subtle, borderRadius: '16px 16px 0 0',
         }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: INK.strong }}>
               Calculation Breakdown
             </h2>
-            <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280' }}>
-              {member.label} &bull; Load case: <span style={{ color: '#2563eb', fontWeight: 600 }}>{load.label}</span> &bull; {isWall ? 'ACI 318-25 Shear Wall' : isEC2 ? 'EN 1992-1-1' : code}
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: INK.secondary }}>
+              {member.label} &bull; Load case: <span style={{ color: ACCENT.primary, fontWeight: 600 }}>{load.label}</span> &bull; {isEC2 ? 'EN 1992-1-1' : code}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={() => setExpandedSections(new Set(sections.map(s => s.title)))}
-              style={{ fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px' }}
+              style={{ fontSize: 11, color: INK.secondary, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px' }}
             >
               Expand All
             </button>
             <button
               onClick={() => setExpandedSections(new Set())}
-              style={{ fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px' }}
+              style={{ fontSize: 11, color: INK.secondary, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px' }}
             >
               Collapse All
             </button>
             <button
               onClick={onClose}
               style={{
-                background: 'white', border: '1px solid #d1d5db', color: '#374151',
+                background: 'white', border: `1px solid ${BORDER.strong}`, color: INK.base,
                 borderRadius: 8, padding: '6px 12px', fontSize: 13, cursor: 'pointer',
                 fontWeight: 600,
               }}
@@ -111,17 +114,11 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
         <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
           {/* Applied loads summary */}
           <div style={{
-            background: '#eff6ff', border: '1px solid #bfdbfe',
+            background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`,
             borderRadius: 10, padding: '12px 16px', marginBottom: 16,
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8,
           }}>
-            {isWall ? (
-              <>
-                <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
-                <LoadItem label="Mu" value={fmt(load.Mu_pos > 0 ? load.Mu_pos : load.Mu_neg, 'moment')} />
-                <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
-              </>
-            ) : isColumn ? (
+            {isColumn ? (
               <>
                 <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
                 <LoadItem label="Mux" value={fmt(load.Mux ?? 0, 'moment')} />
@@ -145,31 +142,31 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
                 onClick={() => toggleSection(section.title)}
                 style={{
                   width: '100%', textAlign: 'left', background: '#f3f4f6',
-                  border: '1px solid #e5e7eb', borderRadius: expandedSections.has(section.title) ? '8px 8px 0 0' : 8,
+                  border: `1px solid ${BORDER.default}`, borderRadius: expandedSections.has(section.title) ? '8px 8px 0 0' : 8,
                   padding: '10px 14px', cursor: 'pointer', display: 'flex',
-                  alignItems: 'center', justifyContent: 'space-between', color: '#111827',
+                  alignItems: 'center', justifyContent: 'space-between', color: INK.strong,
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{section.title}</span>
-                <span style={{ fontSize: 12, color: '#6b7280' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{section.title}</span>
+                <span style={{ fontSize: 12, color: INK.secondary }}>
                   {expandedSections.has(section.title) ? '▲' : '▼'} {section.steps.length} steps
                 </span>
               </button>
 
               {expandedSections.has(section.title) && (
                 <div style={{
-                  border: '1px solid #e5e7eb', borderTop: 'none',
+                  border: `1px solid ${BORDER.default}`, borderTop: 'none',
                   borderRadius: '0 0 8px 8px', overflow: 'hidden',
                 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
-                      <tr style={{ background: '#f9fafb' }}>
+                      <tr style={{ background: SURFACE.subtle }}>
                         {['ACI Ref', 'Description', 'Equation', 'Substitution', 'Result'].map(h => (
                           <th key={h} style={{
                             padding: '8px 12px', textAlign: 'left',
-                            color: '#6b7280', fontWeight: 600, fontSize: 10,
-                            textTransform: 'uppercase', letterSpacing: '0.05em',
-                            borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap',
+                            color: INK.secondary, fontWeight: 600, fontSize: 10,
+                            textTransform: 'uppercase', letterSpacing: TRACK.wide,
+                            borderBottom: `1px solid ${BORDER.default}`, whiteSpace: 'nowrap',
                           }}>
                             {h}
                           </th>
@@ -183,28 +180,28 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
                         return (
                           <tr key={i} style={{
                             background: ng
-                              ? '#fef2f2'
+                              ? STATUS.failBg
                               : ok && step.result.includes('DCR')
-                                ? '#f0fdf4'
-                                : i % 2 === 0 ? 'white' : '#f9fafb',
+                                ? STATUS.okBg
+                                : i % 2 === 0 ? 'white' : SURFACE.subtle,
                             borderTop: '1px solid #f3f4f6',
                           }}>
-                            <td style={{ padding: '8px 12px', color: '#2563eb', fontFamily: 'monospace', fontSize: 11, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                            <td style={{ padding: '8px 12px', color: ACCENT.primary, ...MONO_NUM, fontSize: 11, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                               {step.ref}
                             </td>
-                            <td style={{ padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>
-                              <div style={{ fontWeight: 600, color: '#111827', marginBottom: step.note ? 2 : 0 }}>{step.label}</div>
-                              {step.note && <div style={{ fontSize: 10, color: ng ? '#dc2626' : ok ? '#16a34a' : '#6b7280', marginTop: 2 }}>{step.note}</div>}
+                            <td style={{ padding: '8px 12px', color: INK.base, verticalAlign: 'top' }}>
+                              <div style={{ fontWeight: 600, color: INK.strong, marginBottom: step.note ? 2 : 0 }}>{step.label}</div>
+                              {step.note && <div style={{ fontSize: 10, color: ng ? STATUS.fail : ok ? STATUS.ok : INK.secondary, marginTop: 2 }}>{step.note}</div>}
                             </td>
-                            <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: '#7c3aed', verticalAlign: 'top', whiteSpace: 'pre-wrap' }}>
+                            <td style={{ padding: '8px 12px', ...MONO_NUM, color: '#7c3aed', verticalAlign: 'top', whiteSpace: 'pre-wrap' }}>
                               {step.equation}
                             </td>
-                            <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: '#6b7280', fontSize: 11, verticalAlign: 'top' }}>
+                            <td style={{ padding: '8px 12px', ...MONO_NUM, color: INK.secondary, fontSize: 11, verticalAlign: 'top' }}>
                               {step.substitution}
                             </td>
                             <td style={{
-                              padding: '8px 12px', fontFamily: 'monospace', fontWeight: 700,
-                              color: ng ? '#dc2626' : ok && step.result.includes('DCR') ? '#16a34a' : '#111827',
+                              padding: '8px 12px', ...MONO_NUM, fontWeight: 700,
+                              color: ng ? STATUS.fail : ok && step.result.includes('DCR') ? STATUS.ok : INK.strong,
                               verticalAlign: 'top', whiteSpace: 'nowrap',
                             }}>
                               {step.result}
@@ -219,7 +216,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
             </div>
           ))}
 
-          <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 16, textAlign: 'center' }}>
+          <p style={{ fontSize: 10, color: INK.muted, marginTop: 16, textAlign: 'center' }}>
             All calculations per ACI 318-19 Strength Design Method. Verify independently before use in production design.
           </p>
         </div>
@@ -231,8 +228,8 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
 function LoadItem({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ fontSize: 14, color: '#2563eb', fontWeight: 700, fontFamily: 'monospace' }}>{value}</div>
+      <div style={{ fontSize: 10, color: INK.secondary, fontWeight: 600, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontSize: 13, color: ACCENT.primary, fontWeight: 700, ...MONO_NUM }}>{value}</div>
     </div>
   );
 }

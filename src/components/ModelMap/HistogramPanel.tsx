@@ -10,11 +10,12 @@ import {
   Tooltip as RechartsTip, ResponsiveContainer,
 } from 'recharts';
 import { valueToRampColor } from './colorRamp';
+import { ACCENT, CATEGORICAL, INK, MONO_NUM } from '../../theme';
 
 const NUM_BINS = 20;
 
-/** Colors for each bin-group assignment. */
-const BIN_COLORS = ['#2563eb','#16a34a','#d97706','#9333ea','#0891b2','#dc2626'];
+/** Colors for each bin-group assignment — categorical, no status hues. */
+const BIN_COLORS = CATEGORICAL;
 
 interface HistogramPanelProps {
   /** Raw values to histogram. */
@@ -73,7 +74,7 @@ export default function HistogramPanel({
     return { bins: buckets, minVal: minV, maxVal: maxV };
   }, [values, binAssignment]);
 
-  if (!values.length) return <div style={{ color: '#9ca3af', fontSize: 11, padding: 8 }}>No data</div>;
+  if (!values.length) return <div style={{ color: INK.muted, fontSize: 11, padding: 8 }}>No data</div>;
 
   const range = maxVal - minVal || 1;
 
@@ -112,7 +113,7 @@ export default function HistogramPanel({
       <ResponsiveContainer width="100%" height={100}>
         <BarChart data={chartData} barCategoryGap={1} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
           <XAxis dataKey="label" hide />
-          <YAxis tick={{ fontSize: 9 }} width={28} />
+          <YAxis tick={{ fontSize: 10 }} width={28} />
           <RechartsTip
             contentStyle={{ fontSize: 10, padding: '2px 6px' }}
             formatter={(v) => [`${v} beams`, '']}
@@ -146,7 +147,7 @@ export default function HistogramPanel({
         <div style={{ marginTop: 4 }}>
           {breaks.map((br, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <span style={{ fontSize: 9, color: '#6b7280', width: 50 }}>Cut {i + 1}</span>
+              <span style={{ fontSize: 10, color: INK.secondary, width: 50 }}>Cut {i + 1}</span>
               <input
                 type="range"
                 min={minVal}
@@ -154,21 +155,21 @@ export default function HistogramPanel({
                 step={(maxVal - minVal) / 200}
                 value={br}
                 onChange={e => handleSlider(i, parseFloat(e.target.value))}
-                style={{ flex: 1, accentColor: '#2563eb', height: 4 }}
+                style={{ flex: 1, accentColor: ACCENT.primary, height: 4 }}
               />
-              <span style={{ fontSize: 9, color: '#374151', width: 44, textAlign: 'right', fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 10, color: INK.base, width: 44, textAlign: 'right', ...MONO_NUM }}>
                 {br.toFixed(0)}
               </span>
             </div>
           ))}
-          <div style={{ fontSize: 9, color: '#9ca3af' }}>{xLabel}</div>
+          <div style={{ fontSize: 10, color: INK.muted }}>{xLabel}</div>
         </div>
       )}
 
       {!onBreaksChange && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#9ca3af', marginTop: 2 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: INK.muted, marginTop: 2 }}>
           <span>{minVal.toFixed(Math.max(1, valueDecimals))}</span>
-          <span style={{ color: '#6b7280' }}>{xLabel}</span>
+          <span style={{ color: INK.secondary }}>{xLabel}</span>
           <span>{maxVal.toFixed(Math.max(1, valueDecimals))}</span>
         </div>
       )}

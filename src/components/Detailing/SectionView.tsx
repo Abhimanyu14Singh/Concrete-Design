@@ -1,9 +1,9 @@
-import { formatBarLabel } from '../../utils/rebar';
+import { formatBarLabel, barSizeStep, US_BAR_SIZES, METRIC_BAR_SIZES } from '../../utils/rebar';
 import type { ReactElement } from 'react';
-import type { SectionDimensions, RebarLayout, DesignResults } from '../../types';
+import type { SectionDimensions, RebarLayout, DesignResults, TieZone } from '../../types';
 import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
 import { useUnits } from '../../contexts/UnitsContext';
-import { BARS, DCR } from '../../theme';
+import { BARS, DCR, FONT } from '../../theme';
 
 interface Props {
   section: SectionDimensions;
@@ -12,6 +12,17 @@ interface Props {
   width?: number;
   height?: number;
   showDims?: boolean;
+  /** Render bar/stirrup labels even when dimension arrows are hidden (thumbnails). Defaults to showDims. */
+  barLabels?: boolean;
+  /** Enable per-layer count AND bar-size stepping on the labels (left = up, right = down). */
+  editBarSize?: boolean;
+  /** Enable clickable stirrup size + spacing editing and a ⅓ zoned-spacing toggle. */
+  editStirrup?: boolean;
+  /** SVG paddings; defaults hold the dimension arrows + right-gutter labels. Tighten for a small card. */
+  padL?: number;
+  padR?: number;
+  padT?: number;
+  padB?: number;
   onRebarChange?: (r: RebarLayout) => void;
 }
 
@@ -19,10 +30,29 @@ export default function SectionView({
   section, rebar, result,
   width = 320, height = 270,
   showDims = true,
+  barLabels,
+  editBarSize = false,
+  editStirrup = false,
+  padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
 }: Props) {
-  const { fmt } = useUnits();
-  const pL = 40, pR = 78, pT = 28, pB = 46;
+  const { fmt, units } = useUnits();
+  const pL = padL, pR = padR, pT = padT, pB = padB;
+  const showLabels = barLabels ?? showDims;
+
+  // Bar designation in the ACTIVE unit family: a bar stored in the other family
+  // (e.g. a metric Ø16 left over from an EC2 design) is shown as its nearest US
+  // equivalent when the units are imperial, and vice-versa — so switching the
+  // design code re-labels the reinforcement instead of leaving it in the old units.
+  function displayBar(barSize: number): string {
+    const wantMetric = units === 'si';
+    if ((barSize < 0) === wantMetric) return formatBarLabel(barSize); // already in family
+    const d = getBarDiam(barSize);
+    const family = wantMetric ? METRIC_BAR_SIZES : US_BAR_SIZES;
+    let best = family[0], bestErr = Infinity;
+    for (const c of family) { const e = Math.abs(getBarDiam(c) - d); if (e < bestErr) { bestErr = e; best = c; } }
+    return formatBarLabel(best);
+  }
   const drawW = width - pL - pR;
   const drawH = height - pT - pB;
 
@@ -38,7 +68,11 @@ export default function SectionView({
   const oy = pT + (drawH - scaledH) / 2;
 
   const tieD = getBarDiam(section.stirrupDia);
-  const stOff = (section.coverClear + tieD / 2) * scale;
+  // Clamp the cover offset so a mis-scaled / degenerate section (cover ≥ half the
+  // depth — e.g. a beam imported with the wrong units) still renders a visible
+  // stirrup hoop and bars instead of collapsing to an empty rectangle. For normal
+  // sections cover ≪ size, so the clamp never bites.
+  const stOff = Math.min((section.coverClear + tieD / 2) * scale, scaledW * 0.4, scaledH * 0.4);
   const bw = section.bw ?? secW;
   const hf = section.hf ?? 0;
   const isT = section.type === 'T_beam' || section.type === 'L_beam';
@@ -98,10 +132,235 @@ export default function SectionView({
     };
   }
 
+  // Per-layer count / bar-size stepping for the editable card labels: left-click
+  // (onClick) = +1 bar / larger size, right-click (onContextMenu) = -1 / smaller.
+  function bumpBars(face: 'top' | 'bot', layer: number, field: 'count' | 'size', dir: 1 | -1) {
+    if (!onRebarChange) return;
+    const arr = face === 'top' ? rebar.topBars : rebar.botBars;
+    const grp = arr[layer];
+    if (!grp) return;
+    let newArr: typeof arr;
+    if (field === 'count') {
+      const nextCount = grp.numBars + dir;
+      // Decrementing the last bar (1 → 0) drops the whole layer.
+      newArr = nextCount <= 0
+        ? arr.filter((_, i) => i !== layer)
+        : arr.map((g, i) => (i === layer ? { ...g, numBars: nextCount } : g));
+    } else {
+      newArr = arr.map((g, i) => (i === layer ? { ...g, barSize: barSizeStep(g.barSize, dir) } : g));
+    }
+    onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
+  }
+
+  // Add / remove a reinforcement layer on a face. Multi-layer cages are modeled as
+  // multiple BarGroup entries; a new layer copies the innermost layer's bar size.
+  function addLayer(face: 'top' | 'bot') {
+    if (!onRebarChange) return;
+    const arr = face === 'top' ? rebar.topBars : rebar.botBars;
+    const last = arr[arr.length - 1];
+    const layer = { numBars: 2, barSize: last?.barSize ?? 8 };
+    const newArr = [...arr, layer];
+    onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
+  }
+  function removeLayer(face: 'top' | 'bot') {
+    if (!onRebarChange) return;
+    const arr = face === 'top' ? rebar.topBars : rebar.botBars;
+    if (arr.length <= 1) return;
+    const newArr = arr.slice(0, -1);
+    onRebarChange(face === 'top' ? { ...rebar, topBars: newArr } : { ...rebar, botBars: newArr });
+  }
+
+  // Stirrup editing (card): step the tie bar size or spacing, and toggle a zoned
+  // [end · middle · end] spacing layout over the span thirds. Left-click a spacing
+  // token tightens it, right-click loosens; the single `ties.spacing` tracks the
+  // tightest zone so the shear check keys off the governing (end-zone) spacing.
+  function bumpTie(field: 'size' | 'spacing' | 'legs', dir: 1 | -1, zoneIdx?: number) {
+    if (!onRebarChange || !rebar.ties) return;
+    if (field === 'size') {
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, barSize: barSizeStep(rebar.ties.barSize, dir) } });
+      return;
+    }
+    if (field === 'legs') {
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, legs: Math.max(2, rebar.ties.legs + dir) } });
+      return;
+    }
+    if (rebar.tieZones && zoneIdx !== undefined) {
+      const zones = rebar.tieZones.map((z, i) => (i === zoneIdx ? { spacing: Math.max(2, z.spacing + dir) } : z)) as [TieZone, TieZone, TieZone];
+      const gov = Math.min(...zones.map(z => z.spacing));
+      onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: gov } });
+    } else {
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, spacing: Math.max(2, rebar.ties.spacing + dir) } });
+    }
+  }
+  function toggleTieZones() {
+    if (!onRebarChange || !rebar.ties) return;
+    if (rebar.tieZones) {
+      // Collapse back to a single spacing = the tightest zone.
+      const gov = Math.min(...rebar.tieZones.map(z => z.spacing));
+      const { tieZones: _drop, ...rest } = rebar;
+      void _drop;
+      onRebarChange({ ...rest, ties: { ...rebar.ties, spacing: gov } });
+    } else {
+      const s = rebar.ties.spacing;
+      const end = Math.max(2, Math.round(s / 2)); // denser at the supports by default
+      const zones: [TieZone, TieZone, TieZone] = [{ spacing: end }, { spacing: s }, { spacing: end }];
+      onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: end } });
+    }
+  }
+
+  // Skin / face reinforcement (side bars). numBars = bars per side face; spacing =
+  // vertical c/c. Dropping the count to 0 removes the skin entirely.
+  function bumpSide(field: 'count' | 'size' | 'spacing', dir: 1 | -1) {
+    if (!onRebarChange) return;
+    const cur = rebar.sideBars?.[0];
+    if (!cur) return;
+    let newSide: RebarLayout['sideBars'];
+    if (field === 'count') {
+      const n = cur.numBars + dir;
+      newSide = n <= 0 ? undefined : [{ ...cur, numBars: n }];
+    } else if (field === 'size') {
+      newSide = [{ ...cur, barSize: barSizeStep(cur.barSize, dir) }];
+    } else {
+      newSide = [{ ...cur, spacing: Math.max(2, (cur.spacing ?? 6) + dir) }];
+    }
+    onRebarChange({ ...rebar, sideBars: newSide });
+  }
+  function addSkin() {
+    if (!onRebarChange) return;
+    const metric = (rebar.botBars[0]?.barSize ?? rebar.topBars[0]?.barSize ?? 5) < 0;
+    onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: 12 }] });
+  }
+
+  // pointerEvents:'auto' re-enables hit-testing even when the token sits inside a
+  // parent <text> that set pointer-events:none (e.g. the '＋layer' token on the
+  // hint line) — otherwise the click passes through to the card and never fires.
+  const editTspan = { cursor: 'pointer', userSelect: 'none' as const, pointerEvents: 'auto' as const } as React.CSSProperties;
+  const noHit = { pointerEvents: 'none' } as React.CSSProperties;
+
+  /** Editable face label: per-layer clickable count and bar-size tokens (e.g. "3-#8 + 2-#6"). */
+  function editableFaceLabel(face: 'top' | 'bot', x: number, y: number, fill: string): ReactElement {
+    const bars = face === 'top' ? rebar.topBars : rebar.botBars;
+    const firstIdx = bars.findIndex(g => g.numBars > 0);
+    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>;
+    return (
+      <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
+        {bars.map((g, li) => g.numBars > 0 ? (
+          <tspan key={li}>
+            {li > firstIdx && <tspan style={noHit}> + </tspan>}
+            <tspan style={editTspan} textDecoration="underline"
+              onClick={e => { e.stopPropagation(); bumpBars(face, li, 'count', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'count', -1); }}
+            >{g.numBars}</tspan>
+            <tspan style={noHit}>-</tspan>
+            <tspan style={editTspan} textDecoration="underline"
+              onClick={e => { e.stopPropagation(); bumpBars(face, li, 'size', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'size', -1); }}
+            >{displayBar(g.barSize)}</tspan>
+          </tspan>
+        ) : null)}
+      </text>
+    );
+  }
+
+  /** Editable stirrup label: clickable bar-size + spacing tokens and a ⅓ zoned-spacing
+   *  toggle. Zoned mode shows three span-third spacings "end/mid/end". */
+  function editableStirrupLabel(x: number, y: number): ReactElement | null {
+    const t = rebar.ties;
+    if (!t) return null;
+    const dec = rebar.tieZones ? 0 : 1; // three zoned values need to stay compact
+    const spacingTspan = (val: number, key: string, zoneIdx?: number) => (
+      <tspan key={key} style={editTspan} textDecoration="underline"
+        onClick={e => { e.stopPropagation(); bumpTie('spacing', -1, zoneIdx); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('spacing', 1, zoneIdx); }}
+      >{fmt(val, 'length', dec)}</tspan>
+    );
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpTie('size', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('size', -1); }}
+        >{displayBar(t.barSize)}</tspan>
+        <tspan style={noHit}>@</tspan>
+        {rebar.tieZones
+          ? [spacingTspan(rebar.tieZones[0].spacing, 'z0', 0),
+             <tspan key="s1" style={noHit}>/</tspan>,
+             spacingTspan(rebar.tieZones[1].spacing, 'z1', 1),
+             <tspan key="s2" style={noHit}>/</tspan>,
+             spacingTspan(rebar.tieZones[2].spacing, 'z2', 2)]
+          : spacingTspan(t.spacing, 'z')}
+        <tspan style={{ ...editTspan, fontWeight: 700 }} fill={rebar.tieZones ? '#7c3aed' : '#9ca3af'}
+          onClick={e => { e.stopPropagation(); toggleTieZones(); }}> ⅓</tspan>
+      </text>
+    );
+  }
+
+  /** Editable "N legs" line — left-click adds a leg, right-click removes (min 2).
+   *  The section hoop redraws its interior crosstie legs for legs > 2. */
+  function editableLegsLabel(x: number, y: number): ReactElement | null {
+    const t = rebar.ties;
+    if (!t) return null;
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpTie('legs', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('legs', -1); }}
+        >{t.legs}</tspan>
+        <tspan style={noHit}> legs</tspan>
+      </text>
+    );
+  }
+
+  /** Editable skin / face reinforcement: "X-#Y @ Z" (bars per side · size · spacing),
+   *  each token click-editable; when absent, a "＋ skin" affordance to add it. */
+  function editableSkinLabel(x: number, y: number): ReactElement {
+    const s = rebar.sideBars?.[0];
+    if (!s || s.numBars <= 0) {
+      return (
+        <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+          <tspan style={{ ...editTspan, fontWeight: 700 }} textDecoration="underline"
+            onClick={e => { e.stopPropagation(); addSkin(); }}>＋ skin</tspan>
+        </text>
+      );
+    }
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpSide('count', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('count', -1); }}
+        >{s.numBars}</tspan>
+        <tspan style={noHit}>-</tspan>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpSide('size', 1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('size', -1); }}
+        >{displayBar(s.barSize)}</tspan>
+        <tspan style={noHit}> @ </tspan>
+        <tspan style={editTspan} textDecoration="underline"
+          onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
+        >{fmt(s.spacing ?? 12, 'length', 0)}</tspan>
+      </text>
+    );
+  }
+
   const topBarR = Math.max(3, (getBarDiam(rebar.topBars[0]?.barSize ?? 8) / 2) * scale);
   const botBarR = Math.max(3, (getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2) * scale);
   const topLabelY = oy + stOff + topBarR;
   const botLabelY = oy + scaledH - stOff - botBarR;
+
+  // Innermost longitudinal-layer centers — the bottom-most TOP layer and the
+  // top-most BOTTOM layer. Face/skin bars are spaced in the clear web BETWEEN
+  // these two, never over the top/bottom bars. Mirrors barDots' layer stacking:
+  // each prior layer drops by bar Ø + clear spacing (so multi-layer top/bottom
+  // groups push the band inward correctly; single-layer ⇒ same as the outer y).
+  const sClearPx = (rebar.layerClearSpacing ?? 1.0) * scale;
+  const layerDrop = (bars: { barSize: number }[]) =>
+    bars.slice(0, -1).reduce((s, g) => s + getBarDiam(g.barSize) * scale + sClearPx, 0);
+  const lastTop = rebar.topBars[rebar.topBars.length - 1];
+  const lastBot = rebar.botBars[rebar.botBars.length - 1];
+  const yTopInner = oy + stOff + layerDrop(rebar.topBars)
+    + Math.max(3, (getBarDiam(lastTop?.barSize ?? 8) / 2) * scale);
+  const yBotInner = oy + scaledH - stOff - layerDrop(rebar.botBars)
+    - Math.max(3, (getBarDiam(lastBot?.barSize ?? 8) / 2) * scale);
 
   // Circular columns: pool ALL bar groups onto the ring (matches engine layout)
   const circGroups = [...rebar.topBars, ...rebar.botBars, ...(rebar.sideBars ?? [])]
@@ -186,11 +445,12 @@ export default function SectionView({
             const r = Math.max(2.5, (getBarDiam(grp.barSize) / 2) * scale);
             // Columns: pairs at evenly spaced heights between face layers (engine convention)
             const rows = isColumn ? Math.max(1, Math.round(grp.numBars / 2)) : grp.numBars;
-            const yTop = oy + stOff + topBarR;
-            const yBot = oy + scaledH - stOff - botBarR;
             return Array.from({ length: rows }, (_, i) => {
               const t = (i + 1) / (rows + 1);
-              const by = isColumn ? yTop + t * (yBot - yTop) : oy + (scaledH / (grp.numBars + 1)) * (i + 1);
+              // Evenly spaced in the clear web between the innermost top layer and
+              // the innermost bottom layer — so face bars never overlap the top/
+              // bottom bars (the same interpolation the column path already used).
+              const by = yTopInner + t * (yBotInner - yTopInner);
               return [
                 <circle key={`sl-${gi}-${i}`} cx={ox + stOff + r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
                 <circle key={`sr-${gi}-${i}`} cx={ox + scaledW - stOff - r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
@@ -207,18 +467,22 @@ export default function SectionView({
           <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={cx} y={oy + scaledH + 27} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily="monospace">
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}>
             Ø = {fmt(secW, 'length', 1)}
           </text>
+        </>
+      )}
+      {showLabels && isCircular && (
+        <>
           {/* Bar + tie labels */}
           <text x={ox + scaledW + 8} y={cy - 8}
-            fontSize="10" fill={BARS.bot} fontFamily="monospace" {...labelEvents('bot')}>
-            {circTotal > 0 ? `${circTotal}-${formatBarLabel(circBarSize)}` : '—'}
+            fontSize="10" fill={BARS.bot} fontFamily={FONT.mono} {...labelEvents('bot')}>
+            {circTotal > 0 ? `${circTotal}-${displayBar(circBarSize)}` : '—'}
           </text>
           {rebar.ties && (
             <text x={ox + scaledW + 8} y={cy + 8}
-              fontSize="10" fill={BARS.tie} fontFamily="monospace" {...labelEvents('stir')}>
-              {rebar.tieType === 'spiral' ? 'Sp ' : ''}{formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
+              fontSize="10" fill={BARS.tie} fontFamily={FONT.mono} {...labelEvents('stir')}>
+              {rebar.tieType === 'spiral' ? 'Sp ' : ''}{displayBar(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
             </text>
           )}
         </>
@@ -230,7 +494,7 @@ export default function SectionView({
           <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox + scaledW / 2} y={oy + scaledH + 27} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily="monospace">
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}>
             {isT ? `bw = ${fmt(bw, 'length', 1)}` : `b = ${fmt(secW, 'length', 1)}`}
           </text>
 
@@ -238,69 +502,106 @@ export default function SectionView({
           <line x1={ox - 14} y1={oy} x2={ox - 14} y2={oy + scaledH}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox - 26} y={oy + scaledH / 2} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily="monospace"
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}
             transform={`rotate(-90,${ox - 26},${oy + scaledH / 2})`}>
             h = {fmt(secH, 'length', 1)}
           </text>
+        </>
+      )}
 
-          {/* Top bars — left-click +1 bar, right-click -1 bar */}
-          <text x={ox + scaledW + 8} y={topLabelY + 4}
-            fontSize="10" fill={BARS.top} fontFamily="monospace"
-            {...labelEvents('top')}>
-            {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
-          </text>
+      {showLabels && !isCircular && (
+        <>
+          {/* Top bars — left-click +1, right-click −1 (count and, when editable, size) */}
+          {editBarSize
+            ? editableFaceLabel('top', ox + scaledW + 8, topLabelY + 4, BARS.top)
+            : (
+              <text x={ox + scaledW + 8} y={topLabelY + 4}
+                fontSize="10" fill={BARS.top} fontFamily={FONT.mono}
+                {...labelEvents('top')}>
+                {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ') : '—'}
+              </text>
+            )}
           <text x={ox + scaledW + 8} y={topLabelY + 16}
-            fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
-            {interactive ? 'L+1 / R−1' : 'top'}
+            fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
+            {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'top'}
+            {editBarSize && interactive && (
+              <tspan style={editTspan} fill="#7c3aed" textDecoration="underline"
+                onClick={e => { e.stopPropagation(); addLayer('top'); }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('top'); }}>＋layer</tspan>
+            )}
           </text>
 
           {/* Bottom bars */}
-          <text x={ox + scaledW + 8} y={botLabelY + 4}
-            fontSize="10" fill={BARS.bot} fontFamily="monospace"
-            {...labelEvents('bot')}>
-            {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${formatBarLabel(g.barSize)}`).join(' + ') : '—'}
-          </text>
+          {editBarSize
+            ? editableFaceLabel('bot', ox + scaledW + 8, botLabelY + 4, BARS.bot)
+            : (
+              <text x={ox + scaledW + 8} y={botLabelY + 4}
+                fontSize="10" fill={BARS.bot} fontFamily={FONT.mono}
+                {...labelEvents('bot')}>
+                {rebar.botBars.length ? rebar.botBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ') : '—'}
+              </text>
+            )}
           <text x={ox + scaledW + 8} y={botLabelY + 16}
-            fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
-            {interactive ? 'L+1 / R−1' : 'bot'}
+            fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
+            {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'bot'}
+            {editBarSize && interactive && (
+              <tspan style={editTspan} fill="#7c3aed" textDecoration="underline"
+                onClick={e => { e.stopPropagation(); addLayer('bot'); }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('bot'); }}>＋layer</tspan>
+            )}
           </text>
           {/* Side bar label (columns) */}
           {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
             <text x={ox + scaledW + 8} y={(topLabelY + botLabelY) / 2 + 18}
-              fontSize="10" fill={BARS.side} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
-              {`${rebar.sideBars[0].numBars}-${formatBarLabel(rebar.sideBars[0].barSize)} side`}
+              fontSize="10" fill={BARS.side} fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
+              {`${rebar.sideBars[0].numBars}-${displayBar(rebar.sideBars[0].barSize)} side`}
             </text>
           )}
-          {result && !isColumn && (() => {
+          {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
+              or a "＋ skin" affordance when absent. */}
+          {!isColumn && editStirrup && editableSkinLabel(ox + scaledW + 8, oy + scaledH / 2 - 20)}
+          {showDims && result && !isColumn && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;
             const ok = asBot >= reqBot;
             return (
               <>
-                <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                <text x={ox + scaledW + 8} y={botLabelY + 27} fontSize="8" fill="#6b7280" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
                   {`As=${fmt(asBot, 'area')}`}
                 </text>
-                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? DCR.pass : DCR.fail} fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                <text x={ox + scaledW + 8} y={botLabelY + 37} fontSize="8" fill={ok ? DCR.pass : DCR.fail} fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
                   {`Req:${reqBot.toFixed(2)} ${ok ? '✓' : '⚠'}`}
                 </text>
               </>
             );
           })()}
 
-          {/* Stirrup label — left-click decreases spacing, right-click increases */}
-          {rebar.ties && (
+          {/* Stirrup label — left-click decreases spacing, right-click increases.
+              In editStirrup mode the size is clickable too and a ⅓ toggle enables
+              zoned [end · middle · end] spacing over the span thirds. */}
+          {rebar.ties && (editStirrup ? (
+            <>
+              {/* size @ spacing (·⅓) on one line; editable "N legs" underneath. */}
+              {editableStirrupLabel(ox + scaledW + 8, oy + scaledH / 2 + 4)}
+              {editableLegsLabel(ox + scaledW + 8, oy + scaledH / 2 + 16)}
+              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 27}
+                fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
+                size · s · legs · ⅓
+              </text>
+            </>
+          ) : (
             <>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
-                fontSize="10" fill={BARS.tie} fontFamily="monospace"
+                fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
                 {...labelEvents('stir')}>
-                {formatBarLabel(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
+                {displayBar(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
               </text>
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
-                fontSize="8" fill="#9ca3af" fontFamily="monospace" style={{ pointerEvents: 'none' }}>
+                fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
                 {interactive ? 'L−s / R+s' : 'stir'}
               </text>
             </>
-          )}
+          ))}
         </>
       )}
     </svg>

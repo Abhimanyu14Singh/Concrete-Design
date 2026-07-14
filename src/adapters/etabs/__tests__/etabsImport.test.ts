@@ -135,8 +135,8 @@ describe('pickBars / seedRebar', () => {
       imposeSkinReinf: true, skinBarSize: 5,
     }, 'ACI318-19');
     expect(rebar.sideBars?.[0].barSize).toBe(5);
-    expect(rebar.sideBars![0].numBars).toBeGreaterThan(0);
-    expect(rebar.sideBars![0].numBars % 2).toBe(0); // both faces
+    // Per face now (beam convention): region = h/2 − cover = 22.5" at ≤ 12" → 2.
+    expect(rebar.sideBars![0].numBars).toBe(2);
   });
 
   it('EC2 threshold (h > 1000 mm ≈ 39.4 in) differs from ACI', () => {

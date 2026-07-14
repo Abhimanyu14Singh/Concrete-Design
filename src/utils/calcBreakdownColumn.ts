@@ -12,6 +12,7 @@ import {
   aciInteractionCurve, aciBiaxialCheck, aciColumnShear, capacityOnRay,
   momentAtAxial, totalAst,
 } from '../engines/aci/aciColumn';
+import { spliceLengthIn } from './spliceLength';
 
 function f(n: number, dec = 1): string { return n.toFixed(dec); }
 
@@ -114,7 +115,6 @@ export function generateColumnBreakdown(
   const curveY = !isCircular && Math.abs(Muy) > 0.5
     ? aciInteractionCurve(section, material, rebar, 40, true)
     : null;
-  const phiPn0 = Math.max(...curveX.map(p => p.phiPn));
   const phiMnAtPu = momentAtAxial(curveX, Pu);
   const M0 = momentAtAxial(curveX, 0);
 
@@ -254,6 +254,19 @@ export function generateColumnBreakdown(
       equation: 's ≤ min(16db, 48dt, least dim)',
       substitution: `min(16×${f(maxLongD, 2)}, 48×${f(tieD, 2)}, ${f(leastDim)})`,
       result: `s = ${rebar.ties.spacing}" vs s_max = ${f(sMax)}" ${rebar.ties.spacing <= sMax ? '✓' : '✗'}`,
+    });
+  }
+  // Compression lap splice for the governing (largest) longitudinal bar — columns
+  // are compression members, so the §25.5.5.1 compression lap governs.
+  const maxLongBar = allBars.filter(g => g.numBars > 0)
+    .reduce((m, g) => getBarDiam(g.barSize) > getBarDiam(m) ? g.barSize : m, allBars[0]?.barSize ?? 8);
+  const lsc = spliceLengthIn({ barSize: maxLongBar, spliceType: 'Compression', fcPsi: fc, fyPsi: fy, coverIn: section.coverClear, tieBarSize: rebar.ties?.barSize ?? section.stirrupDia });
+  if (lsc != null) {
+    detailSteps.push({
+      ref: 'ACI §25.5.5.1', label: 'Compression lap splice',
+      equation: fy <= 60000 ? 'l_sc = 0.0005·fy·db ≥ 12"' : 'l_sc = (0.0009·fy − 24)·db ≥ 12"',
+      substitution: `${formatBarLabel(maxLongBar)}, fy = ${f(fy / 1000, 0)} ksi${fc < 3000 ? ", ×1.33 (f'c<3000)" : ''}`,
+      result: `l_sc = ${f(lsc)} in (${f(lsc / getBarDiam(maxLongBar), 0)}·db)`,
     });
   }
   sections.push({ title: '6. Detailing (§10.7, §25.7)', steps: detailSteps });

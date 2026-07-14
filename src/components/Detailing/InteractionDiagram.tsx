@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import type { InteractionPoint, LoadCase, DesignCode } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
-import { codeAccent, DCR } from '../../theme';
+import { DCR, LABEL_STYLE, codeAccent } from '../../theme';
 
 interface Props {
   points: InteractionPoint[];
@@ -56,7 +56,7 @@ export default function InteractionDiagram({
 
   return (
     <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 6px 4px' }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 4px 12px' }}>
+      <div style={{ ...LABEL_STYLE, margin: '0 0 4px 12px' }}>
         Interaction Diagram ({pLabel} – {mLabel})
       </div>
       <ResponsiveContainer width="100%" height={height}>

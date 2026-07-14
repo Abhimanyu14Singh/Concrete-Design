@@ -1,7 +1,7 @@
 import { formatBarLabel } from '../../utils/rebar';
 import type { Member } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
-import { BARS } from '../../theme';
+import { BARS, FONT, STATUS } from '../../theme';
 
 interface Props {
   member: Member;
@@ -76,13 +76,13 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
             <line key={`sep-${i}`}
               x1={ox + (i / 3) * drawW} y1={oy - 6}
               x2={ox + (i / 3) * drawW} y2={oy + drawH + 6}
-              stroke="#d97706" strokeWidth="1" strokeDasharray="4 3" />
+              stroke={STATUS.warn} strokeWidth="1" strokeDasharray="4 3" />
           ))}
           {/* Zone spacing labels */}
           {tieZones.map((z, i) => (
             <text key={`zl-${i}`}
               x={ox + ((i + 0.5) / 3) * drawW} y={oy + drawH + 14}
-              textAnchor="middle" fontSize="9" fill="#d97706" fontFamily="monospace">
+              textAnchor="middle" fontSize="9" fill={STATUS.warn} fontFamily={FONT.mono}>
               {formatBarLabel(ties.barSize)}@{fmt(z.spacing, 'length')}
             </text>
           ))}
@@ -116,23 +116,23 @@ export default function ElevationView({ member, width = 600, height = 160, zoom 
         stroke="#9ca3af" strokeWidth="1"
         markerStart="url(#arrowE)" markerEnd="url(#arrowE)" />
       <text x={ox + drawW / 2} y={oy + drawH + 33}
-        textAnchor="middle" fontSize="11" fill="#6b7280" fontFamily="monospace">
+        textAnchor="middle" fontSize="11" fill="#6b7280" fontFamily={FONT.mono}>
         L = {fmt(member.span ?? 20, 'spanLength', 1)}
       </text>
 
       {/* Label */}
       <text x={ox + 4} y={oy - 10}
-        fontSize="11" fill="#374151" fontFamily="monospace" fontWeight="bold">
+        fontSize="11" fill="#374151" fontFamily={FONT.mono} fontWeight="bold">
         {member.label}
       </text>
 
       {/* Bar labels */}
       <text x={ox - 5} y={oy + 10}
-        textAnchor="end" fontSize="9" fill={BARS.top} fontFamily="monospace">
+        textAnchor="end" fontSize="9" fill={BARS.top} fontFamily={FONT.mono}>
         {member.rebar.topBars[0] ? `${member.rebar.topBars[0].numBars}${formatBarLabel(member.rebar.topBars[0].barSize)}` : ''}
       </text>
       <text x={ox - 5} y={oy + drawH - 4}
-        textAnchor="end" fontSize="9" fill={BARS.bot} fontFamily="monospace">
+        textAnchor="end" fontSize="9" fill={BARS.bot} fontFamily={FONT.mono}>
         {member.rebar.botBars[0] ? `${member.rebar.botBars[0].numBars}${formatBarLabel(member.rebar.botBars[0].barSize)}` : ''}
       </text>
     </svg>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { LoadCase } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
+import { BORDER, FONT, INK, MONO_NUM, TYPE } from '../../theme';
 
 interface Props {
   loads: LoadCase[];
@@ -14,12 +15,12 @@ let _uid = 1;
 function uid() { return `lc-${Date.now()}-${_uid++}`; }
 
 const INPUT: React.CSSProperties = {
-  width: '100%', padding: '4px 6px', border: '1px solid #d1d5db',
-  borderRadius: 4, fontSize: 12, color: '#111827', background: 'white',
-  textAlign: 'right', fontFamily: 'monospace', boxSizing: 'border-box',
+  width: '100%', padding: '4px 6px', border: `1px solid ${BORDER.strong}`,
+  borderRadius: 4, fontSize: TYPE.body, color: INK.strong, background: 'white',
+  textAlign: 'right', ...MONO_NUM, boxSizing: 'border-box',
 };
 const LABEL_INPUT: React.CSSProperties = {
-  ...INPUT, textAlign: 'left', fontFamily: 'system-ui',
+  ...INPUT, textAlign: 'left', fontFamily: FONT.ui,
 };
 
 const BEAM_FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [

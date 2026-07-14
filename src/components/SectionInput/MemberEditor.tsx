@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Member, SectionType, MemberType, WallRebarLayout, BarGroup } from '../../types';
+import type { Member, SectionType, MemberType, BarGroup } from '../../types';
 import LoadCaseTable from './LoadCaseTable';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
@@ -7,7 +7,7 @@ import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea } from '../../utils/concreteDesign';
 import CodeBadge from '../common/CodeBadge';
-import { codeAccent } from '../../theme';
+import { ACCENT, BORDER, FONT, INK, LABEL_STYLE, MONO_NUM, STATUS, codeAccent } from '../../theme';
 import Dropdown from '../common/Dropdown';
 
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
@@ -16,7 +16,6 @@ const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'L_beam',           label: 'L-Beam' },
   { value: 'rectangular_column', label: 'Rect. Column' },
   { value: 'circular_column',  label: 'Circ. Column' },
-  { value: 'shear_wall',       label: 'Shear Wall (ACI 318-25)' },
 ];
 
 // ── Module-level sub-components — NEVER defined inside a render function ──────
@@ -30,18 +29,18 @@ interface InputRowProps {
 function InputRow({ label, value, onChange, unit = '', type = 'number', min, step }: InputRowProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
-      <label style={{ fontSize: 12, color: '#6b7280', minWidth: 80, flexShrink: 0 }}>{label}</label>
+      <label style={{ fontSize: 11, color: INK.secondary, minWidth: 80, flexShrink: 0 }}>{label}</label>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 80 }}>
         <input
           type={type} value={value} min={min} step={step}
           onChange={e => onChange(e.target.value)}
           style={{
-            flex: 1, minWidth: 0, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6,
-            fontSize: 12, color: '#111827', background: 'white', outline: 'none',
-            fontFamily: type === 'text' ? 'inherit' : 'monospace',
+            flex: 1, minWidth: 0, padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
+            fontSize: 12, color: INK.strong, background: 'white', outline: 'none',
+            fontFamily: type === 'text' ? 'inherit' : FONT.mono,
           }}
         />
-        {unit && <span style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0, width: 32 }}>{unit}</span>}
+        {unit && <span style={{ fontSize: 11, color: INK.muted, flexShrink: 0, width: 32 }}>{unit}</span>}
       </div>
     </div>
   );
@@ -82,20 +81,20 @@ function SelectRow({ label, value, options, onChange }: SelectRowProps) {
   const opts = hasValue ? options : [{ value, label: String(value) }, ...options];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
-      <label style={{ fontSize: 12, color: '#6b7280', minWidth: 80, flexShrink: 0 }}>{label}</label>
+      <label style={{ fontSize: 11, color: INK.secondary, minWidth: 80, flexShrink: 0 }}>{label}</label>
       <Dropdown
         value={value} options={opts} onChange={onChange}
-        style={{ flex: 1, minWidth: 80, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, color: '#111827', background: 'white', outline: 'none' }}
+        style={{ flex: 1, minWidth: 80, padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', outline: 'none' }}
       />
     </div>
   );
 }
 
 const cardStyle: React.CSSProperties = {
-  background: 'white', border: '1px solid #e5e7eb', borderRadius: 10, padding: '14px 16px', marginBottom: 12,
+  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '14px 16px', marginBottom: 12,
 };
 const headingStyle: React.CSSProperties = {
-  fontSize: 10, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10,
+  ...LABEL_STYLE, marginBottom: 10,
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -113,18 +112,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
 
   // Unit-aware default bar sizes (negative = metric Ø mm, positive = US #).
   const dLong = units === 'si' ? -16 : 8;   // longitudinal
-  const dWeb  = units === 'si' ? -12 : 5;   // distributed wall steel
   const dStir = units === 'si' ? -10 : 4;   // stirrups / ties
-  const dSbz  = units === 'si' ? -25 : 8;   // SBZ vertical
-
-  // Unit-aware wall-rebar defaults so SI projects never seed imperial bar sizes.
-  function defaultWallRebar(): WallRebarLayout {
-    return {
-      vertBarSize: dWeb, vertSpacing: 12, horizBarSize: dWeb, horizSpacing: 12,
-      numCurtains: 2, sbzBarSize: dSbz, sbzNumBars: 8,
-      sbzTieBarSize: dStir, sbzTieSpacing: 4, sbzTieLegs: 4, driftRatio: 0.015,
-    };
-  }
 
   function update(patch: Partial<Member>) {
     const updated = { ...m, ...patch };
@@ -153,30 +141,18 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
     update({ crackParams: { ...crackP, ...p } });
 
   const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
-  const isWall = m.section.type === 'shear_wall';
   const sideBar = (p: Partial<Member['rebar']['topBars'][0]>) =>
     update({ rebar: { ...m.rebar, sideBars: [{ ...(m.rebar.sideBars?.[0] ?? { numBars: 0, barSize: dLong }), ...p }] } });
-
-  function updateWallRebar(patch: Partial<WallRebarLayout>) {
-    update({ wallRebar: { ...(m.wallRebar ?? defaultWallRebar()), ...patch } });
-  }
 
   /** Switching section type to/from a column syncs memberType and seeds sensible defaults. */
   function changeSectionType(v: SectionType) {
     const toColumn = v.endsWith('_column');
-    const toWall = v === 'shear_wall';
     const wasColumn = isColumn;
     const patch: Partial<Member> = { section: { ...m.section, type: v } };
     if (v === 'circular_column' && !m.section.diameter) {
       patch.section = { ...patch.section!, diameter: 20, b: 20, h: 20 };
     }
-    if (toWall) {
-      patch.memberType = 'wall';
-      patch.section = { ...patch.section!, b: 120, h: 12, lw: 120, tw: 12, hw: 180 };
-      if (!m.wallRebar) {
-        patch.wallRebar = defaultWallRebar();
-      }
-    } else if (toColumn && !wasColumn) {
+    if (toColumn && !wasColumn) {
       patch.memberType = 'column';
       patch.rebar = {
         topBars: [{ numBars: 3, barSize: dLong }],
@@ -185,9 +161,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         ties: { barSize: dStir, spacing: 12, legs: 2 },
         tieType: 'tied',
       };
-    } else if (!toColumn && !toWall && wasColumn) {
-      patch.memberType = 'beam';
-    } else if (!toColumn && !toWall && isWall) {
+    } else if (!toColumn && wasColumn) {
       patch.memberType = 'beam';
     }
     update(patch);
@@ -208,16 +182,16 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
         padding: '8px 12px', background: 'white', borderRadius: 10,
-        border: '1px solid #e5e7eb', borderLeft: `3px solid ${codeAccent(code)}`,
+        border: `1px solid ${BORDER.default}`, borderLeft: `3px solid ${codeAccent(code)}`,
       }}>
         <CodeBadge code={code} />
         <span style={{
-          fontSize: 10, fontWeight: 700, color: '#6b7280', background: '#f3f4f6',
-          border: '1px solid #e5e7eb', borderRadius: 12, padding: '2px 8px',
+          fontSize: 10, fontWeight: 700, color: INK.secondary, background: '#f3f4f6',
+          border: `1px solid ${BORDER.default}`, borderRadius: 12, padding: '2px 8px',
         }}>
           {units === 'si' ? 'SI — mm / MPa / kN' : 'Imperial — in / psi / kips'}
         </span>
-        <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 'auto' }}>
+        <span style={{ fontSize: 10, color: INK.muted, marginLeft: 'auto' }}>
           {isColumn ? 'Column' : 'Beam'} input
         </span>
       </div>
@@ -231,7 +205,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         <InputRow label="Label" value={m.label} type="text" onChange={v => update({ label: v })} />
         <UnitInputRow label="Span" value={m.span ?? 20} quantity="spanLength" onChange={v => update({ span: v })} />
         <SelectRow label="Member type" value={m.memberType}
-          options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }, { value: 'wall', label: 'Wall' }]}
+          options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }]}
           onChange={v => update({ memberType: v as MemberType })} />
       </div>
 
@@ -249,16 +223,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         <div style={headingStyle}>Section Dimensions</div>
         <SelectRow label="Section type" value={m.section.type} options={SECTION_TYPES}
           onChange={v => changeSectionType(v as SectionType)} />
-        {m.section.type === 'shear_wall' ? (
-          <>
-            <UnitInputRow label="Wall length lw" value={m.section.lw ?? m.section.b} quantity="length"
-              onChange={v => sec({ b: v, lw: v })} />
-            <UnitInputRow label="Wall thickness tw" value={m.section.tw ?? m.section.h} quantity="length"
-              onChange={v => sec({ h: v, tw: v })} />
-            <UnitInputRow label="Wall height hw" value={m.section.hw ?? (m.section.b * 2)} quantity="length"
-              onChange={v => sec({ hw: v })} />
-          </>
-        ) : m.section.type === 'circular_column' ? (
+        {m.section.type === 'circular_column' ? (
           <UnitInputRow label="Diameter" value={m.section.diameter ?? 20} quantity="length"
             onChange={v => sec({ diameter: v, b: v, h: v })} />
         ) : (
@@ -276,93 +241,17 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           </>
         )}
         <UnitInputRow label="Clear cover" value={m.section.coverClear} quantity="length" onChange={v => sec({ coverClear: v })} />
-        {!isWall && (
-          <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
-            options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
-            onChange={v => sec({ stirrupDia: +v })} />
-        )}
+        <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
+          options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
+          onChange={v => sec({ stirrupDia: +v })} />
       </div>
 
-      {/* Wall Reinforcement */}
-      {isWall && (
-        <>
-          <div style={cardStyle}>
-            <div style={headingStyle}>Distributed Web Reinforcement</div>
-            <div style={{ background: '#eff6ff', borderRadius: 6, padding: '8px', marginBottom: 8 }}>
-              <p style={{ fontSize: 11, color: '#2563eb', fontWeight: 600, margin: '0 0 6px' }}>Vertical (Longitudinal) Bars §11.6</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <SelectRow label="Bar size" value={m.wallRebar?.vertBarSize ?? dWeb}
-                    options={barSizeOptions(units, m.wallRebar?.vertBarSize ?? dWeb).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                    onChange={v => updateWallRebar({ vertBarSize: +v })} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <UnitInputRow label="Spacing sv" value={m.wallRebar?.vertSpacing ?? 12} quantity="length"
-                    onChange={v => updateWallRebar({ vertSpacing: v })} />
-                </div>
-              </div>
-            </div>
-            <div style={{ background: '#f0fdf4', borderRadius: 6, padding: '8px', marginBottom: 8 }}>
-              <p style={{ fontSize: 11, color: '#16a34a', fontWeight: 600, margin: '0 0 6px' }}>Horizontal (Transverse) Bars §11.6</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <SelectRow label="Bar size" value={m.wallRebar?.horizBarSize ?? dWeb}
-                    options={barSizeOptions(units, m.wallRebar?.horizBarSize ?? dWeb).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                    onChange={v => updateWallRebar({ horizBarSize: +v })} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <UnitInputRow label="Spacing sh" value={m.wallRebar?.horizSpacing ?? 12} quantity="length"
-                    onChange={v => updateWallRebar({ horizSpacing: v })} />
-                </div>
-              </div>
-            </div>
-            <SelectRow label="Curtains" value={m.wallRebar?.numCurtains ?? 2}
-              options={[{ value: 1, label: 'Single curtain' }, { value: 2, label: 'Double curtain' }]}
-              onChange={v => updateWallRebar({ numCurtains: +v as 1 | 2 })} />
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ ...headingStyle, color: '#d97706' }}>Special Boundary Zone (SBZ) §18.10.6</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <div style={{ flex: 1 }}>
-                <SelectRow label="SBZ bar size" value={m.wallRebar?.sbzBarSize ?? dSbz}
-                  options={barSizeOptions(units, m.wallRebar?.sbzBarSize ?? dSbz).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                  onChange={v => updateWallRebar({ sbzBarSize: +v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <InputRow label="# SBZ bars" value={m.wallRebar?.sbzNumBars ?? 8} min={2}
-                  onChange={v => updateWallRebar({ sbzNumBars: +v })} />
-              </div>
-            </div>
-            <p style={{ fontSize: 11, color: '#9ca3af', margin: '4px 0 6px' }}>SBZ Confinement Ties §18.10.6.4</p>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <div style={{ flex: 1 }}>
-                <SelectRow label="Tie size" value={m.wallRebar?.sbzTieBarSize ?? dStir}
-                  options={barSizeOptions(units, m.wallRebar?.sbzTieBarSize ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                  onChange={v => updateWallRebar({ sbzTieBarSize: +v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <UnitInputRow label="Tie spacing" value={m.wallRebar?.sbzTieSpacing ?? 4} quantity="length"
-                  onChange={v => updateWallRebar({ sbzTieSpacing: v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <InputRow label="Legs" value={m.wallRebar?.sbzTieLegs ?? 4} min={2}
-                  onChange={v => updateWallRebar({ sbzTieLegs: +v })} />
-              </div>
-            </div>
-            <InputRow label="Drift δu/hw" value={m.wallRebar?.driftRatio ?? 0.015} step={0.005}
-              onChange={v => updateWallRebar({ driftRatio: +v })} />
-          </div>
-        </>
-      )}
-
       {/* Beam/Column Reinforcement */}
-      {!isWall && (<>
       <div style={cardStyle}>
         <div style={headingStyle}>Reinforcement</div>
         {(!isColumn ? (['topBars', 'botBars'] as const) : []).map(face => (
           <div key={face}>
-            <p style={{ fontSize: 11, color: '#9ca3af', margin: face === 'topBars' ? '0 0 6px' : '8px 0 6px' }}>
+            <p style={{ fontSize: 11, color: INK.muted, margin: face === 'topBars' ? '0 0 6px' : '8px 0 6px' }}>
               {face === 'topBars' ? 'Top Bars' : 'Bottom Bars'}
             </p>
             {m.rebar[face].map((g, i) => (
@@ -379,18 +268,18 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
                 </div>
                 {m.rebar[face].length > 1 && (
                   <button onClick={() => removeLayer(face, i)} title="Remove layer"
-                    style={{ border: '1px solid #e5e7eb', background: 'white', color: '#9ca3af', borderRadius: 6, width: 22, height: 22, cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0 }}>×</button>
+                    style={{ border: `1px solid ${BORDER.default}`, background: 'white', color: INK.muted, borderRadius: 6, width: 22, height: 22, cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0 }}>×</button>
                 )}
               </div>
             ))}
             <button onClick={() => addLayer(face)}
-              style={{ border: 'none', background: 'none', color: '#2563eb', fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '2px 0 0' }}>
+              style={{ border: 'none', background: 'none', color: ACCENT.primary, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '2px 0 0' }}>
               + Add layer
             </button>
           </div>
         ))}
         {isColumn && (<>
-        <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 6px' }}>Top Bars</p>
+        <p style={{ fontSize: 11, color: INK.muted, margin: '0 0 6px' }}>Top Bars</p>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
             <InputRow label="# bars" value={m.rebar.topBars[0]?.numBars ?? 3} min={1}
@@ -402,7 +291,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               onChange={v => topBar({ barSize: +v })} />
           </div>
         </div>
-        <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 6px' }}>Bottom Bars</p>
+        <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 6px' }}>Bottom Bars</p>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
             <InputRow label="# bars" value={m.rebar.botBars[0]?.numBars ?? 4} min={1}
@@ -421,7 +310,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         )}
         {isColumn && (
           <>
-            <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 6px' }}>Side Bars (intermediate layers)</p>
+            <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 6px' }}>Side Bars (intermediate layers)</p>
             <div style={{ display: 'flex', gap: 8 }}>
               <div style={{ flex: 1 }}>
                 <InputRow label="# bars" value={m.rebar.sideBars?.[0]?.numBars ?? 0} min={0}
@@ -435,7 +324,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             </div>
           </>
         )}
-        <p style={{ fontSize: 11, color: '#9ca3af', margin: '8px 0 6px' }}>Stirrups / Ties</p>
+        <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 6px' }}>Stirrups / Ties</p>
         {isColumn && (
           <SelectRow label="Transverse type" value={m.rebar.tieType ?? 'tied'}
             options={[
@@ -462,12 +351,12 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           </div>
         </div>
         {m.rebar.tieZones && (
-          <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>
+          <p style={{ fontSize: 10, color: INK.muted, margin: '2px 0 0' }}>
             Zoned stirrups active — the three zone spacings below govern the shear check.
           </p>
         )}
         {!isColumn && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#6b7280', padding: '6px 0 0', cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: INK.secondary, padding: '6px 0 0', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!m.rebar.tieZones}
               onChange={e => {
                 if (e.target.checked) {
@@ -505,10 +394,10 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             .reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
           const rho = Ag > 0 ? As / Ag : 0;
           return (
-            <div style={{ fontSize: 10, color: '#6b7280', fontFamily: 'monospace', marginTop: 8, paddingTop: 6, borderTop: '1px dashed #e5e7eb', lineHeight: 1.7 }}>
+            <div style={{ fontSize: 10, color: INK.secondary, ...MONO_NUM, marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BORDER.default}`, lineHeight: 1.7 }}>
               Ag = {fmt(Ag, 'area')} &nbsp; As = {fmt(As, 'area')} &nbsp; ρ = {(rho * 100).toFixed(2)}%
               {isColumn && (rho < 0.01 || rho > 0.08) && (
-                <span style={{ color: '#dc2626', fontWeight: 700 }}> ⚠ outside 1–8%</span>
+                <span style={{ color: STATUS.fail, fontWeight: 700 }}> ⚠ outside 1–8%</span>
               )}
             </div>
           );
@@ -519,7 +408,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       {code === 'EN1992-1-1' && !isColumn && (
       <div style={{ ...cardStyle, borderLeft: `3px solid ${codeAccent('EN1992-1-1')}` }}>
         <div style={headingStyle}>Crack Control — EN 1992-1-1 §7.3.4</div>
-        <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 6px' }}>
+        <p style={{ fontSize: 11, color: INK.muted, margin: '0 0 6px' }}>
           Limits and crack widths are always in mm regardless of the display unit system.
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -540,7 +429,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         </div>
         {/* SLS Load Combo picker */}
         <div style={{ marginBottom: 6 }}>
-          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>SLS quasi-permanent combo</div>
+          <div style={{ fontSize: 11, color: INK.secondary, marginBottom: 3 }}>SLS quasi-permanent combo</div>
           <Dropdown
             value={crackP.slsLoadCaseId ?? ''}
             options={[
@@ -548,9 +437,9 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               ...m.loads.map(lc => ({ value: lc.id, label: lc.label })),
             ]}
             onChange={v => crack({ slsLoadCaseId: v || undefined })}
-            style={{ width: '100%', fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 5 }}
+            style={{ width: '100%', fontSize: 12, padding: '4px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 5 }}
           />
-          <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+          <div style={{ fontSize: 10, color: INK.muted, marginTop: 3 }}>
             If a project-level SLS combo is set in the ETABS import, it is applied
             automatically per beam from its station forces; this picker is a manual override.
           </div>
@@ -567,23 +456,22 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           onChange={v => crack({ kt: +v })} />
       </div>
       )}
-      </>) } {/* end !isWall */}
 
       {/* Load Cases */}
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={headingStyle}>Load Cases</div>
-          <span style={{ fontSize: 11, color: '#9ca3af', marginBottom: 10 }}>{m.loads.length} case{m.loads.length !== 1 ? 's' : ''}</span>
+          <span style={{ fontSize: 11, color: INK.muted, marginBottom: 10 }}>{m.loads.length} case{m.loads.length !== 1 ? 's' : ''}</span>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           {m.loads.slice(0, 4).map(l => (
-            <span key={l.id} style={{ fontSize: 11, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 4, padding: '2px 8px', color: '#374151' }}>{l.label}</span>
+            <span key={l.id} style={{ fontSize: 11, background: '#f3f4f6', border: `1px solid ${BORDER.default}`, borderRadius: 4, padding: '2px 8px', color: INK.base }}>{l.label}</span>
           ))}
-          {m.loads.length > 4 && <span style={{ fontSize: 11, color: '#9ca3af' }}>+{m.loads.length - 4} more</span>}
+          {m.loads.length > 4 && <span style={{ fontSize: 11, color: INK.muted }}>+{m.loads.length - 4} more</span>}
         </div>
         <button
           onClick={() => setShowLoads(true)}
-          style={{ width: '100%', padding: '7px 0', border: '1px solid #2563eb', borderRadius: 7, background: 'white', color: '#2563eb', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+          style={{ width: '100%', padding: '7px 0', border: `1px solid ${ACCENT.primary}`, borderRadius: 7, background: 'white', color: ACCENT.primary, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
         >
           Edit Load Cases ({m.loads.length})
         </button>
