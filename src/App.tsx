@@ -99,11 +99,6 @@ export default function App() {
     return out;
   }, [project.members, project.code, project.slsCombo]);
 
-  // Workflow progress for the ribbon: import → design → verify.
-  const hasImport = !!project.modelMap;
-  const hasGroups = (project.designGroups?.length ?? 0) > 0;
-  const hasVerify = (project.sconcreteResults?.length ?? 0) > 0;
-
   // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
   function setProject(p: Project | ((prev: Project) => Project)) {
     setProjectRaw(prev => {
@@ -792,6 +787,31 @@ export default function App() {
                 boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '12px 8px', minWidth: 190,
               }}>
                 <div style={{ ...LABEL_STYLE, padding: '0 8px', marginBottom: 8 }}>
+                  Design code
+                </div>
+                {(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => (
+                  <button
+                    key={c}
+                    onClick={() => {
+                      // Follow the code's native unit system: EC2 → SI, ACI → imperial.
+                      if (c === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
+                      else if (c !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
+                      setProject(p => ({ ...p, code: c }));
+                    }}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                      background: project.code === c ? ACCENT.softBg : 'none',
+                      color: project.code === c ? ACCENT.primary : INK.base,
+                      fontWeight: project.code === c ? 700 : 400,
+                    }}
+                  >
+                    <span>{c}</span>
+                    {project.code === c && <span style={{ fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
+                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
                   Display Scale
                 </div>
                 {[0.75, 0.9, 1.0, 1.1, 1.25, 1.5].map(z => (
@@ -838,57 +858,6 @@ export default function App() {
           {/* Project info */}
           <div style={{ fontSize: 11, color: INK.secondary }}>{project.name}</div>
         </header>
-
-        {/* Workflow ribbon — Import → Design → Verify, always visible so the
-            S-Concrete verification step is reachable from any screen. The design
-            code lives here because it drives the .SCO handed to S-Concrete. */}
-        <div id="app-ribbon" style={{ background: SURFACE.subtle, borderBottom: `1px solid ${BORDER.default}`, padding: '5px 16px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
-          {([
-            { key: 'import', num: '1', label: 'Import', hint: 'from ETABS', done: hasImport, onClick: () => setShowEtabsImport(true) },
-            { key: 'design', num: '2', label: 'Design', hint: 'group & rebar', done: hasGroups, onClick: () => setTab('map') },
-            { key: 'verify', num: '3', label: 'Verify', hint: '⚙ S-Concrete', done: hasVerify, onClick: () => setTab('map') },
-          ] as const).map((stage, i, arr) => {
-            // Current stage = the first not-yet-done step (all done ⇒ Verify).
-            const firstTodo = arr.find(s => !s.done)?.key ?? 'verify';
-            const current = stage.key === firstTodo;
-            return (
-              <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  onClick={stage.onClick}
-                  title={`${stage.label} — ${stage.hint}`}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 14, cursor: 'pointer',
-                    border: `1px solid ${current ? ACCENT.primary : stage.done ? STATUS.okBorder : BORDER.default}`,
-                    background: current ? ACCENT.softBg : stage.done ? STATUS.okBg : 'white',
-                  }}
-                >
-                  <span style={{
-                    width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 10, fontWeight: 700, color: 'white',
-                    background: stage.done ? STATUS.ok : current ? ACCENT.primary : INK.muted,
-                  }}>{stage.done ? '✓' : stage.num}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: current ? ACCENT.primary : stage.done ? STATUS.ok : INK.secondary }}>{stage.label}</span>
-                  <span style={{ fontSize: 11, color: INK.muted }}>{stage.hint}</span>
-                </button>
-                {i < arr.length - 1 && <span style={{ color: BORDER.strong, fontSize: 12 }}>→</span>}
-              </div>
-            );
-          })}
-          <div style={{ flex: 1 }} />
-          <span style={LABEL_STYLE}>Design code</span>
-          <Dropdown
-            value={project.code}
-            options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => ({ value: c, label: c }))}
-            onChange={v => {
-              const newCode = v as DesignCode;
-              // Follow the code's native unit system: EC2 → SI, ACI → imperial.
-              if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
-              else if (newCode !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
-              setProject(p => ({ ...p, code: newCode }));
-            }}
-            style={{ fontSize: 11, background: ACCENT.softBg, color: ACCENT.primary, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
-          />
-        </div>
 
         {/* Content */}
         <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>
