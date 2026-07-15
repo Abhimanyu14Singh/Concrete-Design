@@ -255,12 +255,17 @@ export default function MapCanvas({
   }
 
   function onMouseMove(e: React.MouseEvent) {
-    if (isPanning && panStart.current) {
+    // Capture the pan origin locally: the setViewBox updater below runs
+    // asynchronously, and the native window mouseup listener can null
+    // panStart.current before it flushes — dereferencing the ref inside the
+    // updater then throws "Cannot read properties of null (reading 'vx')".
+    const ps = panStart.current;
+    if (isPanning && ps) {
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect || !rect.width) return;
-      const dx = ((e.clientX - panStart.current.mx) / rect.width) * viewBox.w;
-      const dy = ((e.clientY - panStart.current.my) / rect.height) * viewBox.h;
-      setViewBox(vb => ({ ...vb, x: panStart.current!.vx - dx, y: panStart.current!.vy - dy }));
+      const dx = ((e.clientX - ps.mx) / rect.width) * viewBox.w;
+      const dy = ((e.clientY - ps.my) / rect.height) * viewBox.h;
+      setViewBox(vb => ({ ...vb, x: ps.vx - dx, y: ps.vy - dy }));
       return;
     }
     if (lasso) {
