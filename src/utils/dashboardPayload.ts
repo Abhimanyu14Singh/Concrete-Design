@@ -17,6 +17,8 @@ export interface DashboardGroup {
   label: string;
   color?: string;
   source?: 'auto' | 'manual';
+  /** Governing face (split-by-face groups) → shown as a (T)/(B) badge. */
+  face?: 'top' | 'bot';
   /** Representative (governing beam's) section, for the card drawing. */
   section: SectionDimensions;
   /** The group's cage template (what inline edits mutate). */
@@ -113,6 +115,7 @@ export function buildDashboardPayload(
       label: g.label,
       color: g.color,
       source: g.source,
+      face: g.face,
       section,
       rebar,
       memberIds: g.memberIds.slice(),

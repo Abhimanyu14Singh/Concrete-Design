@@ -61,7 +61,15 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
       {/* Name row + the group's worst per-mode DCRs (M⁺ / M⁻ / V). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ width: 10, height: 10, borderRadius: 3, background: group.color ?? INK.muted, flexShrink: 0 }} />
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: INK.strong, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: INK.strong, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {group.label}
+          {group.face && (
+            <span
+              title={group.face === 'top' ? 'Top (M⁻ / hogging) governed' : 'Bottom (M⁺ / sagging) governed'}
+              style={{ marginLeft: 4, fontSize: 10, fontWeight: 800, color: ACCENT.primary }}
+            >({group.face === 'top' ? 'T' : 'B'})</span>
+          )}
+        </span>
         <span style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
           <DCRChip label="M⁺" value={group.maxFlexPos} />
           <DCRChip label="M⁻" value={group.maxFlexNeg} />

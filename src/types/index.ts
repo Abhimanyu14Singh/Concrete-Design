@@ -92,6 +92,13 @@ export interface DesignGroup {
   /** 'auto' = created by auto-grouping (replaceable); 'manual' = user-created. */
   source?: 'auto' | 'manual';
   /**
+   * Governing flexural face when the group was created by "Split by face" with a
+   * name template. 'top' = M⁻ (hogging) governed, 'bot' = M⁺ (sagging) governed.
+   * Kept OUT of the label (the legend stays clean); shown as a (T)/(B) badge on
+   * the group dashboard.
+   */
+  face?: 'top' | 'bot';
+  /**
    * L/3 curtailment notes the user pinned via the section-card flags. When a face
    * is true, the beam schedule carries a note stating what % of that face's steel
    * the third-point demand needs (so the balance may be curtailed). Recomputed at

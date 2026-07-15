@@ -13,6 +13,7 @@ import {
   ALL_BEAMS_FAMILY_KEY,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
+import { formatGroupName, depthCodeMm, GROUP_NAME_TOKENS } from '../../utils/autoGroupName';
 import type { Quantity } from '../../utils/units';
 import HistogramPanel from './HistogramPanel';
 import { GROUP_PALETTE } from './groupColors';
@@ -56,6 +57,9 @@ export default function AutoGroupPanel({
   const [groupAllBeams, setGroupAllBeams] = useState(false);
   const [splitByFace, setSplitByFace] = useState(false);
   const [totalGroupsDraft, setTotalGroupsDraft] = useState('');
+  // Optional group-name template (e.g. "{type}-{depth}-{seq}" → "B-07-01"). Empty
+  // keeps the legacy "letter_dim_faceN" naming untouched.
+  const [nameTemplate, setNameTemplate] = useState('');
 
   // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
@@ -179,15 +183,20 @@ export default function AutoGroupPanel({
     onHighlightChange?.(new Set());
   }
 
-  function handleApply() {
-    const newGroups: DesignGroup[] = [];
+  // The exact groups a Commit would produce — shared by the name preview and
+  // handleApply so what you see is what you get. Deterministic (no ids/timestamps).
+  const plannedGroups = useMemo(() => {
+    type Planned = { label: string; memberIds: string[]; color: string; face?: 'top' | 'bot' };
+    const out: Planned[] = [];
     let groupCount = 0;
+    const seqByDepth: Record<string, number> = {}; // {seq} counts groups per depth code
+    const memberById = new Map(members.map(m => [m.id, m]));
     const sortedSuggestions = [...baseSuggestions].sort((a, b) => a.familyLabel.localeCompare(b.familyLabel));
     // In face-split mode both sub-pools share the same raw family key and letter
     const rawKeys = [...new Set(sortedSuggestions.map(s => s.rawFamilyKey ?? s.familyKey))].sort();
     const familyLetters = new Map(rawKeys.map((rk, i) => [rk, String.fromCharCode(65 + i)]));
+    const tmpl = nameTemplate.trim();
     for (const sug of sortedSuggestions) {
-      // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
         ? demands
@@ -202,22 +211,46 @@ export default function AutoGroupPanel({
 
       bins.forEach((mIds, bi) => {
         if (!mIds.length) return;
-        const dimStr = displayFamilyLabel(sug.familyLabel, units).replace('×', 'x').replace(' mm', '');
-        const letter = familyLetters.get(sug.rawFamilyKey ?? sug.familyKey) ?? '?';
-        const faceSuffix = sug.face === 'bot' ? 'B' : sug.face === 'top' ? 'T' : '';
-        const label = `${letter}_${dimStr}_${faceSuffix}${bi + 1}`;
-        newGroups.push({
-          id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount}`,
-          label,
-          memberIds: mIds,
-          // global running index keeps every committed group a distinct color,
-          // matching the preview swatches and the map plan
-          color: GROUP_PALETTE[groupCount % GROUP_PALETTE.length],
-          source: 'auto',
-        });
+        let label: string;
+        let face: 'top' | 'bot' | undefined;
+        if (tmpl) {
+          // Template naming — the T/B stays OUT of the name (kept as `face`).
+          const rep = memberById.get(mIds[0]);
+          const depthMm = (rep?.section.h ?? 24) * 25.4;
+          const widthMm = (rep?.section.bw ?? rep?.section.b ?? 12) * 25.4;
+          const isColumn = rep?.memberType === 'column';
+          const dKey = depthCodeMm(depthMm);
+          seqByDepth[dKey] = (seqByDepth[dKey] ?? 0) + 1;
+          label = formatGroupName(tmpl, {
+            isColumn, depthMm, widthMm, seq: seqByDepth[dKey], n: groupCount + 1,
+            face: sug.face, story: rep?.etabs?.story,
+          });
+          if (sug.face) face = sug.face;
+        } else {
+          // Legacy naming (unchanged): letter_dim_faceN, face baked in.
+          const dimStr = displayFamilyLabel(sug.familyLabel, units).replace('×', 'x').replace(' mm', '');
+          const letter = familyLetters.get(sug.rawFamilyKey ?? sug.familyKey) ?? '?';
+          const faceSuffix = sug.face === 'bot' ? 'B' : sug.face === 'top' ? 'T' : '';
+          label = `${letter}_${dimStr}_${faceSuffix}${bi + 1}`;
+        }
+        out.push({ label, memberIds: mIds, color: GROUP_PALETTE[groupCount % GROUP_PALETTE.length], ...(face ? { face } : {}) });
         groupCount++;
       });
     }
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseSuggestions, tweakedBreaks, demands, members, units, nameTemplate]);
+
+  function handleApply() {
+    const stamp = Date.now();
+    const newGroups: DesignGroup[] = plannedGroups.map((g, i) => ({
+      id: `auto-${stamp}-${i}`,
+      label: g.label,
+      memberIds: g.memberIds,
+      color: g.color,
+      source: 'auto',
+      ...(g.face ? { face: g.face } : {}),
+    }));
     onApplySuggestion(newGroups);
   }
 
@@ -425,6 +458,35 @@ export default function AutoGroupPanel({
             </div>
           );
         })}
+      </div>
+
+      {/* Group name template + live preview. Empty = legacy "letter_dim_faceN". */}
+      <div style={{ borderTop: `1px solid ${BORDER.default}`, paddingTop: 8 }}>
+        <div style={lbl}>Group name template <span style={{ color: INK.muted }}>(optional)</span></div>
+        <input
+          value={nameTemplate}
+          onChange={e => setNameTemplate(e.target.value)}
+          placeholder="e.g.  {type}-{depth}-{seq}"
+          spellCheck={false}
+          style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 5, border: `1px solid ${nameTemplate.trim() ? ACCENT.primary : BORDER.strong}`, boxSizing: 'border-box', ...MONO_NUM }}
+        />
+        <div style={{ fontSize: 9, color: INK.muted, marginTop: 3, lineHeight: 1.6 }}>
+          {GROUP_NAME_TOKENS.map(t => `${t.token} ${t.desc}`).join('  ·  ')}
+        </div>
+        {plannedGroups.length > 0 && (
+          <div style={{ fontSize: 10.5, color: INK.secondary, marginTop: 5 }}>
+            Names:{' '}
+            <span style={{ color: ACCENT.primary, fontWeight: 600, ...MONO_NUM }}>
+              {plannedGroups.slice(0, 4).map(g => g.label).join(',  ')}{plannedGroups.length > 4 ? ' …' : ''}
+            </span>
+            {plannedGroups.some(g => g.face) && (
+              <div style={{ fontSize: 9.5, color: INK.muted, marginTop: 2 }}>
+                Split by face → the legend shows the name; the dashboard adds{' '}
+                <span style={{ color: '#7c3aed', fontWeight: 700 }}>(T)</span>/<span style={{ color: '#7c3aed', fontWeight: 700 }}>(B)</span>.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <button
