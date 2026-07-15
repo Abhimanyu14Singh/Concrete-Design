@@ -22,7 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
-  onSuggestAll,
+  onSuggestAll, onToggleCurtailmentNote,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -42,6 +42,8 @@ export default function GroupDashboard({
   onCreateGroupForMember?: (memberId: string) => void;
   /** Auto-size every group's cage to satisfy DCRs / clear errors. */
   onSuggestAll?: () => void;
+  /** Pin/unpin a face's L/3 curtailment % to the beam schedule notes. */
+  onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
@@ -94,6 +96,7 @@ export default function GroupDashboard({
             selected={g.id === selectedGroupId}
             onSelect={() => onSelectGroup(g.id === selectedGroupId ? null : g.id)}
             onApplyRebar={onApplyRebar}
+            onToggleCurtailmentNote={onToggleCurtailmentNote}
           />
         ))}
       </div>

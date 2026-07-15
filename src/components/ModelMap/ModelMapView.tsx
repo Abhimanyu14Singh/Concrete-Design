@@ -522,6 +522,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleCreateGroupForMember(cmd.memberId);
       } else if (cmd.type === 'suggest-all') {
         handleSuggestAllGroups();
+      } else if (cmd.type === 'toggle-curtailment-note') {
+        handleToggleCurtailmentNote(cmd.groupId, cmd.face, cmd.on);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();
@@ -544,6 +546,16 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       ...prev,
       designGroups: (prev.designGroups ?? []).map(g => g.id === groupId ? { ...g, rebar } : g),
       members: prev.members.map(m => memberIdSet.has(m.id) ? { ...m, rebar } : m),
+    }));
+  }
+
+  // Pin/unpin a face's L/3 curtailment % to the beam-schedule notes (persisted on
+  // the group so the export can recompute the note against the current cage).
+  function handleToggleCurtailmentNote(groupId: string, face: 'top' | 'bot', on: boolean) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g =>
+        g.id === groupId ? { ...g, curtailmentNotes: { ...g.curtailmentNotes, [face]: on } } : g),
     }));
   }
 
@@ -1083,6 +1095,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onMoveMember={handleMoveToGroup}
               onCreateGroupForMember={handleCreateGroupForMember}
               onSuggestAll={handleSuggestAllGroups}
+              onToggleCurtailmentNote={handleToggleCurtailmentNote}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}

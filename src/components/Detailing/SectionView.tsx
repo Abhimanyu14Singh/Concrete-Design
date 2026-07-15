@@ -24,6 +24,9 @@ interface Props {
   padT?: number;
   padB?: number;
   onRebarChange?: (r: RebarLayout) => void;
+  /** Small clickable ⚑ after the top/bottom bar label (L/3 curtailment flags). */
+  topFlag?: { color: string; title?: string; onClick: () => void } | null;
+  botFlag?: { color: string; title?: string; onClick: () => void } | null;
 }
 
 export default function SectionView({
@@ -35,6 +38,7 @@ export default function SectionView({
   editStirrup = false,
   padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
+  topFlag, botFlag,
 }: Props) {
   const { fmt, units } = useUnits();
   const pL = padL, pR = padR, pT = padT, pB = padB;
@@ -240,8 +244,17 @@ export default function SectionView({
   /** Editable face label: per-layer clickable count and bar-size tokens (e.g. "3-#8 + 2-#6"). */
   function editableFaceLabel(face: 'top' | 'bot', x: number, y: number, fill: string): ReactElement {
     const bars = face === 'top' ? rebar.topBars : rebar.botBars;
+    const flag = face === 'top' ? topFlag : botFlag;
     const firstIdx = bars.findIndex(g => g.numBars > 0);
-    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>;
+    const flagTspan = flag ? (
+      <tspan dx="7" style={{ cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto', fontWeight: 700 }}
+        fill={flag.color} fontSize="13"
+        onClick={e => { e.stopPropagation(); flag.onClick(); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag.onClick(); }}>
+        {flag.title ? <title>{flag.title}</title> : null}⚑
+      </tspan>
+    ) : null;
+    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—{flagTspan}</text>;
     return (
       <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
         {bars.map((g, li) => g.numBars > 0 ? (
@@ -258,6 +271,7 @@ export default function SectionView({
             >{displayBar(g.barSize)}</tspan>
           </tspan>
         ) : null)}
+        {flagTspan}
       </text>
     );
   }

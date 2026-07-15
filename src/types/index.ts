@@ -91,6 +91,13 @@ export interface DesignGroup {
   rebar?: RebarLayout; // group template — fanned out to members on Apply
   /** 'auto' = created by auto-grouping (replaceable); 'manual' = user-created. */
   source?: 'auto' | 'manual';
+  /**
+   * L/3 curtailment notes the user pinned via the section-card flags. When a face
+   * is true, the beam schedule carries a note stating what % of that face's steel
+   * the third-point demand needs (so the balance may be curtailed). Recomputed at
+   * export time from the current cage + station forces.
+   */
+  curtailmentNotes?: { top?: boolean; bot?: boolean };
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */

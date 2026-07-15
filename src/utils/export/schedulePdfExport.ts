@@ -11,10 +11,11 @@
  */
 import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import type { Project, Member, MapFrame, DesignGroup, LoadCase } from '../../types';
+import type { Project, Member, MapFrame, DesignGroup, LoadCase, DesignCode } from '../../types';
 import { formatBarLabel } from '../rebar';
 import { winAnsiSafe } from './pdfExport';
 import { runDesign } from '../../engines';
+import { analyzeGroupCurtailment, curtailmentNote } from '../curtailment';
 
 // ── colour palette ─────────────────────────────────────────────────────────
 
@@ -117,6 +118,53 @@ function computeMaxDCR(m: Member, code: string): number {
     if (d > best) best = d;
   }
   return best;
+}
+
+// ── L/3 curtailment notes ────────────────────────────────────────────────────
+
+export interface CurtailNote { group: string; note: string; red: boolean; }
+
+/** Collect the curtailment notes the user pinned (per-face) on each group, with
+ *  percentages recomputed against the group's current cage + station forces. */
+export function buildCurtailmentNotes(
+  groups: DesignGroup[],
+  memberById: Map<string, Member>,
+  code: DesignCode,
+): CurtailNote[] {
+  const out: CurtailNote[] = [];
+  for (const g of groups) {
+    if (!g.curtailmentNotes?.top && !g.curtailmentNotes?.bot) continue;
+    const gm = g.memberIds.map(id => memberById.get(id)).filter((m): m is Member => !!m);
+    const rebar = g.rebar ?? gm[0]?.rebar;
+    if (!rebar) continue;
+    const cu = analyzeGroupCurtailment(gm, rebar, code);
+    if (g.curtailmentNotes?.top && cu.top) out.push({ group: g.label, note: curtailmentNote(cu.top), red: cu.top.flag === 'red' });
+    if (g.curtailmentNotes?.bot && cu.bot) out.push({ group: g.label, note: curtailmentNote(cu.bot), red: cu.bot.flag === 'red' });
+  }
+  return out;
+}
+
+function drawNotesPage(
+  doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont,
+  notes: CurtailNote[], projectName: string, pageNum: number,
+): number {
+  const ctx = addPage(doc, fontReg, fontBold);
+  drawPageFrame(ctx, 'Schedule Notes', projectName, pageNum);
+  const { margin } = ctx;
+  let y = 595 - 60;
+  txt(ctx, 'L/3 Bar-Curtailment Notes', margin, y, 12, C.navy, fontBold);
+  y -= 16;
+  txt(ctx, 'Percentage of each face required through the third-points; the balance may be curtailed (respect development + code minimum).', margin, y, 8, C.mid);
+  y -= 20;
+  for (const n of notes) {
+    if (y < 40) { break; }
+    const col = n.red ? C.red : rgb(0.49, 0.29, 0.86); // purple for curtailment opportunities
+    fillRect(ctx, margin, y - 1, 8, 8, col); // red = keep >50% continuous · purple = curtailment opportunity
+    txt(ctx, winAnsiSafe(n.group), margin + 14, y, 8.5, C.dark, fontBold);
+    txt(ctx, winAnsiSafe(n.note), margin + 14, y - 11, 8, C.dark);
+    y -= 26;
+  }
+  return pageNum + 1;
 }
 
 // ── font loading ───────────────────────────────────────────────────────────
@@ -550,6 +598,12 @@ export async function buildSchedulePDF(
   } else {
     const rows = buildBeamRows(members, isEC2, code);
     pageNum = drawScheduleTable(doc, fontReg, fontBold, rows, false, projectName, pageNum);
+  }
+
+  // ── L/3 curtailment notes (only the faces the user pinned) ──────────────────
+  const curtailNotes = buildCurtailmentNotes(groups, memberById, code as DesignCode);
+  if (curtailNotes.length) {
+    pageNum = drawNotesPage(doc, fontReg, fontBold, curtailNotes, projectName, pageNum);
   }
 
   // ── Plan pages ─────────────────────────────────────────────────────────────

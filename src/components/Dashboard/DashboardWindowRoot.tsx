@@ -52,6 +52,7 @@ export default function DashboardWindowRoot() {
         onMoveMember={(memberId, groupId) => api.sendDashboardCommand?.({ type: 'move-member', memberId, groupId })}
         onCreateGroupForMember={memberId => api.sendDashboardCommand?.({ type: 'create-group-for-member', memberId })}
         onSuggestAll={() => api.sendDashboardCommand?.({ type: 'suggest-all' })}
+        onToggleCurtailmentNote={(groupId, face, on) => api.sendDashboardCommand?.({ type: 'toggle-curtailment-note', groupId, face, on })}
         canPopOut={false}
         onClose={() => api.sendDashboardCommand?.({ type: 'pop-in' })}
         closeLabel="⤡ Pop in"

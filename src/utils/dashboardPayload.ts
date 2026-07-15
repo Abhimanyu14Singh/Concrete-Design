@@ -1,14 +1,16 @@
 /**
  * The distilled, plain-JSON payload the Group Dashboard consumes — small enough
  * to relay over IPC to a popped-out window (a few scalars per group/member, never
- * the full model). Built in ModelMapView off already-computed design results, so
- * no extra runDesign happens here.
+ * the full model). Built in ModelMapView off already-computed design results; the
+ * only extra engine work is the per-group L/3 curtailment analysis (one design
+ * pass per member over the third-point demands).
  */
 import type {
   DesignGroup, Member, SectionDimensions, RebarLayout, DesignResults, DesignWarning, DesignCode,
 } from '../types';
 import { flexSteelRatioPct, steelWeightPerFt } from './autoGroup';
 import { modeDCRs, worstOf } from '../components/Dashboard/dashboardShared';
+import { analyzeGroupCurtailment, type GroupCurtailment } from '../utils/curtailment';
 
 export interface DashboardGroup {
   id: string;
@@ -30,6 +32,10 @@ export interface DashboardGroup {
   rhoBot: number;
   steelWtLbFt: number;
   beamCount: number;
+  /** L/3 curtailment analysis for the group cage (red/purple flags + %). */
+  curtailment: GroupCurtailment;
+  /** Which faces the user pinned to the schedule notes. */
+  notePinned: { top: boolean; bot: boolean };
 }
 
 export interface DashboardMember {
@@ -57,6 +63,7 @@ export type DashboardCommand =
   | { type: 'move-member'; memberId: string; groupId: string }
   | { type: 'create-group-for-member'; memberId: string }
   | { type: 'suggest-all' }
+  | { type: 'toggle-curtailment-note'; groupId: string; face: 'top' | 'bot'; on: boolean }
   | { type: 'pop-in' }
   | { type: 'ready' };
 
@@ -118,6 +125,8 @@ export function buildDashboardPayload(
       rhoBot: repMember ? flexSteelRatioPct(repMember, 'bot') : 0,
       steelWtLbFt: repMember ? steelWeightPerFt(repMember).totalLbFt : 0,
       beamCount: beams.length,
+      curtailment: analyzeGroupCurtailment(beams, rebar, code),
+      notePinned: { top: !!g.curtailmentNotes?.top, bot: !!g.curtailmentNotes?.bot },
     };
   });
 

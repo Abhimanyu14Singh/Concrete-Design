@@ -18,6 +18,8 @@ const group = (id: string, memberIds: string[]): DashboardGroup => ({
   id, label: id, section: SEC, rebar: REB, memberIds,
   govDCR: 1, maxFlexPos: 1, maxFlexNeg: 0.5, maxShear: 0.4,
   rhoTop: 0.4, rhoBot: 0.6, steelWtLbFt: 30, beamCount: memberIds.length,
+  curtailment: { hasStationData: false, top: null, bot: null },
+  notePinned: { top: false, bot: false },
 });
 const member = (id: string, groupId: string): DashboardMember => ({
   id, label: id, groupId, b: 20, h: 48,
