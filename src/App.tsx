@@ -294,12 +294,14 @@ export default function App() {
   ) {
     if (applyUnits) setUnits(applyUnits);
     setProject(p => {
-      // Re-imports replace members with the same frame id
-      const incoming = new Set(members.map(m => m.id));
+      // Fresh import: the imported members/groups fully REPLACE whatever was in
+      // the project (the default sample members and any prior import). This is
+      // why importing one group no longer drags in unrelated frames like the
+      // sample C1/C2 columns.
       return {
         ...p,
-        members: [...p.members.filter(m => !incoming.has(m.id)), ...members],
-        designGroups: [...(p.designGroups ?? []).filter(g => !g.memberIds.some(id => incoming.has(id))), ...groups],
+        members,
+        designGroups: groups,
         ...(modelMap ? { modelMap } : {}),
         slsCombo: slsCombo || undefined,
         ...(applyCode ? { code: applyCode } : {}),
