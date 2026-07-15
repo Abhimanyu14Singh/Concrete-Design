@@ -18,24 +18,27 @@ const TABLES: Record<string, Row[]> = {
     { UniqueName: '102', Story: 'L2', UniquePtI: 'P2', UniquePtJ: 'P3', Length: 6 },
     { UniqueName: '103', Story: 'L2', UniquePtI: 'P3', UniquePtJ: 'P4', Length: 6 },
     { UniqueName: '104', Story: 'L2', UniquePtI: 'P4', UniquePtJ: 'P5', Length: 6 },
+    { UniqueName: '105', Story: 'L2', UniquePtI: 'P5', UniquePtJ: 'P6', Length: 6 },
   ],
   'Point Object Connectivity': [
     { UniqueName: 'P1', X: 0, Y: 0, Z: 3 }, { UniqueName: 'P2', X: 6, Y: 0, Z: 3 },
     { UniqueName: 'P3', X: 12, Y: 0, Z: 3 }, { UniqueName: 'P4', X: 18, Y: 0, Z: 3 },
-    { UniqueName: 'P5', X: 24, Y: 0, Z: 3 },
+    { UniqueName: 'P5', X: 24, Y: 0, Z: 3 }, { UniqueName: 'P6', X: 30, Y: 0, Z: 3 },
   ],
   'Frame Assignments - Section Properties': [
     { UniqueName: '101', SectProp: 'B300X600' }, { UniqueName: '102', SectProp: 'B300X600' },
     { UniqueName: '103', SectProp: 'B300X600' }, { UniqueName: '104', SectProp: 'B300X600' },
+    { UniqueName: '105', SectProp: 'B300X600' },
   ],
   'Frame Section Property Definitions - Concrete Rectangular': [
     { Name: 'B300X600', Material: 'C30', t3: 0.6, t2: 0.3 },
   ],
   'Group Assignments': [
     { GroupName: 'G', ObjectType: 'Beam',  ObjectUniqueName: '101' }, // frame 101 IS in G ✓
+    { GroupName: 'G', ObjectType: 'Line',  ObjectUniqueName: '105' }, // ETABS labels frames "Line" — must still import
     { GroupName: 'G', ObjectType: 'Joint', ObjectUniqueName: '102' }, // JOINT 102 in G — must NOT pull beam 102
     { GroupName: 'G', ObjectType: 'Shell', ObjectUniqueName: '103' }, // SHELL 103 in G — must NOT pull beam 103
-    { GroupName: 'U', ObjectUniqueName: '104' },                      // untyped row — backward-compat fallback
+    { GroupName: 'U', ObjectUniqueName: '104' },                      // untyped row — must still import (frame default)
   ],
 };
 
@@ -53,12 +56,12 @@ function mockHttp(tables: Record<string, Row[]>) {
 }
 
 describe('ETABS group membership is object-type aware', () => {
-  it('a group filter imports only FRAME members, not same-named joints/shells', async () => {
+  it('a group filter imports FRAME members (incl. the "Line" type), not same-named joints/shells', async () => {
     mockHttp(TABLES);
     const conn = new BridgeConnection();
     await conn.connect();
     const inGroup = await conn.getBeams({ groups: ['G'] });
-    expect(inGroup.map(b => b.name)).toEqual(['101']); // NOT 102 (joint) or 103 (shell)
+    expect(inGroup.map(b => b.name).sort()).toEqual(['101', '105']); // Beam + Line frames; NOT 102 (joint) or 103 (shell)
   });
 
   it('the leaked frames carry no phantom group membership at all', async () => {
@@ -67,7 +70,8 @@ describe('ETABS group membership is object-type aware', () => {
     await conn.connect();
     const all = await conn.getBeams({});
     const byId = new Map(all.map(b => [b.name, b.groups]));
-    expect(byId.get('101')).toEqual(['G']);
+    expect(byId.get('101')).toEqual(['G']); // Beam-typed frame
+    expect(byId.get('105')).toEqual(['G']); // Line-typed frame (ETABS's real frame label)
     expect(byId.get('102')).toEqual([]); // joint's group must not appear on the beam
     expect(byId.get('103')).toEqual([]); // shell's group must not appear on the beam
   });
@@ -89,8 +93,8 @@ describe('ETABS group membership is object-type aware', () => {
 });
 
 describe('objCategory', () => {
-  it('buckets frame sub-types together', () => {
-    for (const t of ['Frame', 'Beam', 'Column', 'Brace', 'FRAME']) expect(objCategory(t)).toBe('frame');
+  it('treats frame object types — incl. ETABS\'s "Line" — as frame', () => {
+    for (const t of ['Frame', 'Beam', 'Column', 'Brace', 'Line', 'FRAME', 'LineObj']) expect(objCategory(t)).toBe('frame');
   });
   it('buckets area/shell types together', () => {
     for (const t of ['Area', 'Shell', 'Wall', 'Slab', 'Floor']) expect(objCategory(t)).toBe('area');
@@ -98,10 +102,10 @@ describe('objCategory', () => {
   it('buckets point/joint types together', () => {
     for (const t of ['Point', 'Joint', 'Node']) expect(objCategory(t)).toBe('point');
   });
-  it('empty type → any (untyped fallback), other known types → other', () => {
-    expect(objCategory('')).toBe('any');
-    expect(objCategory('  ')).toBe('any');
-    expect(objCategory('Link')).toBe('other');
-    expect(objCategory('Tendon')).toBe('other');
+  it('defaults empty or unrecognised types to frame (never drops real frames)', () => {
+    expect(objCategory('')).toBe('frame');
+    expect(objCategory('  ')).toBe('frame');
+    expect(objCategory('Link')).toBe('frame');
+    expect(objCategory('SomethingNew')).toBe('frame');
   });
 });

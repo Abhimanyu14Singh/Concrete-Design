@@ -33,20 +33,22 @@ export type TableRow = Record<string, unknown>;
  * Coarse category from the Group Assignments "ObjectType" column. ETABS unique
  * names are per-object-type — a frame "12" and a joint "12" are DIFFERENT objects
  * that share the string "12" — so group membership must be matched by category as
- * well as name. Without this, a grouped joint/shell leaks its group onto a
- * same-named frame, and the beam gets imported even though only the joint was in
- * the group. Untyped rows (exports without the column) fall to 'any' so no
- * membership is ever lost; a known-but-other type (Link, Tendon, …) is bucketed
- * on its own so it can never match a frame or an area.
+ * well as name, or a grouped joint/shell leaks its group onto a same-named frame.
+ *
+ * ETABS labels joints "Point" and shells/walls/slabs "Area"; frames are the
+ * "Line" object type (NOT "Frame"). So this is an EXCLUDE list: only the joint and
+ * area object types are pulled out — EVERYTHING else (Line/Frame/Beam/Column/
+ * Brace, plus any empty or unrecognised value) is treated as a frame. Erring
+ * toward frame means a group filter never silently drops real frames on a model
+ * whose exact ObjectType wording we don't recognise; the joints and shells we DO
+ * recognise are still excluded, which is the behaviour the user asked for.
  */
-type ObjCategory = 'frame' | 'area' | 'point' | 'other' | 'any';
+type ObjCategory = 'frame' | 'area' | 'point';
 export function objCategory(type: string): ObjCategory {
   const s = type.trim().toLowerCase();
-  if (!s) return 'any';
-  if (/frame|beam|column|brace/.test(s)) return 'frame';
-  if (/area|wall|slab|floor|deck|ramp|shell|panel/.test(s)) return 'area';
   if (/point|joint|node/.test(s)) return 'point';
-  return 'other';
+  if (/area|shell|wall|slab|floor|deck|ramp|panel/.test(s)) return 'area';
+  return 'frame';
 }
 
 interface UnitFactors {
@@ -374,8 +376,9 @@ export abstract class TableConnection implements EtabsConnection {
 
     // ETABS groups: name list + per-object membership, keyed by (category, name)
     // so a grouped joint/shell never leaks its group onto a same-unique-named
-    // frame. Untyped rows (exports lacking ObjectType) go under 'any' and match
-    // every category — backward-compatible, never dropping a real membership.
+    // frame. objCategory only pulls out Point and Area types; every other value
+    // (incl. the "Line" type ETABS uses for frames, and untyped rows) counts as a
+    // frame, so real frame memberships are never dropped.
     const catGroups = new Map<string, string[]>(); // key: `${category}|${uniqueName}`
     const names = new Set<string>();
     for (const g of groupRows) {
@@ -391,12 +394,8 @@ export abstract class TableConnection implements EtabsConnection {
     }
     this.groupNames = [...names].sort();
 
-    const groupsFor = (uniqueName: string, want: 'frame' | 'area'): string[] => {
-      const specific = catGroups.get(`${want}|${uniqueName}`) ?? [];
-      const untyped = catGroups.get(`any|${uniqueName}`) ?? [];
-      if (!specific.length && !untyped.length) return [];
-      return [...new Set([...specific, ...untyped])];
-    };
+    const groupsFor = (uniqueName: string, want: 'frame' | 'area'): string[] =>
+      catGroups.get(`${want}|${uniqueName}`) ?? [];
 
     this.ctxCache = { coords, sectionByFrame, groupsFor };
     return this.ctxCache;
