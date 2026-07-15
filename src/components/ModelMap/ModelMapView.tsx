@@ -8,7 +8,8 @@ import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
-import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
+import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
+import SuggestSizeDialog from '../common/SuggestSizeDialog';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -132,6 +133,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [autoGroupOverlay, setAutoGroupOverlay] = useState<AutoGroupBin[]>([]);
   const [contextMenu, setContextMenu] = useState<{ memberId: string; frameName: string; x: number; y: number } | null>(null);
   const [suggestAllNote, setSuggestAllNote] = useState<string | null>(null);
+  const [suggestAllOpen, setSuggestAllOpen] = useState(false);
   // User override for the metric color-ramp bounds (Steel% / Stirrups / Weight).
   // null = auto (data min/max). Lets the user refine the legend to highlight a band.
   const [metricOverride, setMetricOverride] = useState<{ min: number; max: number } | null>(null);
@@ -558,7 +560,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     if (activeGroupId === groupId) setActiveGroupId(null);
   }
 
-  function handleSuggestAllGroups() {
+  // The ✨ Suggest-all button opens the size-floor dialog first; runSuggestAllGroups
+  // does the work once the user confirms their minimum bar sizes (or accepts the
+  // defaults, which impose no floor — the original behavior).
+  function handleSuggestAllGroups() { setSuggestAllOpen(true); }
+
+  function runSuggestAllGroups(floors?: SuggestFloors) {
     const target = project.targetDCR ?? 0.9;
     let ok = 0, fail = 0;
     let firstError: string | null = null;
@@ -571,7 +578,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
       const designed = membersInGroup.filter(m => m.memberType === 'beam' && m.loads.length > 0);
       if (!designed.length) continue; // skip empty / no designed beams
-      const r = suggestGroupRebar(membersInGroup, project.code, target);
+      const r = suggestGroupRebar(membersInGroup, project.code, target, floors);
       if (isSuggestError(r)) {
         fail++;
         if (!firstError) firstError = r.error;
@@ -829,6 +836,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             void frame;
           }}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* ✨ Suggest size-floor dialog (per-group Suggest lives in GroupRebarEditor;
+          this instance backs "✨ Suggest all groups" and the popped-out dashboard). */}
+      {suggestAllOpen && (
+        <SuggestSizeDialog
+          code={project.code}
+          title="Suggest all groups"
+          onCancel={() => setSuggestAllOpen(false)}
+          onConfirm={floors => { setSuggestAllOpen(false); runSuggestAllGroups(floors); }}
         />
       )}
 
