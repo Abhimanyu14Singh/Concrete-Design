@@ -8,6 +8,7 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
+import { zoomViewBox } from '../../utils/mapViewport';
 import { ACCENT, BORDER, DEFAULT_DCR_THRESHOLDS, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK, type DcrBand } from '../../theme';
 
 export type { ColorMode };
@@ -203,25 +204,39 @@ export default function MapCanvas({
     };
   }, [viewBox]);
 
-  // Wheel zoom — native non-passive
+  // Wheel zoom — native non-passive. Two guards keep heavy scrolling from taking
+  // the renderer down: (1) the zoom is CLAMPED to a sane range — without a floor,
+  // scrolling in far enough shrinks the viewBox toward zero, which blows every
+  // stroke up to tens of thousands of screen px and exhausts GPU/RAM (a hard crash
+  // on large models); (2) rapid wheel ticks are COALESCED to one state update per
+  // animation frame, so the plan stays smooth instead of thrashing React.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
+    // Relative to the fit width (viewBox.w === width at fit): allow up to ~50× zoom
+    // in and ~10× zoom out. Generous for detailing, nowhere near the blow-up regime.
+    const MIN_W = width / 50;
+    const MAX_W = width * 10;
+    let raf = 0;
+    let pending: { clientX: number; clientY: number; factor: number } | null = null;
+    const apply = () => {
+      raf = 0;
+      const job = pending; pending = null;
+      if (!job) return;
+      const pt = mouseToSvg(job.clientX, job.clientY);
+      if (!pt) return;
+      setViewBox(vb => zoomViewBox(vb, job.factor, pt.x, pt.y, MIN_W, MAX_W));
+    };
     const handler = (e: WheelEvent) => {
       e.preventDefault();
       const factor = e.deltaY > 0 ? 1.15 : 0.87;
-      const pt = mouseToSvg(e.clientX, e.clientY);
-      if (!pt) return;
-      setViewBox(vb => ({
-        x: pt.x - (pt.x - vb.x) * factor,
-        y: pt.y - (pt.y - vb.y) * factor,
-        w: vb.w * factor,
-        h: vb.h * factor,
-      }));
+      // Accumulate ticks that arrive within the same frame; anchor on the latest.
+      pending = { clientX: e.clientX, clientY: e.clientY, factor: (pending?.factor ?? 1) * factor };
+      if (!raf) raf = requestAnimationFrame(apply);
     };
     svg.addEventListener('wheel', handler, { passive: false });
-    return () => svg.removeEventListener('wheel', handler);
-  }, [mouseToSvg]);
+    return () => { svg.removeEventListener('wheel', handler); if (raf) cancelAnimationFrame(raf); };
+  }, [mouseToSvg, width]);
 
   function onMouseDown(e: React.MouseEvent) {
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
