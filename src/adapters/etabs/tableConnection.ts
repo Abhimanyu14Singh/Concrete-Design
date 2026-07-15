@@ -29,6 +29,26 @@ import { matchesFilter } from './connection';
 
 export type TableRow = Record<string, unknown>;
 
+/**
+ * Coarse category from the Group Assignments "ObjectType" column. ETABS unique
+ * names are per-object-type — a frame "12" and a joint "12" are DIFFERENT objects
+ * that share the string "12" — so group membership must be matched by category as
+ * well as name. Without this, a grouped joint/shell leaks its group onto a
+ * same-named frame, and the beam gets imported even though only the joint was in
+ * the group. Untyped rows (exports without the column) fall to 'any' so no
+ * membership is ever lost; a known-but-other type (Link, Tendon, …) is bucketed
+ * on its own so it can never match a frame or an area.
+ */
+type ObjCategory = 'frame' | 'area' | 'point' | 'other' | 'any';
+export function objCategory(type: string): ObjCategory {
+  const s = type.trim().toLowerCase();
+  if (!s) return 'any';
+  if (/frame|beam|column|brace/.test(s)) return 'frame';
+  if (/area|wall|slab|floor|deck|ramp|shell|panel/.test(s)) return 'area';
+  if (/point|joint|node/.test(s)) return 'point';
+  return 'other';
+}
+
 interface UnitFactors {
   lengthToFt: number;   // model length unit → ft
   forceToKip: number;   // model force unit → kip
@@ -206,7 +226,9 @@ export abstract class TableConnection implements EtabsConnection {
   private ctxCache: {
     coords: Map<string, { x: number; y: number; z: number }>;
     sectionByFrame: Map<string, string>;
-    groupsByObject: Map<string, string[]>;
+    /** Group names for an object, restricted to the caller's category (frames read
+     *  only frame memberships, areas only area memberships) + untyped fallback. */
+    groupsFor: (uniqueName: string, want: 'frame' | 'area') => string[];
   } | null = null;
 
   async connect(): Promise<EtabsConnectInfo> {
@@ -350,21 +372,33 @@ export abstract class TableConnection implements EtabsConnection {
       if (un && sect) sectionByFrame.set(un, sect);
     }
 
-    // ETABS groups: name list + per-object membership (all object types)
-    const groupsByObject = new Map<string, string[]>();
+    // ETABS groups: name list + per-object membership, keyed by (category, name)
+    // so a grouped joint/shell never leaks its group onto a same-unique-named
+    // frame. Untyped rows (exports lacking ObjectType) go under 'any' and match
+    // every category — backward-compatible, never dropping a real membership.
+    const catGroups = new Map<string, string[]>(); // key: `${category}|${uniqueName}`
     const names = new Set<string>();
     for (const g of groupRows) {
       const group = str(g, 'GroupName', 'Group');
       const obj = str(g, 'ObjectUniqueName', 'UniqueName', 'ObjectName');
       if (!group || !obj) continue;
       names.add(group);
-      const list = groupsByObject.get(obj) ?? [];
+      const cat = objCategory(str(g, 'ObjectType', 'Type'));
+      const key = `${cat}|${obj}`;
+      const list = catGroups.get(key) ?? [];
       list.push(group);
-      groupsByObject.set(obj, list);
+      catGroups.set(key, list);
     }
     this.groupNames = [...names].sort();
 
-    this.ctxCache = { coords, sectionByFrame, groupsByObject };
+    const groupsFor = (uniqueName: string, want: 'frame' | 'area'): string[] => {
+      const specific = catGroups.get(`${want}|${uniqueName}`) ?? [];
+      const untyped = catGroups.get(`any|${uniqueName}`) ?? [];
+      if (!specific.length && !untyped.length) return [];
+      return [...new Set([...specific, ...untyped])];
+    };
+
+    this.ctxCache = { coords, sectionByFrame, groupsFor };
     return this.ctxCache;
   }
 
@@ -394,7 +428,7 @@ export abstract class TableConnection implements EtabsConnection {
         story: str(row, 'Story'),
         section,
         pt1, pt2,
-        groups: ctx.groupsByObject.get(un) ?? [],
+        groups: ctx.groupsFor(un, 'frame'),
         lengthFt: lengthRaw > 0
           ? lengthRaw * lf
           : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
@@ -435,7 +469,7 @@ export abstract class TableConnection implements EtabsConnection {
         story: str(row, 'Story'),
         section,
         pt1, pt2,
-        groups: ctx.groupsByObject.get(un) ?? [],
+        groups: ctx.groupsFor(un, 'frame'),
         heightFt: lengthRaw > 0
           ? lengthRaw * lf
           : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
@@ -496,7 +530,7 @@ export abstract class TableConnection implements EtabsConnection {
         : (isVerticalArea(points) ? 'wall' : 'slab');
       const section = sectionByArea.get(un) ?? '';
       if (section) this.sectionNamesUsed.add(section);
-      areas.push({ name: un, story, points, kind, section, groups: ctx.groupsByObject.get(un) ?? [] });
+      areas.push({ name: un, story, points, kind, section, groups: ctx.groupsFor(un, 'area') });
     }
     this.areasCache = areas;
     this.openingsCache = openings;
