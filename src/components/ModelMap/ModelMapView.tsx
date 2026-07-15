@@ -1375,7 +1375,11 @@ function MetricLegendPanel({
 
   return (
     <div style={{
-      position: 'absolute', top: 8, right: 8, width: 250, background: 'white',
+      // Bottom-right, above the ETABS filename badge (which sits at bottom:8) — keeps
+      // the histogram clear of the top-right beam summary card. Bottom-anchored so a
+      // tall (histogram-open) panel grows upward; maxHeight stops it running off top.
+      position: 'absolute', bottom: 38, right: 8, width: 250, maxHeight: 'calc(100% - 52px)',
+      overflowY: 'auto', background: 'white',
       borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
       boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
     }}>
