@@ -182,6 +182,19 @@ function endHogging(m: Member): { startHog: number; endHog: number } | null {
   return { startHog, endHog };
 }
 
+/**
+ * The "mark" end of a single beam — the support with the greater hogging (top)
+ * moment, so the tag/heavy top cage belongs there. `'start'` = the I-node
+ * (station x = 0), `'end'` = the J-node (station x = L). Ties (e.g. a symmetric
+ * span) resolve to `'start'`, matching the group-level rule in analyzeOppositeEnd.
+ * Returns null when the beam carries no station forces to judge from.
+ */
+export function beamMarkEnd(m: Member): 'start' | 'end' | null {
+  const e = endHogging(m);
+  if (!e) return null;
+  return e.startHog >= e.endHog ? 'start' : 'end';
+}
+
 export interface OppositeEndResult {
   hasStationData: boolean;
   /** Which end governs the top steel (the "mark" side). */

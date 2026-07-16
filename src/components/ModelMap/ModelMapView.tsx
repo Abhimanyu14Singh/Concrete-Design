@@ -9,6 +9,7 @@ import { resolveCrack } from '../../utils/resolveCrack';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
+import { beamMarkEnd } from '../../utils/curtailment';
 import SuggestSizeDialog from '../common/SuggestSizeDialog';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
@@ -320,6 +321,21 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }
     return out;
   }, [members, diagramMode]);
+
+  // Per-beam "mark" end (the higher-hogging support) — drives where the group tag
+  // sits on each line in "Group + tags" mode. Only computed when that mode is on;
+  // reads station forces (no design run). Beams without station data are absent
+  // and fall back to the line midpoint.
+  const markEndById = useMemo(() => {
+    if (colorMode !== 'groupTags') return undefined;
+    const out: Record<string, 'start' | 'end'> = {};
+    for (const m of members) {
+      if (m.memberType && m.memberType !== 'beam') continue;
+      const me = beamMarkEnd(m);
+      if (me) out[m.id] = me;
+    }
+    return out;
+  }, [members, colorMode]);
 
   const isMetricMode = METRIC_MODES.includes(colorMode);
 
@@ -1018,6 +1034,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             height={canvasSize.h}
             diagramMode={diagramMode}
             diagramDataById={diagramMode !== 'off' ? diagramDataById : undefined}
+            markEndById={markEndById}
             metricById={metricById}
             metricRange={effectiveMetricRange}
             metricLabel={metricLabel}

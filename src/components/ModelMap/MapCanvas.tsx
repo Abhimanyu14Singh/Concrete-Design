@@ -30,6 +30,10 @@ export interface FrameInfo {
 }
 
 const DIAGRAM_MAX_PX = 18; // max perpendicular offset for diagram in SVG user-space pixels
+// How far along the beam (0 = mark node, 0.5 = midpoint) to park the group tag when
+// a mark end is known. 0.22 keeps it clearly biased toward that end without sitting
+// on the beam-column joint, where tags from several beams would collide.
+const MARK_TAG_FRAC = 0.22;
 
 interface Props {
   frames: MapFrame[];
@@ -51,6 +55,11 @@ interface Props {
   height?: number;
   diagramMode?: DiagramMode;
   diagramDataById?: Record<string, { x: number; v: number }[]>;
+  /** memberId → its "mark" end (higher-hogging support). In 'groupTags' mode the
+   *  group tag is drawn near that end of the line instead of at the midpoint.
+   *  'start' = the pt1/I-node end, 'end' = the pt2/J-node end. Members absent from
+   *  this map keep the midpoint tag. */
+  markEndById?: Record<string, 'start' | 'end'>;
   /** For 'flexSteel' / 'stirrups' modes: metric value by memberId. */
   metricById?: Record<string, number>;
   metricRange?: { min: number; max: number };
@@ -100,7 +109,7 @@ export default function MapCanvas({
   colorMode = 'dcr', selected, onSelectionChange, onDoubleClick, onFrameClick,
   onBeamInspect, onBeamContextMenu,
   width = 640, height = 480,
-  diagramMode = 'off', diagramDataById = {},
+  diagramMode = 'off', diagramDataById = {}, markEndById = {},
   metricById = {}, metricRange, metricLabel, scoStatusById = {},
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
@@ -548,7 +557,13 @@ export default function MapCanvas({
                     opacity={baseOpacity}
                   />
                   {colorMode === 'groupTags' && f.memberId && groupIndexMap.has(f.memberId) && (() => {
-                    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+                    // Bias the tag toward the beam's mark end (higher-hogging support):
+                    // 'start' → near pt1 (x1,y1), 'end' → near pt2 (x2,y2). x=0 (I-node)
+                    // maps to pt1, matching the moment-diagram overlay. No mark end known
+                    // → sit at the midpoint (t = 0.5) as before.
+                    const me = markEndById[f.memberId];
+                    const t = me === 'start' ? MARK_TAG_FRAC : me === 'end' ? 1 - MARK_TAG_FRAC : 0.5;
+                    const cx = x1 + t * (x2 - x1), cy = y1 + t * (y2 - y1);
                     const half = 7 * tagScale;
                     return (
                       <>
