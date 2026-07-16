@@ -13,6 +13,7 @@ import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, MapFrame, DesignGroup, LoadCase, DesignCode } from '../../types';
 import { formatBarLabel } from '../rebar';
+import { skinStr, continuousBars } from './scheduleData';
 import { winAnsiSafe } from './pdfExport';
 import { runDesign } from '../../engines';
 import { analyzeGroupCurtailment, curtailmentNote } from '../curtailment';
@@ -138,8 +139,8 @@ export function buildCurtailmentNotes(
     const rebar = g.rebar ?? gm[0]?.rebar;
     if (!rebar) continue;
     const cu = analyzeGroupCurtailment(gm, rebar, code);
-    if (g.curtailmentNotes?.top && cu.top) out.push({ group: g.label, note: curtailmentNote(cu.top), red: cu.top.flag === 'red' });
-    if (g.curtailmentNotes?.bot && cu.bot) out.push({ group: g.label, note: curtailmentNote(cu.bot), red: cu.bot.flag === 'red' });
+    if (g.curtailmentNotes?.top && cu.top) out.push({ group: g.label, note: `${curtailmentNote(cu.top)} Keep ${continuousBars(rebar, 'top', cu.top)} continuous.`, red: cu.top.flag === 'red' });
+    if (g.curtailmentNotes?.bot && cu.bot) out.push({ group: g.label, note: `${curtailmentNote(cu.bot)} Keep ${continuousBars(rebar, 'bot', cu.bot)} continuous.`, red: cu.bot.flag === 'red' });
   }
   return out;
 }
@@ -265,7 +266,7 @@ function buildGroupRows(
         + (g.oppositeTopBars?.length ? ` · opp ${rebarStr(g.oppositeTopBars)}` : '')
       : '—';
     const bot      = rebar ? rebarStr(rebar.botBars) : '—';
-    const skin     = rebar ? rebarStr(rebar.sideBars ?? []) : '—';
+    const skin     = rebar ? skinStr(rebar.sideBars, isEC2) : '—';
     const stirrups = rebar ? stirrupStr(rebar, isEC2) : '—';
     const section  = repMember ? sectionLabel(repMember, isEC2) : '—';
 
