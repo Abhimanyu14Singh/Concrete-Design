@@ -25,7 +25,7 @@
  * Needs member.stationForces (populated on ETABS import). Members without station
  * data are skipped; a group with none yields no flags (hasStationData = false).
  */
-import type { Member, RebarLayout, DesignCode, LoadCase, BarGroup } from '../types';
+import type { Member, RebarLayout, DesignCode, LoadCase, BarGroup, DesignResults } from '../types';
 import { runDesign } from '../engines';
 import { getBarArea } from './concreteDesign';
 
@@ -296,4 +296,68 @@ export function curtailmentNote(fc: FaceCurtailment): string {
   const faceName = fc.face === 'top' ? 'Top' : 'Bottom';
   const min = fc.governedBy === 'code-min' ? ' (code As,min governs)' : '';
   return `${faceName} steel: ${pct}% required through the ${where}${min}; the balance may be curtailed (respect development + code minimum).`;
+}
+
+// ── Stepped moment capacity (for the L/3 diagram overlay) ─────────────────────
+
+/** Fraction of a face's cage kept continuous through its curtailment region — the
+ *  "~50% continuous" rule of thumb this module is built around (see file header). */
+export const CURTAIL_CONTINUOUS_FRAC = 0.5;
+
+export interface SteppedMomentCapacity {
+  /** Hogging capacity with the full top cage — governs the END thirds (kip-ft). */
+  negFull: number;
+  /** Hogging capacity with the curtailed top cage — the MIDDLE third (kip-ft). */
+  negReduced: number;
+  /** Sagging capacity with the full bottom cage — governs the MIDDLE third (kip-ft). */
+  posFull: number;
+  /** Sagging capacity with the curtailed bottom cage — the END thirds (kip-ft). */
+  posReduced: number;
+  /** Continuous fraction assumed through the curtailment region (0..1). */
+  continuousFrac: number;
+}
+
+/** The continuous cage kept through a face's curtailment region: the same bar
+ *  size, `CURTAIL_CONTINUOUS_FRAC` of the area but never below code As,min and
+ *  never above the full cage. */
+function continuousCage(bars: BarGroup[], asMin: number): BarGroup[] {
+  const layer = bars.find(b => b.numBars > 0);
+  if (!layer) return bars;
+  const Ab = getBarArea(layer.barSize);
+  if (Ab <= EPS) return bars;
+  const fullN = bars.reduce((s, b) => s + Math.max(0, b.numBars), 0);
+  const keepAs = Math.max(CURTAIL_CONTINUOUS_FRAC * faceArea(bars), asMin);
+  const n = Math.max(2, Math.min(fullN, Math.ceil(keepAs / Ab - 1e-6)));
+  return [{ numBars: n, barSize: layer.barSize }];
+}
+
+/**
+ * Full vs curtailed ±φMn for the stepped moment-capacity overlay. Top steel
+ * resists hogging and is detailed for the two END thirds; through the MIDDLE
+ * third it may be curtailed to ~50% continuous (never below code As,min), so the
+ * hogging capacity dips there. Bottom steel mirrors this — full across the middle
+ * third, curtailed toward the ends — so the sagging capacity dips at the ends.
+ * The diagram steps the dashed capacity lines between these levels at L/3 & 2L/3,
+ * matching the L/3 reinforcement the Group Dashboard curtailment check reasons
+ * about. Capacity is load-independent, so a zero load case is used.
+ */
+export function steppedMomentCapacity(
+  member: Member, result: DesignResults, code: DesignCode,
+): SteppedMomentCapacity {
+  const span = member.span ?? 20;
+  const lc: LoadCase = { id: 'cap', label: 'capacity', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 };
+  let negReduced = result.phi_Mn_neg, posReduced = result.phi_Mn_pos;
+  try {
+    const cage = continuousCage(member.rebar.topBars, result.As_min);
+    negReduced = runDesign(member.section, member.material, { ...member.rebar, topBars: cage }, lc, span, code, member.crackParams).phi_Mn_neg;
+  } catch { /* fall back to the full-cage capacity */ }
+  try {
+    const cage = continuousCage(member.rebar.botBars, result.As_min);
+    posReduced = runDesign(member.section, member.material, { ...member.rebar, botBars: cage }, lc, span, code, member.crackParams).phi_Mn_pos;
+  } catch { /* fall back to the full-cage capacity */ }
+  return {
+    negFull: result.phi_Mn_neg, negReduced: Math.min(negReduced, result.phi_Mn_neg),
+    posFull: result.phi_Mn_pos, posReduced: Math.min(posReduced, result.phi_Mn_pos),
+    continuousFrac: CURTAIL_CONTINUOUS_FRAC,
+  };
 }

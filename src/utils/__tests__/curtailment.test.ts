@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeGroupCurtailment, curtailmentNote, CURTAIL_THRESHOLD_PCT, analyzeOppositeEnd, suggestOppositeCage } from '../curtailment';
+import { analyzeGroupCurtailment, curtailmentNote, CURTAIL_THRESHOLD_PCT, analyzeOppositeEnd, suggestOppositeCage, steppedMomentCapacity } from '../curtailment';
+import { runDesign } from '../../engines';
 import type { Member, ComboForces, RebarLayout } from '../../types';
 
 /** Build a beam with a moment profile M(f), f = fraction along the span. */
@@ -171,5 +172,35 @@ describe('analyzeOppositeEnd', () => {
     expect(r.hasOpposite).toBe(true);
     expect(r.oppositeDcrMet).toBe(false);
     expect(r.worstOppositeDcr).toBeGreaterThan(1);
+  });
+});
+
+describe('steppedMomentCapacity', () => {
+  it('curtailed capacity is lower than full for a cage well above code minimum', () => {
+    const m = makeBeam({ id: 'cap', moment: fixedEnd, rebar: {
+      topBars: [{ numBars: 6, barSize: 8 }], botBars: [{ numBars: 6, barSize: 8 }],
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+    } });
+    const res = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span ?? 20, 'ACI318-19');
+    const cap = steppedMomentCapacity(m, res, 'ACI318-19');
+    // Full levels come straight from the design result…
+    expect(cap.negFull).toBeCloseTo(res.phi_Mn_neg, 6);
+    expect(cap.posFull).toBeCloseTo(res.phi_Mn_pos, 6);
+    // …and ~50% continuous is a genuine reduction for a 6-bar cage.
+    expect(cap.negReduced).toBeLessThan(cap.negFull);
+    expect(cap.posReduced).toBeLessThan(cap.posFull);
+    expect(cap.negReduced).toBeGreaterThan(0);
+    expect(cap.continuousFrac).toBeCloseTo(0.5);
+  });
+
+  it('a minimum cage cannot be curtailed further (reduced ≈ full)', () => {
+    const m = makeBeam({ id: 'min', moment: fixedEnd, rebar: {
+      topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }],
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+    } });
+    const res = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span ?? 20, 'ACI318-19');
+    const cap = steppedMomentCapacity(m, res, 'ACI318-19');
+    expect(cap.negReduced).toBeCloseTo(cap.negFull, 5);
+    expect(cap.posReduced).toBeCloseTo(cap.posFull, 5);
   });
 });
