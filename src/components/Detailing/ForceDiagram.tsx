@@ -130,13 +130,17 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
         <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="#f3f4f6" strokeDasharray="3 3" />
           <XAxis dataKey="x" type="number" domain={[0, span]} tick={axisTick} unit={spanUnit} />
-          {/* Structural convention: sagging (+M) drawn downward */}
+          {/* Structural convention: sagging (+M) drawn downward. */}
           <YAxis tick={axisTick} width={45} reversed />
           <Tooltip contentStyle={tooltipStyle} />
           <ReferenceLine y={0} stroke="#9ca3af" />
-          <ReferenceLine y={phiMnPos} stroke={STATUS.ok} strokeDasharray="6 3"
+          {/* ±φMn capacity limits. ifOverflow="extendDomain" grows the Y-axis to
+              include them so they stay visible even when capacity comfortably
+              envelopes demand — the default "discard" would hide the lines in
+              exactly the passing case where the envelope check matters most. */}
+          <ReferenceLine y={phiMnPos} stroke={STATUS.ok} strokeDasharray="6 3" ifOverflow="extendDomain"
             label={{ value: 'φMn⁺', fontSize: 9, fill: STATUS.ok, position: 'insideBottomRight' }} />
-          <ReferenceLine y={-phiMnNeg} stroke="#7c3aed" strokeDasharray="6 3"
+          <ReferenceLine y={-phiMnNeg} stroke="#7c3aed" strokeDasharray="6 3" ifOverflow="extendDomain"
             label={{ value: 'φMn⁻', fontSize: 9, fill: '#7c3aed', position: 'insideTopRight' }} />
           <Area dataKey="Mmax" stroke="#3b82f6" fill="#bfdbfe" fillOpacity={0.5} isAnimationActive={false} name="M max" />
           <Area dataKey="Mmin" stroke="#3b82f6" fill="#bfdbfe" fillOpacity={0.5} isAnimationActive={false} name="M min" />
