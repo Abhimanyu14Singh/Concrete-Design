@@ -7,6 +7,7 @@ import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
 import { exportExcel } from './utils/export/excelExport';
 import { buildSchedulePDF } from './utils/export/schedulePdfExport';
+import { exportGroupScheduleExcel } from './utils/export/groupScheduleExcel';
 import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
 import HelpView from './components/Help/HelpView';
@@ -760,6 +761,14 @@ export default function App() {
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
                   Group Schedule PDF
+                </button>
+                <button
+                  onClick={() => { exportGroupScheduleExcel(project); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Group Schedule (Spreadsheet)
                 </button>
                 <button
                   onClick={async () => {
