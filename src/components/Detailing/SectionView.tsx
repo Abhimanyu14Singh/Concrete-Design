@@ -42,7 +42,7 @@ export default function SectionView({
   onRebarChange,
   topFlag, botFlag, topFlag2,
 }: Props) {
-  const { fmt, units } = useUnits();
+  const { fmt, units, toDisplay, fromDisplay } = useUnits();
   const pL = padL, pR = padR, pT = padT, pB = padB;
   const showLabels = barLabels ?? showDims;
 
@@ -216,6 +216,21 @@ export default function SectionView({
 
   // Skin / face reinforcement (side bars). numBars = bars per side face; spacing =
   // vertical c/c. Dropping the count to 0 removes the skin entirely.
+  const skinSnapStep = units === 'si' ? 25 : 1; // display step: 25 mm (or 1 in)
+  const snapLen = (mm: number) =>
+    fromDisplay(Math.max(skinSnapStep, Math.round(mm / skinSnapStep) * skinSnapStep), 'length');
+  // Even c/c of `n` skin bars per face over the clear web between the innermost
+  // top and bottom bars, rounded to the nearest 25 mm (or 1 in). Deriving it from
+  // the count is why adding bars now tightens the spacing.
+  function skinSpacing(n: number): number {
+    const h = section.h ?? 0;
+    const cover = section.coverClear ?? 1.5;
+    const stir = getBarDiam(section.stirrupDia ?? (units === 'si' ? -10 : 4));
+    const topDia = getBarDiam(rebar.topBars[0]?.barSize ?? 8);
+    const botDia = getBarDiam(rebar.botBars[0]?.barSize ?? 8);
+    const web = Math.max(1, h - 2 * cover - 2 * stir - topDia - botDia);
+    return snapLen(toDisplay(web / (n + 1), 'length'));
+  }
   function bumpSide(field: 'count' | 'size' | 'spacing', dir: 1 | -1) {
     if (!onRebarChange) return;
     const cur = rebar.sideBars?.[0];
@@ -223,18 +238,21 @@ export default function SectionView({
     let newSide: RebarLayout['sideBars'];
     if (field === 'count') {
       const n = cur.numBars + dir;
-      newSide = n <= 0 ? undefined : [{ ...cur, numBars: n }];
+      // Recompute the spacing so more bars ⇒ tighter c/c (snapped to 25 mm).
+      newSide = n <= 0 ? undefined : [{ ...cur, numBars: n, spacing: skinSpacing(n) }];
     } else if (field === 'size') {
       newSide = [{ ...cur, barSize: barSizeStep(cur.barSize, dir) }];
     } else {
-      newSide = [{ ...cur, spacing: Math.max(2, (cur.spacing ?? 6) + dir) }];
+      // Manual nudge: step the spacing by 25 mm (or 1 in), min one step.
+      const curMm = toDisplay(cur.spacing ?? skinSpacing(cur.numBars), 'length');
+      newSide = [{ ...cur, spacing: snapLen(curMm + dir * skinSnapStep) }];
     }
     onRebarChange({ ...rebar, sideBars: newSide });
   }
   function addSkin() {
     if (!onRebarChange) return;
     const metric = (rebar.botBars[0]?.barSize ?? rebar.topBars[0]?.barSize ?? 5) < 0;
-    onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: 12 }] });
+    onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: skinSpacing(2) }] });
   }
 
   // pointerEvents:'auto' re-enables hit-testing even when the token sits inside a
