@@ -260,7 +260,9 @@ function buildGroupRows(
     // Top bars = mark-side (governing-end) steel; append the reduced opposite-end
     // top cage when the user has set one, so the schedule carries both ends.
     const top      = rebar
-      ? rebarStr(rebar.topBars) + (g.oppositeTopBars?.length ? ` · opp ${rebarStr(g.oppositeTopBars)}` : '')
+      ? rebarStr(rebar.topBars)
+        + (g.midThirdTopBars?.length ? ` · mid ${rebarStr(g.midThirdTopBars)}` : '')
+        + (g.oppositeTopBars?.length ? ` · opp ${rebarStr(g.oppositeTopBars)}` : '')
       : '—';
     const bot      = rebar ? rebarStr(rebar.botBars) : '—';
     const skin     = rebar ? rebarStr(rebar.sideBars ?? []) : '—';

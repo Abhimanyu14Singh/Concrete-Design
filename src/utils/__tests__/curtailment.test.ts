@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeGroupCurtailment, curtailmentNote, CURTAIL_THRESHOLD_PCT, analyzeOppositeEnd, suggestOppositeCage, steppedMomentCapacity } from '../curtailment';
+import { analyzeGroupCurtailment, curtailmentNote, CURTAIL_THRESHOLD_PCT, analyzeOppositeEnd, suggestOppositeCage, steppedMomentCapacity, minBarsForArea, suggestMidThirdCage } from '../curtailment';
 import { runDesign } from '../../engines';
+import { getBarArea } from '../concreteDesign';
 import type { Member, ComboForces, RebarLayout } from '../../types';
 
 /** Build a beam with a moment profile M(f), f = fraction along the span. */
@@ -202,5 +203,54 @@ describe('steppedMomentCapacity', () => {
     const cap = steppedMomentCapacity(m, res, 'ACI318-19');
     expect(cap.negReduced).toBeCloseTo(cap.negFull, 5);
     expect(cap.posReduced).toBeCloseTo(cap.posFull, 5);
+  });
+});
+
+describe('minBarsForArea', () => {
+  it('returns the fewest bars (≥2) whose area meets As,min', () => {
+    const Ab = getBarArea(8);
+    expect(minBarsForArea(2.0, 8)).toBe(Math.max(2, Math.ceil(2.0 / Ab - 1e-6)));
+    expect(minBarsForArea(0.05, 8)).toBe(2); // a tiny min still floors at 2 bars
+  });
+});
+
+describe('suggestMidThirdCage', () => {
+  it('keeps ~50% of the mark cage', () => {
+    const cage = suggestMidThirdCage([{ numBars: 8, barSize: 8 }], 1.0);
+    const n = cage.reduce((s, b) => s + b.numBars, 0);
+    expect(n).toBeLessThan(8);
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+  it('never drops below code As,min even when 50% is smaller', () => {
+    const asMin = 2.5; // > 50% of 4-#8 (≈1.58 in²)
+    const cage = suggestMidThirdCage([{ numBars: 4, barSize: 8 }], asMin);
+    const area = cage.reduce((s, b) => s + b.numBars * getBarArea(b.barSize), 0);
+    expect(area).toBeGreaterThanOrEqual(asMin - 1e-6);
+  });
+});
+
+describe('steppedMomentCapacity — per-region top cages', () => {
+  const heavyTop: RebarLayout = {
+    topBars: [{ numBars: 8, barSize: 8 }], botBars: [{ numBars: 6, barSize: 8 }],
+    ties: { barSize: 4, spacing: 6, legs: 2 },
+  };
+  it('a middle-third cage lowers negMid; an opposite cage lowers negOpp on the lighter end', () => {
+    const m = makeBeam({ id: 'asym', moment: asym, rebar: heavyTop });
+    const res = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span ?? 20, 'ACI318-19');
+    const cap = steppedMomentCapacity(m, res, 'ACI318-19', {
+      midThirdTopBars: [{ numBars: 3, barSize: 8 }],
+      oppositeTopBars: [{ numBars: 2, barSize: 8 }],
+    });
+    expect(cap.negMid).toBeLessThan(cap.negFull);
+    expect(cap.negOpp).toBeLessThan(cap.negFull);
+    expect(cap.oppEnd).toBe('end'); // asym: strong hogging at the start, light at the end
+  });
+  it('without per-region cages, negMid = negReduced and there is no opposite end', () => {
+    const m = makeBeam({ id: 'sym', moment: fixedEnd, rebar: heavyTop });
+    const res = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span ?? 20, 'ACI318-19');
+    const cap = steppedMomentCapacity(m, res, 'ACI318-19');
+    expect(cap.negMid).toBeCloseTo(cap.negReduced, 6);
+    expect(cap.negOpp).toBeCloseTo(cap.negFull, 6);
+    expect(cap.oppEnd).toBeNull();
   });
 });

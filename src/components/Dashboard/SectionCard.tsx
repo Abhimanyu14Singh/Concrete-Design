@@ -16,8 +16,9 @@
 import { useState } from 'react';
 import type { RebarLayout, BarGroup } from '../../types';
 import type { DashboardGroup } from '../../utils/dashboardPayload';
-import { type FaceCurtailment, type OppositeEndResult, suggestOppositeCage } from '../../utils/curtailment';
+import { type FaceCurtailment, type OppositeEndResult, suggestOppositeCage, suggestMidThirdCage, minBarsForArea } from '../../utils/curtailment';
 import { barSizeStep, formatBarLabel } from '../../utils/rebar';
+import { getBarArea } from '../../utils/concreteDesign';
 import SectionView from '../Detailing/SectionView';
 import { DCRChip } from './dashboardShared';
 import { BORDER, INK, ACCENT, STATUS, MONO_NUM } from '../../theme';
@@ -25,6 +26,7 @@ import { BORDER, INK, ACCENT, STATUS, MONO_NUM } from '../../theme';
 const flagColor = (fc: FaceCurtailment) => (fc.flag === 'red' ? STATUS.fail : ACCENT.primary);
 const OPP_BLUE = '#2563eb';   // opposite-end cage meets DCR
 const OPP_AMBER = '#d97706';  // opposite end can take less (opportunity)
+const MID_TEAL = '#0d9488';   // middle-third cage meets its curtailed demand
 
 type OppState = 'met' | 'insufficient' | 'opportunity' | 'same' | null;
 function oppStateOf(opp: OppositeEndResult | undefined): OppState {
@@ -35,13 +37,14 @@ function oppStateOf(opp: OppositeEndResult | undefined): OppState {
 const oppColorOf = (s: OppState) =>
   s === 'met' ? OPP_BLUE : s === 'insufficient' ? STATUS.fail : s === 'opportunity' ? OPP_AMBER : INK.muted;
 
-export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop }: {
+export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop }: {
   group: DashboardGroup;
   selected: boolean;
   onSelect: () => void;
   onApplyRebar: (groupId: string, rebar: RebarLayout) => void;
   onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
   onSetOppositeTop?: (groupId: string, bars: BarGroup[] | null) => void;
+  onSetMidThirdTop?: (groupId: string, bars: BarGroup[] | null) => void;
 }) {
   const ng = group.govDCR > 1.0;
   const cu = group.curtailment;
@@ -74,13 +77,41 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
     : 'Opposite end needs the same top steel as the mark side';
   const topFlag2 = oppState ? { color: oppColorOf(oppState), title: oppTitle, onClick: toggleOpposite } : null;
 
+  // Every per-region top cage must satisfy code As,min — reducing the bar count
+  // can never drop a region below minimum steel (the Group Dashboard side of the
+  // "minimum reinforcement at any span" guarantee).
+  const minBars = (size: number) => minBarsForArea(group.asMin, size);
   const bumpOpp = (field: 'count' | 'size', dir: 1 | -1) => {
     if (!onSetOppositeTop) return;
-    const cur = oppBar ?? { numBars: 2, barSize: group.rebar.topBars[0]?.barSize ?? 8 };
+    const cur = oppBar ?? { numBars: minBars(group.rebar.topBars[0]?.barSize ?? 8), barSize: group.rebar.topBars[0]?.barSize ?? 8 };
     const next: BarGroup = field === 'count'
-      ? { ...cur, numBars: Math.max(1, cur.numBars + dir) }
+      ? { ...cur, numBars: Math.max(minBars(cur.barSize), cur.numBars + dir) }
       : { ...cur, barSize: barSizeStep(cur.barSize, dir) };
     onSetOppositeTop(group.id, [next]);
+  };
+
+  // ── Middle-third top reinforcement (curtail top steel through mid-span) ──────
+  const faceAreaOf = (bars?: BarGroup[]) => (bars ?? []).reduce((s, b) => s + Math.max(0, b.numBars) * getBarArea(b.barSize), 0);
+  const markTopArea = faceAreaOf(group.rebar.topBars);
+  const midBar = group.midThirdTopBars?.[0];
+  const midArea = faceAreaOf(group.midThirdTopBars);
+  const midPct = markTopArea > 1e-9 ? (midArea / markTopArea) * 100 : 0;
+  // The middle-third cage must cover its own hogging demand AND code As,min.
+  const midReq = Math.max(group.asMin, cu?.top?.asRequired ?? 0);
+  const midMeets = midArea >= midReq - 1e-4;
+  const toggleMid = () => {
+    if (!onSetMidThirdTop) return;
+    if (group.midThirdTopBars?.length) onSetMidThirdTop(group.id, null);                         // remove
+    else onSetMidThirdTop(group.id, suggestMidThirdCage(group.rebar.topBars, group.asMin));      // ~50%, ≥ As,min
+  };
+  const bumpMid = (field: 'count' | 'size', dir: 1 | -1) => {
+    if (!onSetMidThirdTop) return;
+    const size0 = group.rebar.topBars[0]?.barSize ?? 8;
+    const cur = midBar ?? { numBars: minBars(size0), barSize: size0 };
+    const next: BarGroup = field === 'count'
+      ? { ...cur, numBars: Math.max(minBars(cur.barSize), cur.numBars + dir) }
+      : { ...cur, barSize: barSizeStep(cur.barSize, dir) };
+    onSetMidThirdTop(group.id, [next]);
   };
 
   const openFc: FaceCurtailment | null = openFace === 'top' ? cu?.top ?? null : openFace === 'bot' ? cu?.bot ?? null : null;
@@ -180,6 +211,56 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
           <span onClick={e => { e.stopPropagation(); onSetOppositeTop?.(group.id, null); }} title="Remove opposite-end reinforcement" style={{ cursor: 'pointer', color: INK.muted, fontWeight: 700 }}>✕</span>
         </div>
       )}
+
+      {/* Middle-third top reinforcement — the curtailed top cage kept through
+          mid-span, at a user-chosen percentage (never below code As,min). */}
+      {midBar ? (
+        <div
+          onClick={e => e.stopPropagation()}
+          onDoubleClick={e => e.stopPropagation()}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, ...MONO_NUM,
+            padding: '3px 6px', borderRadius: 6, cursor: 'default',
+            border: `1px solid ${midMeets ? MID_TEAL : STATUS.fail}`,
+            background: midMeets ? '#f0fdfa' : STATUS.failBg,
+          }}
+        >
+          <span style={{ color: midMeets ? MID_TEAL : STATUS.fail, fontWeight: 800 }}>⅓</span>
+          <span style={{ color: INK.secondary }}>Mid ⅓</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <span
+              onClick={e => { e.stopPropagation(); bumpMid('count', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpMid('count', -1); }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
+            >{midBar.numBars}</span>
+            <span style={{ color: INK.muted }}>-</span>
+            <span
+              onClick={e => { e.stopPropagation(); bumpMid('size', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpMid('size', -1); }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
+            >{formatBarLabel(midBar.barSize)}</span>
+          </span>
+          <span title="Percent of the mark-end top steel kept continuous through the middle third (≥ code As,min)" style={{ color: midMeets ? MID_TEAL : STATUS.fail, fontWeight: 700 }}>
+            {Math.round(midPct)}% {midMeets ? '✓' : '✗'}
+          </span>
+          <span style={{ flex: 1 }} />
+          <span title="L+ bars / R− · click the size for L larger / R smaller · floored at code As,min" style={{ color: INK.muted, fontSize: 8 }}>L+/R−</span>
+          <span onClick={e => { e.stopPropagation(); onSetMidThirdTop?.(group.id, null); }} title="Remove middle-third curtailment" style={{ cursor: 'pointer', color: INK.muted, fontWeight: 700 }}>✕</span>
+        </div>
+      ) : (onSetMidThirdTop && cu?.top && (
+        <button
+          onClick={e => { e.stopPropagation(); toggleMid(); }}
+          title="Curtail the top steel through the middle third to a chosen percentage (never below code As,min)"
+          style={{
+            alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4,
+            fontSize: 9.5, fontWeight: 700, color: MID_TEAL, ...MONO_NUM,
+            border: `1px dashed ${MID_TEAL}`, background: '#f0fdfa', borderRadius: 6,
+            padding: '2px 7px', cursor: 'pointer',
+          }}
+        >
+          <span style={{ fontSize: 11 }}>⅓</span> curtail mid-third top
+        </button>
+      ))}
 
       <div style={{ display: 'flex', gap: 10, fontSize: 10, color: INK.secondary, ...MONO_NUM }}>
         <span title="Bottom steel ratio">ρ⁺ {group.rhoBot.toFixed(2)}%</span>

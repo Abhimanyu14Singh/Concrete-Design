@@ -112,6 +112,14 @@ export interface DesignGroup {
    * the beam schedule carries it as the opposite-end top bars.
    */
   oppositeTopBars?: BarGroup[];
+  /**
+   * Reduced TOP reinforcement kept CONTINUOUS through the MIDDLE third. Top steel
+   * is detailed for hogging at the supports (the end thirds); through mid-span it
+   * may be curtailed to a user-chosen percentage of the mark cage — never below
+   * code As,min. When set, the section card shows it and the moment diagram /
+   * schedule carry it as the middle-third top bars.
+   */
+  midThirdTopBars?: BarGroup[];
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */

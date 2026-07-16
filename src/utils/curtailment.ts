@@ -307,8 +307,16 @@ export const CURTAIL_CONTINUOUS_FRAC = 0.5;
 export interface SteppedMomentCapacity {
   /** Hogging capacity with the full top cage — governs the END thirds (kip-ft). */
   negFull: number;
-  /** Hogging capacity with the curtailed top cage — the MIDDLE third (kip-ft). */
+  /** Hogging capacity with the default ~50% continuous top cage (kip-ft). */
   negReduced: number;
+  /** Hogging capacity through the MIDDLE third — the user's midThirdTopBars if set,
+   *  otherwise the default `negReduced` (kip-ft). */
+  negMid: number;
+  /** Hogging capacity at the OPPOSITE end third — oppositeTopBars if set, else the
+   *  full cage `negFull` (kip-ft). */
+  negOpp: number;
+  /** Which end third carries the reduced opposite cage (null when none is set). */
+  oppEnd: 'start' | 'end' | null;
   /** Sagging capacity with the full bottom cage — governs the MIDDLE third (kip-ft). */
   posFull: number;
   /** Sagging capacity with the curtailed bottom cage — the END thirds (kip-ft). */
@@ -331,33 +339,61 @@ function continuousCage(bars: BarGroup[], asMin: number): BarGroup[] {
   return [{ numBars: n, barSize: layer.barSize }];
 }
 
+/** Fewest bars (≥2) of the given size whose area meets a code As,min — the floor
+ *  every per-region cage edit must respect so minimum steel is never violated. */
+export function minBarsForArea(asMin: number, barSize: number): number {
+  const Ab = getBarArea(barSize);
+  if (Ab <= EPS) return 2;
+  return Math.max(2, Math.ceil(asMin / Ab - 1e-6));
+}
+
+/** A starting middle-third top cage: ~50% of the mark cage, floored at code
+ *  As,min. The user then tweaks the percentage (bar count/size). */
+export function suggestMidThirdCage(topBars: BarGroup[], asMin: number): BarGroup[] {
+  return continuousCage(topBars, asMin);
+}
+
+/** φMn for one face after swapping in `cage` — capacity only, so a zero load. */
+function faceCapacity(member: Member, code: DesignCode, span: number, face: 'top' | 'bot', cage: BarGroup[]): number | null {
+  const lc: LoadCase = { id: 'cap', label: 'capacity', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 };
+  try {
+    const rebar = face === 'top' ? { ...member.rebar, topBars: cage } : { ...member.rebar, botBars: cage };
+    const r = runDesign(member.section, member.material, rebar, lc, span, code, member.crackParams);
+    return face === 'top' ? r.phi_Mn_neg : r.phi_Mn_pos;
+  } catch { return null; }
+}
+
 /**
  * Full vs curtailed ±φMn for the stepped moment-capacity overlay. Top steel
  * resists hogging and is detailed for the two END thirds; through the MIDDLE
- * third it may be curtailed to ~50% continuous (never below code As,min), so the
- * hogging capacity dips there. Bottom steel mirrors this — full across the middle
- * third, curtailed toward the ends — so the sagging capacity dips at the ends.
- * The diagram steps the dashed capacity lines between these levels at L/3 & 2L/3,
- * matching the L/3 reinforcement the Group Dashboard curtailment check reasons
- * about. Capacity is load-independent, so a zero load case is used.
+ * third it may be curtailed (default ~50% continuous, never below code As,min),
+ * so the hogging capacity dips there. Bottom steel mirrors this — full across the
+ * middle third, curtailed toward the ends. When the group carries explicit
+ * per-region top cages (`opts.midThirdTopBars`, `opts.oppositeTopBars`) they
+ * override the defaults, and the opposite cage is placed on the member's
+ * lighter-hogging end. Capacity is load-independent, so a zero load case is used.
  */
 export function steppedMomentCapacity(
   member: Member, result: DesignResults, code: DesignCode,
+  opts?: { midThirdTopBars?: BarGroup[]; oppositeTopBars?: BarGroup[] },
 ): SteppedMomentCapacity {
   const span = member.span ?? 20;
-  const lc: LoadCase = { id: 'cap', label: 'capacity', Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 };
-  let negReduced = result.phi_Mn_neg, posReduced = result.phi_Mn_pos;
-  try {
-    const cage = continuousCage(member.rebar.topBars, result.As_min);
-    negReduced = runDesign(member.section, member.material, { ...member.rebar, topBars: cage }, lc, span, code, member.crackParams).phi_Mn_neg;
-  } catch { /* fall back to the full-cage capacity */ }
-  try {
-    const cage = continuousCage(member.rebar.botBars, result.As_min);
-    posReduced = runDesign(member.section, member.material, { ...member.rebar, botBars: cage }, lc, span, code, member.crackParams).phi_Mn_pos;
-  } catch { /* fall back to the full-cage capacity */ }
-  return {
-    negFull: result.phi_Mn_neg, negReduced: Math.min(negReduced, result.phi_Mn_neg),
-    posFull: result.phi_Mn_pos, posReduced: Math.min(posReduced, result.phi_Mn_pos),
-    continuousFrac: CURTAIL_CONTINUOUS_FRAC,
-  };
+  const negFull = result.phi_Mn_neg, posFull = result.phi_Mn_pos;
+  const negReduced = Math.min(faceCapacity(member, code, span, 'top', continuousCage(member.rebar.topBars, result.As_min)) ?? negFull, negFull);
+  const posReduced = Math.min(faceCapacity(member, code, span, 'bot', continuousCage(member.rebar.botBars, result.As_min)) ?? posFull, posFull);
+
+  // Middle-third top: an explicit user cage overrides the 50% default.
+  const negMid = opts?.midThirdTopBars?.length
+    ? Math.min(faceCapacity(member, code, span, 'top', opts.midThirdTopBars) ?? negReduced, negFull)
+    : negReduced;
+
+  // Opposite-end top: an explicit user cage sits on the member's lighter end.
+  let negOpp = negFull, oppEnd: 'start' | 'end' | null = null;
+  if (opts?.oppositeTopBars?.length) {
+    negOpp = Math.min(faceCapacity(member, code, span, 'top', opts.oppositeTopBars) ?? negFull, negFull);
+    const e = endHogging(member);
+    oppEnd = e ? (e.startHog <= e.endHog ? 'start' : 'end') : null;
+  }
+
+  return { negFull, negReduced, negMid, negOpp, oppEnd, posFull, posReduced, continuousFrac: CURTAIL_CONTINUOUS_FRAC };
 }

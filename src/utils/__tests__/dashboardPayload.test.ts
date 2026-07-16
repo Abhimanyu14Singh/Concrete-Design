@@ -21,6 +21,7 @@ const group = (id: string, memberIds: string[]): DashboardGroup => ({
   errorBeamCount: 0,
   curtailment: { hasStationData: false, top: null, bot: null },
   oppositeEnd: { hasStationData: false, markEnd: 'start', markDemand: 0, oppositeDemand: 0, markAsProvided: 0, oppositeAsRequired: 0, reductionPossible: false, reductionPct: 0, governingMemberId: '', hasOpposite: false, oppositeAsProvided: 0, oppositeDcrMet: false, worstOppositeDcr: 0 },
+  asMin: 0,
   notePinned: { top: false, bot: false },
 });
 const member = (id: string, groupId: string): DashboardMember => ({

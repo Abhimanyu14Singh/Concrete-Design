@@ -526,6 +526,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleToggleCurtailmentNote(cmd.groupId, cmd.face, cmd.on);
       } else if (cmd.type === 'set-opposite-top') {
         handleSetOppositeTop(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'set-mid-third-top') {
+        handleSetMidThirdTop(cmd.groupId, cmd.bars);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();
@@ -569,6 +571,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         if (g.id !== groupId) return g;
         if (!bars || !bars.length) { const { oppositeTopBars: _drop, ...rest } = g; void _drop; return rest; }
         return { ...g, oppositeTopBars: bars };
+      }),
+    }));
+  }
+
+  // Set (or clear, when bars === null) a group's reduced middle-third top cage.
+  function handleSetMidThirdTop(groupId: string, bars: import('../../types').BarGroup[] | null) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!bars || !bars.length) { const { midThirdTopBars: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, midThirdTopBars: bars };
       }),
     }));
   }
@@ -1111,6 +1125,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onSuggestAll={handleSuggestAllGroups}
               onToggleCurtailmentNote={handleToggleCurtailmentNote}
               onSetOppositeTop={handleSetOppositeTop}
+              onSetMidThirdTop={handleSetMidThirdTop}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}

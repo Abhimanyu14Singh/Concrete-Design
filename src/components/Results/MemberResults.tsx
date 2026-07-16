@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride, SconcreteResult } from '../../types';
+import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride, SconcreteResult, BarGroup } from '../../types';
 import { memberScoSummary, scoAgreesWithApp } from '../../utils/sconcreteMemberResult';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import {
@@ -36,6 +36,10 @@ interface Props {
   /** ISO timestamp of the last S-Concrete batch run. */
   sconcreteRanAt?: string;
   onRebarChange?: (updated: Member) => void;
+  /** The member's group per-region top cages — passed to the moment diagram so its
+   *  stepped hogging capacity reflects the middle-third / opposite-end top steel. */
+  midThirdTopBars?: BarGroup[];
+  oppositeTopBars?: BarGroup[];
 }
 
 function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr?: number; tip?: string; formula?: string; overridden?: boolean }) {
@@ -86,7 +90,7 @@ function dcrStyle(dcr: number): React.CSSProperties {
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
 const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -409,7 +413,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             </div>
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
-            <ForceDiagram member={member} result={result} code={code} height={130} />
+            <ForceDiagram member={member} result={result} code={code} height={130}
+              midThirdTopBars={midThirdTopBars} oppositeTopBars={oppositeTopBars} />
           )}
           {onRebarChange && (
             <p style={{ fontSize: 10, color: INK.muted, margin: 0, textAlign: 'center' }}>

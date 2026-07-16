@@ -90,6 +90,9 @@ export default function App() {
   const splitStartPos = useRef(360);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
+  // The design group the active member belongs to (first match) — supplies the
+  // per-region top cages that step the moment diagram's hogging capacity.
+  const activeGroup = (project.designGroups ?? []).find(g => g.memberIds.includes(activeMember.id));
 
   // Per-member governing status → sidebar group NG/warn badges (memoized so the
   // design engine only re-runs when members / code / SLS combo actually change).
@@ -325,10 +328,25 @@ export default function App() {
   }
 
   function handleUpdateMember(updated: Member) {
-    setProject(p => ({
-      ...p,
-      members: p.members.map(m => m.id === updated.id ? updated : m),
-    }));
+    setProject(p => {
+      const prev = p.members.find(m => m.id === updated.id);
+      const members = p.members.map(m => m.id === updated.id ? updated : m);
+      // A member's cage IS its group's cage. When the member designer changes the
+      // rebar (inline edit or Optimize), fan it back to the group and its siblings
+      // so the Group Dashboard card always matches the member designer. Non-rebar
+      // edits (section/span/loads) stay member-local (reference check on rebar).
+      const rebarChanged = !!prev && prev.rebar !== updated.rebar;
+      const groups = p.designGroups ?? [];
+      const owning = groups.filter(g => g.memberIds.includes(updated.id));
+      if (!rebarChanged || !owning.length) return { ...p, members };
+      const owningIds = new Set(owning.map(g => g.id));
+      const siblingIds = new Set(owning.flatMap(g => g.memberIds));
+      return {
+        ...p,
+        designGroups: groups.map(g => owningIds.has(g.id) ? { ...g, rebar: updated.rebar } : g),
+        members: members.map(m => (m.id !== updated.id && siblingIds.has(m.id)) ? { ...m, rebar: updated.rebar } : m),
+      };
+    });
   }
 
   function addMember() {
@@ -941,6 +959,8 @@ export default function App() {
                       sconcreteResults={project.sconcreteResults}
                       sconcreteRanAt={project.sconcreteRanAt}
                       onRebarChange={handleUpdateMember}
+                      midThirdTopBars={activeGroup?.midThirdTopBars}
+                      oppositeTopBars={activeGroup?.oppositeTopBars}
                     />
                   </ErrorBoundary>
                 </div>

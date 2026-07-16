@@ -8,7 +8,7 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer,
 } from 'recharts';
-import type { Member, DesignResults, DesignCode } from '../../types';
+import type { Member, DesignResults, DesignCode, BarGroup } from '../../types';
 import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { steppedMomentCapacity } from '../../utils/curtailment';
@@ -20,6 +20,10 @@ interface Props {
   result: DesignResults;
   code?: DesignCode;
   height?: number;
+  /** The member's group per-region top cages — drive the stepped hogging capacity
+   *  (φMn⁻) through the middle third and at the opposite end. */
+  midThirdTopBars?: BarGroup[];
+  oppositeTopBars?: BarGroup[];
 }
 
 interface DiagramPoint {
@@ -65,7 +69,7 @@ function buildEnvelope(member: Member): DiagramPoint[] {
 const axisTick = { fill: '#9ca3af', fontSize: 10 };
 const tooltipStyle = { background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 };
 
-export default function ForceDiagram({ member, result, code, height = 150 }: Props) {
+export default function ForceDiagram({ member, result, code, height = 150, midThirdTopBars, oppositeTopBars }: Props) {
   const { label, toDisplay } = useUnits();
   const raw = buildEnvelope(member);
   if (raw.length < 2) return null;
@@ -87,20 +91,28 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
     for (const pt of raw) { pt.phiVn = result.phi_Vn; pt.phiVnNeg = -result.phi_Vn; }
   }
 
-  // Stepped ±φMn capacity across the L/3 regions: top steel is detailed full at
-  // the end thirds and curtailed (~50% continuous) through the middle; bottom
-  // steel is the mirror. Precompute the full/curtailed levels once (display
-  // units), then bin each station into its third.
-  const cap = steppedMomentCapacity(member, result, code ?? 'ACI318-19');
-  const negFullD = toDisplay(cap.negFull, 'moment');
-  const negRedD = toDisplay(cap.negReduced, 'moment');
-  const posFullD = toDisplay(cap.posFull, 'moment');
-  const posRedD = toDisplay(cap.posReduced, 'moment');
-  const isMiddleThird = (xRaw: number) => spanRaw > 0 && Math.min(2, Math.floor((xRaw / spanRaw) * 3)) === 1;
+  // Stepped ±φMn capacity across the L/3 regions. Top steel is detailed full at
+  // the two END thirds and curtailed through the MIDDLE; the group's per-region
+  // top cages (middle-third / opposite-end), when set, drive those hogging
+  // levels. Bottom steel is the mirror — full mid-span, curtailed at the ends.
+  // Precompute the levels once (display units), then bin each station.
+  const cap = steppedMomentCapacity(member, result, code ?? 'ACI318-19', { midThirdTopBars, oppositeTopBars });
+  const negMarkD = toDisplay(cap.negFull, 'moment');
+  const negMidD = toDisplay(cap.negMid, 'moment');
+  const negOppD = toDisplay(cap.negOpp, 'moment');
+  const posMidD = toDisplay(cap.posFull, 'moment');
+  const posEndD = toDisplay(cap.posReduced, 'moment');
+  const oppThird = cap.oppEnd === 'start' ? 0 : cap.oppEnd === 'end' ? 2 : -1;
+  const thirdOf = (xRaw: number) => (spanRaw > 0 ? Math.min(2, Math.floor((xRaw / spanRaw) * 3)) : 0);
 
   // Convert every plotted quantity into the active display unit system.
   const data = raw.map(pt => {
-    const mid = isMiddleThird(pt.x);
+    const third = thirdOf(pt.x);
+    // Hogging (top) capacity by region: middle third → mid cage; opposite-end
+    // third → opposite cage; mark-end third → full cage.
+    const negLevel = third === 1 ? negMidD : third === oppThird ? negOppD : negMarkD;
+    // Sagging (bottom) capacity: full mid-span, curtailed at the ends.
+    const posLevel = third === 1 ? posMidD : posEndD;
     return {
       x: +toDisplay(pt.x, 'spanLength').toFixed(2),
       Vmax: +toDisplay(pt.Vmax, 'force').toFixed(2),
@@ -109,11 +121,11 @@ export default function ForceDiagram({ member, result, code, height = 150 }: Pro
       Mmin: +toDisplay(pt.Mmin, 'moment').toFixed(2),
       phiVn: pt.phiVn != null ? +toDisplay(pt.phiVn, 'force').toFixed(2) : undefined,
       phiVnNeg: pt.phiVnNeg != null ? +toDisplay(pt.phiVnNeg, 'force').toFixed(2) : undefined,
-      // Hogging capacity (top steel): full at the ends, curtailed mid-span. Plotted
-      // negative so it sits on the hogging (up) side of the reversed axis.
-      phiMnNegStep: -(+((mid ? negRedD : negFullD).toFixed(2))),
-      // Sagging capacity (bottom steel): full mid-span, curtailed at the ends.
-      phiMnPosStep: +((mid ? posFullD : posRedD).toFixed(2)),
+      // Hogging capacity (top steel), plotted negative (hogging/up side of the
+      // reversed axis).
+      phiMnNegStep: -(+negLevel.toFixed(2)),
+      // Sagging capacity (bottom steel).
+      phiMnPosStep: +posLevel.toFixed(2),
     };
   });
   const span = +toDisplay(spanRaw, 'spanLength').toFixed(2);

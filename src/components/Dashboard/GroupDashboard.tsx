@@ -22,7 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
-  onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop,
+  onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -46,6 +46,8 @@ export default function GroupDashboard({
   onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
   /** Set (or clear) the group's reduced opposite-end top reinforcement. */
   onSetOppositeTop?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
+  /** Set (or clear) the group's reduced middle-third top reinforcement. */
+  onSetMidThirdTop?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
@@ -100,6 +102,7 @@ export default function GroupDashboard({
             onApplyRebar={onApplyRebar}
             onToggleCurtailmentNote={onToggleCurtailmentNote}
             onSetOppositeTop={onSetOppositeTop}
+            onSetMidThirdTop={onSetMidThirdTop}
           />
         ))}
       </div>

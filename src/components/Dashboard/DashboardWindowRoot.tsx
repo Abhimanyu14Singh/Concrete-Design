@@ -54,6 +54,7 @@ export default function DashboardWindowRoot() {
         onSuggestAll={() => api.sendDashboardCommand?.({ type: 'suggest-all' })}
         onToggleCurtailmentNote={(groupId, face, on) => api.sendDashboardCommand?.({ type: 'toggle-curtailment-note', groupId, face, on })}
         onSetOppositeTop={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-opposite-top', groupId, bars })}
+        onSetMidThirdTop={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-mid-third-top', groupId, bars })}
         canPopOut={false}
         onClose={() => api.sendDashboardCommand?.({ type: 'pop-in' })}
         closeLabel="⤡ Pop in"
