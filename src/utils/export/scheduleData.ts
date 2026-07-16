@@ -22,7 +22,8 @@ export function barsStr(bars?: BarGroup[]): string {
 export function skinStr(sideBars: BarGroup[] | undefined, isEC2: boolean): string {
   const active = (sideBars ?? []).filter(b => b.numBars > 0);
   if (!active.length) return '—';
-  const sp = (v: number) => (isEC2 ? `${(v * 25.4).toFixed(0)} mm` : `${v.toFixed(1)} in`);
+  // EC2 spacings read on the 25 mm grid (300, not 301).
+  const sp = (v: number) => (isEC2 ? `${Math.round(v * 25.4 / 25) * 25} mm` : `${v.toFixed(1)} in`);
   return active.map(b => `${b.numBars}-${formatBarLabel(b.barSize)}${b.spacing ? ` @ ${sp(b.spacing)}` : ''}`).join(' + ');
 }
 
@@ -31,7 +32,7 @@ export function skinStr(sideBars: BarGroup[] | undefined, isEC2: boolean): strin
 export function stirrupZoneStr(rebar: RebarLayout, zone: 0 | 1 | 2, isEC2: boolean): string {
   const t = rebar.ties;
   if (!t) return '—';
-  const conv = (v: number) => (isEC2 ? (v * 25.4).toFixed(0) : v.toFixed(1));
+  const conv = (v: number) => (isEC2 ? String(Math.round(v * 25.4 / 25) * 25) : v.toFixed(1));
   const spacing = rebar.tieZones ? rebar.tieZones[zone].spacing : t.spacing;
   return `${formatBarLabel(t.barSize)}-${conv(spacing)}-${t.legs}L`;
 }

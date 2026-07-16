@@ -43,6 +43,13 @@ export default function SectionView({
   topFlag, botFlag, topFlag2,
 }: Props) {
   const { fmt, units, toDisplay, fromDisplay } = useUnits();
+  // EC2/SI: bar/stirrup spacings should read as round multiples of 25 mm (not the
+  // 301/102 mm artefacts of an inch-stored value). Snap a stored (inch) spacing so
+  // it displays on the 25 mm grid; imperial is left untouched.
+  const snapSpacingIn = (inchVal: number) =>
+    units === 'si'
+      ? fromDisplay(Math.max(25, Math.round(toDisplay(inchVal, 'length') / 25) * 25), 'length')
+      : inchVal;
   const pL = padL, pR = padR, pT = padT, pB = padB;
   const showLabels = barLabels ?? showDims;
 
@@ -190,12 +197,14 @@ export default function SectionView({
       onRebarChange({ ...rebar, ties: { ...rebar.ties, legs: Math.max(2, rebar.ties.legs + dir) } });
       return;
     }
+    // Step by 25 mm (SI/EC2) or 1 in (imperial), landing on the same round grid.
+    const step = units === 'si' ? fromDisplay(25, 'length') : 1;
     if (rebar.tieZones && zoneIdx !== undefined) {
-      const zones = rebar.tieZones.map((z, i) => (i === zoneIdx ? { spacing: Math.max(2, z.spacing + dir) } : z)) as [TieZone, TieZone, TieZone];
+      const zones = rebar.tieZones.map((z, i) => (i === zoneIdx ? { spacing: Math.max(step, snapSpacingIn(z.spacing + dir * step)) } : z)) as [TieZone, TieZone, TieZone];
       const gov = Math.min(...zones.map(z => z.spacing));
       onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: gov } });
     } else {
-      onRebarChange({ ...rebar, ties: { ...rebar.ties, spacing: Math.max(2, rebar.ties.spacing + dir) } });
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, spacing: Math.max(step, snapSpacingIn(rebar.ties.spacing + dir * step)) } });
     }
   }
   function toggleTieZones() {
@@ -335,7 +344,7 @@ export default function SectionView({
       <tspan key={key} style={editTspan} textDecoration="underline"
         onClick={e => { e.stopPropagation(); bumpTie('spacing', -1, zoneIdx); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('spacing', 1, zoneIdx); }}
-      >{fmt(val, 'length', dec)}</tspan>
+      >{fmt(snapSpacingIn(val), 'length', dec)}</tspan>
     );
     return (
       <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
@@ -404,7 +413,7 @@ export default function SectionView({
       <tspan style={editTspan} textDecoration="underline"
         onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
-      >{fmt(s.spacing ?? 12, 'length', 0)}</tspan>
+      >{fmt(snapSpacingIn(s.spacing ?? 12), 'length', 0)}</tspan>
     );
     if (anchor === 'end') {
       return (
