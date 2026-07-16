@@ -87,7 +87,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const [sections, setSections] = useState<EtabsSectionInfo[]>([]);
   const [materials, setMaterials] = useState<EtabsMaterialInfo[]>([]);
   const [combos, setCombos] = useState<string[]>([]);
-  const [selStory, setSelStory] = useState<string>('');           // '' = all
+  const [selStories, setSelStories] = useState<Set<string>>(new Set()); // empty = all
   const [selSections, setSelSections] = useState<Set<string>>(new Set());
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set()); // empty = all
   // ETABS groups to mirror as design-group names (empty = group by story·section)
@@ -197,10 +197,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   const colCount = members.filter(m => m.memberType === 'column').length;
 
   const filter = useMemo(() => ({
-    stories: selStory ? [selStory] : undefined,
+    stories: selStories.size ? [...selStories] : undefined,
     sections: selSections.size ? [...selSections] : undefined,
     groups: selGroups.size ? [...selGroups] : undefined,
-  }), [selStory, selSections, selGroups]);
+  }), [selStories, selSections, selGroups]);
 
   async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
     setBusy(true); setError(null);
@@ -230,7 +230,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       setStories(st); setGroups(gr); setSections(sec); setMaterials(mat); setCombos(cmb);
       setSelSections(new Set(sec.map(s => s.name)));
       setSelCombos(new Set(cmb));
-      setSelStory('');
+      setSelStories(new Set());
       return true;
     });
     if (ok) setStep(1);
@@ -655,10 +655,22 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div style={card}>
-                  <div style={lbl}>Story / floor</div>
-                  <Dropdown style={{ ...inp, width: '100%' }} value={selStory}
-                    options={[{ value: '', label: 'All stories' }, ...stories.map(s => ({ value: s, label: s }))]}
-                    onChange={v => { setSelStory(v); setMatchCount(null); }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Stories / floors (empty = all)</div>
+                    <div style={{ flex: 1 }} />
+                    {stories.length > 0 && <AllNone
+                      onAll={() => { setSelStories(new Set(stories)); setMatchCount(null); }}
+                      onNone={() => { setSelStories(new Set()); setMatchCount(null); }} />}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {stories.map(s => (
+                      <span key={s} style={chip(selStories.has(s))}
+                        onClick={() => { setSelStories(prev => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; }); setMatchCount(null); }}>
+                        {s}
+                      </span>
+                    ))}
+                    {!stories.length && <span style={{ fontSize: 11, color: INK.muted }}>No stories in model</span>}
+                  </div>
                 </div>
                 <div style={card}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
@@ -1032,7 +1044,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: INK.strong }}>
-                    {beamCount} beams{colCount ? ` · ${colCount} columns` : ''} · {selStory || 'all stories'}
+                    {beamCount} beams{colCount ? ` · ${colCount} columns` : ''} · {selStories.size ? (selStories.size === 1 ? [...selStories][0] : `${selStories.size} stories`) : 'all stories'}
                   </span>
                   <div style={{ flex: 1 }} />
                   <label style={{ fontSize: 11, color: INK.secondary }}>

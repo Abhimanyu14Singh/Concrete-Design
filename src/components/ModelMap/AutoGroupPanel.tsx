@@ -5,7 +5,7 @@
  * group-boundary sliders (Jenks or quantile clustering). Lets the user
  * preview and apply the groupings as DesignGroups.
  */
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
@@ -60,6 +60,12 @@ export default function AutoGroupPanel({
   // Optional group-name template (e.g. "{type}-{depth}-{seq}" → "B-07-01"). Empty
   // keeps the legacy "letter_dim_faceN" naming untouched.
   const [nameTemplate, setNameTemplate] = useState('');
+  const [templateSeeded, setTemplateSeeded] = useState(false);
+  // Typing in the template box drives the (heavy) plannedGroups recompute; defer
+  // it so the input stays responsive — the box updates instantly, the name
+  // preview catches up a beat later instead of blocking each keystroke.
+  const deferredTemplate = useDeferredValue(nameTemplate);
+  const NAME_TEMPLATE_HINT = '{type}-{depth}-{seq}';
 
   // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
@@ -195,7 +201,7 @@ export default function AutoGroupPanel({
     // In face-split mode both sub-pools share the same raw family key and letter
     const rawKeys = [...new Set(sortedSuggestions.map(s => s.rawFamilyKey ?? s.familyKey))].sort();
     const familyLetters = new Map(rawKeys.map((rk, i) => [rk, String.fromCharCode(65 + i)]));
-    const tmpl = nameTemplate.trim();
+    const tmpl = deferredTemplate.trim();
     for (const sug of sortedSuggestions) {
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
@@ -239,7 +245,7 @@ export default function AutoGroupPanel({
     }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseSuggestions, tweakedBreaks, demands, members, units, nameTemplate]);
+  }, [baseSuggestions, tweakedBreaks, demands, members, units, deferredTemplate]);
 
   function handleApply() {
     const stamp = Date.now();
@@ -466,6 +472,9 @@ export default function AutoGroupPanel({
         <input
           value={nameTemplate}
           onChange={e => setNameTemplate(e.target.value)}
+          // Seed the template on first click so the format is right there to
+          // tweak, not typed from scratch. Only once — clearing it stays cleared.
+          onFocus={() => { if (!templateSeeded && !nameTemplate) { setNameTemplate(NAME_TEMPLATE_HINT); setTemplateSeeded(true); } }}
           placeholder="e.g.  {type}-{depth}-{seq}"
           spellCheck={false}
           style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 5, border: `1px solid ${nameTemplate.trim() ? ACCENT.primary : BORDER.strong}`, boxSizing: 'border-box', ...MONO_NUM }}
