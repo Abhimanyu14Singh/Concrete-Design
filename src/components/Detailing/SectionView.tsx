@@ -261,21 +261,31 @@ export default function SectionView({
   const editTspan = { cursor: 'pointer', userSelect: 'none' as const, pointerEvents: 'auto' as const } as React.CSSProperties;
   const noHit = { pointerEvents: 'none' } as React.CSSProperties;
 
-  /** Editable face label: per-layer clickable count and bar-size tokens (e.g. "3-#8 + 2-#6"). */
+  /** Editable face label. Each reinforcement layer is drawn on its OWN line so the
+   *  clickable count/size tokens (and the ⚑/◨ flags) never crowd or overlap in the
+   *  narrow label gutter — the top face stacks downward from `y`, the bottom face
+   *  stacks upward toward `y`, so a multi-layer cage (e.g. "7-Ø25 / 7-Ø25") stays
+   *  fully clickable. `y` is the anchor line (line 1 for top, last line for bottom). */
+  const FACE_LINE_H = 11;
   function editableFaceLabel(face: 'top' | 'bot', x: number, y: number, fill: string): ReactElement {
     const bars = face === 'top' ? rebar.topBars : rebar.botBars;
     const flag = face === 'top' ? topFlag : botFlag;
     const flag2 = face === 'top' ? topFlag2 : null; // opposite-end status (top only)
-    const firstIdx = bars.findIndex(g => g.numBars > 0);
+    const stackUp = face === 'bot';                 // bottom grows upward toward its anchor
+    const active = bars.map((g, li) => ({ g, li })).filter(o => o.g.numBars > 0);
 
-    // The ⚑/◨ flags sit just after the bar label, but their x is CLAMPED to the
-    // SVG width so a long multi-layer label (e.g. "4-#20 + 4-#16 + 2-#16") can
-    // never push them out of view — they pin to the right edge instead.
-    const labelStr = firstIdx === -1
-      ? '—'
-      : bars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ');
+    if (active.length === 0) {
+      return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>;
+    }
+
+    const n = active.length;
+    const y0 = stackUp ? y - (n - 1) * FACE_LINE_H : y;   // y of the first-drawn (top-most) line
+    // Anchor layer = the one drawn ON the passed baseline `y` (line 1 for top, last for bottom);
+    // the flags sit just after its short "N-size" text, so they can't overlap any token.
+    const anchor = stackUp ? active[n - 1] : active[0];
+    const anchorStr = `${anchor.g.numBars}-${displayBar(anchor.g.barSize)}`;
     const flagsW = (flag ? 16 : 0) + (flag2 ? 15 : 0) + 4;
-    const flagX = Math.min(x + labelStr.length * 6 + 8, width - flagsW);
+    const flagX = Math.min(x + anchorStr.length * 6.2 + 8, width - flagsW);
     const flagsGroup = (flag || flag2) ? (
       <text x={flagX} y={y} fontSize="13" fontFamily={FONT.mono} style={{ pointerEvents: 'auto' }}>
         {flag ? (
@@ -295,13 +305,10 @@ export default function SectionView({
       </text>
     ) : null;
 
-    const labelText = firstIdx === -1 ? (
-      <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>
-    ) : (
-      <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
-        {bars.map((g, li) => g.numBars > 0 ? (
-          <tspan key={li}>
-            {li > firstIdx && <tspan style={noHit}> + </tspan>}
+    const labelText = (
+      <text x={x} y={y0} fontSize="10" fill={fill} fontFamily={FONT.mono}>
+        {active.map(({ g, li }, i) => (
+          <tspan key={li} x={x} dy={i === 0 ? 0 : FACE_LINE_H}>
             <tspan style={editTspan} textDecoration="underline"
               onClick={e => { e.stopPropagation(); bumpBars(face, li, 'count', 1); }}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'count', -1); }}
@@ -312,7 +319,7 @@ export default function SectionView({
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'size', -1); }}
             >{displayBar(g.barSize)}</tspan>
           </tspan>
-        ) : null)}
+        ))}
       </text>
     );
     return <g>{labelText}{flagsGroup}</g>;
@@ -577,7 +584,7 @@ export default function SectionView({
                 {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ') : '—'}
               </text>
             )}
-          <text x={ox + scaledW + 8} y={topLabelY + 16}
+          <text x={ox + scaledW + 8} y={topLabelY + 16 + Math.max(0, rebar.topBars.filter(g => g.numBars > 0).length - 1) * FACE_LINE_H}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
             {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'top'}
             {editBarSize && interactive && (
