@@ -13,7 +13,7 @@ import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, MapFrame, DesignGroup, LoadCase, DesignCode } from '../../types';
 import { formatBarLabel } from '../rebar';
-import { skinStr, continuousBars } from './scheduleData';
+import { barsStr, skinStr, stirrupZoneStr, continuousBars } from './scheduleData';
 import { winAnsiSafe } from './pdfExport';
 import { runDesign } from '../../engines';
 import { analyzeGroupCurtailment, curtailmentNote } from '../curtailment';
@@ -215,30 +215,47 @@ function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum
 
 // ── GROUP schedule (compact — one row per design group) ────────────────────
 
-const GRP_COL_DEFS = [
-  { key: 'idx',      header: '#',                  w: 22  },
-  { key: 'label',    header: 'Group',              w: 135 },
-  { key: 'section',  header: 'Section (b×h)',      w: 80  },
-  { key: 'count',    header: 'Beams',              w: 40  },
-  { key: 'top',      header: 'Top bars',           w: 120 },
-  { key: 'bot',      header: 'Bottom bars',        w: 120 },
-  { key: 'skin',     header: 'Skin bars',          w: 80  },
-  { key: 'stirrups', header: 'Stirrups (z1/z2/z3)', w: 150 },
-  { key: 'dcr',      header: 'Max DCR',            w: 50  },
+// Group schedule columns. Top steel is split into its three L/3 regions
+// (mark end / middle third / opposite end) and stirrups into their three zones,
+// each pair rendered under a spanning super-header via `group`.
+const GRP_COL_DEFS: { key: string; header: string; w: number; group?: 'top' | 'stirrups' }[] = [
+  { key: 'idx',      header: '#',              w: 20  },
+  { key: 'label',    header: 'Group',          w: 108 },
+  { key: 'section',  header: 'Section (b×h)',  w: 66  },
+  { key: 'count',    header: 'Beams',          w: 32  },
+  { key: 'topMark',  header: 'Mark End',       w: 66, group: 'top' },
+  { key: 'topMid',   header: 'Middle',         w: 66, group: 'top' },
+  { key: 'topOpp',   header: 'Opp. End',       w: 66, group: 'top' },
+  { key: 'bot',      header: 'Bottom',         w: 72  },
+  { key: 'skin',     header: 'Skin (n-size@sp)', w: 76 },
+  { key: 'stirMark', header: 'Mark End',       w: 58, group: 'stirrups' },
+  { key: 'stirMid',  header: 'Middle',         w: 58, group: 'stirrups' },
+  { key: 'stirOpp',  header: 'Opp. End',       w: 58, group: 'stirrups' },
+  { key: 'dcr',      header: 'Max DCR',        w: 44  },
 ];
+// Spanning super-headers over the grouped sub-columns.
+const GRP_SUPERHEADERS: Record<'top' | 'stirrups', string> = {
+  top: 'Top bars',
+  stirrups: 'Stirrups (size-spacing-legs)',
+};
 const TABLE_MARGIN_LEFT = 36;
 const ROW_H = 17;
-const HEADER_H = 22;
+const HEADER_H = 22;      // single-band header (beam schedule)
+const GRP_HEADER_H = 30;  // two-band header (group schedule)
 
 interface GroupSchedRow {
   idx: string;
   label: string;
   section: string;
   count: string;
-  top: string;
+  topMark: string;
+  topMid: string;
+  topOpp: string;
   bot: string;
   skin: string;
-  stirrups: string;
+  stirMark: string;
+  stirMid: string;
+  stirOpp: string;
   dcr: string;
   dcrVal: number;
   groupIdx: number; // for colour swatch
@@ -258,16 +275,17 @@ function buildGroupRows(
     const repMember = groupMembers[0];
     const rebar = g.rebar ?? repMember?.rebar;
 
-    // Top bars = mark-side (governing-end) steel; append the reduced opposite-end
-    // top cage when the user has set one, so the schedule carries both ends.
-    const top      = rebar
-      ? rebarStr(rebar.topBars)
-        + (g.midThirdTopBars?.length ? ` · mid ${rebarStr(g.midThirdTopBars)}` : '')
-        + (g.oppositeTopBars?.length ? ` · opp ${rebarStr(g.oppositeTopBars)}` : '')
-      : '—';
-    const bot      = rebar ? rebarStr(rebar.botBars) : '—';
+    // Top bars split into the three L/3 regions: mark end (governing-end cage),
+    // middle third (user curtailment cage), and opposite end.
+    const topMark  = rebar ? barsStr(rebar.topBars) : '—';
+    const topMid   = barsStr(g.midThirdTopBars);
+    const topOpp   = barsStr(g.oppositeTopBars);
+    const bot      = rebar ? barsStr(rebar.botBars) : '—';
     const skin     = rebar ? skinStr(rebar.sideBars, isEC2) : '—';
-    const stirrups = rebar ? stirrupStr(rebar, isEC2) : '—';
+    // Stirrups split into the three zones (end / middle / end).
+    const stirMark = rebar ? stirrupZoneStr(rebar, 0, isEC2) : '—';
+    const stirMid  = rebar ? stirrupZoneStr(rebar, 1, isEC2) : '—';
+    const stirOpp  = rebar ? stirrupZoneStr(rebar, 2, isEC2) : '—';
     const section  = repMember ? sectionLabel(repMember, isEC2) : '—';
 
     // Worst DCR across all group members
@@ -282,7 +300,7 @@ function buildGroupRows(
       label: g.label,
       section,
       count: String(groupMembers.length),
-      top, bot, skin, stirrups,
+      topMark, topMid, topOpp, bot, skin, stirMark, stirMid, stirOpp,
       dcr: maxDCR > 0 ? maxDCR.toFixed(2) : '—',
       dcrVal: maxDCR,
       groupIdx: i,
@@ -292,11 +310,47 @@ function buildGroupRows(
 
 function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
   const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
-  fillRect(ctx, x0, y, totalW, HEADER_H, C.navy);
-  let x = x0;
-  for (const col of GRP_COL_DEFS) {
-    txt(ctx, col.header, x + 3, y + 7, 7.5, C.white, ctx.bold);
-    x += col.w;
+  fillRect(ctx, x0, y, totalW, GRP_HEADER_H, C.navy);
+  const bandY = y + GRP_HEADER_H - 13; // divider between super-header band and sub-headers
+
+  // Collect each super-group's horizontal span.
+  const spans: Partial<Record<'top' | 'stirrups', { x0: number; w: number }>> = {};
+  {
+    let x = x0;
+    for (const col of GRP_COL_DEFS) {
+      if (col.group) {
+        const s = spans[col.group] ?? (spans[col.group] = { x0: x, w: 0 });
+        s.w += col.w;
+      }
+      x += col.w;
+    }
+  }
+  // Super-headers, centred over their span in the top band.
+  for (const key of ['top', 'stirrups'] as const) {
+    const s = spans[key];
+    if (!s) continue;
+    const label = winAnsiSafe(GRP_SUPERHEADERS[key]);
+    const tw = ctx.bold.widthOfTextAtSize(label, 7);
+    txt(ctx, GRP_SUPERHEADERS[key], s.x0 + Math.max(2, (s.w - tw) / 2), y + GRP_HEADER_H - 10, 7, C.white, ctx.bold);
+    hline(ctx, s.x0, bandY, s.x0 + s.w, 0.5, C.mid);
+  }
+  // Column headers: grouped ones sit in the lower band; the rest span both bands.
+  {
+    let x = x0;
+    for (const col of GRP_COL_DEFS) {
+      if (col.group) txt(ctx, col.header, x + 3, y + 5, 6.8, C.white, ctx.bold);
+      else           txt(ctx, col.header, x + 3, y + GRP_HEADER_H / 2 - 3, 7.2, C.white, ctx.bold);
+      x += col.w;
+    }
+  }
+  // Vertical separators: full-height at group boundaries, lower-band only within a group.
+  {
+    let x = x0;
+    for (let i = 0; i < GRP_COL_DEFS.length - 1; i++) {
+      x += GRP_COL_DEFS[i].w;
+      const sameGroup = GRP_COL_DEFS[i].group && GRP_COL_DEFS[i].group === GRP_COL_DEFS[i + 1].group;
+      ctx.page.drawLine({ start: { x, y }, end: { x, y: sameGroup ? bandY : y + GRP_HEADER_H }, thickness: 0.3, color: C.mid });
+    }
   }
 }
 
@@ -304,7 +358,12 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
   const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
   if (shade) fillRect(ctx, x0, y, totalW, ROW_H, C.light);
 
-  const cells = [row.idx, row.label, row.section, row.count, row.top, row.bot, row.skin, row.stirrups, row.dcr];
+  const cells = [
+    row.idx, row.label, row.section, row.count,
+    row.topMark, row.topMid, row.topOpp, row.bot, row.skin,
+    row.stirMark, row.stirMid, row.stirOpp, row.dcr,
+  ];
+  const dcrIdx = GRP_COL_DEFS.length - 1;
   let x = x0;
 
   GRP_COL_DEFS.forEach((col, i) => {
@@ -315,10 +374,11 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
       x += col.w;
       return;
     }
-    const cellColor = i === 8 && row.dcrVal > 0
+    const cellColor = i === dcrIdx && row.dcrVal > 0
       ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
       : C.dark;
-    txt(ctx, cells[i], x + 3, y + 5, 8, cellColor,
+    // Narrow reinforcement columns get a slightly smaller face so they don't overflow.
+    txt(ctx, cells[i], x + 3, y + 5, i >= 4 && i < dcrIdx ? 7 : 8, cellColor,
       i === 1 ? ctx.bold : ctx.font);
     x += col.w;
   });
@@ -406,9 +466,10 @@ function drawScheduleTable(
   startPageNum: number,
 ): number {
   const colDefs = isGroup ? GRP_COL_DEFS : BEAM_COL_DEFS;
+  const headerH = isGroup ? GRP_HEADER_H : HEADER_H;
   const tableW = colDefs.reduce((s, c) => s + c.w, 0);
   const topY = 595 - 44;
-  const rowsPerPage = Math.floor((topY - 24 - HEADER_H) / ROW_H);
+  const rowsPerPage = Math.floor((topY - 24 - headerH) / ROW_H);
   let pageNum = startPageNum;
 
   for (let start = 0; start < rows.length; start += rowsPerPage) {
@@ -416,12 +477,12 @@ function drawScheduleTable(
     drawPageFrame(ctx, isGroup ? 'Group Schedule' : 'Beam Schedule', projectName, pageNum++);
 
     if (isGroup) {
-      drawGroupTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+      drawGroupTableHeader(ctx, TABLE_MARGIN_LEFT, topY - headerH);
     } else {
-      drawBeamTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+      drawBeamTableHeader(ctx, TABLE_MARGIN_LEFT, topY - headerH);
     }
 
-    let y = topY - HEADER_H - ROW_H;
+    let y = topY - headerH - ROW_H;
     const chunk = rows.slice(start, start + rowsPerPage);
     chunk.forEach((row, i) => {
       if (isGroup) drawGroupRow(ctx, row as GroupSchedRow, TABLE_MARGIN_LEFT, y, i % 2 === 0);
@@ -429,14 +490,14 @@ function drawScheduleTable(
       y -= ROW_H;
     });
 
-    strokeRect(ctx, TABLE_MARGIN_LEFT, y, tableW, topY - y - HEADER_H - ROW_H + ROW_H);
+    strokeRect(ctx, TABLE_MARGIN_LEFT, y, tableW, topY - y - headerH);
 
-    // Column dividers
+    // Column dividers (body only — header draws its own)
     let cx = TABLE_MARGIN_LEFT;
     for (const col of colDefs.slice(0, -1)) {
       cx += col.w;
       ctx.page.drawLine({
-        start: { x: cx, y: topY - HEADER_H },
+        start: { x: cx, y: topY - headerH },
         end:   { x: cx, y: y + ROW_H },
         thickness: 0.3, color: C.mid,
       });
