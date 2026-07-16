@@ -8,7 +8,7 @@ import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase, CrackCont
 import { DEFAULT_CRACK_PARAMS } from '../types';
 import type { CalcSection } from './calcBreakdown';
 import { getBarArea, getBarDiam } from './concreteDesign';
-import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, ecm, creepCoefficient } from '../engines/ec2/ec2Beam';
+import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, ecm, creepCoefficient, layerCentroidMm } from '../engines/ec2/ec2Beam';
 import { formatBarLabel } from './rebar';
 
 const IN_TO_MM = 25.4, PSI_TO_MPA = 0.00689476, KIP_TO_KN = 4.44822, KIPFT_TO_KNM = 1.35582, IN2_TO_MM2 = 645.16;
@@ -31,7 +31,12 @@ export function generateBreakdownEC2(
   const cover = section.coverClear * IN_TO_MM;
   const stirrupD = getBarDiam(section.stirrupDia) * IN_TO_MM;
   const botBarD = getBarDiam(rebar.botBars[0]?.barSize ?? 8) * IN_TO_MM;
-  const d = h - cover - stirrupD - botBarD / 2;
+  // Effective depth = distance to the CENTROID of all tension-bar layers (matches the
+  // engine and S-Concrete), not just the outer layer. `d` (bottom) governs +M / shear /
+  // detailing; `dTop` (hogging effective depth) governs −M.
+  const layerClear = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
+  const d = h - layerCentroidMm(rebar.botBars, cover, stirrupD, layerClear);
+  const dTop = h - layerCentroidMm(rebar.topBars, cover, stirrupD, layerClear);
 
   const fck = material.fc * PSI_TO_MPA;
   const fyk = material.fy * PSI_TO_MPA;
@@ -67,7 +72,7 @@ export function generateBreakdownEC2(
       { ref: '§3.1.6', label: 'Design compressive strength', equation: 'fcd = αcc·fck/γc', substitution: `0.85 × ${f(fck)} / 1.5`, result: `fcd = ${f(fcd)} MPa` },
       { ref: '§3.2.7', label: 'Design steel strength', equation: 'fyd = fyk/γs', substitution: `${f(fyk, 0)} / 1.15`, result: `fyd = ${f(fyd, 0)} MPa` },
       { ref: '§3.1.7', label: 'Stress block factors', equation: 'λ, η (fck ≤ 50 MPa)', substitution: `fck = ${f(fck)} MPa`, result: `λ = ${f(lambda, 2)}, η = ${f(eta, 2)}` },
-      { ref: '—', label: 'Effective depth', equation: 'd = h − c − Øst − Øbar/2', substitution: `${f(h, 0)} − ${f(cover, 0)} − ${f(stirrupD, 1)} − ${f(botBarD / 2, 1)}`, result: `d = ${f(d, 0)} mm`, note: `Bottom steel: ${botDesc}, As = ${f(As, 0)} mm²` },
+      { ref: '§6.1', label: 'Effective depth (layer centroid)', equation: 'd = h − centroid of the tension-bar layers', substitution: `bottom ${botDesc} → centroid ${f(h - d, 0)} mm from face`, result: `d = ${f(d, 0)} mm${rebar.topBars.some(g => g.numBars > 0) ? `  ·  d_top (hog) = ${f(dTop, 0)} mm` : ''}`, note: `Area-weighted over ALL layers (not just the outer bar); As = ${f(As, 0)} mm²` },
     ],
   });
 
@@ -78,7 +83,7 @@ export function generateBreakdownEC2(
   const topDesc = rebar.topBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
 
   const flex = mRd(As, d, b, fck, fcd, fyd);
-  const flex_neg = mRd(As_top, d, b, fck, fcd, fyd);
+  const flex_neg = mRd(As_top, dTop, b, fck, fcd, fyd);
 
   const flexSteps: CalcSection['steps'] = [
     { ref: '§6.1', label: 'Bottom steel (positive moment, tension at bottom)', equation: 'As,bot', substitution: `${botDesc}, As = ${f(As, 0)} mm²`, result: `As,bot = ${f(As, 0)} mm²` },
@@ -91,7 +96,7 @@ export function generateBreakdownEC2(
     flexSteps.push(
       { ref: '§6.1', label: 'Top steel (negative moment, tension at top)', equation: 'As,top', substitution: `${topDesc}, As,top = ${f(As_top, 0)} mm²`, result: `As,top = ${f(As_top, 0)} mm²` },
       { ref: '§6.1', label: 'Neutral axis depth (negative)', equation: 'x = As,top·fyd / (η·fcd·λ·bw)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} / (${f(eta, 2)} × ${f(fcd)} × ${f(lambda, 2)} × ${f(b, 0)})`, result: `x = ${f(flex_neg.x, 1)} mm` },
-      { ref: '§6.1', label: 'M_Rd negative', equation: 'M_Rd⁻ = As,top·fyd·(d − λx/2)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} × (${f(d, 0)} − ${f(lambda * flex_neg.x / 2, 1)}) / 10⁶`, result: `M_Rd⁻ = ${f(flex_neg.MRd)} kN·m ${MEd_neg <= flex_neg.MRd ? '✓' : '✗'}`, note: `M_Ed⁻ = ${f(MEd_neg)} kN·m → DCR = ${flex_neg.MRd > 0 ? f(MEd_neg / flex_neg.MRd, 3) : '—'}` },
+      { ref: '§6.1', label: 'M_Rd negative', equation: 'M_Rd⁻ = As,top·fyd·(d_top − λx/2)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} × (${f(dTop, 0)} − ${f(lambda * flex_neg.x / 2, 1)}) / 10⁶`, result: `M_Rd⁻ = ${f(flex_neg.MRd)} kN·m ${MEd_neg <= flex_neg.MRd ? '✓' : '✗'}`, note: `d_top = ${f(dTop, 0)} mm (top-layer centroid) · M_Ed⁻ = ${f(MEd_neg)} kN·m → DCR = ${flex_neg.MRd > 0 ? f(MEd_neg / flex_neg.MRd, 3) : '—'}` },
     );
   }
 
@@ -214,7 +219,7 @@ export function generateBreakdownEC2(
   const dComp_pos = cover + stirrupD + topBarD / 2; // +M: top steel in compression
   const dComp_neg = cover + stirrupD + botBarD / 2; // −M: bottom steel in compression
   addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, As_top, dComp_pos, crack.wLimitBot, posFromCombo);
-  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, d, As, dComp_neg, crack.wLimitTop, negFromCombo);
+  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, dTop, As, dComp_neg, crack.wLimitTop, negFromCombo);
 
   // Side face (skin reinforcement) — corrected EC2 §7.3.2/§7.3.4 approach:
   //   k2 = 1.0 (pure tension at mid-height)
@@ -228,7 +233,7 @@ export function generateBreakdownEC2(
     if (As_per_bar > 0 && totalSideBars > 0) {
       const govMqp = Math.max(Mqp_pos, Mqp_neg);
       const useHogging = Mqp_neg >= Mqp_pos;
-      const d_chord = useHogging ? (h - cover - stirrupD - topBarD / 2) : d;
+      const d_chord = useHogging ? dTop : d;
       const As_chord = useHogging ? As_top : As;
       const cwGov = crackWidth(govMqp, As_chord, useHogging ? topBarD : botBarD, b, h, d_chord, cover + stirrupD, fck, Es_MPa, crack.kt,
         { AsComp: useHogging ? As : As_top, dComp: useHogging ? dComp_neg : dComp_pos, phi: phiCreep });

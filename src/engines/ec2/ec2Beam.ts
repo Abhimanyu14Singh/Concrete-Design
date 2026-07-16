@@ -168,7 +168,7 @@ export function tRd(
  * (mm). `groups` is ordered outermost-first (e.g. botBars[0] = outermost bottom
  * layer). `layerClearMm` is the clear gap between successive layers.
  */
-function layerCentroidMm(
+export function layerCentroidMm(
   groups: import('../../types').BarGroup[],
   coverMm: number,
   stirrupMm: number,

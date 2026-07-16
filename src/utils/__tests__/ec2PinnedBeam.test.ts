@@ -282,8 +282,8 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     });
 
     it('effective depth step result contains "mm" and shows 542 mm', () => {
-      // The effective depth equation is 'd = h − c − Øst − Øbar/2'
-      const step = sections[0].steps.find(s => s.equation.includes('Øst'));
+      // Effective depth is now the tension-layer CENTROID (single layer here → 542.5 mm).
+      const step = sections[0].steps.find(s => s.label.includes('Effective depth'));
       expect(step).toBeDefined();
       expect(step!.result).toContain('mm');
       expect(step!.result).toMatch(/54[23]/);   // d_bot = 542.5 mm → rounds to "543 mm"
