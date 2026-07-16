@@ -55,9 +55,12 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
     const fc = face === 'top' ? cu?.top : cu?.bot;
     if (!fc) return null;
     const where = face === 'top' ? 'middle third' : 'end thirds';
+    // Green once the % is pinned to the schedule notes — the flag doubles as a
+    // "this curtailment is recorded" indicator.
+    const pinned = face === 'top' ? group.notePinned.top : group.notePinned.bot;
     return {
-      color: flagColor(fc),
-      title: `${face === 'top' ? 'Top' : 'Bottom'} · ${Math.round(fc.pctNeeded)}% needed through the ${where} (L/3) — click for detail`,
+      color: pinned ? STATUS.ok : flagColor(fc),
+      title: `${face === 'top' ? 'Top' : 'Bottom'} · ${Math.round(fc.pctNeeded)}% needed through the ${where} (L/3)${pinned ? ' · pinned to schedule notes' : ' — click for detail'}`,
       onClick: () => setOpenFace(f => (f === face ? null : face)),
     };
   };

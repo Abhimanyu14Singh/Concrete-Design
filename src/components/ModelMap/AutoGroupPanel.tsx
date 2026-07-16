@@ -10,6 +10,7 @@ import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
   demandValueFor, governingFace,
+  jenksBreaks, quantileBreaks,
   ALL_BEAMS_FAMILY_KEY,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
@@ -122,6 +123,21 @@ export default function AutoGroupPanel({
   const poolMetric = activeSuggestion?.metric ?? metric;
   const vals = familyDemands.map(d => demandValueFor(d, poolMetric));
   const binAssignment = vals.length ? assignByBreaks(vals, currentBreaks) : [];
+
+  // Per-family group-count override: re-cluster JUST the active family at the
+  // chosen k and store its breaks, so it overrides the global default without
+  // touching the other families. 'auto' clears the override (back to default).
+  const familyIsCustom = !!tweakedBreaks[activeFamily];
+  const familyGroupCount = currentBreaks.length + 1;
+  function setFamilyK(k: number | 'auto') {
+    if (!activeFamily) return;
+    if (k === 'auto') {
+      setTweakedBreaks(prev => { const n = { ...prev }; delete n[activeFamily]; return n; });
+      return;
+    }
+    const breakFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
+    setTweakedBreaks(prev => ({ ...prev, [activeFamily]: breakFn(vals, Math.max(1, Math.min(k, vals.length))) }));
+  }
 
   // Bin preview
   const numBins = currentBreaks.length + 1;
@@ -404,11 +420,43 @@ export default function AutoGroupPanel({
             options={baseSuggestions.map(s => {
               const count = s.bins.reduce((sum, b) => sum + b.memberIds.length, 0);
               const faceLabel = s.face === 'bot' ? ' — M⁺ gov' : s.face === 'top' ? ' — M⁻ gov' : '';
-              return { value: s.familyKey, label: `${displayFamilyLabel(s.familyLabel, units)}${faceLabel} (${count} beams)` };
+              // Mark families with a user-set group count (✎) vs auto-grouped.
+              const custom = !!tweakedBreaks[s.familyKey];
+              const grp = custom ? tweakedBreaks[s.familyKey].length + 1 : s.bins.length;
+              const tag = custom ? `✎ ${grp} grp` : `auto ${grp}`;
+              return { value: s.familyKey, label: `${displayFamilyLabel(s.familyLabel, units)}${faceLabel} (${count} beams) · ${tag}` };
             })}
             onChange={setSelectedFamily}
             style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, width: '100%' }}
           />
+        </div>
+      )}
+
+      {/* Per-family group-count override — set a custom number for JUST the family
+          selected above; every other family keeps the global "Groups / family". */}
+      {families.length > 1 && totalGroups === null && activeSuggestion && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ ...lbl, marginBottom: 0 }}>Groups for this family</div>
+            {familyIsCustom
+              ? <span style={{ fontSize: 9, color: ACCENT.primary, fontWeight: 700 }}>✎ custom ({familyGroupCount})</span>
+              : <span style={{ fontSize: 9, color: INK.muted }}>auto ({familyGroupCount})</span>}
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+            <button onClick={() => setFamilyK('auto')}
+              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: !familyIsCustom ? ACCENT.primary : 'white', color: !familyIsCustom ? 'white' : INK.base, cursor: 'pointer' }}>
+              Auto
+            </button>
+            {[2, 3, 4, 5].map(k => (
+              <button key={k} onClick={() => setFamilyK(k)}
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: familyIsCustom && familyGroupCount === k ? ACCENT.primary : 'white', color: familyIsCustom && familyGroupCount === k ? 'white' : INK.base, cursor: 'pointer' }}>
+                {k}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 9, color: INK.muted, marginTop: 3 }}>
+            Overrides “Groups / family” for {displayFamilyLabel(activeSuggestion.familyLabel, units)} only — the dropdown marks ✎ custom families.
+          </div>
         </div>
       )}
 

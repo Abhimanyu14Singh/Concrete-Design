@@ -249,24 +249,37 @@ export default function SectionView({
     const flag = face === 'top' ? topFlag : botFlag;
     const flag2 = face === 'top' ? topFlag2 : null; // opposite-end status (top only)
     const firstIdx = bars.findIndex(g => g.numBars > 0);
-    const flagTspan = flag ? (
-      <tspan dx="7" style={{ cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto', fontWeight: 700 }}
-        fill={flag.color} fontSize="13"
-        onClick={e => { e.stopPropagation(); flag.onClick(); }}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag.onClick(); }}>
-        {flag.title ? <title>{flag.title}</title> : null}⚑
-      </tspan>
+
+    // The ⚑/◨ flags sit just after the bar label, but their x is CLAMPED to the
+    // SVG width so a long multi-layer label (e.g. "4-#20 + 4-#16 + 2-#16") can
+    // never push them out of view — they pin to the right edge instead.
+    const labelStr = firstIdx === -1
+      ? '—'
+      : bars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ');
+    const flagsW = (flag ? 16 : 0) + (flag2 ? 15 : 0) + 4;
+    const flagX = Math.min(x + labelStr.length * 6 + 8, width - flagsW);
+    const flagsGroup = (flag || flag2) ? (
+      <text x={flagX} y={y} fontSize="13" fontFamily={FONT.mono} style={{ pointerEvents: 'auto' }}>
+        {flag ? (
+          <tspan style={{ cursor: 'pointer', userSelect: 'none', fontWeight: 700 }} fill={flag.color}
+            onClick={e => { e.stopPropagation(); flag.onClick(); }}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag.onClick(); }}>
+            {flag.title ? <title>{flag.title}</title> : null}⚑
+          </tspan>
+        ) : null}
+        {flag2 ? (
+          <tspan dx={flag ? '4' : '0'} style={{ cursor: 'pointer', userSelect: 'none', fontWeight: 700 }} fill={flag2.color}
+            onClick={e => { e.stopPropagation(); flag2.onClick(); }}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag2.onClick(); }}>
+            {flag2.title ? <title>{flag2.title}</title> : null}◨
+          </tspan>
+        ) : null}
+      </text>
     ) : null;
-    const flag2Tspan = flag2 ? (
-      <tspan dx="4" style={{ cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto', fontWeight: 700 }}
-        fill={flag2.color} fontSize="13"
-        onClick={e => { e.stopPropagation(); flag2.onClick(); }}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag2.onClick(); }}>
-        {flag2.title ? <title>{flag2.title}</title> : null}◨
-      </tspan>
-    ) : null;
-    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—{flagTspan}{flag2Tspan}</text>;
-    return (
+
+    const labelText = firstIdx === -1 ? (
+      <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>
+    ) : (
       <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
         {bars.map((g, li) => g.numBars > 0 ? (
           <tspan key={li}>
@@ -282,9 +295,9 @@ export default function SectionView({
             >{displayBar(g.barSize)}</tspan>
           </tspan>
         ) : null)}
-        {flagTspan}{flag2Tspan}
       </text>
     );
+    return <g>{labelText}{flagsGroup}</g>;
   }
 
   /** Editable stirrup label: clickable bar-size + spacing tokens and a ⅓ zoned-spacing
