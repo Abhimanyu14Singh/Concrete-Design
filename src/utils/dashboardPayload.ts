@@ -44,6 +44,8 @@ export interface DashboardGroup {
   oppositeTopBars?: BarGroup[];
   /** The reduced middle-third top cage the user set (if any). */
   midThirdTopBars?: BarGroup[];
+  /** The reduced end-third bottom cage the user set (if any). */
+  endThirdBotBars?: BarGroup[];
   /** Code minimum flexural steel area (in²) for the group's section — the floor
    *  every per-region cage edit must respect so min steel is never violated. */
   asMin: number;
@@ -79,6 +81,7 @@ export type DashboardCommand =
   | { type: 'toggle-curtailment-note'; groupId: string; face: 'top' | 'bot'; on: boolean }
   | { type: 'set-opposite-top'; groupId: string; bars: BarGroup[] | null }
   | { type: 'set-mid-third-top'; groupId: string; bars: BarGroup[] | null }
+  | { type: 'set-end-third-bot'; groupId: string; bars: BarGroup[] | null }
   | { type: 'open-member'; memberId: string }
   | { type: 'pop-in' }
   | { type: 'ready' };
@@ -147,6 +150,7 @@ export function buildDashboardPayload(
       oppositeEnd: analyzeOppositeEnd(beams, rebar, g.oppositeTopBars, code),
       oppositeTopBars: g.oppositeTopBars,
       midThirdTopBars: g.midThirdTopBars,
+      endThirdBotBars: g.endThirdBotBars,
       asMin: (repMember ? designResultsById[repMember.id]?.As_min : undefined) ?? 0,
       notePinned: { top: !!g.curtailmentNotes?.top, bot: !!g.curtailmentNotes?.bot },
     };

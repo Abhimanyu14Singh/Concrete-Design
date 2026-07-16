@@ -40,6 +40,9 @@ interface Props {
    *  stepped hogging capacity reflects the middle-third / opposite-end top steel. */
   midThirdTopBars?: BarGroup[];
   oppositeTopBars?: BarGroup[];
+  /** The member's group reduced end-third bottom cage — passed to the moment
+   *  diagram so its stepped sagging capacity (φMn⁺) reflects the end-third steel. */
+  endThirdBotBars?: BarGroup[];
 }
 
 function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr?: number; tip?: string; formula?: string; overridden?: boolean }) {
@@ -90,7 +93,7 @@ function dcrStyle(dcr: number): React.CSSProperties {
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
 const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -414,7 +417,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
             <ForceDiagram member={member} result={result} code={code} height={130}
-              midThirdTopBars={midThirdTopBars} oppositeTopBars={oppositeTopBars} />
+              midThirdTopBars={midThirdTopBars} oppositeTopBars={oppositeTopBars} endThirdBotBars={endThirdBotBars} />
           )}
           {onRebarChange && (
             <p style={{ fontSize: 10, color: INK.muted, margin: 0, textAlign: 'center' }}>

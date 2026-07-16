@@ -27,6 +27,7 @@ const flagColor = (fc: FaceCurtailment) => (fc.flag === 'red' ? STATUS.fail : AC
 const OPP_BLUE = '#2563eb';   // opposite-end cage meets DCR
 const OPP_AMBER = '#d97706';  // opposite end can take less (opportunity)
 const MID_TEAL = '#0d9488';   // middle-third cage meets its curtailed demand
+const BOT_BLUE = '#1565c0';   // end-third bottom cage meets its curtailed demand (matches bottom bars)
 
 type OppState = 'met' | 'insufficient' | 'opportunity' | 'same' | null;
 function oppStateOf(opp: OppositeEndResult | undefined): OppState {
@@ -37,7 +38,7 @@ function oppStateOf(opp: OppositeEndResult | undefined): OppState {
 const oppColorOf = (s: OppState) =>
   s === 'met' ? OPP_BLUE : s === 'insufficient' ? STATUS.fail : s === 'opportunity' ? OPP_AMBER : INK.muted;
 
-export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop }: {
+export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot }: {
   group: DashboardGroup;
   selected: boolean;
   onSelect: () => void;
@@ -45,6 +46,7 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
   onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
   onSetOppositeTop?: (groupId: string, bars: BarGroup[] | null) => void;
   onSetMidThirdTop?: (groupId: string, bars: BarGroup[] | null) => void;
+  onSetEndThirdBot?: (groupId: string, bars: BarGroup[] | null) => void;
 }) {
   const ng = group.govDCR > 1.0;
   const cu = group.curtailment;
@@ -96,13 +98,14 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
 
   // ── Middle-third top reinforcement (curtail top steel through mid-span) ──────
   const faceAreaOf = (bars?: BarGroup[]) => (bars ?? []).reduce((s, b) => s + Math.max(0, b.numBars) * getBarArea(b.barSize), 0);
-  const markTopArea = faceAreaOf(group.rebar.topBars);
   const midBar = group.midThirdTopBars?.[0];
   const midArea = faceAreaOf(group.midThirdTopBars);
-  const midPct = markTopArea > 1e-9 ? (midArea / markTopArea) * 100 : 0;
   // The middle-third cage must cover its own hogging demand AND code As,min.
   const midReq = Math.max(group.asMin, cu?.top?.asRequired ?? 0);
   const midMeets = midArea >= midReq - 1e-4;
+  // Demand/capacity of the middle-third cage (As,req ÷ As,prov, code As,min floored
+  // in) — shown as a DCR rather than a "% of the mark cage".
+  const midDCR = midArea > 1e-9 ? midReq / midArea : Infinity;
   const toggleMid = () => {
     if (!onSetMidThirdTop) return;
     if (group.midThirdTopBars?.length) onSetMidThirdTop(group.id, null);                         // remove
@@ -116,6 +119,29 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
       ? { ...cur, numBars: Math.max(minBars(cur.barSize), cur.numBars + dir) }
       : { ...cur, barSize: barSizeStep(cur.barSize, dir) };
     onSetMidThirdTop(group.id, [next]);
+  };
+
+  // ── End-third bottom reinforcement (curtail bottom steel toward the supports) ──
+  // Revealed once the ⚑ bottom curtailment is pinned to the schedule notes. Seeds
+  // from the auto ~continuous end cage; editing pins an explicit end-third cage.
+  const autoEndBot = continuousCage(group.rebar.botBars, group.asMin);
+  const endBotExplicit = group.endThirdBotBars?.length ? group.endThirdBotBars : null;
+  const endBotBars = endBotExplicit ?? autoEndBot;
+  const endBotBar = endBotBars[0];
+  const endBotArea = faceAreaOf(endBotBars);
+  // The end-third bottom cage must cover the end-third sagging demand AND As,min.
+  const endBotReq = Math.max(group.asMin, cu?.bot?.asRequired ?? 0);
+  const endBotMeets = endBotArea >= endBotReq - 1e-4;
+  const endBotDCR = endBotArea > 1e-9 ? endBotReq / endBotArea : Infinity;
+  const showEndBotRow = !!(onSetEndThirdBot && cu?.bot && group.notePinned.bot);
+  const bumpEndBot = (field: 'count' | 'size', dir: 1 | -1) => {
+    if (!onSetEndThirdBot) return;
+    const size0 = group.rebar.botBars[0]?.barSize ?? 8;
+    const cur = endBotExplicit?.[0] ?? endBotBar ?? { numBars: minBars(size0), barSize: size0 };
+    const next: BarGroup = field === 'count'
+      ? { ...cur, numBars: Math.max(minBars(cur.barSize), cur.numBars + dir) }
+      : { ...cur, barSize: barSizeStep(cur.barSize, dir) };
+    onSetEndThirdBot(group.id, [next]);
   };
 
   const openFc: FaceCurtailment | null = openFace === 'top' ? cu?.top ?? null : openFace === 'bot' ? cu?.bot ?? null : null;
@@ -249,8 +275,8 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
               style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
             >{formatBarLabel(midBar.barSize)}</span>
           </span>
-          <span title="Percent of the mark-end top steel kept continuous through the middle third (≥ code As,min)" style={{ color: midMeets ? MID_TEAL : STATUS.fail, fontWeight: 700 }}>
-            {Math.round(midPct)}% {midMeets ? '✓' : '✗'}
+          <span title="Demand/capacity of the middle-third top cage (As,req ÷ As,prov, code As,min floored in)" style={{ color: midMeets ? MID_TEAL : STATUS.fail, fontWeight: 700 }}>
+            DCR {midDCR.toFixed(2)} {midMeets ? '✓' : '✗'}
           </span>
           <span style={{ flex: 1 }} />
           <span title="L+ bars / R− · click the size for L larger / R smaller · floored at code As,min" style={{ color: INK.muted, fontSize: 8 }}>L+/R−</span>
@@ -270,6 +296,47 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
           <span style={{ fontSize: 11 }}>⅓</span> curtail mid-third top
         </button>
       ))}
+
+      {/* End-third bottom reinforcement — the curtailed bottom cage kept through
+          the two END thirds. Revealed by pinning the ⚑ bottom curtailment note;
+          seeds from the auto ~continuous cage, then editable. Drives the moment
+          diagram's φMn⁺ end-third step and the eye pop-out's support sections. */}
+      {showEndBotRow && (
+        <div
+          onClick={e => e.stopPropagation()}
+          onDoubleClick={e => e.stopPropagation()}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, ...MONO_NUM,
+            padding: '3px 6px', borderRadius: 6, cursor: 'default',
+            border: `1px solid ${endBotMeets ? BOT_BLUE : STATUS.fail}`,
+            background: endBotMeets ? '#eff6ff' : STATUS.failBg,
+          }}
+        >
+          <span style={{ color: endBotMeets ? BOT_BLUE : STATUS.fail, fontWeight: 800 }}>⅓</span>
+          <span style={{ color: INK.secondary }}>End ⅓ bot</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <span
+              onClick={e => { e.stopPropagation(); bumpEndBot('count', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpEndBot('count', -1); }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
+            >{endBotBar?.numBars ?? 0}</span>
+            <span style={{ color: INK.muted }}>-</span>
+            <span
+              onClick={e => { e.stopPropagation(); bumpEndBot('size', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpEndBot('size', -1); }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
+            >{formatBarLabel(endBotBar?.barSize ?? 8)}</span>
+          </span>
+          <span title="Demand/capacity of the end-third bottom cage (As,req ÷ As,prov, code As,min floored in)" style={{ color: endBotMeets ? BOT_BLUE : STATUS.fail, fontWeight: 700 }}>
+            DCR {endBotDCR.toFixed(2)} {endBotMeets ? '✓' : '✗'}
+          </span>
+          <span style={{ flex: 1 }} />
+          <span title="L+ bars / R− · click the size for L larger / R smaller · floored at code As,min" style={{ color: INK.muted, fontSize: 8 }}>L+/R−</span>
+          {endBotExplicit && (
+            <span onClick={e => { e.stopPropagation(); onSetEndThirdBot?.(group.id, null); }} title="Reset to the auto end-third cage" style={{ cursor: 'pointer', color: INK.muted, fontWeight: 700 }}>↺</span>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 10, fontSize: 10, color: INK.secondary, ...MONO_NUM }}>
         <span title="Bottom steel ratio">ρ⁺ {group.rhoBot.toFixed(2)}%</span>
@@ -371,11 +438,13 @@ function RegionSectionsModal({ group, onClose }: { group: DashboardGroup; onClos
     const a = (bars ?? []).filter(b => b.numBars > 0);
     return a.length ? a.map(b => `${b.numBars}-${formatBarLabel(b.barSize)}`).join(' + ') : '—';
   };
-  // Bottom (sagging) steel: full at mid-span, curtailed to the continuous cage
-  // through the end thirds — the reduction the ⚑ bottom flag represents.
+  // Bottom (sagging) steel: full at mid-span, curtailed toward the supports —
+  // an explicit end-third bottom cage (End ⅓ bot row) wins; else the auto
+  // ~continuous cage the ⚑ bottom flag represents.
   const reducedBot = continuousCage(rebar.botBars, group.asMin);
+  const explicitEndBot = group.endThirdBotBars?.length ? group.endThirdBotBars : null;
   const botReduces = areaOf(reducedBot) < asBotMark - 1e-6;
-  const endBot = botReduces ? reducedBot : rebar.botBars;
+  const endBot = explicitEndBot ?? (botReduces ? reducedBot : rebar.botBars);
   const midTop = group.midThirdTopBars?.length ? group.midThirdTopBars : rebar.topBars;
   const oppTop = group.oppositeTopBars?.length ? group.oppositeTopBars : rebar.topBars;
   const regions: { key: string; title: string; top: BarGroup[]; bot: BarGroup[] }[] = [

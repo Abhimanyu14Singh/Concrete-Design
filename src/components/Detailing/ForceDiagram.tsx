@@ -24,6 +24,9 @@ interface Props {
    *  (φMn⁻) through the middle third and at the opposite end. */
   midThirdTopBars?: BarGroup[];
   oppositeTopBars?: BarGroup[];
+  /** The group's reduced end-third bottom cage — drives the stepped sagging
+   *  capacity (φMn⁺) through the two END thirds. */
+  endThirdBotBars?: BarGroup[];
 }
 
 interface DiagramPoint {
@@ -69,7 +72,7 @@ function buildEnvelope(member: Member): DiagramPoint[] {
 const axisTick = { fill: '#9ca3af', fontSize: 10 };
 const tooltipStyle = { background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 };
 
-export default function ForceDiagram({ member, result, code, height = 150, midThirdTopBars, oppositeTopBars }: Props) {
+export default function ForceDiagram({ member, result, code, height = 150, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
   const { label, toDisplay } = useUnits();
   const raw = buildEnvelope(member);
   if (raw.length < 2) return null;
@@ -96,7 +99,7 @@ export default function ForceDiagram({ member, result, code, height = 150, midTh
   // top cages (middle-third / opposite-end), when set, drive those hogging
   // levels. Bottom steel is the mirror — full mid-span, curtailed at the ends.
   // Precompute the levels once (display units), then bin each station.
-  const cap = steppedMomentCapacity(member, result, code ?? 'ACI318-19', { midThirdTopBars, oppositeTopBars });
+  const cap = steppedMomentCapacity(member, result, code ?? 'ACI318-19', { midThirdTopBars, oppositeTopBars, endThirdBotBars });
   const negMarkD = toDisplay(cap.negFull, 'moment');
   const negMidD = toDisplay(cap.negMid, 'moment');
   const negOppD = toDisplay(cap.negOpp, 'moment');

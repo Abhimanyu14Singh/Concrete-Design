@@ -120,6 +120,14 @@ export interface DesignGroup {
    * schedule carry it as the middle-third top bars.
    */
   midThirdTopBars?: BarGroup[];
+  /**
+   * Reduced BOTTOM reinforcement kept CONTINUOUS through the END thirds. Bottom
+   * steel is detailed for sagging at mid-span; toward the supports (the end
+   * thirds) it may be curtailed to a user-chosen cage — never below code As,min.
+   * When set, the section card shows it, and the moment diagram / eye pop-out
+   * carry it as the end-third bottom bars. Unset ⇒ the auto ~continuous cage.
+   */
+  endThirdBotBars?: BarGroup[];
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */

@@ -970,6 +970,7 @@ export default function App() {
                       onRebarChange={handleUpdateMember}
                       midThirdTopBars={activeGroup?.midThirdTopBars}
                       oppositeTopBars={activeGroup?.oppositeTopBars}
+                      endThirdBotBars={activeGroup?.endThirdBotBars}
                     />
                   </ErrorBoundary>
                 </div>

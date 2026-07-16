@@ -388,12 +388,14 @@ function faceCapacity(member: Member, code: DesignCode, span: number, face: 'top
  */
 export function steppedMomentCapacity(
   member: Member, result: DesignResults, code: DesignCode,
-  opts?: { midThirdTopBars?: BarGroup[]; oppositeTopBars?: BarGroup[] },
+  opts?: { midThirdTopBars?: BarGroup[]; oppositeTopBars?: BarGroup[]; endThirdBotBars?: BarGroup[] },
 ): SteppedMomentCapacity {
   const span = member.span ?? 20;
   const negFull = result.phi_Mn_neg, posFull = result.phi_Mn_pos;
   const negReduced = Math.min(faceCapacity(member, code, span, 'top', continuousCage(member.rebar.topBars, result.As_min)) ?? negFull, negFull);
-  const posReduced = Math.min(faceCapacity(member, code, span, 'bot', continuousCage(member.rebar.botBars, result.As_min)) ?? posFull, posFull);
+  // End-third bottom cage: an explicit user cage overrides the ~continuous default.
+  const posReducedCage = opts?.endThirdBotBars?.length ? opts.endThirdBotBars : continuousCage(member.rebar.botBars, result.As_min);
+  const posReduced = Math.min(faceCapacity(member, code, span, 'bot', posReducedCage) ?? posFull, posFull);
 
   // Middle-third top: an explicit user cage overrides the 50% default.
   const negMid = opts?.midThirdTopBars?.length

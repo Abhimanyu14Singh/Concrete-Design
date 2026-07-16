@@ -544,6 +544,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleSetOppositeTop(cmd.groupId, cmd.bars);
       } else if (cmd.type === 'set-mid-third-top') {
         handleSetMidThirdTop(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'set-end-third-bot') {
+        handleSetEndThirdBot(cmd.groupId, cmd.bars);
       } else if (cmd.type === 'open-member') {
         // Double-click a beam in the popped-out window → open it on the main window's
         // Member screen (main.cjs also raises the main window to the front).
@@ -603,6 +605,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         if (g.id !== groupId) return g;
         if (!bars || !bars.length) { const { midThirdTopBars: _drop, ...rest } = g; void _drop; return rest; }
         return { ...g, midThirdTopBars: bars };
+      }),
+    }));
+  }
+
+  // Set (or clear, when bars === null) a group's reduced end-third bottom cage.
+  function handleSetEndThirdBot(groupId: string, bars: import('../../types').BarGroup[] | null) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!bars || !bars.length) { const { endThirdBotBars: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, endThirdBotBars: bars };
       }),
     }));
   }
@@ -1147,6 +1161,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onToggleCurtailmentNote={handleToggleCurtailmentNote}
               onSetOppositeTop={handleSetOppositeTop}
               onSetMidThirdTop={handleSetMidThirdTop}
+              onSetEndThirdBot={handleSetEndThirdBot}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}
