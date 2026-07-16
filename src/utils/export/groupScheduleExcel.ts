@@ -8,8 +8,9 @@
 import * as XLSX from 'xlsx';
 import type { Project, Member } from '../../types';
 import {
-  barsStr, skinStr, stirrupZoneStr, scheduleSectionLabel, groupMaxDCR, groupNoteText,
+  barsStr, skinStr, stirrupZoneStr, scheduleSectionLabel, groupNoteText, continuousBars,
 } from './scheduleData';
+import { analyzeGroupCurtailment } from '../curtailment';
 
 export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
   const isEC2 = project.code === 'EN1992-1-1';
@@ -19,9 +20,10 @@ export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
   const header = [
     '#', 'Group', 'Section (b×h)', 'Beams',
     'Top — Mark End', 'Top — Middle', 'Top — Opp. End',
-    'Bottom', 'Skin (n-size@spacing)',
+    'Bottom — Mark End', 'Bottom — Middle', 'Bottom — Opp. End',
+    'Skin (n-size@spacing)',
     'Stirrup — Mark End', 'Stirrup — Middle', 'Stirrup — Opp. End',
-    'Notes', 'Max DCR',
+    'Notes',
   ];
   const data: (string | number)[][] = [
     [`Group Reinforcement Schedule — ${project.name ?? ''}`],
@@ -38,18 +40,23 @@ export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
     const rebar = g.rebar ?? rep?.rebar;
     if (!rebar) continue;
     idx += 1;
+    // Bottom bars: full through mid-span, curtailed to the continuous cage toward
+    // the supports (mark / opposite end) — mirrors the top curtailment.
+    const cu = beams.length ? analyzeGroupCurtailment(beams, rebar, project.code) : null;
+    const botMid = barsStr(rebar.botBars);
+    const botEnd = cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : botMid;
     data.push([
       idx, g.label, scheduleSectionLabel(rep, isEC2), beams.length,
       barsStr(rebar.topBars), barsStr(g.midThirdTopBars), barsStr(g.oppositeTopBars),
-      barsStr(rebar.botBars), skinStr(rebar.sideBars, isEC2),
+      botEnd, botMid, botEnd,
+      skinStr(rebar.sideBars, isEC2),
       stirrupZoneStr(rebar, 0, isEC2), stirrupZoneStr(rebar, 1, isEC2), stirrupZoneStr(rebar, 2, isEC2),
       groupNoteText(g, beams, rebar, project.code) || '—',
-      +groupMaxDCR(beams, project.code).toFixed(2),
     ]);
   }
 
   const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['!cols'] = [4, 24, 12, 6, 15, 15, 15, 15, 20, 15, 15, 15, 52, 8].map(w => ({ wch: w }));
+  ws['!cols'] = [4, 24, 12, 6, 15, 15, 15, 15, 15, 15, 20, 15, 15, 15, 52].map(w => ({ wch: w }));
   // Merge the two title rows across the table width.
   ws['!merges'] = [
     { s: { c: 0, r: 0 }, e: { c: header.length - 1, r: 0 } },

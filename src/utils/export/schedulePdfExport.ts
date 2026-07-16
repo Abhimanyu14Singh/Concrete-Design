@@ -215,27 +215,31 @@ function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum
 
 // ── GROUP schedule (compact — one row per design group) ────────────────────
 
-// Group schedule columns. Top steel is split into its three L/3 regions
-// (mark end / middle third / opposite end) and stirrups into their three zones,
-// each pair rendered under a spanning super-header via `group`.
-const GRP_COL_DEFS: { key: string; header: string; w: number; group?: 'top' | 'stirrups' }[] = [
+// Group schedule columns. Top bars, bottom bars and stirrups are each split into
+// their three L/3 regions (mark end / middle / opposite end) under a spanning
+// super-header via `group`. Top is full at the supports & curtailed mid-span;
+// bottom is full at mid-span & curtailed toward the supports.
+type GrpGroup = 'top' | 'bottom' | 'stirrups';
+const GRP_COL_DEFS: { key: string; header: string; w: number; group?: GrpGroup }[] = [
   { key: 'idx',      header: '#',              w: 20  },
-  { key: 'label',    header: 'Group',          w: 108 },
-  { key: 'section',  header: 'Section (b×h)',  w: 66  },
-  { key: 'count',    header: 'Beams',          w: 32  },
-  { key: 'topMark',  header: 'Mark End',       w: 66, group: 'top' },
-  { key: 'topMid',   header: 'Middle',         w: 66, group: 'top' },
-  { key: 'topOpp',   header: 'Opp. End',       w: 66, group: 'top' },
-  { key: 'bot',      header: 'Bottom',         w: 72  },
-  { key: 'skin',     header: 'Skin (n-size@sp)', w: 76 },
-  { key: 'stirMark', header: 'Mark End',       w: 58, group: 'stirrups' },
-  { key: 'stirMid',  header: 'Middle',         w: 58, group: 'stirrups' },
-  { key: 'stirOpp',  header: 'Opp. End',       w: 58, group: 'stirrups' },
-  { key: 'dcr',      header: 'Max DCR',        w: 44  },
+  { key: 'label',    header: 'Group',          w: 100 },
+  { key: 'section',  header: 'Section (b×h)',  w: 62  },
+  { key: 'count',    header: 'Beams',          w: 30  },
+  { key: 'topMark',  header: 'Mark End',       w: 58, group: 'top' },
+  { key: 'topMid',   header: 'Middle',         w: 58, group: 'top' },
+  { key: 'topOpp',   header: 'Opp. End',       w: 58, group: 'top' },
+  { key: 'botMark',  header: 'Mark End',       w: 58, group: 'bottom' },
+  { key: 'botMid',   header: 'Middle',         w: 58, group: 'bottom' },
+  { key: 'botOpp',   header: 'Opp. End',       w: 58, group: 'bottom' },
+  { key: 'skin',     header: 'Skin (n-size@sp)', w: 66 },
+  { key: 'stirMark', header: 'Mark End',       w: 52, group: 'stirrups' },
+  { key: 'stirMid',  header: 'Middle',         w: 52, group: 'stirrups' },
+  { key: 'stirOpp',  header: 'Opp. End',       w: 52, group: 'stirrups' },
 ];
 // Spanning super-headers over the grouped sub-columns.
-const GRP_SUPERHEADERS: Record<'top' | 'stirrups', string> = {
+const GRP_SUPERHEADERS: Record<GrpGroup, string> = {
   top: 'Top bars',
+  bottom: 'Bottom bars',
   stirrups: 'Stirrups (size-spacing-legs)',
 };
 const TABLE_MARGIN_LEFT = 36;
@@ -251,13 +255,13 @@ interface GroupSchedRow {
   topMark: string;
   topMid: string;
   topOpp: string;
-  bot: string;
+  botMark: string;
+  botMid: string;
+  botOpp: string;
   skin: string;
   stirMark: string;
   stirMid: string;
   stirOpp: string;
-  dcr: string;
-  dcrVal: number;
   groupIdx: number; // for colour swatch
 }
 
@@ -280,7 +284,12 @@ function buildGroupRows(
     const topMark  = rebar ? barsStr(rebar.topBars) : '—';
     const topMid   = barsStr(g.midThirdTopBars);
     const topOpp   = barsStr(g.oppositeTopBars);
-    const bot      = rebar ? barsStr(rebar.botBars) : '—';
+    // Bottom bars split the same way: full through mid-span, curtailed to the
+    // continuous cage toward the supports (mark / opposite end).
+    const beams = groupMembers.filter(m => m.memberType === 'beam' || !m.memberType);
+    const cu = rebar && beams.length ? analyzeGroupCurtailment(beams, rebar, code as DesignCode) : undefined;
+    const botMid  = rebar ? barsStr(rebar.botBars) : '—';
+    const botEnd  = rebar ? (cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : barsStr(rebar.botBars)) : '—';
     const skin     = rebar ? skinStr(rebar.sideBars, isEC2) : '—';
     // Stirrups split into the three zones (end / middle / end).
     const stirMark = rebar ? stirrupZoneStr(rebar, 0, isEC2) : '—';
@@ -288,21 +297,14 @@ function buildGroupRows(
     const stirOpp  = rebar ? stirrupZoneStr(rebar, 2, isEC2) : '—';
     const section  = repMember ? sectionLabel(repMember, isEC2) : '—';
 
-    // Worst DCR across all group members
-    let maxDCR = 0;
-    for (const m of groupMembers) {
-      const d = computeMaxDCR(m, code);
-      if (d > maxDCR) maxDCR = d;
-    }
-
     return {
       idx: String(i + 1),
       label: g.label,
       section,
       count: String(groupMembers.length),
-      topMark, topMid, topOpp, bot, skin, stirMark, stirMid, stirOpp,
-      dcr: maxDCR > 0 ? maxDCR.toFixed(2) : '—',
-      dcrVal: maxDCR,
+      topMark, topMid, topOpp,
+      botMark: botEnd, botMid, botOpp: botEnd,
+      skin, stirMark, stirMid, stirOpp,
       groupIdx: i,
     };
   });
@@ -314,7 +316,7 @@ function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
   const bandY = y + GRP_HEADER_H - 13; // divider between super-header band and sub-headers
 
   // Collect each super-group's horizontal span.
-  const spans: Partial<Record<'top' | 'stirrups', { x0: number; w: number }>> = {};
+  const spans: Partial<Record<GrpGroup, { x0: number; w: number }>> = {};
   {
     let x = x0;
     for (const col of GRP_COL_DEFS) {
@@ -326,7 +328,7 @@ function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
     }
   }
   // Super-headers, centred over their span in the top band.
-  for (const key of ['top', 'stirrups'] as const) {
+  for (const key of ['top', 'bottom', 'stirrups'] as const) {
     const s = spans[key];
     if (!s) continue;
     const label = winAnsiSafe(GRP_SUPERHEADERS[key]);
@@ -360,10 +362,10 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
 
   const cells = [
     row.idx, row.label, row.section, row.count,
-    row.topMark, row.topMid, row.topOpp, row.bot, row.skin,
-    row.stirMark, row.stirMid, row.stirOpp, row.dcr,
+    row.topMark, row.topMid, row.topOpp,
+    row.botMark, row.botMid, row.botOpp,
+    row.skin, row.stirMark, row.stirMid, row.stirOpp,
   ];
-  const dcrIdx = GRP_COL_DEFS.length - 1;
   let x = x0;
 
   GRP_COL_DEFS.forEach((col, i) => {
@@ -374,12 +376,8 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
       x += col.w;
       return;
     }
-    const cellColor = i === dcrIdx && row.dcrVal > 0
-      ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
-      : C.dark;
     // Narrow reinforcement columns get a slightly smaller face so they don't overflow.
-    txt(ctx, cells[i], x + 3, y + 5, i >= 4 && i < dcrIdx ? 7 : 8, cellColor,
-      i === 1 ? ctx.bold : ctx.font);
+    txt(ctx, cells[i], x + 3, y + 5, i >= 4 ? 7 : 8, C.dark, i === 1 ? ctx.bold : ctx.font);
     x += col.w;
   });
   hline(ctx, x0, y, x0 + totalW);
