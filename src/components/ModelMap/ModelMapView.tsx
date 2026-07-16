@@ -544,6 +544,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleSetOppositeTop(cmd.groupId, cmd.bars);
       } else if (cmd.type === 'set-mid-third-top') {
         handleSetMidThirdTop(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'open-member') {
+        // Double-click a beam in the popped-out window → open it on the main window's
+        // Member screen (main.cjs also raises the main window to the front).
+        onPickMember(cmd.memberId);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();

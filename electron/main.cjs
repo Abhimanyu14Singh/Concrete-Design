@@ -127,7 +127,15 @@ ipcMain.on('dashboard:state', (_e, payload) => {
   if (dashboardWin && !dashboardWin.isDestroyed()) dashboardWin.webContents.send('dashboard:state', payload);
 });
 ipcMain.on('dashboard:command', (_e, cmd) => {
-  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dashboard:command', cmd);
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.webContents.send('dashboard:command', cmd);
+    // Opening a member navigates the MAIN window to its Member screen — bring it to
+    // the front so the user sees it (they double-clicked in the dashboard window).
+    if (cmd && cmd.type === 'open-member') {
+      if (mainWin.isMinimized()) mainWin.restore();
+      mainWin.focus();
+    }
+  }
 });
 ipcMain.on('dashboard:ready', () => {
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('dashboard:ready');

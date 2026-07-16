@@ -79,6 +79,7 @@ export type DashboardCommand =
   | { type: 'toggle-curtailment-note'; groupId: string; face: 'top' | 'bot'; on: boolean }
   | { type: 'set-opposite-top'; groupId: string; bars: BarGroup[] | null }
   | { type: 'set-mid-third-top'; groupId: string; bars: BarGroup[] | null }
+  | { type: 'open-member'; memberId: string }
   | { type: 'pop-in' }
   | { type: 'ready' };
 

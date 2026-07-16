@@ -65,8 +65,50 @@ export default function GroupDashboard({
   const [rowMenu, setRowMenu] = useState<{ memberId: string; x: number; y: number } | null>(null);
   const canContext = !!onMoveMember || !!onCreateGroupForMember;
 
+  // Draggable divider between the card grid (top) and the beam-list detail (bottom).
+  // Persisted (localStorage) so the split survives re-open and reads the same whether
+  // the dashboard is docked or in its own window — this component renders both.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [containerH, setContainerH] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => { for (const e of entries) setContainerH(e.contentRect.height); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const [detailH, setDetailH] = useState<number>(() => {
+    const v = Number(typeof localStorage !== 'undefined' ? localStorage.getItem('dashDetailH') : NaN);
+    return Number.isFinite(v) && v > 0 ? v : 300;
+  });
+  const MIN_DETAIL = 96;
+  // Leave headroom for the header + at least a couple of card rows above the divider.
+  const maxDetail = containerH > 0 ? Math.max(MIN_DETAIL, containerH - 220) : Number.MAX_SAFE_INTEGER;
+  const detailHClamped = Math.min(Math.max(detailH, MIN_DETAIL), maxDetail);
+
+  function startDetailDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = detailHClamped;
+    let latest = startH;
+    const move = (ev: MouseEvent) => {
+      // Drag up → taller beam list (the boundary follows the cursor).
+      latest = Math.min(Math.max(startH - (ev.clientY - startY), MIN_DETAIL), maxDetail);
+      setDetailH(latest);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+      try { localStorage.setItem('dashDetailH', String(Math.round(latest))); } catch { /* non-fatal */ }
+    };
+    document.body.style.cursor = 'row-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, flex: 1, width: '100%', background: SURFACE.app }}
+    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, flex: 1, width: '100%', background: SURFACE.app }}
       onMouseLeave={() => onHoverMember?.(null)}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
@@ -107,9 +149,20 @@ export default function GroupDashboard({
         ))}
       </div>
 
-      {/* Selected-group detail (bottom half) */}
+      {/* Draggable divider — drop it where you like; the beam list keeps that height. */}
       {selGroup && (
-        <div style={{ flexShrink: 0, maxHeight: '44%', overflow: 'auto', borderTop: `1px solid ${BORDER.default}`, background: 'white' }}>
+        <div
+          onMouseDown={startDetailDrag}
+          title="Drag to resize the beam list"
+          style={{ flexShrink: 0, height: 9, cursor: 'row-resize', background: SURFACE.subtle, borderTop: `1px solid ${BORDER.default}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <div style={{ width: 44, height: 3, borderRadius: 2, background: BORDER.strong }} />
+        </div>
+      )}
+
+      {/* Selected-group detail (bottom half) — height set by the divider above. */}
+      {selGroup && (
+        <div style={{ flexShrink: 0, height: detailHClamped, overflow: 'auto', background: 'white' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 12px', position: 'sticky', top: 0, background: 'white', borderBottom: `1px solid ${BORDER.default}`, zIndex: 1 }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: selGroup.color ?? INK.muted }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{selGroup.label}</span>

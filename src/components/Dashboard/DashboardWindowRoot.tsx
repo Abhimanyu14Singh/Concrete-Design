@@ -49,6 +49,7 @@ export default function DashboardWindowRoot() {
         selectedGroupId={selectedGroupId}
         onSelectGroup={id => { setSelectedGroupId(id); api.sendDashboardCommand?.({ type: 'select-group', groupId: id }); }}
         onApplyRebar={apply}
+        onOpenMember={memberId => api.sendDashboardCommand?.({ type: 'open-member', memberId })}
         onMoveMember={(memberId, groupId) => api.sendDashboardCommand?.({ type: 'move-member', memberId, groupId })}
         onCreateGroupForMember={memberId => api.sendDashboardCommand?.({ type: 'create-group-for-member', memberId })}
         onSuggestAll={() => api.sendDashboardCommand?.({ type: 'suggest-all' })}
