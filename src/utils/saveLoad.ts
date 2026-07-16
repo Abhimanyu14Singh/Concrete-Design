@@ -43,8 +43,13 @@ function migrateRebar(r: Partial<RebarLayout> | undefined): RebarLayout {
 }
 
 function migrateMember(m: Partial<Member>): Member {
+  // Drop any stale cached design `results` from files saved by an older build so the
+  // current engine always recomputes (new d / crack logic) on load — nothing in the
+  // app writes this field anymore.
+  const { results: _staleResults, ...rest } = m;
+  void _staleResults;
   return {
-    ...m,
+    ...rest,
     id: m.id ?? `mem-${Math.random().toString(36).slice(2, 10)}`,
     label: m.label ?? 'Member',
     memberType: m.memberType ?? 'beam',
