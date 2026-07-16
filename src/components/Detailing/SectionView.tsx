@@ -374,19 +374,21 @@ export default function SectionView({
   }
 
   /** Editable skin / face reinforcement: "X-#Y @ Z" (bars per side · size · spacing),
-   *  each token click-editable; when absent, a "＋ skin" affordance to add it. */
-  function editableSkinLabel(x: number, y: number): ReactElement {
+   *  each token click-editable; when absent, a "＋ skin" affordance to add it.
+   *  `anchor='end'` right-aligns to `x` and wraps onto two lines (count-size / @ spacing)
+   *  so it can live in the LEFT gutter beside the side bars without clipping. */
+  function editableSkinLabel(x: number, y: number, anchor: 'start' | 'end' = 'start'): ReactElement {
     const s = rebar.sideBars?.[0];
     if (!s || s.numBars <= 0) {
       return (
-        <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+        <text x={x} y={y} textAnchor={anchor} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
           <tspan style={{ ...editTspan, fontWeight: 700 }} textDecoration="underline"
             onClick={e => { e.stopPropagation(); addSkin(); }}>＋ skin</tspan>
         </text>
       );
     }
-    return (
-      <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+    const countSize = (
+      <>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpSide('count', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('count', -1); }}
@@ -396,11 +398,25 @@ export default function SectionView({
           onClick={e => { e.stopPropagation(); bumpSide('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('size', -1); }}
         >{displayBar(s.barSize)}</tspan>
-        <tspan style={noHit}> @ </tspan>
-        <tspan style={editTspan} textDecoration="underline"
-          onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
-          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
-        >{fmt(s.spacing ?? 12, 'length', 0)}</tspan>
+      </>
+    );
+    const spacingTok = (
+      <tspan style={editTspan} textDecoration="underline"
+        onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
+      >{fmt(s.spacing ?? 12, 'length', 0)}</tspan>
+    );
+    if (anchor === 'end') {
+      return (
+        <text x={x} y={y} textAnchor="end" fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+          <tspan x={x} dy={0}>{countSize}</tspan>
+          <tspan x={x} dy={11}><tspan style={noHit}>@ </tspan>{spacingTok}</tspan>
+        </text>
+      );
+    }
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+        {countSize}<tspan style={noHit}> @ </tspan>{spacingTok}
       </text>
     );
   }
@@ -622,7 +638,7 @@ export default function SectionView({
           )}
           {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
               or a "＋ skin" affordance when absent. */}
-          {!isColumn && editStirrup && editableSkinLabel(ox + scaledW + 8, oy + scaledH / 2 - 20)}
+          {!isColumn && editStirrup && editableSkinLabel(ox - 8, oy + scaledH / 2 - 6, 'end')}
           {showDims && result && !isColumn && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;

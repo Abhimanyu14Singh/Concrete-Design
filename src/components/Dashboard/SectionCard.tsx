@@ -171,7 +171,7 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
           rebar={group.rebar}
           width={248} height={168}
           showDims={false} barLabels editBarSize editStirrup
-          padL={8} padR={104} padT={14} padB={16}
+          padL={48} padR={104} padT={14} padB={16}
           onRebarChange={r => onApplyRebar(group.id, r)}
           topFlag={faceFlag('top')}
           botFlag={faceFlag('bot')}
