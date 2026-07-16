@@ -50,6 +50,7 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
   const cu = group.curtailment;
   const opp = group.oppositeEnd;
   const [openFace, setOpenFace] = useState<'top' | 'bot' | null>(null);
+  const [showRegions, setShowRegions] = useState(false);
 
   const faceFlag = (face: 'top' | 'bot') => {
     const fc = face === 'top' ? cu?.top : cu?.bot;
@@ -148,6 +149,11 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
             >({group.face === 'top' ? 'T' : 'B'})</span>
           )}
         </span>
+        <button
+          onClick={e => { e.stopPropagation(); setShowRegions(true); }}
+          title="View the section at each L/3 region — mark end / middle / opposite end — with its reinforcement ratio"
+          style={{ flexShrink: 0, border: `1px solid ${BORDER.default}`, background: 'white', borderRadius: 6, cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '2px 5px', marginTop: 1 }}
+        >👁</button>
         <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
           <span style={{ display: 'flex', gap: 5 }}>
             <DCRChip label="M⁺" value={group.maxFlexPos} />
@@ -282,6 +288,10 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
           onClose={() => setOpenFace(null)}
         />
       )}
+
+      {showRegions && (
+        <RegionSectionsModal group={group} onClose={() => setShowRegions(false)} />
+      )}
     </div>
   );
 }
@@ -339,6 +349,70 @@ function CurtailmentPopover({ face, fc, pinned, canPin, onPin, onClose }: {
           Add this % to the beam schedule notes
         </label>
       )}
+    </div>
+  );
+}
+
+/** Pop-out: the section drawn at each L/3 region — mark end, middle third and
+ *  opposite end — reflecting that region's TOP cage, with the top reinforcement
+ *  ratio ρ⁻ under each (bottom steel ρ⁺ is constant along the span). */
+function RegionSectionsModal({ group, onClose }: { group: DashboardGroup; onClose: () => void }) {
+  const { section, rebar } = group;
+  const areaOf = (bars?: BarGroup[]) =>
+    (bars ?? []).reduce((s, b) => s + Math.max(0, b.numBars) * getBarArea(b.barSize), 0);
+  const asMark = areaOf(rebar.topBars) || 1e-9;
+  // ρ⁻ scales with the top-steel area (same section + d_top across regions), anchored
+  // to the card's mark-end ratio so it matches the ρ⁻ shown on the card.
+  const rhoOf = (bars?: BarGroup[]) => group.rhoTop * (areaOf(bars) / asMark);
+  const desc = (bars?: BarGroup[]) => {
+    const a = (bars ?? []).filter(b => b.numBars > 0);
+    return a.length ? a.map(b => `${b.numBars}-${formatBarLabel(b.barSize)}`).join(' + ') : '—';
+  };
+  const regions: { key: string; title: string; sub: string; top: BarGroup[] }[] = [
+    { key: 'mark', title: 'Mark End', sub: 'governing top cage', top: rebar.topBars },
+    { key: 'mid',  title: 'Middle ⅓', sub: group.midThirdTopBars?.length ? 'curtailed cage' : 'full (no curtailment)', top: group.midThirdTopBars?.length ? group.midThirdTopBars : rebar.topBars },
+    { key: 'opp',  title: 'Opp. End', sub: group.oppositeTopBars?.length ? 'reduced cage' : 'same as mark', top: group.oppositeTopBars?.length ? group.oppositeTopBars : rebar.topBars },
+  ];
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        onDoubleClick={e => e.stopPropagation()}
+        style={{ background: 'white', borderRadius: 12, padding: 16, boxShadow: '0 12px 40px rgba(15,23,42,0.28)', maxWidth: '92vw', maxHeight: '90vh', overflow: 'auto', cursor: 'default' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <span style={{ width: 11, height: 11, borderRadius: 3, background: group.color ?? INK.muted }} />
+          <span style={{ fontSize: 14, fontWeight: 800, color: INK.strong }}>{group.label}</span>
+          <span style={{ fontSize: 12, color: INK.muted }}>— section by L/3 region (top steel)</span>
+          <div style={{ flex: 1 }} />
+          <span onClick={onClose} title="Close" style={{ cursor: 'pointer', color: INK.muted, fontSize: 16, lineHeight: 1 }}>✕</span>
+        </div>
+        <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start' }}>
+          {regions.map(r => (
+            <div key={r.key} style={{ textAlign: 'center', width: 168 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: ACCENT.primary }}>{r.title}</div>
+              <div style={{ fontSize: 9.5, color: INK.muted, marginBottom: 4 }}>{r.sub}</div>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <SectionView
+                  section={section}
+                  rebar={{ ...rebar, topBars: r.top }}
+                  width={168} height={210}
+                  showDims={false}
+                  padL={14} padR={14} padT={12} padB={12}
+                />
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK.strong, ...MONO_NUM, marginTop: 5 }}>{desc(r.top)} <span style={{ color: INK.muted, fontWeight: 400 }}>top</span></div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: ACCENT.primary, ...MONO_NUM, marginTop: 3 }}>ρ⁻ = {rhoOf(r.top).toFixed(2)}%</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10.5, color: INK.muted, ...MONO_NUM, marginTop: 10, textAlign: 'center' }}>
+          Bottom steel constant along the span: {desc(rebar.botBars)} · ρ⁺ = {group.rhoBot.toFixed(2)}%
+        </div>
+      </div>
     </div>
   );
 }
