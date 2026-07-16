@@ -22,7 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
-  onSuggestAll, onToggleCurtailmentNote,
+  onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -44,6 +44,8 @@ export default function GroupDashboard({
   onSuggestAll?: () => void;
   /** Pin/unpin a face's L/3 curtailment % to the beam schedule notes. */
   onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
+  /** Set (or clear) the group's reduced opposite-end top reinforcement. */
+  onSetOppositeTop?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
@@ -97,6 +99,7 @@ export default function GroupDashboard({
             onSelect={() => onSelectGroup(g.id === selectedGroupId ? null : g.id)}
             onApplyRebar={onApplyRebar}
             onToggleCurtailmentNote={onToggleCurtailmentNote}
+            onSetOppositeTop={onSetOppositeTop}
           />
         ))}
       </div>

@@ -1,34 +1,51 @@
 /**
  * SectionCard — one design group's cross-section as a thumbnail with its worst
- * per-mode DCRs (M⁺ / M⁻ / V) on the name row, live ρ / steel weight, and inline
- * cage editing (click a bar count/size to step it; '＋layer' adds a layer; the
- * stirrup line is size/spacing-editable with a '⅓' zoned-spacing toggle). Edits
+ * per-mode DCRs (M⁺ / M⁻ / V) on the name row, an error-beam count beneath them,
+ * live ρ / steel weight, and inline cage editing (click a bar count/size to step
+ * it; '＋layer' adds a layer; the stirrup line is size/spacing-editable). Edits
  * apply to the whole group. Clicking the card selects the group.
  *
- * A small ⚑ sits after the top and bottom bar labels: it reports the L/3
- * curtailment check (RED = 50 % of the bars can't cover the third-point demand;
- * PURPLE = the region is over-provided, curtailment opportunity). Clicking it
- * opens a detail popover where the % can be pinned to the beam schedule notes.
+ * After the top/bottom bar labels sit small status icons:
+ *   ⚑  L/3 curtailment (RED = 50 % can't cover the third-point demand; PURPLE =
+ *      over-provided). Click for a detail popover + schedule-note pin.
+ *   ◨  (top only) opposite-end top steel. AMBER = the far end can take less;
+ *      click to add a reduced opposite-end cage. Then tweak it (left/right-click)
+ *      until it turns BLUE = the reduced cage meets the opposite-end DCR for the
+ *      whole group. RED = the set opposite cage is still short.
  */
 import { useState } from 'react';
-import type { RebarLayout } from '../../types';
+import type { RebarLayout, BarGroup } from '../../types';
 import type { DashboardGroup } from '../../utils/dashboardPayload';
-import type { FaceCurtailment } from '../../utils/curtailment';
+import { type FaceCurtailment, type OppositeEndResult, suggestOppositeCage } from '../../utils/curtailment';
+import { barSizeStep, formatBarLabel } from '../../utils/rebar';
 import SectionView from '../Detailing/SectionView';
 import { DCRChip } from './dashboardShared';
 import { BORDER, INK, ACCENT, STATUS, MONO_NUM } from '../../theme';
 
 const flagColor = (fc: FaceCurtailment) => (fc.flag === 'red' ? STATUS.fail : ACCENT.primary);
+const OPP_BLUE = '#2563eb';   // opposite-end cage meets DCR
+const OPP_AMBER = '#d97706';  // opposite end can take less (opportunity)
 
-export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote }: {
+type OppState = 'met' | 'insufficient' | 'opportunity' | 'same' | null;
+function oppStateOf(opp: OppositeEndResult | undefined): OppState {
+  if (!opp?.hasStationData) return null;
+  if (opp.hasOpposite) return opp.oppositeDcrMet ? 'met' : 'insufficient';
+  return opp.reductionPossible ? 'opportunity' : 'same';
+}
+const oppColorOf = (s: OppState) =>
+  s === 'met' ? OPP_BLUE : s === 'insufficient' ? STATUS.fail : s === 'opportunity' ? OPP_AMBER : INK.muted;
+
+export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop }: {
   group: DashboardGroup;
   selected: boolean;
   onSelect: () => void;
   onApplyRebar: (groupId: string, rebar: RebarLayout) => void;
   onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
+  onSetOppositeTop?: (groupId: string, bars: BarGroup[] | null) => void;
 }) {
   const ng = group.govDCR > 1.0;
   const cu = group.curtailment;
+  const opp = group.oppositeEnd;
   const [openFace, setOpenFace] = useState<'top' | 'bot' | null>(null);
 
   const faceFlag = (face: 'top' | 'bot') => {
@@ -42,8 +59,34 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
     };
   };
 
+  // ◨ opposite-end top-steel status icon (after the top curtailment flag).
+  const oppState = oppStateOf(opp);
+  const oppBar = group.oppositeTopBars?.[0];
+  const toggleOpposite = () => {
+    if (!onSetOppositeTop || !opp?.hasStationData) return;
+    if (opp.hasOpposite) onSetOppositeTop(group.id, null);            // remove
+    else onSetOppositeTop(group.id, suggestOppositeCage(group.rebar, opp)); // add a reduced starting cage
+  };
+  const oppTitle =
+    oppState === 'met' ? `Opposite end OK — ${oppBar?.numBars}-${formatBarLabel(oppBar?.barSize ?? 8)} meets DCR ${opp!.worstOppositeDcr.toFixed(2)} (click to remove)`
+    : oppState === 'insufficient' ? `Opposite end short — DCR ${opp!.worstOppositeDcr.toFixed(2)} > 1; increase the bars`
+    : oppState === 'opportunity' ? `Opposite end can take less (needs ~${Math.round(opp!.reductionPct)}% of the mark steel) — click to add a reduced cage`
+    : 'Opposite end needs the same top steel as the mark side';
+  const topFlag2 = oppState ? { color: oppColorOf(oppState), title: oppTitle, onClick: toggleOpposite } : null;
+
+  const bumpOpp = (field: 'count' | 'size', dir: 1 | -1) => {
+    if (!onSetOppositeTop) return;
+    const cur = oppBar ?? { numBars: 2, barSize: group.rebar.topBars[0]?.barSize ?? 8 };
+    const next: BarGroup = field === 'count'
+      ? { ...cur, numBars: Math.max(1, cur.numBars + dir) }
+      : { ...cur, barSize: barSizeStep(cur.barSize, dir) };
+    onSetOppositeTop(group.id, [next]);
+  };
+
   const openFc: FaceCurtailment | null = openFace === 'top' ? cu?.top ?? null : openFace === 'bot' ? cu?.bot ?? null : null;
   const pinned = openFace === 'top' ? group.notePinned.top : openFace === 'bot' ? group.notePinned.bot : false;
+
+  const errN = group.errorBeamCount;
 
   return (
     <div
@@ -58,9 +101,10 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
         boxShadow: selected ? `0 0 0 1px ${ACCENT.primary}` : 'none',
       }}
     >
-      {/* Name row + the group's worst per-mode DCRs (M⁺ / M⁻ / V). */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ width: 10, height: 10, borderRadius: 3, background: group.color ?? INK.muted, flexShrink: 0 }} />
+      {/* Name row + the group's worst per-mode DCRs (M⁺ / M⁻ / V), with the
+          error-beam count stacked under the chips. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+        <span style={{ width: 10, height: 10, borderRadius: 3, background: group.color ?? INK.muted, flexShrink: 0, marginTop: 2 }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: INK.strong, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {group.label}
           {group.face && (
@@ -70,17 +114,23 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
             >({group.face === 'top' ? 'T' : 'B'})</span>
           )}
         </span>
-        <span style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-          <DCRChip label="M⁺" value={group.maxFlexPos} />
-          <DCRChip label="M⁻" value={group.maxFlexNeg} />
-          <DCRChip label="V" value={group.maxShear} />
+        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+          <span style={{ display: 'flex', gap: 5 }}>
+            <DCRChip label="M⁺" value={group.maxFlexPos} />
+            <DCRChip label="M⁻" value={group.maxFlexNeg} />
+            <DCRChip label="V" value={group.maxShear} />
+          </span>
+          <span
+            title={`${errN} of ${group.beamCount} beam${group.beamCount === 1 ? '' : 's'} fail (NG)`}
+            style={{ fontSize: 10, fontWeight: 700, ...MONO_NUM, color: errN > 0 ? STATUS.fail : INK.muted, display: 'flex', alignItems: 'center', gap: 3 }}
+          >
+            <span style={{ fontSize: 9 }}>{errN > 0 ? '▲' : '△'}</span>{errN} error{errN === 1 ? '' : 's'}
+          </span>
         </span>
       </div>
 
-      {/* Section drawing — bars + stirrups are click-editable; the '＋layer' token
-          adds a reinforcement layer, the '⅓' token zones the stirrup spacing.
-          The ⚑ after each face label opens its L/3 curtailment detail.
-          Clicking anywhere else on the card selects the group. */}
+      {/* Section drawing — bars + stirrups are click-editable. ⚑ = L/3 curtailment,
+          ◨ = opposite-end top steel. Clicking elsewhere selects the group. */}
       <div style={{ display: 'flex', justifyContent: 'center' }}>
         <SectionView
           section={group.section}
@@ -91,8 +141,45 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
           onRebarChange={r => onApplyRebar(group.id, r)}
           topFlag={faceFlag('top')}
           botFlag={faceFlag('bot')}
+          topFlag2={topFlag2}
         />
       </div>
+
+      {/* Opposite-end top reinforcement — editable when set. */}
+      {opp?.hasOpposite && oppBar && (
+        <div
+          onClick={e => e.stopPropagation()}
+          onDoubleClick={e => e.stopPropagation()}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, ...MONO_NUM,
+            padding: '3px 6px', borderRadius: 6, cursor: 'default',
+            border: `1px solid ${opp.oppositeDcrMet ? OPP_BLUE : STATUS.fail}`,
+            background: opp.oppositeDcrMet ? '#eff6ff' : STATUS.failBg,
+          }}
+        >
+          <span style={{ color: opp.oppositeDcrMet ? OPP_BLUE : STATUS.fail, fontWeight: 800 }}>◨</span>
+          <span style={{ color: INK.secondary }}>Opp. end</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <span
+              onClick={e => { e.stopPropagation(); bumpOpp('count', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpOpp('count', -1); }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
+            >{oppBar.numBars}</span>
+            <span style={{ color: INK.muted }}>-</span>
+            <span
+              onClick={e => { e.stopPropagation(); bumpOpp('size', 1); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpOpp('size', -1); }}
+              style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
+            >{formatBarLabel(oppBar.barSize)}</span>
+          </span>
+          <span style={{ color: opp.oppositeDcrMet ? OPP_BLUE : STATUS.fail, fontWeight: 700 }}>
+            DCR {opp.worstOppositeDcr.toFixed(2)} {opp.oppositeDcrMet ? '✓' : '✗'}
+          </span>
+          <span style={{ flex: 1 }} />
+          <span title="L+ bars / R− · click the size for L larger / R smaller" style={{ color: INK.muted, fontSize: 8 }}>L+/R−</span>
+          <span onClick={e => { e.stopPropagation(); onSetOppositeTop?.(group.id, null); }} title="Remove opposite-end reinforcement" style={{ cursor: 'pointer', color: INK.muted, fontWeight: 700 }}>✕</span>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 10, fontSize: 10, color: INK.secondary, ...MONO_NUM }}>
         <span title="Bottom steel ratio">ρ⁺ {group.rhoBot.toFixed(2)}%</span>

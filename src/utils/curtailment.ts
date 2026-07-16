@@ -25,7 +25,7 @@
  * Needs member.stationForces (populated on ETABS import). Members without station
  * data are skipped; a group with none yields no flags (hasStationData = false).
  */
-import type { Member, RebarLayout, DesignCode, LoadCase } from '../types';
+import type { Member, RebarLayout, DesignCode, LoadCase, BarGroup } from '../types';
 import { runDesign } from '../engines';
 import { getBarArea } from './concreteDesign';
 
@@ -158,6 +158,135 @@ export function analyzeGroupCurtailment(
     }
   }
   return { hasStationData: true, top, bot };
+}
+
+// ── Opposite-end top reinforcement ───────────────────────────────────────────
+
+/** Peak hogging near the start support (first third) and end support (last third). */
+function endHogging(m: Member): { startHog: number; endHog: number } | null {
+  const combos = m.stationForces ?? [];
+  let minX = Infinity, maxX = -Infinity;
+  for (const cf of combos) for (const st of cf.stations) {
+    if (st.x < minX) minX = st.x;
+    if (st.x > maxX) maxX = st.x;
+  }
+  if (!isFinite(minX) || maxX - minX < EPS) return null;
+  const L = maxX - minX;
+  let startHog = 0, endHog = 0;
+  for (const cf of combos) for (const st of cf.stations) {
+    const f = (st.x - minX) / L;
+    const hog = Math.max(-st.M, 0);
+    if (f <= 1 / 3 + EPS) startHog = Math.max(startHog, hog);
+    if (f >= 2 / 3 - EPS) endHog = Math.max(endHog, hog);
+  }
+  return { startHog, endHog };
+}
+
+export interface OppositeEndResult {
+  hasStationData: boolean;
+  /** Which end governs the top steel (the "mark" side). */
+  markEnd: 'start' | 'end';
+  markDemand: number;         // hogging at the mark end, group max (kip-ft)
+  oppositeDemand: number;     // hogging at the opposite end, group max (kip-ft)
+  markAsProvided: number;     // mark-side top steel = the group cage (in²)
+  oppositeAsRequired: number; // steel the opposite end needs, incl. code As,min (in²)
+  /** The opposite end can carry its demand with LESS steel than the mark side. */
+  reductionPossible: boolean;
+  reductionPct: number;       // oppositeAsRequired / markAsProvided × 100
+  governingMemberId: string;
+  /** An opposite-end cage has been set on the group. */
+  hasOpposite: boolean;
+  oppositeAsProvided: number; // steel of the set opposite cage (in²)
+  /** The opposite cage covers every beam's opposite-end hogging (DCR ≤ 1). */
+  oppositeDcrMet: boolean;
+  worstOppositeDcr: number;   // worst opposite-end flexural DCR with the opposite cage
+}
+
+const EMPTY_OPP: OppositeEndResult = {
+  hasStationData: false, markEnd: 'start', markDemand: 0, oppositeDemand: 0,
+  markAsProvided: 0, oppositeAsRequired: 0, reductionPossible: false, reductionPct: 0,
+  governingMemberId: '', hasOpposite: false, oppositeAsProvided: 0, oppositeDcrMet: false, worstOppositeDcr: 0,
+};
+
+/**
+ * Analyse whether the OPPOSITE (non-governing) end of a group's beams can take
+ * less top steel than the mark side, and — when an opposite cage is given —
+ * whether that cage covers the opposite-end hogging for every beam.
+ *
+ * `rebar.topBars` is the mark-side top steel. The two supports usually see
+ * different hogging; the lower one (opposite end) can often be curtailed to a
+ * smaller cage. Needs station forces; a group without them returns hasStationData
+ * = false.
+ */
+export function analyzeOppositeEnd(
+  members: Member[],
+  rebar: RebarLayout,
+  oppositeTopBars: BarGroup[] | undefined,
+  code: DesignCode,
+): OppositeEndResult {
+  const beams = members.filter(
+    m => (m.memberType === 'beam' || !m.memberType) && (m.stationForces?.length ?? 0) > 0,
+  );
+  if (!beams.length) return EMPTY_OPP;
+
+  const asTop = faceArea(rebar.topBars);
+  let groupStart = 0, groupEnd = 0;
+  const perBeam: { m: Member; startHog: number; endHog: number }[] = [];
+  for (const m of beams) {
+    const e = endHogging(m);
+    if (!e) continue;
+    groupStart = Math.max(groupStart, e.startHog);
+    groupEnd = Math.max(groupEnd, e.endHog);
+    perBeam.push({ m, startHog: e.startHog, endHog: e.endHog });
+  }
+  if (!perBeam.length) return EMPTY_OPP;
+
+  const markEnd: 'start' | 'end' = groupStart >= groupEnd ? 'start' : 'end';
+  const markDemand = Math.max(groupStart, groupEnd);
+  const oppositeDemand = Math.min(groupStart, groupEnd);
+  const oppHogOf = (pb: { startHog: number; endHog: number }) => markEnd === 'start' ? pb.endHog : pb.startHog;
+
+  // Steel required at the opposite end (max over beams, each on its own section).
+  let oppositeAsRequired = 0, governingMemberId = perBeam[0].m.id;
+  for (const pb of perBeam) {
+    const lc: LoadCase = { id: 'opp', label: 'opposite end', Mu_pos: 0, Mu_neg: oppHogOf(pb), Vu: 0, Tu: 0, Pu: 0 };
+    let r; try { r = runDesign(pb.m.section, pb.m.material, rebar, lc, pb.m.span ?? 20, code, pb.m.crackParams); } catch { continue; }
+    if (r.As_req_neg > oppositeAsRequired) { oppositeAsRequired = r.As_req_neg; governingMemberId = pb.m.id; }
+  }
+  // Only an OPPORTUNITY when the two ends genuinely differ (asymmetric hogging)
+  // AND the opposite end needs less steel than the full mark cage provides.
+  const reductionPossible = asTop > EPS && oppositeAsRequired < asTop - 1e-3 && markDemand > oppositeDemand + 1e-3;
+
+  const oppBars = oppositeTopBars ?? [];
+  const oppositeAsProvided = faceArea(oppBars);
+  const hasOpposite = oppBars.length > 0 && oppositeAsProvided > EPS;
+  let worstOppositeDcr = 0;
+  if (hasOpposite) {
+    for (const pb of perBeam) {
+      const lc: LoadCase = { id: 'opp', label: 'opposite end', Mu_pos: 0, Mu_neg: oppHogOf(pb), Vu: 0, Tu: 0, Pu: 0 };
+      let r; try { r = runDesign(pb.m.section, pb.m.material, { ...rebar, topBars: oppBars }, lc, pb.m.span ?? 20, code, pb.m.crackParams); }
+      catch { worstOppositeDcr = Infinity; continue; }
+      worstOppositeDcr = Math.max(worstOppositeDcr, r.DCR_flex_neg);
+    }
+  }
+
+  return {
+    hasStationData: true, markEnd, markDemand, oppositeDemand,
+    markAsProvided: asTop, oppositeAsRequired,
+    reductionPossible, reductionPct: asTop > EPS ? (oppositeAsRequired / asTop) * 100 : 100,
+    governingMemberId, hasOpposite, oppositeAsProvided,
+    oppositeDcrMet: hasOpposite && worstOppositeDcr <= 1 + 1e-6, worstOppositeDcr,
+  };
+}
+
+/** Suggest a reduced opposite-end cage: the mark bar size, fewest bars (≥2) that
+ *  meet the opposite-end requirement. A sensible starting point the user tweaks. */
+export function suggestOppositeCage(rebar: RebarLayout, opp: OppositeEndResult): BarGroup[] {
+  const markLayer = rebar.topBars.find(b => b.numBars > 0) ?? { numBars: 2, barSize: 8 };
+  const Ab = getBarArea(markLayer.barSize);
+  const n = Math.max(2, Math.ceil(opp.oppositeAsRequired / Ab - 1e-6));
+  const markTotal = rebar.topBars.reduce((s, b) => s + Math.max(0, b.numBars), 0);
+  return [{ numBars: Math.min(n, Math.max(2, markTotal)), barSize: markLayer.barSize }];
 }
 
 /** One-line schedule note for a face's curtailment result. */

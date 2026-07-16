@@ -6,11 +6,11 @@
  * pass per member over the third-point demands).
  */
 import type {
-  DesignGroup, Member, SectionDimensions, RebarLayout, DesignResults, DesignWarning, DesignCode,
+  DesignGroup, Member, SectionDimensions, RebarLayout, DesignResults, DesignWarning, DesignCode, BarGroup,
 } from '../types';
 import { flexSteelRatioPct, steelWeightPerFt } from './autoGroup';
 import { modeDCRs, worstOf } from '../components/Dashboard/dashboardShared';
-import { analyzeGroupCurtailment, type GroupCurtailment } from '../utils/curtailment';
+import { analyzeGroupCurtailment, analyzeOppositeEnd, type GroupCurtailment, type OppositeEndResult } from '../utils/curtailment';
 
 export interface DashboardGroup {
   id: string;
@@ -34,8 +34,14 @@ export interface DashboardGroup {
   rhoBot: number;
   steelWtLbFt: number;
   beamCount: number;
+  /** Beams in the group whose design fails (status NG) — the error count. */
+  errorBeamCount: number;
   /** L/3 curtailment analysis for the group cage (red/purple flags + %). */
   curtailment: GroupCurtailment;
+  /** Opposite-(non-governing-)end top-steel analysis (can it take less?). */
+  oppositeEnd: OppositeEndResult;
+  /** The reduced opposite-end top cage the user set (if any). */
+  oppositeTopBars?: BarGroup[];
   /** Which faces the user pinned to the schedule notes. */
   notePinned: { top: boolean; bot: boolean };
 }
@@ -66,6 +72,7 @@ export type DashboardCommand =
   | { type: 'create-group-for-member'; memberId: string }
   | { type: 'suggest-all' }
   | { type: 'toggle-curtailment-note'; groupId: string; face: 'top' | 'bot'; on: boolean }
+  | { type: 'set-opposite-top'; groupId: string; bars: BarGroup[] | null }
   | { type: 'pop-in' }
   | { type: 'ready' };
 
@@ -128,7 +135,10 @@ export function buildDashboardPayload(
       rhoBot: repMember ? flexSteelRatioPct(repMember, 'bot') : 0,
       steelWtLbFt: repMember ? steelWeightPerFt(repMember).totalLbFt : 0,
       beamCount: beams.length,
+      errorBeamCount: beams.filter(m => designResultsById[m.id]?.status === 'NG').length,
       curtailment: analyzeGroupCurtailment(beams, rebar, code),
+      oppositeEnd: analyzeOppositeEnd(beams, rebar, g.oppositeTopBars, code),
+      oppositeTopBars: g.oppositeTopBars,
       notePinned: { top: !!g.curtailmentNotes?.top, bot: !!g.curtailmentNotes?.bot },
     };
   });

@@ -524,6 +524,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleSuggestAllGroups();
       } else if (cmd.type === 'toggle-curtailment-note') {
         handleToggleCurtailmentNote(cmd.groupId, cmd.face, cmd.on);
+      } else if (cmd.type === 'set-opposite-top') {
+        handleSetOppositeTop(cmd.groupId, cmd.bars);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();
@@ -556,6 +558,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       ...prev,
       designGroups: (prev.designGroups ?? []).map(g =>
         g.id === groupId ? { ...g, curtailmentNotes: { ...g.curtailmentNotes, [face]: on } } : g),
+    }));
+  }
+
+  // Set (or clear, when bars === null) a group's reduced opposite-end top cage.
+  function handleSetOppositeTop(groupId: string, bars: import('../../types').BarGroup[] | null) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!bars || !bars.length) { const { oppositeTopBars: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, oppositeTopBars: bars };
+      }),
     }));
   }
 
@@ -1096,6 +1110,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onCreateGroupForMember={handleCreateGroupForMember}
               onSuggestAll={handleSuggestAllGroups}
               onToggleCurtailmentNote={handleToggleCurtailmentNote}
+              onSetOppositeTop={handleSetOppositeTop}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}

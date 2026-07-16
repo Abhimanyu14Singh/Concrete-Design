@@ -105,6 +105,13 @@ export interface DesignGroup {
    * export time from the current cage + station forces.
    */
   curtailmentNotes?: { top?: boolean; bot?: boolean };
+  /**
+   * Reduced TOP reinforcement for the OPPOSITE (non-governing) end of the beams.
+   * The group's `rebar.topBars` is the mark-side (governing-end) top steel; the
+   * lower-demand end can often take less. When set, the section card shows it and
+   * the beam schedule carries it as the opposite-end top bars.
+   */
+  oppositeTopBars?: BarGroup[];
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */

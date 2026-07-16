@@ -27,6 +27,8 @@ interface Props {
   /** Small clickable ⚑ after the top/bottom bar label (L/3 curtailment flags). */
   topFlag?: { color: string; title?: string; onClick: () => void } | null;
   botFlag?: { color: string; title?: string; onClick: () => void } | null;
+  /** Second clickable icon (◨) after the top flag — opposite-end top-steel status. */
+  topFlag2?: { color: string; title?: string; onClick: () => void } | null;
 }
 
 export default function SectionView({
@@ -38,7 +40,7 @@ export default function SectionView({
   editStirrup = false,
   padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
-  topFlag, botFlag,
+  topFlag, botFlag, topFlag2,
 }: Props) {
   const { fmt, units } = useUnits();
   const pL = padL, pR = padR, pT = padT, pB = padB;
@@ -245,6 +247,7 @@ export default function SectionView({
   function editableFaceLabel(face: 'top' | 'bot', x: number, y: number, fill: string): ReactElement {
     const bars = face === 'top' ? rebar.topBars : rebar.botBars;
     const flag = face === 'top' ? topFlag : botFlag;
+    const flag2 = face === 'top' ? topFlag2 : null; // opposite-end status (top only)
     const firstIdx = bars.findIndex(g => g.numBars > 0);
     const flagTspan = flag ? (
       <tspan dx="7" style={{ cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto', fontWeight: 700 }}
@@ -254,7 +257,15 @@ export default function SectionView({
         {flag.title ? <title>{flag.title}</title> : null}⚑
       </tspan>
     ) : null;
-    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—{flagTspan}</text>;
+    const flag2Tspan = flag2 ? (
+      <tspan dx="4" style={{ cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto', fontWeight: 700 }}
+        fill={flag2.color} fontSize="13"
+        onClick={e => { e.stopPropagation(); flag2.onClick(); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag2.onClick(); }}>
+        {flag2.title ? <title>{flag2.title}</title> : null}◨
+      </tspan>
+    ) : null;
+    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—{flagTspan}{flag2Tspan}</text>;
     return (
       <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
         {bars.map((g, li) => g.numBars > 0 ? (
@@ -271,7 +282,7 @@ export default function SectionView({
             >{displayBar(g.barSize)}</tspan>
           </tspan>
         ) : null)}
-        {flagTspan}
+        {flagTspan}{flag2Tspan}
       </text>
     );
   }

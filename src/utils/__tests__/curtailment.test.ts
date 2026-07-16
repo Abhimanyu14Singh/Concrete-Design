@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeGroupCurtailment, curtailmentNote, CURTAIL_THRESHOLD_PCT } from '../curtailment';
+import { analyzeGroupCurtailment, curtailmentNote, CURTAIL_THRESHOLD_PCT, analyzeOppositeEnd, suggestOppositeCage } from '../curtailment';
 import type { Member, ComboForces, RebarLayout } from '../../types';
 
 /** Build a beam with a moment profile M(f), f = fraction along the span. */
@@ -120,5 +120,56 @@ describe('analyzeGroupCurtailment', () => {
     expect(r.hasStationData).toBe(true);
     expect(r.top).not.toBeNull();
     expect(r.bot).not.toBeNull();
+  });
+});
+
+// Asymmetric ends: strong hogging at the start support (−200), light at the end
+// (−50), sagging mid-span. So the end (opposite) support can take less top steel.
+const asym = (f: number) => (-200 + 150 * f) + 300 * Math.sin(Math.PI * f);
+
+describe('analyzeOppositeEnd', () => {
+  it('reports no data when the group has no station forces', () => {
+    const m = makeBeam({ id: 'ns', moment: asym, withStations: false });
+    const r = analyzeOppositeEnd([m], m.rebar, undefined, 'ACI318-19');
+    expect(r.hasStationData).toBe(false);
+  });
+
+  it('detects the mark (governing) end and that the opposite end can take less', () => {
+    const m = makeBeam({ id: 'asym', moment: asym });
+    const r = analyzeOppositeEnd([m], m.rebar, undefined, 'ACI318-19');
+    expect(r.hasStationData).toBe(true);
+    expect(r.markEnd).toBe('start');            // −200 end governs
+    expect(r.markDemand).toBeGreaterThan(180);
+    expect(r.oppositeDemand).toBeLessThan(80);  // ~50 at the far end
+    expect(r.reductionPossible).toBe(true);
+    expect(r.hasOpposite).toBe(false);
+  });
+
+  it('a symmetric beam offers no opposite-end reduction', () => {
+    const m = makeBeam({ id: 'sym', moment: fixedEnd });
+    const r = analyzeOppositeEnd([m], m.rebar, undefined, 'ACI318-19');
+    expect(r.hasStationData).toBe(true);
+    expect(r.reductionPossible).toBe(false);     // both ends ≈ equal
+  });
+
+  it('suggestOppositeCage yields a REDUCED cage that meets the opposite-end DCR', () => {
+    const m = makeBeam({ id: 'asym', moment: asym });
+    const base = analyzeOppositeEnd([m], m.rebar, undefined, 'ACI318-19');
+    const cage = suggestOppositeCage(m.rebar, base);
+    const markTotal = m.rebar.topBars.reduce((s, b) => s + b.numBars, 0);
+    const oppTotal = cage.reduce((s, b) => s + b.numBars, 0);
+    expect(oppTotal).toBeLessThan(markTotal);    // fewer bars than the mark side
+    const withCage = analyzeOppositeEnd([m], m.rebar, cage, 'ACI318-19');
+    expect(withCage.hasOpposite).toBe(true);
+    expect(withCage.oppositeDcrMet).toBe(true);  // the reduced cage still passes
+  });
+
+  it('an inadequate opposite cage does NOT meet the DCR (icon would stay red)', () => {
+    const m = makeBeam({ id: 'asym', moment: asym });
+    const tiny = [{ numBars: 2, barSize: 3 }]; // 2-#3 — far too little for ~50 k·ft
+    const r = analyzeOppositeEnd([m], m.rebar, tiny, 'ACI318-19');
+    expect(r.hasOpposite).toBe(true);
+    expect(r.oppositeDcrMet).toBe(false);
+    expect(r.worstOppositeDcr).toBeGreaterThan(1);
   });
 });
