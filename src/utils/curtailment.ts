@@ -328,7 +328,7 @@ export interface SteppedMomentCapacity {
 /** The continuous cage kept through a face's curtailment region: the same bar
  *  size, `CURTAIL_CONTINUOUS_FRAC` of the area but never below code As,min and
  *  never above the full cage. */
-function continuousCage(bars: BarGroup[], asMin: number): BarGroup[] {
+export function continuousCage(bars: BarGroup[], asMin: number): BarGroup[] {
   const layer = bars.find(b => b.numBars > 0);
   if (!layer) return bars;
   const Ab = getBarArea(layer.barSize);
