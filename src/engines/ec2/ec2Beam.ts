@@ -195,20 +195,59 @@ export function ecm(fck: number): number {
   return 22000 * Math.pow((fck + 8) / 10, 0.3);
 }
 
+/**
+ * Creep coefficient φ(t,t0) per EN 1992-1-1 Annex B (eq B.1–B.10). Long-term by
+ * default (pass a large t, e.g. 70 yr, so βc → 1). h0 = notional size (mm) =
+ * 2·Ac/u. cementClass: 'S' (slow), 'N' (normal) or 'R' (rapid). 20 °C assumed.
+ */
+export function creepCoefficient(
+  fck: number, RH: number, t0: number, tDays: number, h0: number,
+  cementClass: 'S' | 'N' | 'R' = 'N',
+): number {
+  const fcm = fck + 8;
+  const a1 = Math.pow(35 / fcm, 0.7);   // (B.8c)
+  const a2 = Math.pow(35 / fcm, 0.2);
+  const a3 = Math.pow(35 / fcm, 0.5);
+  // Loading-age adjustment for cement class (B.9); 20 °C ⇒ no temperature term.
+  const aCem = cementClass === 'S' ? -1 : cementClass === 'R' ? 1 : 0;
+  const t0adj = Math.max(0.5, t0 * Math.pow(9 / (2 + Math.pow(t0, 1.2)) + 1, aCem));
+  const h0root = Math.cbrt(h0);
+  const phiRH = fcm <= 35                                                 // (B.3a/b)
+    ? 1 + (1 - RH / 100) / (0.1 * h0root)
+    : (1 + (1 - RH / 100) / (0.1 * h0root) * a1) * a2;
+  const betaFcm = 16.8 / Math.sqrt(fcm);                                  // (B.4)
+  const betaT0 = 1 / (0.1 + Math.pow(t0adj, 0.20));                       // (B.5)
+  const phi0 = phiRH * betaFcm * betaT0;                                  // (B.2)
+  const betaH = fcm <= 35                                                 // (B.8a/b)
+    ? Math.min(1.5 * (1 + Math.pow(0.012 * RH, 18)) * h0 + 250, 1500)
+    : Math.min(1.5 * (1 + Math.pow(0.012 * RH, 18)) * h0 + 250 * a3, 1500 * a3);
+  const dt = Math.max(0, tDays - t0adj);
+  const betaC = Math.pow(dt / (betaH + dt), 0.3);                         // (B.7)
+  return phi0 * betaC;                                                    // (B.1)
+}
+
 export interface CrackWidthResult {
-  wk: number;       // characteristic crack width (mm)
+  wk: number;       // characteristic crack width (mm) — 0 when the section is uncracked
   sigma_s: number;  // steel stress under quasi-permanent moment (MPa)
   sr_max: number;   // maximum crack spacing (mm)
   x: number;        // cracked-section neutral axis depth (mm)
   rho_p_eff: number;
-  k2: number;       // strain-distribution factor actually used
-  srEq: '7.11' | '7.14' | null;  // which sr,max equation governed
+  k2: number;       // strain-distribution factor used (0.5, bending)
+  srEq: '7.11' | '7.14' | null;  // which sr,max equation governed the min()
+  cracked: boolean; // Mqp > Mcr → cracked; otherwise wk is forced to 0
+  Mcr: number;      // cracking moment (kN·m)
+  alpha_e: number;  // (creep-adjusted) modular ratio actually used
 }
 
 /**
- * Characteristic crack width wk = sr,max·(εsm − εcm) per EN 1992-1-1 §7.3.4.
- * Elastic cracked-section analysis for σs; k1=0.8 (ribbed bars), k2=0.5
- * (bending), k3=3.4, k4=0.425. All inputs SI: mm, MPa, kN·m.
+ * Characteristic crack width wk = sr,max·(εsm − εcm) per EN 1992-1-1 §7.3.4,
+ * following the Concrete-Institute long-hand method:
+ *   • modular ratio αe = Es / Ec,eff with Ec,eff = Ecm/(1+φ)  (creep, opts.phi)
+ *   • fully-cracked TRANSFORMED neutral axis incl. compression steel (opts.AsComp/dComp)
+ *   • σs from the cracked transformed second moment of area
+ *   • k2 = 0.5 (bending); sr,max = min(eq 7.11, eq 7.14)
+ *   • un-cracked check: if Mqp ≤ Mcr the section is uncracked ⇒ wk = 0
+ * All inputs SI: mm, MPa, kN·m.
  */
 export function crackWidth(
   Mqp: number,     // quasi-permanent moment (kN·m)
@@ -216,53 +255,56 @@ export function crackWidth(
   barD: number,    // tension bar diameter (mm)
   b: number,       // section width at the tension face (mm)
   h: number,       // overall depth (mm)
-  d: number,       // effective depth (mm)
-  cover: number,   // clear cover to the tension bars (mm)
+  d: number,       // effective depth to tension steel (mm)
+  cover: number,   // cover to the tension bar surface (mm)
   fck: number,     // MPa
   Es: number,      // MPa
   kt: number,      // 0.4 long-term / 0.6 short-term
+  opts: { AsComp?: number; dComp?: number; phi?: number } = {},
 ): CrackWidthResult {
+  const phi = opts.phi ?? 0;
+  const alpha_e = Es / (ecm(fck) / (1 + phi));  // creep-adjusted modular ratio
+  const AsComp = opts.AsComp ?? 0;              // compression steel (mm²)
+  const dComp = opts.dComp ?? 0;                // its depth from the compression face
+
   if (Mqp <= 0 || As <= 0 || d <= 0) {
-    return { wk: 0, sigma_s: 0, sr_max: 0, x: 0, rho_p_eff: 0, k2: 0.5, srEq: null };
+    return { wk: 0, sigma_s: 0, sr_max: 0, x: 0, rho_p_eff: 0, k2: 0.5, srEq: null, cracked: false, Mcr: 0, alpha_e };
   }
 
-  const alpha_e = Es / ecm(fck);
+  // ── Un-cracked transformed section → cracking moment §7.1 ──
+  const Au = b * h + (alpha_e - 1) * (As + AsComp);
+  const xu = (b * h * h / 2 + (alpha_e - 1) * (As * d + AsComp * dComp)) / Au;
+  const Iu = b * h ** 3 / 12 + b * h * (h / 2 - xu) ** 2
+    + (alpha_e - 1) * (As * (d - xu) ** 2 + AsComp * (xu - dComp) ** 2);
+  const Mcr = fctm(fck) * Iu / (h - xu) / 1e6; // kN·m
 
-  // Cracked elastic neutral axis: b·x²/2 = αe·As·(d − x)
-  const n = alpha_e * As / b;
-  const x = n * (Math.sqrt(1 + 2 * d / n) - 1);
-  const z = d - x / 3;
-  const sigma_s = Mqp * 1e6 / (As * z); // MPa
+  // ── Fully-cracked TRANSFORMED neutral axis (incl. compression steel) ──
+  // (b/2)x² + [(αe−1)As' + αe·As]·x − [(αe−1)As'·d' + αe·As·d] = 0
+  const qA = b / 2;
+  const qB = (alpha_e - 1) * AsComp + alpha_e * As;
+  const qC = -((alpha_e - 1) * AsComp * dComp + alpha_e * As * d);
+  const x = (-qB + Math.sqrt(qB * qB - 4 * qA * qC)) / (2 * qA);
 
-  // Effective tension area §7.3.2(3)
+  // Cracked transformed 2nd moment of area about the NA → tension-steel stress
+  const Icr = b * x ** 3 / 3 + (alpha_e - 1) * AsComp * (x - dComp) ** 2 + alpha_e * As * (d - x) ** 2;
+  const sigma_s = Icr > 0 ? alpha_e * Mqp * 1e6 * (d - x) / Icr : 0; // MPa
+
+  // Effective tension area §7.3.2(3) — concrete area net of the tension bars
   const hc_ef = Math.min(2.5 * (h - d), (h - x) / 3, h / 2);
-  const Ac_eff = b * hc_ef;
+  const Ac_eff = Math.max(b * hc_ef - As, 1);
   const rho_p_eff = As / Ac_eff;
 
-  // Strain-distribution factor k2 §7.3.4: general k2 = (ε1+ε2)/(2·ε1), where
-  // ε1/ε2 are the strains at the outer/inner edges of the effective tension
-  // zone. Strain is linear in distance from the neutral axis, so with a1 =
-  // (h−x) at the tension face and a2 = a1 − hc_ef at the inner edge,
-  // k2 = (a1 + max(a2,0)) / (2·a1). Reduces to 0.5 for pure bending (ε2→0)
-  // and 1.0 for pure tension (uniform strain). EN 1992-1-1 cites 0.5 for
-  // bending as a simplification; the general form matches S-CONCRETE and is
-  // more conservative when hc_ef is a deep strip.
-  const a1 = h - x;                       // NA → tension face (mm)
-  const a2 = Math.max(0, a1 - hc_ef);     // NA → inner edge of effective zone
-  const k2 = a1 > 0 ? (a1 + a2) / (2 * a1) : 0.5;
+  // Un-cracked: below the cracking moment there is no crack to check.
+  if (Mqp <= Mcr) {
+    return { wk: 0, sigma_s, sr_max: 0, x, rho_p_eff, k2: 0.5, srEq: null, cracked: false, Mcr, alpha_e };
+  }
 
-  // Maximum crack spacing §7.3.4(3): use eq (7.11) when bonded bars are spaced
-  // closely (≤ 5(c+φ/2)); otherwise the upper-bound eq (7.14) sr,max = 1.3(h−x)
-  // governs (bars too far apart to control cracking individually).
-  const k1 = 0.8, k3 = 3.4, k4 = 0.425;
-  const nBars = As / (Math.PI / 4 * barD * barD);
-  const spacing = nBars > 1 ? (b - 2 * cover - barD) / (nBars - 1) : Infinity;
-  const threshold = 5 * (cover + barD / 2);
-  const useEq714 = spacing > threshold;
-  const srEq: '7.11' | '7.14' = useEq714 ? '7.14' : '7.11';
-  const sr_max = useEq714
-    ? 1.3 * (h - x)                                  // eq (7.14)
-    : k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;  // eq (7.11)
+  // Maximum crack spacing §7.3.4(3): min of eq (7.11) and the (7.14) upper bound.
+  const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
+  const sr711 = k3 * cover + k1 * k2 * k4 * barD / rho_p_eff;
+  const sr714 = 1.3 * (h - x);
+  const sr_max = Math.min(sr711, sr714);
+  const srEq: '7.11' | '7.14' = sr711 <= sr714 ? '7.11' : '7.14';
 
   // Mean strain difference eq (7.9), floor 0.6·σs/Es
   const fct_eff = fctm(fck);
@@ -271,7 +313,7 @@ export function crackWidth(
     0.6 * sigma_s / Es,
   );
 
-  return { wk: sr_max * eps, sigma_s, sr_max, x, rho_p_eff, k2, srEq };
+  return { wk: sr_max * eps, sigma_s, sr_max, x, rho_p_eff, k2, srEq, cracked: true, Mcr, alpha_e };
 }
 
 // ── Full member check ────────────────────────────────────────────────────────
@@ -588,12 +630,21 @@ export function designMemberEC2(
   const Mqp_pos = crack.Mqp_pos !== undefined ? crack.Mqp_pos * KIPFT_TO_KNM : crack.qpFactor * MEd_pos;
   const Mqp_neg = crack.Mqp_neg !== undefined ? crack.Mqp_neg * KIPFT_TO_KNM : crack.qpFactor * MEd_neg;
 
+  // Effective creep coefficient for the crack modular ratio (Annex B, long-term).
+  // Notional size h0 = 2·Ac/u with the full perimeter taken as the drying face.
+  const h0_mm = 2 * (b_mm * h_mm) / (2 * (b_mm + h_mm));
+  const phiCreep = crack.creepPhi
+    ?? creepCoefficient(fck, crack.creepRH ?? 50, crack.creepT0 ?? 28, 25550, h0_mm, crack.cementClass ?? 'N');
+  // Compression-steel depth from the compression face for each bending sense.
+  const dComp_pos = cover_mm + stirrupD_mm + topBarD_mm / 2; // +M: top steel in compression
+  const dComp_neg = cover_mm + stirrupD_mm + botBarD_mm / 2; // −M: bottom steel in compression
+
   // Bottom face (positive bending → bottom steel in tension)
   const cw_bot = crackWidth(Mqp_pos, As_bot_mm2, botBarD_mm, b_mm, h_mm, d_bot,
-    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt);
+    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt, { AsComp: As_top_mm2, dComp: dComp_pos, phi: phiCreep });
   // Top face (negative bending → top steel in tension)
   const cw_top = crackWidth(Mqp_neg, As_top_mm2, topBarD_mm, b_mm, h_mm, d_top,
-    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt);
+    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt, { AsComp: As_bot_mm2, dComp: dComp_neg, phi: phiCreep });
 
   if (cw_bot.wk > crack.wLimitBot)
     warnings.push({ code: 'EC2 §7.3.4', message: `Bottom face crack width wk = ${cw_bot.wk.toFixed(2)} mm > limit ${crack.wLimitBot.toFixed(2)} mm (σs = ${cw_bot.sigma_s.toFixed(0)} MPa under M_qp = ${Mqp_pos.toFixed(1)} kN·m)`, severity: 'error' });
@@ -607,7 +658,7 @@ export function designMemberEC2(
   //   fs_skin interpolated from governing chord elastic strain profile
   let wk_face: number | undefined;
   const governingMqp = Math.max(Mqp_pos, Mqp_neg);
-  if (rebar.sideBars && rebar.sideBars.length > 0 && governingMqp > 0) {
+  if (rebar.sideBars && rebar.sideBars.length > 0 && governingMqp > 0 && (cw_bot.cracked || cw_top.cracked)) {
     const firstSideGroup = rebar.sideBars[0];
     const sideBarD = getBarDiam(firstSideGroup.barSize) * IN_TO_MM;
     const As_per_bar = getBarArea(firstSideGroup.barSize) * IN2_TO_MM2;
@@ -662,7 +713,7 @@ export function designMemberEC2(
 
       // (εsm − εcm) at skin bar using EC2 eq (7.9)
       const fct_eff = fctm(fck);
-      const alpha_e_side = Es_MPa / ecm(fck);
+      const alpha_e_side = Es_MPa / (ecm(fck) / (1 + phiCreep));
       const eps_skin = Math.max(
         (fs_skin - crack.kt * fct_eff / Math.max(rho_side, 1e-6) * (1 + alpha_e_side * rho_side)) / Es_MPa,
         0.6 * fs_skin / Es_MPa,

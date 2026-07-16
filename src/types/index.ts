@@ -346,10 +346,16 @@ export interface CrackControlParams {
   slsLoadCaseId?: string;   // ID of the SLS quasi-permanent load case
   Mqp_pos?: number;         // kip-ft, resolved from slsLoadCaseId at call site
   Mqp_neg?: number;         // kip-ft, resolved from slsLoadCaseId at call site
+  // Creep model for the crack modular ratio αe = Es/(Ecm/(1+φ)), EN 1992-1-1 Annex B.
+  creepPhi?: number;        // effective creep coefficient φ; when set, used directly
+  creepRH?: number;         // ambient relative humidity % (default 50)
+  creepT0?: number;         // concrete age at first loading, days (default 28)
+  cementClass?: 'S' | 'N' | 'R'; // cement class for the loading-age maturity (default 'N')
 }
 
 export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
   wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4,
+  creepRH: 50, creepT0: 28, cementClass: 'N',
 };
 
 /** Engineer override — stamps a failing member as reviewed & accepted. */

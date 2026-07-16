@@ -8,7 +8,7 @@ import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase, CrackCont
 import { DEFAULT_CRACK_PARAMS } from '../types';
 import type { CalcSection } from './calcBreakdown';
 import { getBarArea, getBarDiam } from './concreteDesign';
-import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, ecm } from '../engines/ec2/ec2Beam';
+import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, ecm, creepCoefficient } from '../engines/ec2/ec2Beam';
 import { formatBarLabel } from './rebar';
 
 const IN_TO_MM = 25.4, PSI_TO_MPA = 0.00689476, KIP_TO_KN = 4.44822, KIPFT_TO_KNM = 1.35582, IN2_TO_MM2 = 645.16;
@@ -164,7 +164,11 @@ export function generateBreakdownEC2(
 
   // ── Crack width §7.3.4 ──
   const Es_MPa = material.Es * PSI_TO_MPA;
-  const alpha_e = Es_MPa / ecm(fck);
+  // Creep-adjusted modular ratio αe = Es / (Ecm/(1+φ)), φ from Annex B (long-term).
+  const h0_mm = 2 * (b * h) / (2 * (b + h));
+  const phiCreep = crack.creepPhi ?? creepCoefficient(fck, crack.creepRH ?? 50, crack.creepT0 ?? 28, 25550, h0_mm, crack.cementClass ?? 'N');
+  const Ec_eff = ecm(fck) / (1 + phiCreep);
+  const alpha_e = Es_MPa / Ec_eff;
   // M_qp precedence mirrors the engine (ec2Beam.ts): use the resolved SLS combo
   // moment (kip-ft → kN·m) when present, else the qpFactor × M_Ed ratio fallback.
   const posFromCombo = crack.Mqp_pos !== undefined;
@@ -177,30 +181,40 @@ export function generateBreakdownEC2(
 
   function addFaceSteps(
     faceLabel: string, Mqp: number, As_f: number, barD_f: number,
-    b_f: number, d_f: number, wLimit: number, fromCombo = false,
+    b_f: number, d_f: number, AsComp_f: number, dComp_f: number,
+    wLimit: number, fromCombo = false,
   ) {
     if (Mqp <= 0 || As_f <= 0) return;
-    const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt);
-    // Show whichever max-crack-spacing equation actually governed (§7.3.4(3)):
-    // eq (7.11) for closely-spaced bonded bars, else the upper bound eq (7.14).
-    const srStep = cw.srEq === '7.14'
-      ? { ref: 'eq (7.14)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = 1.3·(h − x)', substitution: `bars spaced > 5(c+Ø/2) ⇒ upper bound governs; h−x = ${f(h - cw.x, 0)} mm`, result: `sr,max = ${f(cw.sr_max, 0)} mm` }
-      : { ref: 'eq (7.11)', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = ${f(cw.k2, 2)}, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
-    const dcr = wLimit > 0 ? cw.wk / wLimit : 0;
+    const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt,
+      { AsComp: AsComp_f, dComp: dComp_f, phi: phiCreep });
+    // Quasi-permanent moment + cracking check are shown for every face.
     crackSteps.push(
       fromCombo
         ? { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = M_Ed (SLS combo)', substitution: slsComboName ? `quasi-permanent combo "${slsComboName}"` : 'selected SLS combo', result: `M_qp = ${f(Mqp)} kN·m` }
         : { ref: '§7.3.4', label: `${faceLabel}: quasi-permanent moment`, equation: 'M_qp = ψ·M_Ed', substitution: `${f(crack.qpFactor, 2)} × ${f(Mqp / crack.qpFactor)}`, result: `M_qp = ${f(Mqp)} kN·m` },
-      { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'σs via elastic cracked section', substitution: `x = ${f(cw.x, 0)} mm, z = d−x/3 = ${f(d_f - cw.x / 3, 0)} mm, αe = ${f(alpha_e, 1)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
-      { ref: '§7.3.2(3)', label: `${faceLabel}: effective reinforcement ratio`, equation: 'ρp,eff = As/Ac,eff', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
+      { ref: '§7.1', label: `${faceLabel}: cracking moment (transformed uncracked)`, equation: 'M_cr = fctm·Iu/(h − xu)', substitution: `αe = ${f(alpha_e, 2)} (φ = ${f(phiCreep, 2)}), fctm = ${f(fctm(fck), 2)} MPa`, result: `M_cr = ${f(cw.Mcr)} kN·m → ${cw.cracked ? 'M_qp > M_cr ⇒ CRACKED' : 'M_qp ≤ M_cr ⇒ UNCRACKED'}` },
+    );
+    if (!cw.cracked) {
+      crackSteps.push({ ref: '§7.3.1', label: `${faceLabel}: crack DCR`, equation: 'section uncracked', substitution: `M_qp = ${f(Mqp)} ≤ M_cr = ${f(cw.Mcr)} kN·m`, result: 'wk = 0 → DCR = 0 ✓ OK (no crack)' });
+      return;
+    }
+    const srStep = cw.srEq === '7.14'
+      ? { ref: 'eq (7.14) gov', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = min[ eq(7.11), 1.3(h − x) ]', substitution: `upper bound governs; h−x = ${f(h - cw.x, 0)} mm`, result: `sr,max = ${f(cw.sr_max, 0)} mm` }
+      : { ref: 'eq (7.11) gov', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = min[ k3·c + k1·k2·k4·Ø/ρp,eff , 1.3(h−x) ]', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
+    const dcr = wLimit > 0 ? cw.wk / wLimit : 0;
+    crackSteps.push(
+      { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'transformed cracked section incl. compression steel', substitution: `x = ${f(cw.x, 0)} mm, As' = ${f(AsComp_f, 0)} mm² @ d' = ${f(dComp_f, 0)} mm, αe = ${f(alpha_e, 2)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
+      { ref: '§7.3.2(3)', label: `${faceLabel}: effective reinforcement ratio`, equation: 'ρp,eff = As/(Ac,eff − As)', substitution: `hc,ef = min(2.5(h−d), (h−x)/3, h/2)`, result: `ρp,eff = ${f(cw.rho_p_eff * 100, 2)}%` },
       srStep,
       { ref: 'eq (7.8)', label: `${faceLabel}: crack width`, equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)} (${crack.kt === 0.4 ? 'long-term' : 'short-term'})`, result: `wk = ${f(cw.wk, 3)} mm vs limit ${f(wLimit, 2)} mm` },
       { ref: '§7.3.1', label: `${faceLabel}: crack DCR`, equation: 'DCR = wk / w_max', substitution: `${f(cw.wk, 3)} / ${f(wLimit, 2)}`, result: `DCR = ${f(dcr, 3)} ${dcr <= 1 ? '✓ OK' : '✗ NG'}` },
     );
   }
 
-  addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, crack.wLimitBot, posFromCombo);
-  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, d, crack.wLimitTop, negFromCombo);
+  const dComp_pos = cover + stirrupD + topBarD / 2; // +M: top steel in compression
+  const dComp_neg = cover + stirrupD + botBarD / 2; // −M: bottom steel in compression
+  addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, As_top, dComp_pos, crack.wLimitBot, posFromCombo);
+  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, d, As, dComp_neg, crack.wLimitTop, negFromCombo);
 
   // Side face (skin reinforcement) — corrected EC2 §7.3.2/§7.3.4 approach:
   //   k2 = 1.0 (pure tension at mid-height)
@@ -216,7 +230,8 @@ export function generateBreakdownEC2(
       const useHogging = Mqp_neg >= Mqp_pos;
       const d_chord = useHogging ? (h - cover - stirrupD - topBarD / 2) : d;
       const As_chord = useHogging ? As_top : As;
-      const cwGov = crackWidth(govMqp, As_chord, useHogging ? topBarD : botBarD, b, h, d_chord, cover + stirrupD, fck, Es_MPa, crack.kt);
+      const cwGov = crackWidth(govMqp, As_chord, useHogging ? topBarD : botBarD, b, h, d_chord, cover + stirrupD, fck, Es_MPa, crack.kt,
+        { AsComp: useHogging ? As : As_top, dComp: useHogging ? dComp_neg : dComp_pos, phi: phiCreep });
       const x_mm = cwGov.x;
       const sigma_chord = cwGov.sigma_s;
 

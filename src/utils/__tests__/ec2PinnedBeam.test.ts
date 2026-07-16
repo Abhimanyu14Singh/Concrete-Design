@@ -74,6 +74,7 @@
 import { describe, it, expect } from 'vitest';
 import { runDesign } from '../../engines';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../types';
 
 // ── Conversion factors ────────────────────────────────────────────────────────
@@ -180,20 +181,29 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
   });
 
   // ── EC2-specific finding ②: crack width §7.3.4 ───────────────────────────────
+  // Crack width uses the Concrete-Institute long-hand method: creep-adjusted
+  // αe = Es/(Ecm/(1+φ)), fully-cracked transformed section incl. compression
+  // steel, k2 = 0.5, sr,max = min(eq 7.11, 7.14), and an un-cracked (Mcr) gate.
+  // M_qp = 0.6 × 400 = 240 kN·m → wk_bot ≈ 0.267 mm (< the 0.30 mm limit here).
 
-  it('EC2 §7.3.4 error fired: wk = 0.376 mm exceeds w_lim = 0.30 mm', () => {
-    // M_qp = 0.6 × 400 = 240 kN·m (quasi-permanent factor 0.6)
-    // This is an EC2 SLS check; ACI has no equivalent wk limit in the engine.
-    const err = r.warnings.find(w => w.code === 'EC2 §7.3.4');
-    expect(err).toBeDefined();
-    expect(err!.severity).toBe('error');
-    expect(err!.message).toContain('0.30 mm');   // limit
-    expect(err!.message).toContain('M_qp');       // quasi-permanent moment
+  it('wk_bot ≈ 0.267 mm (long-hand: creep αe + transformed section + k2 = 0.5)', () => {
+    expect(r.wk_bot).toBeDefined();
+    expect(r.wk_bot!).toBeCloseTo(0.267, 2);
   });
 
-  it('wk_bot ≈ 0.376 mm (crack width under quasi-permanent combination)', () => {
-    expect(r.wk_bot).toBeDefined();
-    expect(r.wk_bot!).toBeCloseTo(0.376, 2);
+  it('passes crack width at the default 0.30 mm limit (wk_bot < w_lim)', () => {
+    const err = r.warnings.find(w => w.code === 'EC2 §7.3.4' && w.severity === 'error');
+    expect(err).toBeUndefined();
+  });
+
+  it('EC2 §7.3.4 error fires when wk exceeds a stricter 0.25 mm limit', () => {
+    const rStrict = runDesign(section1, material1, rebar1, load1, span_ft, 'EN1992-1-1',
+      { ...DEFAULT_CRACK_PARAMS, wLimitBot: 0.25 });
+    const err = rStrict.warnings.find(w => w.code === 'EC2 §7.3.4');
+    expect(err).toBeDefined();
+    expect(err!.severity).toBe('error');
+    expect(err!.message).toContain('0.25 mm');   // the tighter limit
+    expect(err!.message).toContain('M_qp');       // quasi-permanent moment
   });
 
   // ── All warnings are EC2 clause references ────────────────────────────────────
@@ -202,12 +212,6 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     for (const w of r.warnings) {
       expect(w.code).toMatch(/^EC2 §/);
     }
-  });
-
-  it('exactly 1 error found (§7.3.4 crack width only — §6.2.3(7) excluded)', () => {
-    const errors = r.warnings.filter(w => w.severity === 'error');
-    expect(errors).toHaveLength(1);
-    expect(errors[0].code).toBe('EC2 §7.3.4');
   });
 
   it('DCR_crack is exposed and equals wk_bot / w_limit (0.30 mm)', () => {

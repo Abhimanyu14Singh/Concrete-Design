@@ -226,7 +226,7 @@ describe('code routing sanity', () => {
 });
 
 // ── Crack width §7.3.4 ────────────────────────────────────────────────────────
-import { crackWidth, ecm } from '../ec2Beam';
+import { crackWidth, ecm, creepCoefficient } from '../ec2Beam';
 import { DEFAULT_CRACK_PARAMS } from '../../../types';
 
 describe('crackWidth §7.3.4 — 300×500, 3Ø20, C30, B500', () => {
@@ -277,12 +277,55 @@ describe('crackWidth §7.3.4 — 300×500, 3Ø20, C30, B500', () => {
   });
 });
 
+// ── Creep coefficient (Annex B) reproduces the reference derivation ──────────
+describe('creepCoefficient — EN 1992-1-1 Annex B', () => {
+  it('φ(t,t0) ≈ 1.20 for C40, RH 85%, t0 28 d, cement N, h0 2000 mm, 70 yr', () => {
+    // Reproduces the Concrete-Institute spreadsheet: φ0 ≈ 1.218, βc ≈ 0.985.
+    expect(creepCoefficient(40, 85, 28, 70 * 365, 2000, 'N')).toBeCloseTo(1.20, 1);
+  });
+  it('drier air (lower RH) increases creep', () => {
+    const wet = creepCoefficient(40, 85, 28, 70 * 365, 2000, 'N');
+    const dry = creepCoefficient(40, 50, 28, 70 * 365, 2000, 'N');
+    expect(dry).toBeGreaterThan(wet);
+  });
+});
+
+// ── External validation: EN 1992-1-1 §7.3.4 worked example ───────────────────
+// Concrete-Institute long-hand crack-width spreadsheet, 500×1000 C40/500:
+// As=2454 (5Ø25 bottom), As'=1473 (3Ø25 top), d=925, d'=70, cover 63,
+// M_qp=500 kN·m, long-term. Driving crackWidth at the reference modular ratio
+// αe=11.89 reproduces the spreadsheet's x, σs, Mcr, sr,max, ρp,eff and wk.
+describe('crackWidth — Concrete-Institute §7.3.4 worked example (500×1000)', () => {
+  const phiRef = ecm(40) / (200_000 / 11.89) - 1;  // φ s.t. αe = 11.89
+  const cw = crackWidth(500, 2454, 25, 500, 1000, 925, 63, 40, 200_000, 0.4,
+    { AsComp: 1473, dComp: 70, phi: phiRef });
+
+  it('modular ratio αe ≈ 11.89 (creep-adjusted)', () => expect(cw.alpha_e).toBeCloseTo(11.89, 1));
+  it('cracking moment Mcr ≈ 352.6 kN·m → cracked (M_qp = 500 > Mcr)', () => {
+    expect(cw.Mcr).toBeCloseTo(352.6, 0);
+    expect(cw.cracked).toBe(true);
+  });
+  it('cracked transformed NA x ≈ 256.9 mm', () => expect(cw.x).toBeCloseTo(256.9, 0));
+  it('steel stress σs ≈ 242 MPa', () => expect(cw.sigma_s).toBeCloseTo(242, 0));
+  it('effective reinforcement ratio ρp,eff ≈ 0.0269', () => expect(cw.rho_p_eff).toBeCloseTo(0.0269, 3));
+  it('max crack spacing sr,max ≈ 372 mm', () => expect(cw.sr_max).toBeCloseTo(372, -1));
+  it('characteristic crack width wk ≈ 0.321 mm', () => expect(cw.wk).toBeCloseTo(0.321, 2));
+
+  it('below the cracking moment the section is un-cracked → wk = 0', () => {
+    const uncr = crackWidth(200, 2454, 25, 500, 1000, 925, 63, 40, 200_000, 0.4,
+      { AsComp: 1473, dComp: 70, phi: phiRef });
+    expect(uncr.Mcr).toBeGreaterThan(200);
+    expect(uncr.cracked).toBe(false);
+    expect(uncr.wk).toBe(0);
+  });
+});
+
 describe('designMemberEC2 crack width integration', () => {
   it('reports wk_bot and wk_top in results', () => {
     const r = designMemberEC2(section, material, rebar, load);
-    expect(r.wk_bot).toBeGreaterThan(0);
-    expect(r.wk_top).toBeGreaterThan(0);
-    expect(r.wk_face).toBeUndefined(); // no side bars in fixture
+    expect(r.wk_bot).toBeGreaterThan(0);  // bottom face cracks under +M (Mqp,pos > Mcr)
+    expect(r.wk_top).toBe(0);             // top face uncracked under the light −M (Mqp,neg ≤ Mcr)
+    expect(r.wk_face).toBeUndefined();    // no side bars in fixture
   });
 
   it('fires §7.3.4 warning when limit exceeded (tight user limit)', () => {
@@ -324,12 +367,15 @@ describe('designMemberEC2 crack width integration', () => {
   });
 });
 
-// ── S-CONCRETE 2026 large-beam benchmark (500×1200 mm) ───────────────────────
-// Reference: S-CONCRETE report for 500×1200mm rectangular beam, fck=40MPa,
-// fyk=500MPa, cover=50mm, Ø12@200 2-leg stirrups, top 7+7-Ø25 (two layers),
-// bottom 6+6-Ø25 (two layers), skin 8-Ø16@180mm vertical spacing.
-// Expected: shear DCR≈0.629, wk_face≈0.596mm, wk_top≈0.415mm, wk_bot≈0.181mm.
-describe('S-CONCRETE 500×1200mm large-beam benchmark', () => {
+// ── Large-beam benchmark (500×1200 mm) ───────────────────────────────────────
+// Geometry/shear from the S-CONCRETE report (500×1200mm, fck=40, fyk=500,
+// cover=50, Ø12@200 2-leg stirrups, top 7+7-Ø25, bottom 6+6-Ø25, skin 8-Ø16@180).
+// Shear DCR≈0.629 still tracks S-CONCRETE. Crack widths now follow the
+// Concrete-Institute long-hand method (creep αe, transformed section incl.
+// compression steel, k2=0.5, sr,max=min(7.11,7.14), un-cracked gate), so the
+// wk goldens below are the long-hand results — they intentionally differ from
+// the S-CONCRETE report's crack figures.
+describe('Large-beam benchmark 500×1200mm (shear vs S-CONCRETE, crack vs long-hand)', () => {
   const MM  = 1 / 25.4;           // mm → in
   const MPA = 1 / 0.00689476;    // MPa → psi  (1 MPa = 145.038 psi)
   const KNM = 1 / 1.35582;       // kN·m → kip-ft
@@ -412,19 +458,19 @@ describe('S-CONCRETE 500×1200mm large-beam benchmark', () => {
     expect(result.DCR_shear).toBeLessThan(0.629 * 1.05);
   });
 
-  it('wk_bot ≈ 0.181 mm (±20%)', () => {
-    expect(result.wk_bot).toBeGreaterThan(0.181 * 0.80);
-    expect(result.wk_bot).toBeLessThan(0.181 * 1.20);
+  it('wk_bot ≈ 0.125 mm (±20%, long-hand method)', () => {
+    expect(result.wk_bot).toBeGreaterThan(0.125 * 0.80);
+    expect(result.wk_bot).toBeLessThan(0.125 * 1.20);
   });
 
-  it('wk_top ≈ 0.415 mm (±20%)', () => {
-    expect(result.wk_top).toBeGreaterThan(0.415 * 0.80);
-    expect(result.wk_top).toBeLessThan(0.415 * 1.20);
+  it('wk_top ≈ 0.338 mm (±20%, long-hand method)', () => {
+    expect(result.wk_top).toBeGreaterThan(0.338 * 0.80);
+    expect(result.wk_top).toBeLessThan(0.338 * 1.20);
   });
 
-  it('wk_face ≈ 0.596 mm (±20%)', () => {
+  it('wk_face ≈ 0.590 mm (±20%)', () => {
     expect(result.wk_face).toBeDefined();
-    expect(result.wk_face!).toBeGreaterThan(0.596 * 0.80);
-    expect(result.wk_face!).toBeLessThan(0.596 * 1.20);
+    expect(result.wk_face!).toBeGreaterThan(0.590 * 0.80);
+    expect(result.wk_face!).toBeLessThan(0.590 * 1.20);
   });
 });
