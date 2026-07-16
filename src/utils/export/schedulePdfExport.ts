@@ -69,6 +69,15 @@ function hline(ctx: Ctx, x1: number, y: number, x2: number, thickness = 0.4, col
   ctx.page.drawLine({ start: { x: x1, y }, end: { x: x2, y }, thickness, color });
 }
 
+/** Largest font size ≤ base (down to min) at which `s` fits within `maxW` points —
+ *  keeps long multi-layer bar strings from bleeding into the next column. */
+function fitSize(font: PDFFont, s: string, maxW: number, base: number, min = 5): number {
+  const str = winAnsiSafe(String(s));
+  let size = base;
+  while (size > min && font.widthOfTextAtSize(str, size) > maxW) size -= 0.25;
+  return size;
+}
+
 // ── rebar formatting ───────────────────────────────────────────────────────
 
 function rebarStr(bars: { numBars: number; barSize: number }[]): string {
@@ -376,8 +385,10 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
       x += col.w;
       return;
     }
-    // Narrow reinforcement columns get a slightly smaller face so they don't overflow.
-    txt(ctx, cells[i], x + 3, y + 5, i >= 4 ? 7 : 8, C.dark, i === 1 ? ctx.bold : ctx.font);
+    const f = i === 1 ? ctx.bold : ctx.font;
+    // Shrink to fit the column so long multi-layer strings never bleed across.
+    const size = fitSize(f, cells[i], col.w - 6, i >= 4 ? 7 : 8);
+    txt(ctx, cells[i], x + 3, y + 5, size, C.dark, f);
     x += col.w;
   });
   hline(ctx, x0, y, x0 + totalW);
@@ -450,7 +461,8 @@ function drawBeamRow(ctx: Ctx, row: BeamSchedRow, x0: number, y: number, shade: 
     const cellColor = i === 8 && row.dcrVal > 0
       ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
       : C.dark;
-    txt(ctx, cells[i], x + 3, y + 5, 8, cellColor, i === 0 ? ctx.bold : ctx.font);
+    const f = i === 0 ? ctx.bold : ctx.font;
+    txt(ctx, cells[i], x + 3, y + 5, fitSize(f, cells[i], col.w - 6, 8), cellColor, f);
     x += col.w;
   });
   hline(ctx, x0, y, x0 + totalW);
