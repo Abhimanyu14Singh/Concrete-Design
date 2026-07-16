@@ -102,10 +102,10 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
   const midArea = faceAreaOf(group.midThirdTopBars);
   // The middle-third cage must cover its own hogging demand AND code As,min.
   const midReq = Math.max(group.asMin, cu?.top?.asRequired ?? 0);
-  const midMeets = midArea >= midReq - 1e-4;
-  // Demand/capacity of the middle-third cage (As,req ÷ As,prov, code As,min floored
-  // in) — shown as a DCR rather than a "% of the mark cage".
-  const midDCR = midArea > 1e-9 ? midReq / midArea : Infinity;
+  // Exact worst middle-third hogging DCR from the engine (per-beam design pass);
+  // falls back to the As-ratio only when the group carries no station forces.
+  const midDCR = group.midThirdDcr ?? (midArea > 1e-9 ? midReq / midArea : Infinity);
+  const midMeets = midDCR <= 1 + 1e-6;
   const toggleMid = () => {
     if (!onSetMidThirdTop) return;
     if (group.midThirdTopBars?.length) onSetMidThirdTop(group.id, null);                         // remove
@@ -131,8 +131,9 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
   const endBotArea = faceAreaOf(endBotBars);
   // The end-third bottom cage must cover the end-third sagging demand AND As,min.
   const endBotReq = Math.max(group.asMin, cu?.bot?.asRequired ?? 0);
-  const endBotMeets = endBotArea >= endBotReq - 1e-4;
-  const endBotDCR = endBotArea > 1e-9 ? endBotReq / endBotArea : Infinity;
+  // Exact worst end-third sagging DCR from the engine; As-ratio fallback if no data.
+  const endBotDCR = group.endThirdDcr ?? (endBotArea > 1e-9 ? endBotReq / endBotArea : Infinity);
+  const endBotMeets = endBotDCR <= 1 + 1e-6;
   const showEndBotRow = !!(onSetEndThirdBot && cu?.bot && group.notePinned.bot);
   const bumpEndBot = (field: 'count' | 'size', dir: 1 | -1) => {
     if (!onSetEndThirdBot) return;
@@ -275,7 +276,7 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
               style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
             >{formatBarLabel(midBar.barSize)}</span>
           </span>
-          <span title="Demand/capacity of the middle-third top cage (As,req ÷ As,prov, code As,min floored in)" style={{ color: midMeets ? MID_TEAL : STATUS.fail, fontWeight: 700 }}>
+          <span title="Worst-beam flexural DCR of the middle-third top cage against the middle-third hogging demand" style={{ color: midMeets ? MID_TEAL : STATUS.fail, fontWeight: 700 }}>
             DCR {midDCR.toFixed(2)} {midMeets ? '✓' : '✗'}
           </span>
           <span style={{ flex: 1 }} />
@@ -327,7 +328,7 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
               style={{ cursor: 'pointer', textDecoration: 'underline', fontWeight: 700, color: INK.strong }}
             >{formatBarLabel(endBotBar?.barSize ?? 8)}</span>
           </span>
-          <span title="Demand/capacity of the end-third bottom cage (As,req ÷ As,prov, code As,min floored in)" style={{ color: endBotMeets ? BOT_BLUE : STATUS.fail, fontWeight: 700 }}>
+          <span title="Worst-beam flexural DCR of the end-third bottom cage against the end-third sagging demand" style={{ color: endBotMeets ? BOT_BLUE : STATUS.fail, fontWeight: 700 }}>
             DCR {endBotDCR.toFixed(2)} {endBotMeets ? '✓' : '✗'}
           </span>
           <span style={{ flex: 1 }} />

@@ -291,14 +291,19 @@ function buildGroupRows(
     // Top bars split into the three L/3 regions: mark end (governing-end cage),
     // middle third (user curtailment cage), and opposite end.
     const topMark  = rebar ? barsStr(rebar.topBars) : '—';
-    const topMid   = barsStr(g.midThirdTopBars);
-    const topOpp   = barsStr(g.oppositeTopBars);
-    // Bottom bars split the same way: full through mid-span, curtailed to the
-    // continuous cage toward the supports (mark / opposite end).
+    // Middle-third / opposite-end top: the group's explicit reduced cage when set,
+    // else the mark cage runs through (matches the eye pop-out & moment diagram).
+    const topMid   = g.midThirdTopBars?.length ? barsStr(g.midThirdTopBars) : topMark;
+    const topOpp   = g.oppositeTopBars?.length ? barsStr(g.oppositeTopBars) : topMark;
+    // Bottom bars split the same way: full through mid-span, curtailed toward the
+    // supports (mark / opposite end) — the group's explicit end-third bottom cage
+    // when set, else the auto ~continuous cage the ⚑ bottom flag represents.
     const beams = groupMembers.filter(m => m.memberType === 'beam' || !m.memberType);
     const cu = rebar && beams.length ? analyzeGroupCurtailment(beams, rebar, code as DesignCode) : undefined;
     const botMid  = rebar ? barsStr(rebar.botBars) : '—';
-    const botEnd  = rebar ? (cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : barsStr(rebar.botBars)) : '—';
+    const botEnd  = g.endThirdBotBars?.length
+      ? barsStr(g.endThirdBotBars)
+      : (rebar ? (cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : barsStr(rebar.botBars)) : '—');
     const skin     = rebar ? skinStr(rebar.sideBars, isEC2) : '—';
     // Stirrups split into the three zones (end / middle / end).
     const stirMark = rebar ? stirrupZoneStr(rebar, 0, isEC2) : '—';

@@ -10,7 +10,7 @@ import type {
 } from '../types';
 import { flexSteelRatioPct, steelWeightPerFt } from './autoGroup';
 import { modeDCRs, worstOf } from '../components/Dashboard/dashboardShared';
-import { analyzeGroupCurtailment, analyzeOppositeEnd, type GroupCurtailment, type OppositeEndResult } from '../utils/curtailment';
+import { analyzeGroupCurtailment, analyzeOppositeEnd, regionCageDcr, continuousCage, type GroupCurtailment, type OppositeEndResult } from '../utils/curtailment';
 
 export interface DashboardGroup {
   id: string;
@@ -46,6 +46,12 @@ export interface DashboardGroup {
   midThirdTopBars?: BarGroup[];
   /** The reduced end-third bottom cage the user set (if any). */
   endThirdBotBars?: BarGroup[];
+  /** Exact worst middle-third hogging DCR carried by the middle-third top cage
+   *  (set only when that cage is set). From a per-beam design pass, not an As-ratio. */
+  midThirdDcr?: number;
+  /** Exact worst end-third sagging DCR carried by the end-third bottom cage
+   *  (explicit or the auto ~continuous cage; set only when the ⚑ bottom note is pinned). */
+  endThirdDcr?: number;
   /** Code minimum flexural steel area (in²) for the group's section — the floor
    *  every per-region cage edit must respect so min steel is never violated. */
   asMin: number;
@@ -127,6 +133,17 @@ export function buildDashboardPayload(
     const section = repMember?.section ?? FALLBACK_SECTION;
     const rebar = g.rebar ?? repMember?.rebar ?? { topBars: [], botBars: [] };
     for (const m of gMembers) memberGroupId.set(m.id, g.id);
+
+    // Exact per-region DCRs (one design pass per beam vs its region demand). Only
+    // computed for the cage the card actually shows: the middle-third top cage when
+    // set, and the end-third bottom cage (explicit or auto) when the ⚑ bottom note
+    // is pinned — so the rows read a true moment DCR, not an area ratio.
+    const asMin = (repMember ? designResultsById[repMember.id]?.As_min : undefined) ?? 0;
+    const midThirdDcr = g.midThirdTopBars?.length
+      ? regionCageDcr(beams, rebar, g.midThirdTopBars, 'mid-top', code) : undefined;
+    const endThirdDcr = g.curtailmentNotes?.bot
+      ? regionCageDcr(beams, rebar, g.endThirdBotBars?.length ? g.endThirdBotBars : continuousCage(rebar.botBars, asMin), 'end-bot', code)
+      : undefined;
     return {
       id: g.id,
       label: g.label,
@@ -151,7 +168,9 @@ export function buildDashboardPayload(
       oppositeTopBars: g.oppositeTopBars,
       midThirdTopBars: g.midThirdTopBars,
       endThirdBotBars: g.endThirdBotBars,
-      asMin: (repMember ? designResultsById[repMember.id]?.As_min : undefined) ?? 0,
+      midThirdDcr,
+      endThirdDcr,
+      asMin,
       notePinned: { top: !!g.curtailmentNotes?.top, bot: !!g.curtailmentNotes?.bot },
     };
   });

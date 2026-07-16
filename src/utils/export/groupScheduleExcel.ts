@@ -40,14 +40,22 @@ export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
     const rebar = g.rebar ?? rep?.rebar;
     if (!rebar) continue;
     idx += 1;
-    // Bottom bars: full through mid-span, curtailed to the continuous cage toward
-    // the supports (mark / opposite end) — mirrors the top curtailment.
+    // Per-region cages, connected to the group's explicit curtailment cages (the
+    // same ones the section card / eye pop-out / moment diagram use). Top: mark
+    // cage runs through unless a reduced middle-third / opposite-end cage is set.
+    // Bottom: full mid-span, curtailed toward the supports to the explicit
+    // end-third cage when set, else the auto ~continuous cage.
     const cu = beams.length ? analyzeGroupCurtailment(beams, rebar, project.code) : null;
+    const topMark = barsStr(rebar.topBars);
+    const topMid = g.midThirdTopBars?.length ? barsStr(g.midThirdTopBars) : topMark;
+    const topOpp = g.oppositeTopBars?.length ? barsStr(g.oppositeTopBars) : topMark;
     const botMid = barsStr(rebar.botBars);
-    const botEnd = cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : botMid;
+    const botEnd = g.endThirdBotBars?.length
+      ? barsStr(g.endThirdBotBars)
+      : (cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : botMid);
     data.push([
       idx, g.label, scheduleSectionLabel(rep, isEC2), beams.length,
-      barsStr(rebar.topBars), barsStr(g.midThirdTopBars), barsStr(g.oppositeTopBars),
+      topMark, topMid, topOpp,
       botEnd, botMid, botEnd,
       skinStr(rebar.sideBars, isEC2),
       stirrupZoneStr(rebar, 0, isEC2), stirrupZoneStr(rebar, 1, isEC2), stirrupZoneStr(rebar, 2, isEC2),

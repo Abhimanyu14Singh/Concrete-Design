@@ -160,6 +160,37 @@ export function analyzeGroupCurtailment(
   return { hasStationData: true, top, bot };
 }
 
+/**
+ * Exact worst-case flexural DCR for a chosen per-region cage, found the same way
+ * the opposite-end DCR is: one design pass per beam against that beam's OWN region
+ * demand, worst wins (so it agrees with the engine, not an As-ratio proxy).
+ *   'mid-top' → middle-third hogging carried by `cage` as TOP steel  → DCR_flex_neg
+ *   'end-bot' → end-third sagging   carried by `cage` as BOTTOM steel → DCR_flex_pos
+ * Returns 0 when no beam in the group carries station forces.
+ */
+export function regionCageDcr(
+  members: Member[], rebar: RebarLayout, cage: BarGroup[],
+  region: 'mid-top' | 'end-bot', code: DesignCode,
+): number {
+  const beams = members.filter(
+    m => (m.memberType === 'beam' || !m.memberType) && (m.stationForces?.length ?? 0) > 0,
+  );
+  let worst = 0;
+  for (const m of beams) {
+    const rm = regionMoments(m);
+    if (!rm) continue;
+    const lc: LoadCase = region === 'mid-top'
+      ? { id: 'reg', label: 'region', Mu_pos: 0, Mu_neg: rm.midHog, Vu: 0, Tu: 0, Pu: 0 }
+      : { id: 'reg', label: 'region', Mu_pos: rm.edgeSag, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0 };
+    const rr: RebarLayout = region === 'mid-top' ? { ...rebar, topBars: cage } : { ...rebar, botBars: cage };
+    let r;
+    try { r = runDesign(m.section, m.material, rr, lc, m.span ?? 20, code, m.crackParams); }
+    catch { continue; }
+    worst = Math.max(worst, region === 'mid-top' ? r.DCR_flex_neg : r.DCR_flex_pos);
+  }
+  return worst;
+}
+
 // ── Opposite-end top reinforcement ───────────────────────────────────────────
 
 /** Peak hogging near the start support (first third) and end support (last third). */
