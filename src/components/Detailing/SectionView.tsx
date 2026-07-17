@@ -223,23 +223,28 @@ export default function SectionView({
     }
   }
 
-  // Skin / face reinforcement (side bars). numBars = bars per side face; spacing =
-  // vertical c/c. Dropping the count to 0 removes the skin entirely.
+  // Skin / face reinforcement (side bars). SPACING is the primary variable: the
+  // user sets the vertical c/c and the bar COUNT is fitted to it (numBars = bars
+  // that fill the clear web at that spacing), so the count and the drawing always
+  // agree with the spacing. Dropping the count to 0 removes the skin entirely.
   const skinSnapStep = units === 'si' ? 25 : 1; // display step: 25 mm (or 1 in)
   const snapLen = (mm: number) =>
     fromDisplay(Math.max(skinSnapStep, Math.round(mm / skinSnapStep) * skinSnapStep), 'length');
-  // Even c/c of `n` skin bars per face over the clear web between the innermost
-  // top and bottom bars, rounded to the nearest 25 mm (or 1 in). Deriving it from
-  // the count is why adding bars now tightens the spacing.
-  function skinSpacing(n: number): number {
+  // Clear web (internal units) between the innermost top and bottom bars — the
+  // height the skin bars are distributed over.
+  function skinWeb(): number {
     const h = section.h ?? 0;
     const cover = section.coverClear ?? 1.5;
     const stir = getBarDiam(section.stirrupDia ?? (units === 'si' ? -10 : 4));
     const topDia = getBarDiam(rebar.topBars[0]?.barSize ?? 8);
     const botDia = getBarDiam(rebar.botBars[0]?.barSize ?? 8);
-    const web = Math.max(1, h - 2 * cover - 2 * stir - topDia - botDia);
-    return snapLen(toDisplay(web / (n + 1), 'length'));
+    return Math.max(1, h - 2 * cover - 2 * stir - topDia - botDia);
   }
+  // Even c/c of `n` skin bars per face over the clear web, snapped to 25 mm (1 in).
+  const skinSpacing = (n: number): number => snapLen(toDisplay(skinWeb() / (n + 1), 'length'));
+  // Bars per face that a given c/c spacing fills the web with (the inverse of
+  // skinSpacing): n bars leave n+1 even gaps, so n = web/spacing − 1. ≥ 1.
+  const skinCountFor = (spacing: number): number => Math.max(1, Math.round(skinWeb() / spacing) - 1);
   function bumpSide(field: 'count' | 'size' | 'spacing', dir: 1 | -1) {
     if (!onRebarChange) return;
     const cur = rebar.sideBars?.[0];
@@ -252,9 +257,12 @@ export default function SectionView({
     } else if (field === 'size') {
       newSide = [{ ...cur, barSize: barSizeStep(cur.barSize, dir) }];
     } else {
-      // Manual nudge: step the spacing by 25 mm (or 1 in), min one step.
+      // Spacing is primary: step it by 25 mm (or 1 in), then REFIT the bar count to
+      // that spacing so the count and the section drawing follow (click = tighter =
+      // more bars). dir = −1 tightens (label onClick), +1 loosens (right-click).
       const curMm = toDisplay(cur.spacing ?? skinSpacing(cur.numBars), 'length');
-      newSide = [{ ...cur, spacing: snapLen(curMm + dir * skinSnapStep) }];
+      const newSpacing = snapLen(curMm + dir * skinSnapStep);
+      newSide = [{ ...cur, numBars: skinCountFor(newSpacing), spacing: newSpacing }];
     }
     onRebarChange({ ...rebar, sideBars: newSide });
   }
