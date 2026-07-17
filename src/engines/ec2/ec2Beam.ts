@@ -742,8 +742,19 @@ export function designMemberEC2(
       As_skin_min = skin.AsMin;
       // sideBars.numBars is PER FACE (beam convention) → ×2 faces for the total.
       As_skin_prov = 2 * (rebar.sideBars ?? []).reduce((s, g) => s + g.numBars * getBarArea(g.barSize) * IN2_TO_MM2, 0);
-      if (As_skin_prov < skin.AsMin - 1) // 1 mm² tolerance
-        warnings.push({ code: 'EC2 §7.3.3', message: `Skin steel A_s = ${As_skin_prov.toFixed(0)} mm² < A_s,min = ${skin.AsMin.toFixed(0)} mm² (§7.3.2: k_c = ${skin.kc.toFixed(2)}, k = 0.5, A_ct = ${(skin.Act / 1e3).toFixed(0)}×10³ mm², σ_s = ${skin.sigmaS.toFixed(0)} MPa) — add side-face bars`, severity: 'warning' });
+      // §7.3.2(2) As,min is met by ALL bonded longitudinal steel within the tension
+      // zone. When axial tension puts the WHOLE section in tension (yt = h), the top
+      // and bottom flexural bars lie in that zone and count toward the minimum — so a
+      // heavily-reinforced tension member is not falsely flagged for "missing skin
+      // bars". In the bending-governed deep-beam case (yt < h) the check stays skin-
+      // only (the S-CONCRETE-benchmarked skin-region provision).
+      const wholeSectionInTension = skin.yt >= h_mm - 1;
+      const As_avail = wholeSectionInTension ? As_bot_mm2 + As_top_mm2 + As_skin_prov : As_skin_prov;
+      if (As_avail < skin.AsMin - 1) { // 1 mm² tolerance
+        const kind = wholeSectionInTension ? 'Tension-zone' : 'Skin';
+        const advise = wholeSectionInTension ? 'add longitudinal bars' : 'add side-face bars';
+        warnings.push({ code: 'EC2 §7.3.3', message: `${kind} steel A_s = ${As_avail.toFixed(0)} mm² < A_s,min = ${skin.AsMin.toFixed(0)} mm² (§7.3.2: k_c = ${skin.kc.toFixed(2)}, k = 0.5, A_ct = ${(skin.Act / 1e3).toFixed(0)}×10³ mm², σ_s = ${skin.sigmaS.toFixed(0)} MPa) — ${advise}`, severity: 'warning' });
+      }
     }
   }
 
