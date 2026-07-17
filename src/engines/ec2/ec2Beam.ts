@@ -652,8 +652,9 @@ export function designMemberEC2(
     warnings.push({ code: 'EC2 §7.3.4', message: `Top face crack width wk = ${cw_top.wk.toFixed(2)} mm > limit ${crack.wLimitTop.toFixed(2)} mm (σs = ${cw_top.sigma_s.toFixed(0)} MPa under M_qp = ${Mqp_neg.toFixed(1)} kN·m)`, severity: 'error' });
 
   // Side-face crack width §7.3.4.
-  // Corrected per S-CONCRETE 2026 benchmark:
-  //   k2 = 1.0 (skin bars at mid-height → both strip edges in tension → pure tension)
+  //   k2 = 0.5 — EC2 §7.3.4(3) bending value (opposite-sign strains at the section
+  //     boundaries), matching the EN 1992-1-1 worked reference (EurocodeApplied).
+  //     (Previously 1.0 per the S-CONCRETE benchmark, which reads ~2× higher.)
   //   ρ_eff = As_one_bar / (s_v × hc,eff)  where s_v = vertical bar spacing
   //   fs_skin interpolated from governing chord elastic strain profile
   let wk_face: number | undefined;
@@ -707,8 +708,9 @@ export function designMemberEC2(
       // ρ_eff per EC2 §7.3.2: area of one bar over its tributary area (s_v × hc,eff)
       const rho_side = As_per_bar / (s_v_mm * hc_side);
 
-      // Sr,max §7.3.4(3) — k2 = 1.0 for side face (pure tension at mid-height)
-      const k1 = 0.8, k2 = 1.0, k3 = 3.4, k4 = 0.425;
+      // Sr,max §7.3.4(3) — k2 = 0.5 for the side face (bending: opposite-sign
+      // strains across the section, per EC2 §7.3.4(3) / the EN1992 worked reference)
+      const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
       const sr_side = k3 * (cover_mm + stirrupD_mm) + k1 * k2 * k4 * sideBarD / Math.max(rho_side, 1e-4);
 
       // (εsm − εcm) at skin bar using EC2 eq (7.9)

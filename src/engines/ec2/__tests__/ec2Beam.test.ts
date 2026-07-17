@@ -468,9 +468,12 @@ describe('Large-beam benchmark 500×1200mm (shear vs S-CONCRETE, crack vs long-h
     expect(result.wk_top).toBeLessThan(0.338 * 1.20);
   });
 
-  it('wk_face ≈ 0.590 mm (±20%)', () => {
+  // Side-face wk uses k2 = 0.5 (EC2 §7.3.4(3) bending value, matching the EN 1992-1-1
+  // worked reference / EurocodeApplied). With k2 = 1.0 (the older S-CONCRETE reading)
+  // this was ≈ 0.590 mm; the bending k2 halves the spacing term → ≈ 0.353 mm.
+  it('wk_face ≈ 0.353 mm (±20%, k2 = 0.5 side face)', () => {
     expect(result.wk_face).toBeDefined();
-    expect(result.wk_face!).toBeGreaterThan(0.590 * 0.80);
-    expect(result.wk_face!).toBeLessThan(0.590 * 1.20);
+    expect(result.wk_face!).toBeGreaterThan(0.353 * 0.80);
+    expect(result.wk_face!).toBeLessThan(0.353 * 1.20);
   });
 });
