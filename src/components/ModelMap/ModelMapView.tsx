@@ -297,14 +297,19 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   }, [deferredMembers, project.code, project.slsCombo, fmtVal, label]);
 
   const errorMemberIds = useMemo(() => {
+    // Beams in an engineer-Reviewed group are accepted — they stop being flagged red
+    // on the plan (the sign-off "goes into the calculations" here too).
+    const reviewedMembers = new Set<string>();
+    for (const g of groups) if (g.reviewed) for (const id of g.memberIds) reviewedMembers.add(id);
     const out = new Set<string>();
     for (const [id, info] of Object.entries(infoById)) {
+      if (reviewedMembers.has(id)) continue;
       if (info.status === 'NG' || info.error || info.warnings?.some(w => w.severity === 'error')) {
         out.add(id);
       }
     }
     return out;
-  }, [infoById]);
+  }, [infoById, groups]);
 
   const dcrById = useMemo(() => {
     const out: Record<string, number> = {};
@@ -546,6 +551,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleSetMidThirdTop(cmd.groupId, cmd.bars);
       } else if (cmd.type === 'set-end-third-bot') {
         handleSetEndThirdBot(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'set-reviewed') {
+        handleSetReviewed(cmd.groupId, cmd.on);
       } else if (cmd.type === 'open-member') {
         // Double-click a beam in the popped-out window → open it on the main window's
         // Member screen (main.cjs also raises the main window to the front).
@@ -617,6 +624,19 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         if (g.id !== groupId) return g;
         if (!bars || !bars.length) { const { endThirdBotBars: _drop, ...rest } = g; void _drop; return rest; }
         return { ...g, endThirdBotBars: bars };
+      }),
+    }));
+  }
+
+  // Engineer sign-off — mark (or clear) a group as Reviewed. Its NG/warnings then read
+  // "Reviewed" across the dashboard and its beams stop being flagged red on the plan.
+  function handleSetReviewed(groupId: string, on: boolean) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!on) { const { reviewed: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, reviewed: true };
       }),
     }));
   }
@@ -1162,6 +1182,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onSetOppositeTop={handleSetOppositeTop}
               onSetMidThirdTop={handleSetMidThirdTop}
               onSetEndThirdBot={handleSetEndThirdBot}
+              onSetReviewed={handleSetReviewed}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}

@@ -36,6 +36,10 @@ export interface DashboardGroup {
   beamCount: number;
   /** Beams in the group whose design fails (status NG) — the error count. */
   errorBeamCount: number;
+  /** Beams in the group that are merely warned (not NG, but Warning / carry warnings). */
+  warnBeamCount: number;
+  /** Engineer sign-off — the group's NG/warnings are presented as "Reviewed". */
+  reviewed: boolean;
   /** L/3 curtailment analysis for the group cage (red/purple flags + %). */
   curtailment: GroupCurtailment;
   /** Opposite-(non-governing-)end top-steel analysis (can it take less?). */
@@ -88,6 +92,7 @@ export type DashboardCommand =
   | { type: 'set-opposite-top'; groupId: string; bars: BarGroup[] | null }
   | { type: 'set-mid-third-top'; groupId: string; bars: BarGroup[] | null }
   | { type: 'set-end-third-bot'; groupId: string; bars: BarGroup[] | null }
+  | { type: 'set-reviewed'; groupId: string; on: boolean }
   | { type: 'open-member'; memberId: string }
   | { type: 'pop-in' }
   | { type: 'ready' };
@@ -163,6 +168,11 @@ export function buildDashboardPayload(
       steelWtLbFt: repMember ? steelWeightPerFt(repMember).totalLbFt : 0,
       beamCount: beams.length,
       errorBeamCount: beams.filter(m => designResultsById[m.id]?.status === 'NG').length,
+      warnBeamCount: beams.filter(m => {
+        const r = designResultsById[m.id];
+        return r && r.status !== 'NG' && (r.status === 'Warning' || r.warnings.length > 0);
+      }).length,
+      reviewed: !!g.reviewed,
       curtailment: analyzeGroupCurtailment(beams, rebar, code),
       oppositeEnd: analyzeOppositeEnd(beams, rebar, g.oppositeTopBars, code),
       oppositeTopBars: g.oppositeTopBars,

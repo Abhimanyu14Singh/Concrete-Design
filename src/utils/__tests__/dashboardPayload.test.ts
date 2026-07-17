@@ -18,7 +18,7 @@ const group = (id: string, memberIds: string[]): DashboardGroup => ({
   id, label: id, section: SEC, rebar: REB, memberIds,
   govDCR: 1, maxFlexPos: 1, maxFlexNeg: 0.5, maxShear: 0.4,
   rhoTop: 0.4, rhoBot: 0.6, steelWtLbFt: 30, beamCount: memberIds.length,
-  errorBeamCount: 0,
+  errorBeamCount: 0, warnBeamCount: 0, reviewed: false,
   curtailment: { hasStationData: false, top: null, bot: null },
   oppositeEnd: { hasStationData: false, markEnd: 'start', markDemand: 0, oppositeDemand: 0, markAsProvided: 0, oppositeAsRequired: 0, reductionPossible: false, reductionPct: 0, governingMemberId: '', hasOpposite: false, oppositeAsProvided: 0, oppositeDcrMet: false, worstOppositeDcr: 0 },
   asMin: 0,

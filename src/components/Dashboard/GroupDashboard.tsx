@@ -22,7 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
-  onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot,
+  onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot, onSetReviewed,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -50,6 +50,8 @@ export default function GroupDashboard({
   onSetMidThirdTop?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
   /** Set (or clear) the group's reduced end-third bottom reinforcement. */
   onSetEndThirdBot?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
+  /** Mark (or clear) the group as engineer-Reviewed — NG/warnings shown as "Reviewed". */
+  onSetReviewed?: (groupId: string, on: boolean) => void;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
@@ -58,9 +60,13 @@ export default function GroupDashboard({
   // by that tag would empty this table (see membersForGroup).
   const selMembers = useMemo(() => membersForGroup(payload, selectedGroupId), [payload, selectedGroupId]);
   const govDCRs = selMembers.map(m => m.maxDCR);
+  // Engineer sign-off on the selected group: its beams read "Reviewed" and drop out
+  // of the flagged tallies. Driven by the group flag (correct for beams shared across
+  // groups — the same beam can be reviewed in one group, still flagged in another).
+  const reviewed = !!selGroup?.reviewed;
   // How many of the group's beams are failing (NG) vs merely warned.
-  const ngCount = selMembers.filter(m => m.status === 'NG').length;
-  const warnCount = selMembers.filter(m => m.status !== 'NG' && (m.status === 'Warning' || m.warnings.length > 0)).length;
+  const ngCount = reviewed ? 0 : selMembers.filter(m => m.status === 'NG').length;
+  const warnCount = reviewed ? 0 : selMembers.filter(m => m.status !== 'NG' && (m.status === 'Warning' || m.warnings.length > 0)).length;
 
   // Right-click row menu (move to group / new group). Kept local so the dashboard
   // works the same in-app or popped out; the host decides what the callbacks do.
@@ -148,6 +154,7 @@ export default function GroupDashboard({
             onSetOppositeTop={onSetOppositeTop}
             onSetMidThirdTop={onSetMidThirdTop}
             onSetEndThirdBot={onSetEndThirdBot}
+            onSetReviewed={onSetReviewed}
           />
         ))}
       </div>
@@ -175,15 +182,19 @@ export default function GroupDashboard({
               <div>
                 <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>Beams flagged</div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', height: 30 }}>
-                  {ngCount === 0 && warnCount === 0 && (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok }}>✓ all pass</span>
-                  )}
-                  {ngCount > 0 && (
-                    <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} ✕</span>
-                  )}
-                  {warnCount > 0 && (
-                    <span title="Beams with warnings" style={{ fontSize: 12, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, padding: '2px 7px', borderRadius: 5 }}>{warnCount} ⚠</span>
-                  )}
+                  {reviewed ? (
+                    <span title="Engineer sign-off — this group's NG/warnings are accepted" style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok, background: STATUS.okBg, padding: '2px 7px', borderRadius: 5 }}>✓ Reviewed</span>
+                  ) : (<>
+                    {ngCount === 0 && warnCount === 0 && (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok }}>✓ all pass</span>
+                    )}
+                    {ngCount > 0 && (
+                      <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} ✕</span>
+                    )}
+                    {warnCount > 0 && (
+                      <span title="Beams with warnings" style={{ fontSize: 12, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, padding: '2px 7px', borderRadius: 5 }}>{warnCount} ⚠</span>
+                    )}
+                  </>)}
                 </div>
               </div>
               <div>
@@ -210,8 +221,14 @@ export default function GroupDashboard({
               <DCRChip label="M⁻" value={m.modeDCRs.flexNeg} />
               <DCRChip label="V" value={m.modeDCRs.shear} />
               <span style={{ ...MONO_NUM, fontSize: 11, fontWeight: 700, color: dcrColor(m.maxDCR), background: dcrBg(m.maxDCR), padding: '1px 5px', borderRadius: 4, justifySelf: 'start' }}>{m.maxDCR.toFixed(2)}</span>
-              <span style={{ fontSize: 10, fontWeight: 700, color: m.status === 'OK' ? STATUS.ok : m.status === 'NG' ? STATUS.fail : STATUS.warn }}>{m.status}</span>
-              <span title={m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: m.warnings.length ? STATUS.warn : INK.muted }}>{m.warnings.length ? `${m.warnings.length}⚠` : '—'}</span>
+              {/* Reviewed group: a beam's NG/Warning verdict reads "Reviewed"; passing
+                  beams stay "OK" and warnings are hidden. */}
+              {reviewed && m.status !== 'OK' ? (
+                <span title="Engineer-reviewed — verdict accepted" style={{ fontSize: 10, fontWeight: 700, color: STATUS.ok }}>Reviewed</span>
+              ) : (
+                <span style={{ fontSize: 10, fontWeight: 700, color: m.status === 'OK' ? STATUS.ok : m.status === 'NG' ? STATUS.fail : STATUS.warn }}>{m.status}</span>
+              )}
+              <span title={reviewed ? 'Reviewed — warnings accepted' : m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: !reviewed && m.warnings.length ? STATUS.warn : INK.muted }}>{reviewed || !m.warnings.length ? '—' : `${m.warnings.length}⚠`}</span>
             </div>
           ))}
           {selMembers.length === 0 && <div style={{ padding: 14, fontSize: 12, color: INK.muted }}>No beams in this group.</div>}

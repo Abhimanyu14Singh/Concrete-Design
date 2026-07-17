@@ -57,6 +57,7 @@ export default function DashboardWindowRoot() {
         onSetOppositeTop={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-opposite-top', groupId, bars })}
         onSetMidThirdTop={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-mid-third-top', groupId, bars })}
         onSetEndThirdBot={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-end-third-bot', groupId, bars })}
+        onSetReviewed={(groupId, on) => api.sendDashboardCommand?.({ type: 'set-reviewed', groupId, on })}
         canPopOut={false}
         onClose={() => api.sendDashboardCommand?.({ type: 'pop-in' })}
         closeLabel="⤡ Pop in"

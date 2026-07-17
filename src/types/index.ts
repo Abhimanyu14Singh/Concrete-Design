@@ -128,6 +128,14 @@ export interface DesignGroup {
    * carry it as the end-third bottom bars. Unset ⇒ the auto ~continuous cage.
    */
   endThirdBotBars?: BarGroup[];
+  /**
+   * Engineer sign-off. When true, every failing / warned beam in the group is
+   * presented as "Reviewed" across the Group Dashboard (card + beam list), the
+   * group drops out of the error/warning tallies, and its beams stop being flagged
+   * red on the plan. A DISPLAY-LAYER override recording that an engineer has
+   * accepted the group's checks — the design engines still compute the true DCRs.
+   */
+  reviewed?: boolean;
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */

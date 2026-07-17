@@ -38,7 +38,7 @@ function oppStateOf(opp: OppositeEndResult | undefined): OppState {
 const oppColorOf = (s: OppState) =>
   s === 'met' ? OPP_BLUE : s === 'insufficient' ? STATUS.fail : s === 'opportunity' ? OPP_AMBER : INK.muted;
 
-export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot }: {
+export default function SectionCard({ group, selected, onSelect, onApplyRebar, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot, onSetReviewed }: {
   group: DashboardGroup;
   selected: boolean;
   onSelect: () => void;
@@ -47,8 +47,12 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
   onSetOppositeTop?: (groupId: string, bars: BarGroup[] | null) => void;
   onSetMidThirdTop?: (groupId: string, bars: BarGroup[] | null) => void;
   onSetEndThirdBot?: (groupId: string, bars: BarGroup[] | null) => void;
+  onSetReviewed?: (groupId: string, on: boolean) => void;
 }) {
-  const ng = group.govDCR > 1.0;
+  // Engineer sign-off: a reviewed group shows "Reviewed" in place of its NG/warning
+  // flags and is never painted red — the design is unchanged, only accepted.
+  const reviewed = !!group.reviewed;
+  const ng = !reviewed && group.govDCR > 1.0;
   const cu = group.curtailment;
   const opp = group.oppositeEnd;
   const [openFace, setOpenFace] = useState<'top' | 'bot' | null>(null);
@@ -149,6 +153,9 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
   const pinned = openFace === 'top' ? group.notePinned.top : openFace === 'bot' ? group.notePinned.bot : false;
 
   const errN = group.errorBeamCount;
+  const warnN = group.warnBeamCount;
+  const reviewClick = (on: boolean) =>
+    onSetReviewed ? (e: React.MouseEvent) => { e.stopPropagation(); onSetReviewed(group.id, on); } : undefined;
 
   return (
     <div
@@ -156,8 +163,8 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
       title="Double-click to isolate this group on the plan"
       style={{
         position: 'relative',
-        border: `1px solid ${selected ? ACCENT.primary : ng ? STATUS.failBorder : BORDER.default}`,
-        background: selected ? ACCENT.softBg : ng ? STATUS.failBg : 'white',
+        border: `1px solid ${selected ? ACCENT.primary : reviewed ? STATUS.okBorder : ng ? STATUS.failBorder : BORDER.default}`,
+        background: selected ? ACCENT.softBg : reviewed ? STATUS.okBg : ng ? STATUS.failBg : 'white',
         borderRadius: 10, padding: 8, cursor: 'pointer',
         display: 'flex', flexDirection: 'column', gap: 6,
         boxShadow: selected ? `0 0 0 1px ${ACCENT.primary}` : 'none',
@@ -187,12 +194,41 @@ export default function SectionCard({ group, selected, onSelect, onApplyRebar, o
             <DCRChip label="M⁻" value={group.maxFlexNeg} />
             <DCRChip label="V" value={group.maxShear} />
           </span>
-          <span
-            title={`${errN} of ${group.beamCount} beam${group.beamCount === 1 ? '' : 's'} fail (NG)`}
-            style={{ fontSize: 10, fontWeight: 700, ...MONO_NUM, color: errN > 0 ? STATUS.fail : INK.muted, display: 'flex', alignItems: 'center', gap: 3 }}
-          >
-            <span style={{ fontSize: 9 }}>{errN > 0 ? '▲' : '△'}</span>{errN} error{errN === 1 ? '' : 's'}
-          </span>
+          {/* Error/warning tally → click to sign the group off as "Reviewed"
+              (engineer override). Reviewed groups read "✓ Reviewed" in green and
+              drop out of the tallies; click again to clear. */}
+          {reviewed ? (
+            <span
+              onClick={reviewClick(false)}
+              title={`Reviewed — ${errN} NG${warnN ? ` / ${warnN} warned` : ''} beam${errN + warnN === 1 ? '' : 's'} accepted by the engineer.${onSetReviewed ? ' Click to clear.' : ''}`}
+              style={{ fontSize: 10, fontWeight: 800, ...MONO_NUM, color: STATUS.ok, display: 'flex', alignItems: 'center', gap: 3, cursor: onSetReviewed ? 'pointer' : 'default' }}
+            >
+              <span style={{ fontSize: 10 }}>✓</span>Reviewed
+            </span>
+          ) : errN > 0 ? (
+            <span
+              onClick={reviewClick(true)}
+              title={`${errN} of ${group.beamCount} beam${group.beamCount === 1 ? '' : 's'} fail (NG)${onSetReviewed ? ' — click to mark the group Reviewed' : ''}`}
+              style={{ fontSize: 10, fontWeight: 700, ...MONO_NUM, color: STATUS.fail, display: 'flex', alignItems: 'center', gap: 3, cursor: onSetReviewed ? 'pointer' : 'default' }}
+            >
+              <span style={{ fontSize: 9 }}>▲</span>{errN} error{errN === 1 ? '' : 's'}
+            </span>
+          ) : warnN > 0 ? (
+            <span
+              onClick={reviewClick(true)}
+              title={`${warnN} of ${group.beamCount} beam${group.beamCount === 1 ? '' : 's'} warned${onSetReviewed ? ' — click to mark the group Reviewed' : ''}`}
+              style={{ fontSize: 10, fontWeight: 700, ...MONO_NUM, color: STATUS.warn, display: 'flex', alignItems: 'center', gap: 3, cursor: onSetReviewed ? 'pointer' : 'default' }}
+            >
+              <span style={{ fontSize: 9 }}>⚠</span>{warnN} warning{warnN === 1 ? '' : 's'}
+            </span>
+          ) : (
+            <span
+              title="All beams pass"
+              style={{ fontSize: 10, fontWeight: 700, ...MONO_NUM, color: INK.muted, display: 'flex', alignItems: 'center', gap: 3 }}
+            >
+              <span style={{ fontSize: 9 }}>△</span>0 errors
+            </span>
+          )}
         </span>
       </div>
 
