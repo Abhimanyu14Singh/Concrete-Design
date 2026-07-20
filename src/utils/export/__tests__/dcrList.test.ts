@@ -56,3 +56,25 @@ describe('buildDcrListWorkbook', () => {
     expect(b1[5] as number).toBeGreaterThan(b2[5] as number); // B1 (2 bars) worse than B2 (6 bars)
   });
 });
+
+describe('buildDcrListWorkbook — engineer-Reviewed groups', () => {
+  // A clearly over-utilized beam (400 k·ft on a 2-#8 14×28 → NG).
+  const failing: Member = { ...beam('X1', 2), loads: [{ id: 'u', label: 'U', Mu_pos: 400, Mu_neg: 200, Vu: 100, Tu: 0, Pu: 0 }] };
+  const proj = (reviewed: boolean): Project => ({
+    name: 'R', engineer: 'E', date: 'd', code: 'ACI318-19',
+    members: [failing],
+    designGroups: [{ id: 'g', label: 'G', memberIds: ['X1'], reviewed }],
+  } as unknown as Project);
+  const statusOf = (reviewed: boolean) => {
+    const rows = XLSX.utils.sheet_to_json<(string | number)[]>(
+      buildDcrListWorkbook(proj(reviewed)).Sheets['DCR List'], { header: 1 });
+    return (rows[4] as (string | number)[])[12]; // Status column of the first data row
+  };
+
+  it('an unreviewed failing member reads "NG"', () => {
+    expect(statusOf(false)).toBe('NG');
+  });
+  it('the same member in a Reviewed group reads "Reviewed", never "NG"', () => {
+    expect(statusOf(true)).toBe('Reviewed');
+  });
+});

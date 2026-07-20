@@ -212,10 +212,10 @@ function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont, margin = 36): C
   return { page, font, bold, w, h, margin };
 }
 
-function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum: number) {
+function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum: number, banner = 'Beam Schedule') {
   const { w, h, margin } = ctx;
   fillRect(ctx, 0, h - 28, w, 28, C.navy);
-  txt(ctx, 'S-Dashboard — Beam Schedule', margin, h - 19, 9, C.white, ctx.bold);
+  txt(ctx, `S-Dashboard — ${banner}`, margin, h - 19, 9, C.white, ctx.bold);
   txt(ctx, pageTitle, w / 2 - 60, h - 19, 9, C.white);
   txt(ctx, projectName, w - margin - 140, h - 19, 8, C.mid);
   fillRect(ctx, 0, 0, w, 16, C.navy);
@@ -706,5 +706,165 @@ export async function buildSchedulePDF(
     drawPlanPage(ctx, storyFrames, story, memberById, groups, projectName, pageNum++);
   }
 
+  return doc.save();
+}
+
+// ── Member DCR list (a few pages: one row per member, per-mode + governing DCR) ──
+// Reviewed members (in an engineer-Reviewed group) never read "NG"/"Warning" — the
+// Status column shows "Reviewed" and the governing DCR is drawn neutral, not red.
+
+const DCR_COL_DEFS: { key: string; header: string; w: number; align: 'l' | 'r' | 'c' }[] = [
+  { key: 'idx',     header: '#',       w: 22,  align: 'c' },
+  { key: 'label',   header: 'Member',  w: 152, align: 'l' },
+  { key: 'group',   header: 'Group',   w: 112, align: 'l' },
+  { key: 'section', header: 'Section', w: 58,  align: 'l' },
+  { key: 'mpos',    header: 'M+',      w: 40,  align: 'r' },
+  { key: 'mneg',    header: 'M-',      w: 40,  align: 'r' },
+  { key: 'shear',   header: 'V',       w: 38,  align: 'r' },
+  { key: 'tor',     header: 'T',       w: 38,  align: 'r' },
+  { key: 'crack',   header: 'Crack',   w: 44,  align: 'r' },
+  { key: 'pm',      header: 'P-M',     w: 40,  align: 'r' },
+  { key: 'gov',     header: 'Gov DCR', w: 52,  align: 'r' },
+  { key: 'status',  header: 'Status',  w: 64,  align: 'c' },
+];
+const DCR_TABLE_W = DCR_COL_DEFS.reduce((s, c) => s + c.w, 0);
+
+interface DcrRow {
+  idx: string; label: string; group: string; section: string;
+  mpos: number; mneg: number; shear: number; tor: number; crack: number; pm: number | null;
+  gov: number; status: string; reviewed: boolean;
+}
+
+function govResultOf(m: Member, code: string): ReturnType<typeof runDesign> | null {
+  let worst: ReturnType<typeof runDesign> | null = null;
+  let worstMax = -1;
+  const consider = (r: ReturnType<typeof runDesign>) => {
+    const mx = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.DCR_PM ?? 0);
+    if (mx > worstMax) { worstMax = mx; worst = r; }
+  };
+  if (m.results?.length) for (const r of m.results) consider(r);
+  else for (const lc of m.loads) consider(runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams));
+  return worst;
+}
+
+function buildDcrRows(members: Member[], groups: DesignGroup[], isEC2: boolean, code: string): DcrRow[] {
+  const groupLabel = new Map<string, string>();
+  const reviewed = new Set<string>();
+  for (const g of groups)
+    for (const id of g.memberIds) { groupLabel.set(id, g.label); if (g.reviewed) reviewed.add(id); }
+  const rows: DcrRow[] = [];
+  members.forEach((m, i) => {
+    const r = govResultOf(m, code);
+    if (!r) return;
+    const gov = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.DCR_PM ?? 0);
+    const isRev = reviewed.has(m.id);
+    rows.push({
+      idx: String(i + 1), label: m.label, group: groupLabel.get(m.id) ?? '—',
+      section: sectionLabel(m, isEC2),
+      mpos: r.DCR_flex_pos, mneg: r.DCR_flex_neg, shear: r.DCR_shear, tor: r.DCR_torsion,
+      crack: r.DCR_crack ?? 0, pm: r.DCR_PM ?? null, gov,
+      status: isRev && r.status !== 'OK' ? 'Reviewed' : r.status, reviewed: isRev,
+    });
+  });
+  return rows;
+}
+
+const dcrColorFor = (v: number) => (v > 1.0 ? C.red : v > 0.9 ? C.amber : C.dark);
+const statusColorFor = (s: string) => (s === 'NG' ? C.red : s === 'Warning' ? C.amber : C.green);
+
+function drawCell(ctx: Ctx, s: string, x: number, w: number, y: number, align: 'l' | 'r' | 'c', color = C.dark, font?: PDFFont) {
+  const f = font ?? ctx.font;
+  const size = fitSize(f, s, w - 6, 8.5);
+  const tw = f.widthOfTextAtSize(winAnsiSafe(String(s)), size);
+  const tx = align === 'r' ? x + w - 3 - tw : align === 'c' ? x + (w - tw) / 2 : x + 3;
+  txt(ctx, s, tx, y, size, color, f);
+}
+
+function drawDcrTableHeader(ctx: Ctx, x0: number, y: number) {
+  fillRect(ctx, x0, y, DCR_TABLE_W, HEADER_H, C.navy);
+  let x = x0;
+  for (const col of DCR_COL_DEFS) { drawCell(ctx, col.header, x, col.w, y + 7, col.align, C.white, ctx.bold); x += col.w; }
+}
+
+function drawDcrRow(ctx: Ctx, row: DcrRow, x0: number, y: number, zebra: boolean) {
+  if (zebra) fillRect(ctx, x0, y - 4, DCR_TABLE_W, ROW_H, C.light);
+  let x = x0;
+  for (const col of DCR_COL_DEFS) {
+    let s = '';
+    let color = C.dark;
+    let font: PDFFont | undefined;
+    switch (col.key) {
+      case 'idx': s = row.idx; break;
+      case 'label': s = row.label; break;
+      case 'group': s = row.group; color = C.mid; break;
+      case 'section': s = row.section; break;
+      case 'mpos': s = row.mpos.toFixed(2); break;
+      case 'mneg': s = row.mneg.toFixed(2); break;
+      case 'shear': s = row.shear.toFixed(2); break;
+      case 'tor': s = row.tor.toFixed(2); break;
+      case 'crack': s = row.crack.toFixed(2); break;
+      case 'pm': s = row.pm == null ? '—' : row.pm.toFixed(2); break;
+      case 'gov': s = row.gov.toFixed(2); color = row.reviewed ? C.dark : dcrColorFor(row.gov); font = ctx.bold; break;
+      case 'status': s = row.status; color = statusColorFor(row.status); font = ctx.bold; break;
+    }
+    drawCell(ctx, s, x, col.w, y, col.align, color, font);
+    x += col.w;
+  }
+}
+
+function drawDcrTable(doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont, rows: DcrRow[], projectName: string, startPage: number): number {
+  const topY = 595 - 44;
+  const rowsPerPage = Math.floor((topY - 24 - HEADER_H) / ROW_H);
+  let pageNum = startPage;
+  for (let start = 0; start < rows.length; start += rowsPerPage) {
+    const ctx = addPage(doc, fontReg, fontBold);
+    drawPageFrame(ctx, 'Member DCR Schedule', projectName, pageNum++, 'DCR Schedule');
+    drawDcrTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+    let y = topY - HEADER_H - ROW_H;
+    rows.slice(start, start + rowsPerPage).forEach((row, i) => { drawDcrRow(ctx, row, TABLE_MARGIN_LEFT, y, i % 2 === 0); y -= ROW_H; });
+    strokeRect(ctx, TABLE_MARGIN_LEFT, y, DCR_TABLE_W, topY - y - HEADER_H);
+    let cx = TABLE_MARGIN_LEFT;
+    for (const col of DCR_COL_DEFS.slice(0, -1)) {
+      cx += col.w;
+      ctx.page.drawLine({ start: { x: cx, y: topY - HEADER_H }, end: { x: cx, y: y + ROW_H }, thickness: 0.3, color: C.mid });
+    }
+  }
+  return pageNum;
+}
+
+/** A few-page "DCR schedule": one row per member with per-mode + governing DCR and
+ *  status. Members in an engineer-Reviewed group show "Reviewed" instead of NG. */
+export async function buildDcrListPDF(project: Project): Promise<Uint8Array> {
+  const { regular, bold } = await getFontBytes();
+  const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkit);
+  const fontReg = await doc.embedFont(regular);
+  const fontBold = await doc.embedFont(bold);
+
+  const isEC2 = project.code === 'EN1992-1-1';
+  const code = project.code ?? 'ACI318-19';
+  const projectName = winAnsiSafe(project.name ?? 'Unnamed Project');
+  const groups = project.designGroups ?? [];
+  const members = (project.members ?? []).filter(m => !m.memberType || m.memberType === 'beam');
+  const rows = buildDcrRows(members, groups, isEC2, code);
+  const ngCount = rows.filter(r => r.status === 'NG').length;
+  const reviewedCount = rows.filter(r => r.reviewed).length;
+
+  // Cover page
+  {
+    const cover = doc.addPage([842, 595]);
+    const { width: w, height: h } = cover.getSize();
+    cover.drawRectangle({ x: 0, y: 0, width: w, height: h, color: C.navy });
+    cover.drawRectangle({ x: 40, y: 120, width: w - 80, height: 3, color: C.blue });
+    cover.drawText('S-Dashboard', { x: 44, y: h - 80, size: 18, color: C.mid, font: fontBold });
+    cover.drawText('Member DCR Schedule', { x: 44, y: h - 110, size: 28, color: C.white, font: fontBold });
+    cover.drawText(projectName, { x: 44, y: h - 148, size: 14, color: C.mid, font: fontReg });
+    const today = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+    cover.drawText(today, { x: 44, y: 100, size: 10, color: C.mid, font: fontReg });
+    cover.drawText(`${rows.length} members  ·  ${ngCount} NG  ·  ${reviewedCount} reviewed  ·  ${isEC2 ? 'EN 1992-1-1' : code}`, { x: 44, y: 82, size: 10, color: C.mid, font: fontReg });
+    cover.drawText('DCR = utilisation (demand / capacity). "Reviewed" = engineer sign-off; failing checks accepted.', { x: 44, y: 62, size: 8.5, color: C.mid, font: fontReg });
+  }
+
+  drawDcrTable(doc, fontReg, fontBold, rows, projectName, 2);
   return doc.save();
 }

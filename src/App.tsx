@@ -6,7 +6,7 @@ import { resolveCrack } from './utils/resolveCrack';
 import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
 import { exportExcel, exportDcrList } from './utils/export/excelExport';
-import { buildSchedulePDF } from './utils/export/schedulePdfExport';
+import { buildSchedulePDF, buildDcrListPDF } from './utils/export/schedulePdfExport';
 import { exportGroupScheduleExcel } from './utils/export/groupScheduleExcel';
 import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
@@ -752,6 +752,25 @@ export default function App() {
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
                   Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(Spreadsheet)</span>
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowExport(false);
+                    const bytes = await buildDcrListPDF(project);
+                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${(project.name ?? 'dcr').replace(/\s+/g, '_')}_DCR_schedule.pdf`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  title="A few-page PDF: one row per member with per-mode + governing DCR and status (reviewed members show 'Reviewed', not NG)"
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(PDF)</span>
                 </button>
                 <button
                   onClick={async () => {

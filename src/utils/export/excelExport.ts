@@ -195,10 +195,12 @@ function govDcrOf(r: ReturnType<typeof runDesign>): number {
  */
 export function buildDcrListWorkbook(project: Project): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
-  // member id → group label (a beam shared by several groups shows the last one).
+  // member id → group label (a beam shared by several groups shows the last one),
+  // and the set of members in an engineer-Reviewed group (their NG/Warning → "Reviewed").
   const groupOf = new Map<string, string>();
+  const reviewed = new Set<string>();
   for (const g of project.designGroups ?? [])
-    for (const id of g.memberIds) groupOf.set(id, g.label);
+    for (const id of g.memberIds) { groupOf.set(id, g.label); if (g.reviewed) reviewed.add(id); }
 
   const data: (string | number)[][] = [
     ['S-Concrete Design — Member DCR List'],
@@ -220,7 +222,8 @@ export function buildDcrListWorkbook(project: Project): XLSX.WorkBook {
       +r.DCR_shear.toFixed(2), +r.DCR_torsion.toFixed(2),
       +(r.DCR_crack ?? 0).toFixed(2),
       r.DCR_PM !== undefined ? +r.DCR_PM.toFixed(2) : '—',
-      r.status,
+      // Engineer-Reviewed members never read "NG"/"Warning" — they show "Reviewed".
+      reviewed.has(m.id) && r.status !== 'OK' ? 'Reviewed' : r.status,
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(data);
