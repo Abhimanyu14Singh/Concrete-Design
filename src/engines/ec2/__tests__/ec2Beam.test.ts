@@ -226,7 +226,7 @@ describe('code routing sanity', () => {
 });
 
 // ── Crack width §7.3.4 ────────────────────────────────────────────────────────
-import { crackWidth, ecm, creepCoefficient } from '../ec2Beam';
+import { crackWidth, sideFaceCrackWidth, ecm, creepCoefficient } from '../ec2Beam';
 import { DEFAULT_CRACK_PARAMS } from '../../../types';
 
 describe('crackWidth §7.3.4 — 300×500, 3Ø20, C30, B500', () => {
@@ -468,12 +468,60 @@ describe('Large-beam benchmark 500×1200mm (shear vs S-CONCRETE, crack vs long-h
     expect(result.wk_top).toBeLessThan(0.338 * 1.20);
   });
 
-  // Side-face wk uses k2 = 0.5 (EC2 §7.3.4(3) bending value, matching the EN 1992-1-1
-  // worked reference / EurocodeApplied). With k2 = 1.0 (the older S-CONCRETE reading)
-  // this was ≈ 0.590 mm; the bending k2 halves the spacing term → ≈ 0.353 mm.
-  it('wk_face ≈ 0.353 mm (±20%, k2 = 0.5 side face)', () => {
+  // Side-face wk now uses the PRECISE layered cracked section — the top (14-Ø25),
+  // bottom (12-Ø25) AND the 8-Ø16 skin bars all sit in ONE transformed section,
+  // k2 = 0.5 (EC2 §7.3.4(3) bending). Crediting the skin steel's own stiffness
+  // pushes the NA down (417 → 442 mm) and drops the skin-bar stress (185 → 162 MPa),
+  // so wk_face ≈ 0.309 mm — ~12 % below the old two-layer chord + interpolation
+  // (0.353 mm), which ignored the skin steel. (k2 = 1.0 read ≈ 0.590 mm.)
+  it('wk_face ≈ 0.309 mm (±15%, precise layered section)', () => {
     expect(result.wk_face).toBeDefined();
-    expect(result.wk_face!).toBeGreaterThan(0.353 * 0.80);
-    expect(result.wk_face!).toBeLessThan(0.353 * 1.20);
+    expect(result.wk_face!).toBeGreaterThan(0.309 * 0.85);
+    expect(result.wk_face!).toBeLessThan(0.309 * 1.15);
+  });
+});
+
+// ── Side-face crack: precise layered-section behaviour ───────────────────────
+// The refined side-face check folds the top, bottom AND skin bars into one
+// cracked transformed section, so the skin steel's own stiffness is credited.
+describe('sideFaceCrackWidth — layered section credits top/bottom + skin steel', () => {
+  const base = {
+    b: 500, h: 1200, cover: 50, stirrupD: 12,
+    fck: 40, Es: 200_000, kt: 0.4, phi: 2.0,
+    As_top: 6872, d_top: 1100, As_bot: 5890, d_bot: 1100, botBarD: 25,
+    sideBarD: 16, As_perBar: 201, s_v: 180,
+    Mqp_pos: 300, Mqp_neg: 800,
+  };
+
+  it('is cracked and returns a positive side-face crack width', () => {
+    const r = sideFaceCrackWidth({ ...base, nPerFace: 8 });
+    expect(r.cracked).toBe(true);
+    expect(r.wk).toBeGreaterThan(0);
+    expect(r.nSkinLevels).toBe(8);
+  });
+
+  it('MORE skin area at the same spacing → stiffer section → lower crack width', () => {
+    const few  = sideFaceCrackWidth({ ...base, nPerFace: 4 });
+    const many = sideFaceCrackWidth({ ...base, nPerFace: 8 });
+    // Same s_v ⇒ identical local ρ_eff, crack spacing and check location, so the
+    // extra skin AREA is the only difference: it pushes the NA down and lowers the
+    // skin-bar stress, dropping the crack width. (Vary s_v too and y_crit shifts,
+    // which the isolated comparison here deliberately avoids.)
+    expect(many.sr_side).toBeCloseTo(few.sr_side, 6); // spacing term unchanged
+    expect(many.x).toBeGreaterThan(few.x);
+    expect(many.sigma_skin).toBeLessThan(few.sigma_skin);
+    expect(many.wk).toBeLessThan(few.wk);
+  });
+
+  it('MORE bottom/top flexural steel → lower side-face crack width', () => {
+    const light = sideFaceCrackWidth({ ...base, nPerFace: 8, As_bot: 3000, As_top: 3000 });
+    const heavy = sideFaceCrackWidth({ ...base, nPerFace: 8, As_bot: 9000, As_top: 9000 });
+    expect(heavy.wk).toBeLessThan(light.wk); // chords stiffen the section too
+  });
+
+  it('below the cracking moment → uncracked, wk = 0', () => {
+    const r = sideFaceCrackWidth({ ...base, nPerFace: 8, Mqp_pos: 5, Mqp_neg: 5 });
+    expect(r.cracked).toBe(false);
+    expect(r.wk).toBe(0);
   });
 });

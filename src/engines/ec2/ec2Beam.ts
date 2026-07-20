@@ -316,6 +316,171 @@ export function crackWidth(
   return { wk: sr_max * eps, sigma_s, sr_max, x, rho_p_eff, k2, srEq, cracked: true, Mcr, alpha_e };
 }
 
+// ── Side-face (skin) crack width — precise layered-section method ─────────────
+
+/** One longitudinal steel layer: area (mm²) at depth `d` from the compression face (mm). */
+interface SteelLayer { As: number; d: number; }
+
+/**
+ * Neutral-axis depth `x` and cracked TRANSFORMED second moment `Icr` for an
+ * arbitrary stack of steel layers over a rectangular web of width `b`.
+ *
+ * The first moment of the transformed areas about the trial axis,
+ *   f(x) = b·x²/2 + Σ_{d<x}(αe−1)As(x−d) − Σ_{d≥x} αe·As(d−x),
+ * is monotonically increasing in x (concrete + compression steel grow, tension
+ * steel shrinks), so a bisection is unconditionally robust for ANY layer layout
+ * — unlike the closed-form quadratic, which only admits two layers. Each bar is
+ * classified tension/compression by its own position relative to the axis.
+ */
+function crackedSectionLayered(b: number, alpha_e: number, layers: SteelLayer[]): { x: number; Icr: number } {
+  const f = (x: number) => {
+    let m = b * x * x / 2;
+    for (const L of layers) m += L.d < x ? (alpha_e - 1) * L.As * (x - L.d) : -alpha_e * L.As * (L.d - x);
+    return m;
+  };
+  let lo = 1e-6, hi = Math.max(1, ...layers.map(L => L.d));  // root lies in (0, deepest bar)
+  for (let i = 0; i < 80; i++) { const mid = (lo + hi) / 2; if (f(mid) > 0) hi = mid; else lo = mid; }
+  const x = (lo + hi) / 2;
+  let Icr = b * x ** 3 / 3;
+  for (const L of layers) Icr += (L.d < x ? (alpha_e - 1) : alpha_e) * L.As * (L.d - x) ** 2;
+  return { x, Icr };
+}
+
+/** Cracking moment M_cr (kN·m) from the transformed UN-cracked section, all layers. */
+function crackingMomentLayered(b: number, h: number, alpha_e: number, layers: SteelLayer[], fck: number): number {
+  let Au = b * h, Sx = b * h * h / 2;
+  for (const L of layers) { Au += (alpha_e - 1) * L.As; Sx += (alpha_e - 1) * L.As * L.d; }
+  const xu = Sx / Au;                                        // centroid from compression face
+  let Iu = b * h ** 3 / 12 + b * h * (h / 2 - xu) ** 2;
+  for (const L of layers) Iu += (alpha_e - 1) * L.As * (L.d - xu) ** 2;
+  return fctm(fck) * Iu / (h - xu) / 1e6;                   // tension face at depth h
+}
+
+export interface SideFaceCrackResult {
+  cracked: boolean;
+  wk: number;          // side-face characteristic crack width (mm)
+  sigma_skin: number;  // stress at the critical skin bar (MPa) — read off the full section
+  sigma_chord: number; // governing tension-chord stress (MPa) from the SAME section
+  sr_side: number;     // max crack spacing eq (7.11), k2 = 0.5 (mm)
+  eps: number;         // (εsm − εcm)
+  rho_side: number;    // local effective ratio at the skin bar
+  hc_side: number;     // side-face effective tension strip (mm)
+  s_v: number;         // vertical skin-bar spacing used (mm)
+  x: number;           // layered cracked NA depth from compression face (mm)
+  Icr: number;         // layered cracked transformed I (mm⁴)
+  Mcr: number;         // cracking moment (kN·m)
+  y_crit: number;      // critical skin-bar depth from compression face (mm)
+  d_chord: number;     // governing tension-chord depth from compression face (mm)
+  alpha_e: number;
+  useHogging: boolean;
+  govMqp: number;      // governing quasi-permanent moment (kN·m)
+  nSkinLevels: number; // skin levels folded into the section
+}
+
+/**
+ * PRECISE side-face (skin) crack width, EN 1992-1-1 §7.3.4.
+ *
+ * The tension-chord `crackWidth()` above models only TWO layers — the tension
+ * chord and the opposite compression steel — and the skin-bar stress is then
+ * interpolated off that strain plane. That anchors the plane on the top and
+ * bottom bars but ignores the stiffness the SKIN bars themselves add to the
+ * cracked section (and lumps each chord at a single depth).
+ *
+ * Here we assemble ONE fully-cracked transformed section holding EVERY
+ * longitudinal layer — top steel, bottom steel AND each skin level at its true
+ * depth — solve the neutral axis once, and read the stress at the critical skin
+ * bar DIRECTLY from σ(d) = αe·M·(d − x)/Icr. Crediting the skin steel for the
+ * stiffness it genuinely contributes makes the result exact rather than
+ * conservative. This is the single implementation shared by the engine DCR and
+ * the Calc Sheet (they had drifted: engine k2 = 0.5 vs the sheet's stale 1.0).
+ *
+ * ρp,eff, hc,eff and sr,max stay LOCAL to the skin bar (§7.3.2/§7.3.4) — only
+ * the steel stress and the neutral axis gain the full-section refinement.
+ */
+export function sideFaceCrackWidth(p: {
+  b: number; h: number;              // web width, overall depth (mm)
+  cover: number; stirrupD: number;   // clear cover, link Ø (mm)
+  fck: number; Es: number; kt: number; phi: number;
+  As_top: number; d_top: number;     // top steel area (mm²) & depth from top (mm)
+  As_bot: number; d_bot: number; botBarD: number;  // bottom steel (+ bar Ø for auto-spacing)
+  sideBarD: number; As_perBar: number; nPerFace: number; s_v?: number;  // skin bars
+  Mqp_pos: number; Mqp_neg: number;  // quasi-permanent moments (kN·m)
+}): SideFaceCrackResult {
+  const { b, h, cover, stirrupD, fck, Es, kt, phi } = p;
+  const alpha_e = Es / (ecm(fck) / (1 + phi));
+  const useHogging = p.Mqp_neg >= p.Mqp_pos;
+  const govMqp = useHogging ? p.Mqp_neg : p.Mqp_pos;
+  const nSkin = Math.max(0, Math.floor(p.nPerFace));
+
+  // Vertical skin-bar spacing: user value, else uniform over the clear web height.
+  const s_v = (p.s_v && p.s_v > 0)
+    ? p.s_v
+    : (nSkin > 1 ? (h - 2 * (cover + stirrupD + p.botBarD)) / (nSkin - 1) : h - 2 * (cover + stirrupD + p.botBarD));
+
+  const nil: SideFaceCrackResult = {
+    cracked: false, wk: 0, sigma_skin: 0, sigma_chord: 0, sr_side: 0, eps: 0, rho_side: 0,
+    hc_side: 0, s_v, x: 0, Icr: 0, Mcr: 0, y_crit: 0, d_chord: 0, alpha_e, useHogging, govMqp, nSkinLevels: nSkin,
+  };
+  if (nSkin <= 0 || p.As_perBar <= 0 || govMqp <= 0) return nil;
+
+  // Put every layer in a common "depth from the compression face of the governing
+  // sense" frame. d_top and d_bot arrive as flexural effective depths, each
+  // measured from its OWN compression face, so first express both as depth-from-
+  // the-top-face (top steel: h − d_top; bottom steel: d_bot), then flip for hogging.
+  const dTopFromTop = h - p.d_top;
+  const dBotFromTop = p.d_bot;
+  const toComp = (dFromTop: number) => (useHogging ? h - dFromTop : dFromTop);
+  const dTopC = toComp(dTopFromTop);
+  const dBotC = toComp(dBotFromTop);
+  const layers: SteelLayer[] = [
+    { As: p.As_top, d: dTopC },
+    { As: p.As_bot, d: dBotC },
+  ].filter(L => L.As > 0);
+  // Skin bars folded into the section: distribute the nSkin levels uniformly over
+  // the clear web, bounded by the top/bottom chord zones (robust for any count or
+  // spacing — no bars fall outside the section). Their near-mid-height lever means
+  // the exact placement barely moves Icr; what matters is the tension-side area.
+  // The nominal s_v above is kept for the LOCAL effective ratio / crack spacing.
+  const skinAreaPerLevel = 2 * p.As_perBar;      // both faces share each level
+  const webTop = Math.min(cover + stirrupD + p.botBarD, h / 2);
+  const webBot = Math.max(h - (cover + stirrupD + p.botBarD), h / 2);
+  for (let j = 0; j < nSkin; j++) {
+    const dFromTop = nSkin > 1 ? webTop + j * (webBot - webTop) / (nSkin - 1) : h / 2;
+    layers.push({ As: skinAreaPerLevel, d: toComp(dFromTop) });
+  }
+
+  const d_chord = Math.max(dTopC, dBotC);  // governing tension chord (deepest layer)
+  const Mcr = crackingMomentLayered(b, h, alpha_e, layers, fck);
+  if (govMqp <= Mcr) return { ...nil, Mcr };  // below cracking → no crack to check
+
+  const { x, Icr } = crackedSectionLayered(b, alpha_e, layers);
+  const M_Nmm = govMqp * 1e6;
+  const sigma_chord = Icr > 0 ? alpha_e * M_Nmm * (d_chord - x) / Icr : 0;
+
+  // Critical skin bar: the first bar just OUTSIDE the tension chord's effective
+  // strip (bars inside it are controlled by the main-face check). Its stress is
+  // read straight off the layered section — no chord-to-skin interpolation.
+  const hc_ef_chord = Math.min(2.5 * (h - d_chord), (h - x) / 3, h / 2);
+  const y_crit = h - hc_ef_chord - s_v / 2;
+  const sigma_skin = Icr > 0 && y_crit > x ? alpha_e * M_Nmm * (y_crit - x) / Icr : 0;
+
+  // Local effective ratio + max crack spacing at the skin bar (§7.3.2 / §7.3.4).
+  const hc_side = Math.min(2.5 * (cover + stirrupD + p.sideBarD / 2), h / 2);
+  const rho_side = p.As_perBar / (s_v * hc_side);
+  const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;  // k2 = 0.5 (bending) — EC2 §7.3.4(3)
+  const sr_side = k3 * (cover + stirrupD) + k1 * k2 * k4 * p.sideBarD / Math.max(rho_side, 1e-4);
+
+  const fct_eff = fctm(fck);
+  const eps = Math.max(
+    (sigma_skin - kt * fct_eff / Math.max(rho_side, 1e-6) * (1 + alpha_e * rho_side)) / Es,
+    0.6 * sigma_skin / Es,
+  );
+  return {
+    cracked: true, wk: sr_side * eps, sigma_skin, sigma_chord, sr_side, eps, rho_side,
+    hc_side, s_v, x, Icr, Mcr, y_crit, d_chord, alpha_e, useHogging, govMqp, nSkinLevels: nSkin,
+  };
+}
+
 // ── Full member check ────────────────────────────────────────────────────────
 
 function rebarAs(bars: { numBars: number; barSize: number }[]): number {
@@ -521,6 +686,24 @@ export function designMemberEC2(
     Asw_s_prov_leg = AtLeg_mm2 / s_mm;
     if (Asw_s_req_VT > Asw_s_prov_leg && (VEd > VRdc || TEd > t.TRdc))
       warnings.push({ code: 'EC2 §6.3.2', message: `Combined shear+torsion links NG: required Asw/s = ${Asw_s_req_VT.toFixed(3)} mm²/mm/leg > provided ${Asw_s_prov_leg.toFixed(3)} mm²/mm/leg — shear and torsion link demands add`, severity: 'error' });
+
+    // §9.2.3(2) — closed TORSION links must be spaced ≤ the smallest of u/8 (u = outer
+    // perimeter of the section), the §9.2.2(6) shear limit 0.75d, and the least section
+    // dimension. This is tighter than the plain shear limit and only applies once
+    // torsion cracks the section (T_Ed > T_Rd,c), i.e. torsion links are required.
+    if (TEd > t.TRdc) {
+      const u_outer = 2 * (b_mm + h_mm);
+      const s_tor_u8 = u_outer / 8;
+      const s_tor_shear = 0.75 * d_bot;
+      const s_tor_least = Math.min(b_mm, h_mm);
+      const s_tor_max = Math.min(s_tor_u8, s_tor_shear, s_tor_least);
+      if (s_mm > s_tor_max + 0.5)
+        warnings.push({
+          code: 'EC2 §9.2.3(2)',
+          message: `Torsion link spacing ${s_mm.toFixed(0)} mm > s_max = ${s_tor_max.toFixed(0)} mm (min of u/8 = ${s_tor_u8.toFixed(0)}, 0.75d = ${s_tor_shear.toFixed(0)}, least dim = ${s_tor_least.toFixed(0)} mm) — tighten the closed torsion links`,
+          severity: 'warning',
+        });
+    }
   } else {
     const t = tRd(b_mm, h_mm, 0, 1, fywd, fck, fcd, cotTheta, coverToCentre);
     TRdc_val = t.TRdc;
@@ -651,77 +834,26 @@ export function designMemberEC2(
   if (cw_top.wk > crack.wLimitTop)
     warnings.push({ code: 'EC2 §7.3.4', message: `Top face crack width wk = ${cw_top.wk.toFixed(2)} mm > limit ${crack.wLimitTop.toFixed(2)} mm (σs = ${cw_top.sigma_s.toFixed(0)} MPa under M_qp = ${Mqp_neg.toFixed(1)} kN·m)`, severity: 'error' });
 
-  // Side-face crack width §7.3.4.
-  //   k2 = 0.5 — EC2 §7.3.4(3) bending value (opposite-sign strains at the section
-  //     boundaries), matching the EN 1992-1-1 worked reference (EurocodeApplied).
-  //     (Previously 1.0 per the S-CONCRETE benchmark, which reads ~2× higher.)
-  //   ρ_eff = As_one_bar / (s_v × hc,eff)  where s_v = vertical bar spacing
-  //   fs_skin interpolated from governing chord elastic strain profile
+  // Side-face (skin) crack width §7.3.4 — precise layered-section method.
+  // sideFaceCrackWidth() folds the top, bottom AND skin bars into ONE cracked
+  // transformed section (see its doc-comment), so the skin-bar stress is read
+  // straight off that section instead of being interpolated off a two-layer
+  // chord that ignores the skin steel's own stiffness.
   let wk_face: number | undefined;
-  const governingMqp = Math.max(Mqp_pos, Mqp_neg);
-  if (rebar.sideBars && rebar.sideBars.length > 0 && governingMqp > 0 && (cw_bot.cracked || cw_top.cracked)) {
+  if (rebar.sideBars && rebar.sideBars.length > 0) {
     const firstSideGroup = rebar.sideBars[0];
-    const sideBarD = getBarDiam(firstSideGroup.barSize) * IN_TO_MM;
-    const As_per_bar = getBarArea(firstSideGroup.barSize) * IN2_TO_MM2;
-    const totalSideBars = rebar.sideBars.reduce((s, g) => s + g.numBars, 0);
-    if (As_per_bar > 0 && totalSideBars > 0) {
-      // Governing chord (whichever bending moment governs)
-      const useHogging = Mqp_neg >= Mqp_pos;
-      const cwGov = useHogging ? cw_top : cw_bot;
-      const x_mm = cwGov.x;       // elastic cracked NA depth from compression face (mm)
-      const sigma_chord = cwGov.sigma_s;  // tension chord steel stress (MPa)
-      const d_chord = useHogging ? d_top : d_bot;
-
-      // Effective tension strip height on each side face per EC2 §7.3.2:
-      //   h_c,ef = min(2.5(c + φ_link + φ_skin/2),  h/2)
-      const hc_side = Math.min(2.5 * (cover_mm + stirrupD_mm + sideBarD / 2), h_mm / 2);
-
-      // Vertical spacing s_v: use user-supplied value if present, otherwise
-      // distribute bars uniformly over the available web height (conservatively
-      // reduced by main bar zone on each side).
-      let s_v_mm: number;
-      if (firstSideGroup.spacing != null && firstSideGroup.spacing > 0) {
-        s_v_mm = firstSideGroup.spacing * IN_TO_MM;
-      } else {
-        // Available web height between main bar zones at top and bottom
-        const avail = h_mm - 2 * (cover_mm + stirrupD_mm + botBarD_mm);
-        s_v_mm = totalSideBars > 1 ? avail / (totalSideBars - 1) : avail;
-      }
-
-      // Critical skin bar position: the bar just outside the main tension chord
-      // effective strip (hc,eff_chord) is the most highly stressed skin bar.
-      // hc,eff at the governing chord face = min(2.5×(h-d_chord),(h-x)/3,h/2).
-      const hc_ef_chord = Math.min(
-        2.5 * (h_mm - d_chord),
-        (h_mm - x_mm) / 3,
-        h_mm / 2,
-      );
-      // Position of the critical skin bar from the COMPRESSION face (same
-      // reference as x_mm). The first skin bar lies s_v/2 outside the inner
-      // edge of the chord's effective tension strip.
-      const y_crit = h_mm - hc_ef_chord - s_v_mm / 2;   // from compression face
-      const lever = d_chord - x_mm;                       // NA → tension chord
-      const y_skin_from_NA = Math.max(0, y_crit - x_mm); // NA → critical bar
-      // Interpolated steel stress at critical skin bar height (linear strain diagram)
-      const fs_skin = lever > 0 ? Math.max(0, sigma_chord * y_skin_from_NA / lever) : 0;
-
-      // ρ_eff per EC2 §7.3.2: area of one bar over its tributary area (s_v × hc,eff)
-      const rho_side = As_per_bar / (s_v_mm * hc_side);
-
-      // Sr,max §7.3.4(3) — k2 = 0.5 for the side face (bending: opposite-sign
-      // strains across the section, per EC2 §7.3.4(3) / the EN1992 worked reference)
-      const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;
-      const sr_side = k3 * (cover_mm + stirrupD_mm) + k1 * k2 * k4 * sideBarD / Math.max(rho_side, 1e-4);
-
-      // (εsm − εcm) at skin bar using EC2 eq (7.9)
-      const fct_eff = fctm(fck);
-      const alpha_e_side = Es_MPa / (ecm(fck) / (1 + phiCreep));
-      const eps_skin = Math.max(
-        (fs_skin - crack.kt * fct_eff / Math.max(rho_side, 1e-6) * (1 + alpha_e_side * rho_side)) / Es_MPa,
-        0.6 * fs_skin / Es_MPa,
-      );
-
-      wk_face = sr_side * eps_skin;
+    const sf = sideFaceCrackWidth({
+      b: b_mm, h: h_mm, cover: cover_mm, stirrupD: stirrupD_mm,
+      fck, Es: Es_MPa, kt: crack.kt, phi: phiCreep,
+      As_top: As_top_mm2, d_top, As_bot: As_bot_mm2, d_bot, botBarD: botBarD_mm,
+      sideBarD: getBarDiam(firstSideGroup.barSize) * IN_TO_MM,
+      As_perBar: getBarArea(firstSideGroup.barSize) * IN2_TO_MM2,
+      nPerFace: rebar.sideBars.reduce((s, g) => s + g.numBars, 0),
+      s_v: firstSideGroup.spacing != null && firstSideGroup.spacing > 0 ? firstSideGroup.spacing * IN_TO_MM : undefined,
+      Mqp_pos, Mqp_neg,
+    });
+    if (sf.cracked) {
+      wk_face = sf.wk;
       if (wk_face > crack.wLimitFace)
         warnings.push({ code: 'EC2 §7.3.4', message: `Side face crack width wk ≈ ${wk_face.toFixed(2)} mm > limit ${crack.wLimitFace.toFixed(2)} mm — add/enlarge skin reinforcement`, severity: 'warning' });
     }

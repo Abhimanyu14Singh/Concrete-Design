@@ -8,7 +8,7 @@ import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase, CrackCont
 import { DEFAULT_CRACK_PARAMS } from '../types';
 import type { CalcSection } from './calcBreakdown';
 import { getBarArea, getBarDiam } from './concreteDesign';
-import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, ecm, creepCoefficient, layerCentroidMm } from '../engines/ec2/ec2Beam';
+import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, sideFaceCrackWidth, ecm, creepCoefficient, layerCentroidMm } from '../engines/ec2/ec2Beam';
 import { formatBarLabel } from './rebar';
 
 const IN_TO_MM = 25.4, PSI_TO_MPA = 0.00689476, KIP_TO_KN = 4.44822, KIPFT_TO_KNM = 1.35582, IN2_TO_MM2 = 645.16;
@@ -221,64 +221,43 @@ export function generateBreakdownEC2(
   addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, As_top, dComp_pos, crack.wLimitBot, posFromCombo);
   addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, dTop, As, dComp_neg, crack.wLimitTop, negFromCombo);
 
-  // Side face (skin reinforcement) — corrected EC2 §7.3.2/§7.3.4 approach:
-  //   k2 = 1.0 (pure tension at mid-height)
-  //   ρ_eff = As_one_bar / (s_v × hc,eff)
-  //   fs_skin interpolated from governing chord elastic strain profile
+  // Side face (skin reinforcement) — PRECISE layered-section method (EC2 §7.3.4):
+  //   one cracked transformed section holding the top, bottom AND skin bars, so
+  //   the skin-bar stress is read straight off the section (no chord interpolation)
+  //   and the skin steel's own stiffness is credited. k2 = 0.5 (bending). This
+  //   calls the SAME sideFaceCrackWidth() the engine DCR uses — the two can no
+  //   longer drift (they had: engine 0.5 vs this sheet's old 1.0).
   if (rebar.sideBars && rebar.sideBars.length > 0) {
     const firstSideG = rebar.sideBars[0];
     const sideBarD = getBarDiam(firstSideG.barSize) * IN_TO_MM;
     const As_per_bar = getBarArea(firstSideG.barSize) * IN2_TO_MM2;
     const totalSideBars = rebar.sideBars.reduce((s, g) => s + g.numBars, 0);
     if (As_per_bar > 0 && totalSideBars > 0) {
-      const govMqp = Math.max(Mqp_pos, Mqp_neg);
-      const useHogging = Mqp_neg >= Mqp_pos;
-      const d_chord = useHogging ? dTop : d;
-      const As_chord = useHogging ? As_top : As;
-      const cwGov = crackWidth(govMqp, As_chord, useHogging ? topBarD : botBarD, b, h, d_chord, cover + stirrupD, fck, Es_MPa, crack.kt,
-        { AsComp: useHogging ? As : As_top, dComp: useHogging ? dComp_neg : dComp_pos, phi: phiCreep });
-      const x_mm = cwGov.x;
-      const sigma_chord = cwGov.sigma_s;
-
-      // Effective tension strip for skin bars
-      const hc_side = Math.min(2.5 * (cover + stirrupD + sideBarD / 2), h / 2);
-      // Vertical spacing
-      let s_v_mm: number;
-      if (firstSideG.spacing != null && firstSideG.spacing > 0) {
-        s_v_mm = firstSideG.spacing * IN_TO_MM;
+      const sf = sideFaceCrackWidth({
+        b, h, cover, stirrupD, fck, Es: Es_MPa, kt: crack.kt, phi: phiCreep,
+        As_top, d_top: dTop, As_bot: As, d_bot: d, botBarD,
+        sideBarD, As_perBar: As_per_bar, nPerFace: totalSideBars,
+        s_v: firstSideG.spacing != null && firstSideG.spacing > 0 ? firstSideG.spacing * IN_TO_MM : undefined,
+        Mqp_pos, Mqp_neg,
+      });
+      const dcr_side = crack.wLimitFace > 0 ? sf.wk / crack.wLimitFace : 0;
+      crackSteps.push({
+        ref: '§7.3.4', label: 'Side face: layered cracked section',
+        equation: `all longitudinal bars in one section — top + bottom + ${sf.nSkinLevels} skin level${sf.nSkinLevels === 1 ? '' : 's'}`,
+        substitution: `M_qp (${sf.useHogging ? '−M, top tension' : '+M, bot tension'}) = ${f(sf.govMqp)} kN·m, αe = ${f(sf.alpha_e, 2)}`,
+        result: sf.cracked ? `x = ${f(sf.x, 0)} mm, σs,chord = ${f(sf.sigma_chord, 0)} MPa` : `M_qp ≤ M_cr = ${f(sf.Mcr)} kN·m ⇒ uncracked`,
+      });
+      if (sf.cracked) {
+        crackSteps.push(
+          { ref: '§7.3.4', label: 'Side face: stress at critical skin bar', equation: 'σs,skin = αe·M·(y − x) / Icr  (direct off the section)', substitution: `y = ${f(sf.y_crit, 0)} mm from comp. face, x = ${f(sf.x, 0)} mm`, result: `σs,skin = ${f(sf.sigma_skin, 0)} MPa` },
+          { ref: '§7.3.2(3)', label: 'Side face: effective reinforcement ratio', equation: 'ρp,eff = As_bar / (sv × hc,eff)', substitution: `As_bar = ${f(As_per_bar, 0)} mm², sv = ${f(sf.s_v, 0)} mm, hc,eff = ${f(sf.hc_side, 0)} mm`, result: `ρp,eff = ${f(sf.rho_side * 100, 3)}%` },
+          { ref: 'eq (7.11)', label: 'Side face: max crack spacing (k2 = 0.5, bending)', equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `k2 = 0.50, c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(sideBarD, 0)} mm`, result: `sr,max = ${f(sf.sr_side, 0)} mm` },
+          { ref: 'eq (7.8)', label: 'Side face: crack width', equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)}, (εsm − εcm) = ${f(sf.eps * 1000, 3)}‰`, result: `wk = ${f(sf.wk, 3)} mm vs limit ${f(crack.wLimitFace, 2)} mm` },
+          { ref: '§7.3.1', label: 'Side face: crack DCR', equation: 'DCR = wk / w_max', substitution: `${f(sf.wk, 3)} / ${f(crack.wLimitFace, 2)}`, result: `DCR = ${f(dcr_side, 3)} ${dcr_side <= 1 ? '✓ OK' : '✗ NG'}` },
+        );
       } else {
-        const avail = h - 2 * (cover + stirrupD + botBarD);
-        s_v_mm = totalSideBars > 1 ? avail / (totalSideBars - 1) : avail;
+        crackSteps.push({ ref: '§7.3.1', label: 'Side face: crack DCR', equation: 'section uncracked', substitution: `M_qp = ${f(sf.govMqp)} ≤ M_cr = ${f(sf.Mcr)} kN·m`, result: 'wk = 0 → DCR = 0 ✓ OK (no crack)' });
       }
-      // Critical bar: just outside governing chord tension strip
-      const hc_ef_chord = Math.min(2.5 * (h - d_chord), (h - x_mm) / 3, h / 2);
-      const y_crit = h - hc_ef_chord - s_v_mm / 2;
-      const lever = d_chord - x_mm;
-      const y_skin_from_NA = Math.max(0, y_crit - x_mm);
-      const fs_skin = lever > 0 ? Math.max(0, sigma_chord * y_skin_from_NA / lever) : 0;
-
-      // ρ_eff per EC2 §7.3.2
-      const rho_side = As_per_bar / (s_v_mm * hc_side);
-      // Sr,max with k2 = 1.0 (pure tension on side face)
-      const k1 = 0.8, k2 = 1.0, k3 = 3.4, k4 = 0.425;
-      const sr_side = k3 * (cover + stirrupD) + k1 * k2 * k4 * sideBarD / Math.max(rho_side, 1e-4);
-      // (εsm − εcm)
-      const fct_eff_side = fctm(fck);
-      const eps_skin = Math.max(
-        (fs_skin - crack.kt * fct_eff_side / Math.max(rho_side, 1e-6) * (1 + alpha_e * rho_side)) / Es_MPa,
-        0.6 * fs_skin / Es_MPa,
-      );
-      const wk_side = sr_side * eps_skin;
-      const dcr_side = crack.wLimitFace > 0 ? wk_side / crack.wLimitFace : 0;
-
-      crackSteps.push(
-        { ref: '§7.3.4', label: 'Side face: governing moment', equation: `M_qp (${useHogging ? '−M, top tension' : '+M, bot tension'})`, substitution: `${f(govMqp)} kN·m`, result: `σs_chord = ${f(sigma_chord, 0)} MPa` },
-        { ref: '§7.3.4', label: 'Side face: steel stress at critical skin bar', equation: 'fs = σs_chord × y_skin / (d − x)', substitution: `y_skin = ${f(y_skin_from_NA, 0)} mm, lever = ${f(lever, 0)} mm`, result: `fs = ${f(fs_skin, 0)} MPa` },
-        { ref: '§7.3.2(3)', label: 'Side face: effective reinforcement ratio', equation: 'ρp,eff = As_bar / (sv × hc,eff)', substitution: `As_bar = ${f(As_per_bar, 0)} mm², sv = ${f(s_v_mm, 0)} mm, hc,eff = ${f(hc_side, 0)} mm`, result: `ρp,eff = ${f(rho_side * 100, 3)}%` },
-        { ref: 'eq (7.11)', label: 'Side face: max crack spacing (k2 = 1.0, pure tension)', equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `k2 = 1.00, c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(sideBarD, 0)} mm`, result: `sr,max = ${f(sr_side, 0)} mm` },
-        { ref: 'eq (7.8)', label: 'Side face: crack width', equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)}`, result: `wk = ${f(wk_side, 3)} mm vs limit ${f(crack.wLimitFace, 2)} mm` },
-        { ref: '§7.3.1', label: 'Side face: crack DCR', equation: 'DCR = wk / w_max', substitution: `${f(wk_side, 3)} / ${f(crack.wLimitFace, 2)}`, result: `DCR = ${f(dcr_side, 3)} ${dcr_side <= 1 ? '✓ OK' : '✗ NG'}` },
-      );
     }
   } else if (h > 1000) {
     crackSteps.push({
