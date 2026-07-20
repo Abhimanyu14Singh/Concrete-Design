@@ -5,7 +5,7 @@ import { runDesign } from './engines';
 import { resolveCrack } from './utils/resolveCrack';
 import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
-import { exportExcel } from './utils/export/excelExport';
+import { exportExcel, exportDcrList } from './utils/export/excelExport';
 import { buildSchedulePDF } from './utils/export/schedulePdfExport';
 import { exportGroupScheduleExcel } from './utils/export/groupScheduleExcel';
 import ReportModal from './components/ReportModal';
@@ -743,6 +743,15 @@ export default function App() {
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
                   Excel Summary
+                </button>
+                <button
+                  onClick={() => { exportDcrList(project); setShowExport(false); }}
+                  title="One row per member: governing DCR + per-mode DCRs (flexure / shear / torsion / crack / P-M) and status"
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(Spreadsheet)</span>
                 </button>
                 <button
                   onClick={async () => {

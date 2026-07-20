@@ -58,8 +58,11 @@ interface UnitInputRowProps {
 }
 function UnitInputRow({ label, value, quantity, onChange, min, step }: UnitInputRowProps) {
   const { toDisplay, fromDisplay, label: unitLbl } = useUnits();
-  // Strip float noise (355.59999 → 355.6) without losing user precision
-  const display = +toDisplay(value, quantity).toFixed(4);
+  // Show a sensible number of decimals per quantity so unit-converted values read
+  // cleanly (e.g. f'c 34.4738 → 34.5, fy 413.6856 → 413.7) instead of float noise.
+  // Only the DISPLAYED value rounds; the stored (imperial) value is untouched.
+  const dp = quantity === 'stress' ? 1 : 2;
+  const display = +toDisplay(value, quantity).toFixed(dp);
   return (
     <InputRow
       label={label} value={display} unit={unitLbl(quantity)} min={min} step={step}

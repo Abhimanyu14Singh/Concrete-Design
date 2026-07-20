@@ -156,12 +156,12 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
               {expandedSections.has(section.title) && (
                 <div style={{
                   border: `1px solid ${BORDER.default}`, borderTop: 'none',
-                  borderRadius: '0 0 8px 8px', overflow: 'hidden',
+                  borderRadius: '0 0 8px 8px', overflowX: 'auto', overflowY: 'hidden',
                 }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
                       <tr style={{ background: SURFACE.subtle }}>
-                        {['ACI Ref', 'Description', 'Equation', 'Substitution', 'Result'].map(h => (
+                        {[isEC2 ? 'EC2 Ref' : 'ACI Ref', 'Description', 'Equation', 'Substitution', 'Result'].map(h => (
                           <th key={h} style={{
                             padding: '8px 12px', textAlign: 'left',
                             color: INK.secondary, fontWeight: 600, fontSize: 10,
@@ -217,7 +217,9 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
           ))}
 
           <p style={{ fontSize: 10, color: INK.muted, marginTop: 16, textAlign: 'center' }}>
-            All calculations per ACI 318-19 Strength Design Method. Verify independently before use in production design.
+            {isEC2
+              ? 'All calculations per EN 1992-1-1:2004 (Eurocode 2). Verify independently before use in production design.'
+              : 'All calculations per ACI 318-19 Strength Design Method. Verify independently before use in production design.'}
           </p>
         </div>
       </div>
