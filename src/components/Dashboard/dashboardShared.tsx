@@ -23,9 +23,9 @@ export function worstOf(r: DesignResults): number {
   );
 }
 
-export function summarize(m: Member, code: DesignCode, slsCombo?: string): MemberSummary {
+export function summarize(m: Member, code: DesignCode, slsCombo?: string, cotTheta?: number): MemberSummary {
   const results = m.loads.map(l =>
-    runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo)));
+    runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo), cotTheta));
   const maxDCR = Math.max(...results.map(worstOf));
   const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
   return { member: m, worstResult, maxDCR };

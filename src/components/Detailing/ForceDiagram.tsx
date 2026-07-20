@@ -20,6 +20,8 @@ interface Props {
   result: DesignResults;
   code?: DesignCode;
   height?: number;
+  /** Project-level EC2 §6.2.3 strut angle cotθ (default 2.5). */
+  cotTheta?: number;
   /** The member's group per-region top cages — drive the stepped hogging capacity
    *  (φMn⁻) through the middle third and at the opposite end. */
   midThirdTopBars?: BarGroup[];
@@ -72,7 +74,7 @@ function buildEnvelope(member: Member): DiagramPoint[] {
 const axisTick = { fill: '#9ca3af', fontSize: 10 };
 const tooltipStyle = { background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 11 };
 
-export default function ForceDiagram({ member, result, code, height = 150, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
+export default function ForceDiagram({ member, result, code, height = 150, cotTheta, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
   const { label, toDisplay } = useUnits();
   const raw = buildEnvelope(member);
   if (raw.length < 2) return null;
@@ -83,7 +85,7 @@ export default function ForceDiagram({ member, result, code, height = 150, midTh
   if (member.rebar.tieZones && member.rebar.ties) {
     const demands = zoneShearDemands(member.stationForces ?? [], spanRaw);
     const zones = code === 'EN1992-1-1'
-      ? zonedShearCheckEC2(member.section, member.material, member.rebar, demands)
+      ? zonedShearCheckEC2(member.section, member.material, member.rebar, demands, cotTheta ?? 2.5)
       : zonedShearCheck(member.section, member.material, member.rebar, demands);
     for (const pt of raw) {
       const zi = Math.min(2, Math.floor((pt.x / spanRaw) * 3));

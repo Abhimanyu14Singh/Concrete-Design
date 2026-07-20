@@ -23,6 +23,7 @@ export function generateBreakdownEC2(
   _span = 20,
   crackIn: CrackControlParams = DEFAULT_CRACK_PARAMS,
   slsComboName?: string,
+  cotTheta = 2.5,   // EC2 §6.2.3 strut angle, matches the engine's cotθ
 ): CalcSection[] {
   // Merge with defaults so partial objects from old saves don't crash on missing fields.
   const crack: CrackControlParams = { ...DEFAULT_CRACK_PARAMS, ...crackIn };
@@ -105,7 +106,8 @@ export function generateBreakdownEC2(
   // ── Shear ──
   const VRdc_v = vRdc(b, d, As, fck);
   const z = 0.9 * d;
-  const cotT = 2.5;
+  const cotT = cotTheta;
+  const thetaDeg = (Math.atan(1 / cotT) * 180 / Math.PI).toFixed(1);
   const shearSteps: CalcSection['steps'] = [
     { ref: '§6.2.2', label: 'Resistance without stirrups', equation: 'V_Rd,c = [C_Rd,c·k·(100ρl·fck)^⅓]·bw·d', substitution: `k = ${f(Math.min(2, 1 + Math.sqrt(200 / d)), 2)}, ρl = ${f(Math.min(0.02, As / (b * d)) * 100, 2)}%`, result: `V_Rd,c = ${f(VRdc_v)} kN` },
   ];
@@ -117,7 +119,7 @@ export function generateBreakdownEC2(
     const VRdmax_v = vRdMax(b, z, fck, fcd, cotT);
     VRd_kN = Math.min(VRds_v, VRdmax_v);
     shearSteps.push(
-      { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = 21.8° (cotθ = 2.5)${zonedNote}` },
+      { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = ${thetaDeg}° (cotθ = ${cotT})${zonedNote}` },
       { ref: '§6.2.3', label: 'Strut crushing limit', equation: 'V_Rd,max = bw·z·ν1·fcd/(cotθ+tanθ)', substitution: `ν1 = 0.6(1 − ${f(fck)}/250) = ${f(0.6 * (1 - fck / 250), 3)}`, result: `V_Rd,max = ${f(VRdmax_v)} kN` },
       { ref: '§6.2', label: 'Governing shear resistance', equation: 'V_Rd = min(V_Rd,s, V_Rd,max)', substitution: `min(${f(VRds_v)}, ${f(VRdmax_v)})`, result: `V_Rd = ${f(VRd_kN)} kN ${VEd <= VRd_kN ? '✓' : '✗'}`, note: `V_Ed = ${f(VEd)} kN → DCR = ${VRd_kN > 0 ? f(VEd / VRd_kN, 3) : '—'}` },
     );
@@ -164,6 +166,19 @@ export function generateBreakdownEC2(
       { ref: '§9.2.2(5)', label: 'Minimum shear reinforcement ratio', equation: 'ρw,min = 0.08·√fck/fywk', substitution: `0.08 × √${f(fck)} / ${f(fywk, 0)}`, result: `ρw = ${f(rho_w * 1000, 2)}‰ vs ρw,min = ${f(rho_w_min * 1000, 2)}‰ ${rho_w >= rho_w_min ? '✓' : '✗'}`, note: zonedNote ? `evaluated at${zonedNote}` : undefined },
       { ref: '§9.2.2(6)', label: 'Maximum stirrup spacing', equation: 's_max = 0.75·d', substitution: `0.75 × ${f(d, 0)}`, result: `s = ${f(s_mm, 0)} mm vs s_max = ${f(0.75 * d, 0)} mm ${s_mm <= 0.75 * d ? '✓' : '✗'}`, note: zonedNote ? `worst zone${zonedNote}` : undefined },
     );
+    // §9.2.3(2) — closed TORSION links get a tighter spacing cap, but only once the
+    // section is torsion-cracked (T_Ed > T_Rd,c); below that the shear rule governs.
+    if (load.Tu > 0) {
+      const AtLeg = getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
+      const tDet = tRd(b, h, AtLeg, s_mm, fywd, fck, fcd, cotT);
+      if (TEd > tDet.TRdc) {
+        const u8 = 2 * (b + h) / 8;
+        const sMaxTor = Math.min(u8, 0.75 * d, Math.min(b, h));
+        detailSteps.push(
+          { ref: '§9.2.3(2)', label: 'Maximum torsion link spacing', equation: 's_max = min(u/8, 0.75·d, least dim)', substitution: `min(${f(u8, 0)}, ${f(0.75 * d, 0)}, ${f(Math.min(b, h), 0)})`, result: `s = ${f(s_mm, 0)} mm vs s_max = ${f(sMaxTor, 0)} mm ${s_mm <= sMaxTor + 0.5 ? '✓' : '✗'}`, note: zonedNote ? `worst zone${zonedNote}` : undefined },
+        );
+      }
+    }
   }
   sections.push({ title: `${load.Tu > 0 ? 5 : 4}. Detailing (§9.2)`, steps: detailSteps });
 

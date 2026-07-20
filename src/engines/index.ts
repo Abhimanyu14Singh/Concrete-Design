@@ -38,6 +38,7 @@ export function runDesign(
   span = 20,
   code?: DesignCode | string,
   crack?: CrackControlParams,
+  cotTheta?: number,   // EC2 §6.2.3 strut angle (default 2.5); ignored for ACI
 ): DesignResults {
   const isColumn = section.type === 'rectangular_column' || section.type === 'circular_column';
   if (isColumn) {
@@ -46,7 +47,7 @@ export function runDesign(
       : designColumnACI(section, material, rebar, load, span);
   }
   if (code === 'EN1992-1-1') {
-    return designMemberEC2(section, material, rebar, load, span, crack);
+    return designMemberEC2(section, material, rebar, load, span, crack, cotTheta ?? 2.5);
   }
   return designMember(section, material, rebar, load, span);
 }

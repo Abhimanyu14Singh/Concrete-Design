@@ -29,6 +29,8 @@ interface Props {
   code?: DesignCode;
   /** Project-level EC2 SLS quasi-permanent combo name (auto-applied to crack checks). */
   slsCombo?: string;
+  /** Project-level EC2 §6.2.3 strut angle cotθ (default 2.5). */
+  cotTheta?: number;
   /** Project engineer name — pre-fills the "Reviewed by" field on overrides. */
   engineer?: string;
   /** Persisted S-Concrete batch results (for the verification card). */
@@ -93,7 +95,7 @@ function dcrStyle(dcr: number): React.CSSProperties {
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
 const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, cotTheta, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -103,7 +105,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   const cap = capacityLabels(code);
 
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
+  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo), cotTheta);
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
@@ -114,7 +116,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   const appGovDCR = (() => {
     let worst = 0;
     for (const l of member.loads) {
-      const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo));
+      const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta);
       const g = isColumn
         ? Math.max(r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0)
         : Math.max(r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.DCR_crack ?? 0);
@@ -151,6 +153,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
       ? zonedShearCheckEC2(
           member.section, member.material, member.rebar,
           zoneShearDemands(member.stationForces, member.span ?? 20),
+          cotTheta ?? 2.5,
         )
       : zonedShearCheck(
           member.section, member.material, member.rebar,
@@ -162,7 +165,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   // C1: compute all-LC results to find governing cases
   const allResults = member.loads.map(l => ({
     id: l.id, label: l.label,
-    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo)),
+    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta),
   }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
@@ -181,7 +184,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo)));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 
@@ -242,6 +245,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
           loadId={activeLoad || member.loads[0]?.id}
           code={code}
           slsCombo={slsCombo}
+          cotTheta={cotTheta}
           onClose={() => setShowCalc(false)}
         />
       )}
@@ -416,7 +420,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             </div>
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
-            <ForceDiagram member={member} result={result} code={code} height={130}
+            <ForceDiagram member={member} result={result} code={code} height={130} cotTheta={cotTheta}
               midThirdTopBars={midThirdTopBars} oppositeTopBars={oppositeTopBars} endThirdBotBars={endThirdBotBars} />
           )}
           {onRebarChange && (

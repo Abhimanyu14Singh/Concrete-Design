@@ -567,6 +567,10 @@ export function designMemberEC2(
   load: LoadCase,
   _span = 20,
   crack: CrackControlParams = DEFAULT_CRACK_PARAMS,
+  // §6.2.3 variable strut inclination. 2.5 (θ = 21.8°) is the EC2 upper bound and
+  // the most link-efficient choice; a lower value (steeper strut) is more
+  // conservative and matches checkers that fix θ. Configurable per project.
+  cotTheta = 2.5,
 ): DesignResults {
   const warnings: DesignWarning[] = [];
 
@@ -619,7 +623,7 @@ export function designMemberEC2(
   const Ac = b_mm * h_mm;
   const VRdc = vRdc(b_mm, d_bot, As_bot_mm2, fck, NEd_N, Ac);
   const z = 0.9 * d_bot;
-  const cotTheta = 2.5;
+  // cotTheta is a parameter (default 2.5) — see the function signature.
 
   // Governing tie spacing for ALL spacing-derived capacity & detailing checks.
   // When zoned stirrups exist the worst (most widely spaced) zone governs —
@@ -965,6 +969,7 @@ export function zonedShearCheckEC2(
   material: MaterialProps,
   rebar: RebarLayout,
   zoneVu: [number, number, number],
+  cotTheta = 2.5,
 ): ZoneShearResult[] {
   const zones = rebar.tieZones;
   if (!zones || !rebar.ties) return [];
@@ -976,7 +981,7 @@ export function zonedShearCheckEC2(
   const botBarD_mm = getBarDiam(rebar.botBars[0]?.barSize ?? 8) * IN_TO_MM;
   const d_bot = h_mm - cover_mm - stirrupD_mm - botBarD_mm / 2;
   const z = 0.9 * d_bot;
-  const cotTheta = 2.5;
+  // cotTheta is a parameter (default 2.5) — see the function signature.
 
   const fck  = material.fc * PSI_TO_MPA;
   const fywk = material.fyt * PSI_TO_MPA;

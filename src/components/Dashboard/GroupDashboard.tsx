@@ -5,7 +5,7 @@
  * Renders identically in-app or in a popped-out window; all data arrives as a plain
  * DashboardPayload and selection/edits flow out through callbacks.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { RebarLayout } from '../../types';
 import { membersForGroup, type DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
@@ -207,10 +207,13 @@ export default function GroupDashboard({
           <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, padding: '5px 12px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
             {['Beam', 'M⁺', 'M⁻', 'V', 'DCR', 'Status', '⚠'].map(h => <span key={h} style={LABEL_STYLE}>{h}</span>)}
           </div>
-          {selMembers.map(m => (
-            <div key={m.id}
+          {selMembers.map(m => {
+            const showWarns = !reviewed && m.warnings.length > 0;
+            return (
+            <Fragment key={m.id}>
+            <div
               title={onOpenMember ? 'Double-click to open the member · right-click to move to another group' : undefined}
-              style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: '1px solid #f3f4f6', cursor: onOpenMember ? 'pointer' : 'default' }}
+              style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: showWarns ? 'none' : '1px solid #f3f4f6', cursor: onOpenMember ? 'pointer' : 'default' }}
               onMouseEnter={e => { onHoverMember?.(m.id); (e.currentTarget as HTMLDivElement).style.background = SURFACE.subtle; }}
               onMouseLeave={e => { onHoverMember?.(null); (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
               onDoubleClick={() => onOpenMember?.(m.id)}
@@ -230,7 +233,25 @@ export default function GroupDashboard({
               )}
               <span title={reviewed ? 'Reviewed — warnings accepted' : m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: !reviewed && m.warnings.length ? STATUS.warn : INK.muted }}>{reviewed || !m.warnings.length ? '—' : `${m.warnings.length}⚠`}</span>
             </div>
-          ))}
+            {/* Visible warning-code chips per beam (e.g. §9.2.3(2), §6.3.2) — hover any
+                chip for its full message. Errors read red, warnings amber. */}
+            {showWarns && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 12px 6px 12px', borderBottom: '1px solid #f3f4f6' }}>
+                {m.warnings.map((w, i) => {
+                  const isErr = w.severity === 'error';
+                  return (
+                    <span key={i} title={w.message}
+                      style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'help',
+                        color: isErr ? STATUS.fail : STATUS.warn, background: isErr ? STATUS.failBg : STATUS.warnBg }}>
+                      {w.code.replace(/^(EC2|ACI)\s+/, '')}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            </Fragment>
+            );
+          })}
           {selMembers.length === 0 && <div style={{ padding: 14, fontSize: 12, color: INK.muted }}>No beams in this group.</div>}
         </div>
       )}

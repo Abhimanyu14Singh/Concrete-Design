@@ -525,3 +525,25 @@ describe('sideFaceCrackWidth — layered section credits top/bottom + skin steel
     expect(r.wk).toBe(0);
   });
 });
+
+// ── Configurable strut angle cotθ (§6.2.3) ───────────────────────────────────
+describe('designMemberEC2 — configurable cotθ shear', () => {
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 12, h: 24, coverClear: 1.5, stirrupDia: -10 };
+  const material: MaterialProps = { fc: 5800, fy: 72500, fyt: 72500, Es: 29_000_000, lambdaConcrete: 1 };
+  // Moderate stirrups (Ø10 @ 10") so V_Rd,s (not strut crushing) governs at both angles.
+  const rebar: RebarLayout = { topBars: [{ numBars: 2, barSize: -20 }], botBars: [{ numBars: 4, barSize: -20 }], ties: { barSize: -10, spacing: 10, legs: 2 } };
+  const load: LoadCase = { id: 'x', label: 'x', Mu_pos: 120, Mu_neg: 80, Vu: 55, Tu: 0, Pu: 0 };
+
+  it('a steeper strut (lower cotθ) lowers V_Rd,s → higher shear DCR', () => {
+    const flat = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 2.5);
+    const steep = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 1.25);
+    // V_Rd,s ∝ cotθ, so halving cotθ roughly doubles the shear DCR.
+    expect(steep.DCR_shear).toBeGreaterThan(flat.DCR_shear * 1.5);
+  });
+
+  it('defaults to cotθ = 2.5 when the parameter is omitted', () => {
+    const def = designMemberEC2(section, material, rebar, load);
+    const explicit = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 2.5);
+    expect(def.DCR_shear).toBeCloseTo(explicit.DCR_shear, 6);
+  });
+});

@@ -328,6 +328,10 @@ export interface Project {
    * beam from stationForces. Chosen in the ETABS import wizard.
    */
   slsCombo?: string;
+  /** EC2 §6.2.3 shear/torsion strut angle as cotθ (1.0–2.5). Default 2.5 (θ=21.8°,
+   *  the most link-efficient EC2 value); lower = steeper strut = more conservative
+   *  (matches checkers like S-CONCRETE that fix θ). Applies to EC2 beam checks. */
+  cotTheta?: number;
   /** Last S-Concrete batch results, persisted so they survive tab switches and
    *  colour the model map by pass/fail. */
   sconcreteResults?: SconcreteResult[];

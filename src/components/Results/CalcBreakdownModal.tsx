@@ -16,10 +16,12 @@ interface Props {
   code?: DesignCode;
   /** Project-level EC2 SLS quasi-permanent combo name (drives §7.3.4 M_qp). */
   slsCombo?: string;
+  /** Project-level EC2 §6.2.3 strut angle cotθ (default 2.5). */
+  cotTheta?: number;
   onClose: () => void;
 }
 
-export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, onClose }: Props) {
+export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, cotTheta, onClose }: Props) {
   const { fmt } = useUnits();
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
@@ -32,7 +34,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
         ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
         : generateColumnBreakdown(member.section, member.material, member.rebar, load))
     : (isEC2
-        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, crackParams, slsCombo)
+        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, crackParams, slsCombo, cotTheta ?? 2.5)
         : generateBreakdown(
             member.section, member.material, member.rebar, load, member.span,
             member.rebar.tieZones && member.stationForces?.length

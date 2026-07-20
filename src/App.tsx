@@ -29,10 +29,10 @@ const hdrBtn: React.CSSProperties = {
 
 /** Governing status for a member (respecting engineer overrides), used for the
  *  sidebar group NG/warn badges. 'Warning' → near-capacity, 'NG' → inadequate. */
-function memberBadge(m: Member, code: DesignCode, slsCombo?: string): 'OK' | 'warn' | 'NG' {
+function memberBadge(m: Member, code: DesignCode, slsCombo?: string, cotTheta?: number): 'OK' | 'warn' | 'NG' {
   let sawNG = false, sawWarn = false;
   for (const l of m.loads) {
-    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo));
+    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo), cotTheta);
     const st = effectiveStatus(r, m.overrides);
     if (st === 'NG') sawNG = true;
     else if (st !== 'OK') sawWarn = true;
@@ -99,9 +99,9 @@ export default function App() {
   // design engine only re-runs when members / code / SLS combo actually change).
   const badgeById = useMemo(() => {
     const out: Record<string, 'OK' | 'warn' | 'NG'> = {};
-    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo);
+    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo, project.cotTheta);
     return out;
-  }, [project.members, project.code, project.slsCombo]);
+  }, [project.members, project.code, project.slsCombo, project.cotTheta]);
 
   // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
   function setProject(p: Project | ((prev: Project) => Project)) {
@@ -868,6 +868,34 @@ export default function App() {
                     {project.code === c && <span style={{ fontSize: 11 }}>✓</span>}
                   </button>
                 ))}
+                {project.code === 'EN1992-1-1' && (
+                  <>
+                    <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
+                      Shear strut angle (cot θ)
+                    </div>
+                    {([[2.5, '2.5 · θ = 21.8° (EC2 max)'], [2.0, '2.0 · θ = 26.6°'], [1.5, '1.5 · θ = 33.7°'], [1.0, '1.0 · θ = 45°']] as [number, string][]).map(([v, lbl]) => {
+                      const cur = project.cotTheta ?? 2.5;
+                      return (
+                        <button
+                          key={v}
+                          onClick={() => setProject(p => ({ ...p, cotTheta: v }))}
+                          title="EC2 §6.2.3 variable strut inclination. Lower cot θ = steeper strut = more conservative shear/torsion capacity — use it to match a checker (e.g. S-CONCRETE) that fixes θ."
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                            cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                            background: cur === v ? ACCENT.softBg : 'none',
+                            color: cur === v ? ACCENT.primary : INK.base,
+                            fontWeight: cur === v ? 700 : 400,
+                          }}
+                        >
+                          <span>{lbl}</span>
+                          {cur === v && <span style={{ fontSize: 11 }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
                 <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
                   Display Scale
                 </div>
@@ -992,6 +1020,7 @@ export default function App() {
                       member={activeMember}
                       code={project.code}
                       slsCombo={project.slsCombo}
+                      cotTheta={project.cotTheta}
                       engineer={project.engineer}
                       sconcreteResults={project.sconcreteResults}
                       sconcreteRanAt={project.sconcreteRanAt}
