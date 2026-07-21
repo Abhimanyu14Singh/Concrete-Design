@@ -11,7 +11,7 @@ import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterial
 import { FORCE_UNITS, LENGTH_UNITS, STRESS_UNITS } from '../../adapters/etabs/tableConnection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
-import { buildMembers, buildColumnMembers, autoGroup, envelopeLoadCase } from '../../adapters/etabs';
+import { buildMembers, buildColumnMembers, autoGroup, stationLoadCases } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
@@ -55,8 +55,13 @@ function AllNone({ onAll, onNone }: { onAll: () => void; onNone: () => void }) {
 }
 
 function worstDCR(m: Member, code: DesignCode): number {
-  const r = runDesign(m.section, m.material, m.rebar, m.loads[0], m.span, code);
-  return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear);
+  // Govern across every load row (beams now carry one row per station/combo).
+  let worst = 0;
+  for (const l of m.loads) {
+    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code);
+    worst = Math.max(worst, r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.VT_util ?? 0);
+  }
+  return worst;
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
@@ -438,11 +443,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   }
 
   function commit(pickId?: string) {
-    // refresh envelope load labels with the chosen combos before handing off.
-    // The SLS quasi-permanent combo is stored at PROJECT level (project.slsCombo)
+    // Expand each beam's station forces into one load row per station per combo so
+    // every actual simultaneous {M, V, T, P} state is checked (not a single worst-
+    // of-each envelope), and all rows flow through member design + the S-CONCRETE
+    // .SCO. The SLS quasi-permanent combo is stored at PROJECT level (project.slsCombo)
     // and resolved per beam from stationForces at design time — no per-member id.
     const labeled = members.map(m => m.memberType === 'beam'
-      ? { ...m, loads: [envelopeLoadCase(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`)] }
+      ? { ...m, loads: stationLoadCases(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`) }
       : m); // columns keep their (user-entered / placeholder) loads
     onImport(
       labeled, designGroups, pickId, capturedModelMap ?? undefined,
