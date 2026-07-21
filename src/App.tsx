@@ -29,10 +29,10 @@ const hdrBtn: React.CSSProperties = {
 
 /** Governing status for a member (respecting engineer overrides), used for the
  *  sidebar group NG/warn badges. 'Warning' → near-capacity, 'NG' → inadequate. */
-function memberBadge(m: Member, code: DesignCode, slsCombo?: string, cotTheta?: number): 'OK' | 'warn' | 'NG' {
+function memberBadge(m: Member, code: DesignCode, slsCombo?: string, cotTheta?: number, ignoreTorsion?: boolean): 'OK' | 'warn' | 'NG' {
   let sawNG = false, sawWarn = false;
   for (const l of m.loads) {
-    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo), cotTheta);
+    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo), cotTheta, ignoreTorsion);
     const st = effectiveStatus(r, m.overrides);
     if (st === 'NG') sawNG = true;
     else if (st !== 'OK') sawWarn = true;
@@ -99,9 +99,9 @@ export default function App() {
   // design engine only re-runs when members / code / SLS combo actually change).
   const badgeById = useMemo(() => {
     const out: Record<string, 'OK' | 'warn' | 'NG'> = {};
-    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo, project.cotTheta);
+    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo, project.cotTheta, project.ignoreTorsion);
     return out;
-  }, [project.members, project.code, project.slsCombo, project.cotTheta]);
+  }, [project.members, project.code, project.slsCombo, project.cotTheta, project.ignoreTorsion]);
 
   // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
   function setProject(p: Project | ((prev: Project) => Project)) {
@@ -897,6 +897,24 @@ export default function App() {
                   </>
                 )}
                 <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
+                  Torsion
+                </div>
+                <button
+                  onClick={() => setProject(p => ({ ...p, ignoreTorsion: !p.ignoreTorsion }))}
+                  title="Neglect torsion for all beams: Tu is treated as 0, the in-app torsion / shear+torsion checks (DCR_torsion, V&T links, §6.3.x, §9.2.3) are skipped, and no torsion is written into the S-Concrete .SCO export. Use when torsion is compatibility-only and can be redistributed, or is handled outside this model."
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                    cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                    background: project.ignoreTorsion ? ACCENT.softBg : 'none',
+                    color: project.ignoreTorsion ? ACCENT.primary : INK.base,
+                    fontWeight: project.ignoreTorsion ? 700 : 400,
+                  }}
+                >
+                  <span>Neglect torsion (Tu = 0)</span>
+                  <span style={{ fontSize: 11 }}>{project.ignoreTorsion ? '✓' : ''}</span>
+                </button>
+                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
                   Display Scale
                 </div>
                 {[0.75, 0.9, 1.0, 1.1, 1.25, 1.5].map(z => (
@@ -1021,6 +1039,7 @@ export default function App() {
                       code={project.code}
                       slsCombo={project.slsCombo}
                       cotTheta={project.cotTheta}
+                      ignoreTorsion={project.ignoreTorsion}
                       engineer={project.engineer}
                       sconcreteResults={project.sconcreteResults}
                       sconcreteRanAt={project.sconcreteRanAt}

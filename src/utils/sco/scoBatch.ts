@@ -68,6 +68,20 @@ const isScoEligible = (m: Member, ec2: boolean): boolean =>
  *  label is also written to the row's Comment column so the governing case stays
  *  traceable — important for the per-group envelope file, where the rows pool
  *  every member's combos. */
+/**
+ * "Neglect torsion" project setting → drop Tu to 0 on every BEAM load row so no
+ * torsion is written into the .SCO (S-Concrete then reports zero torsion demand
+ * and skips its shear+torsion interaction). Columns are untouched; the member's
+ * stored Tu is preserved — only the SCO input is stripped. Applied at both the
+ * per-member and the group-envelope builders so both writer paths are covered.
+ */
+function stripTorsion(members: Member[], project?: Project): Member[] {
+  if (!project?.ignoreTorsion) return members;
+  return members.map(m => m.memberType === 'beam'
+    ? { ...m, loads: m.loads.map((lc: LoadCase) => (lc.Tu ? { ...lc, Tu: 0 } : lc)) }
+    : m);
+}
+
 function beamLoadCases(m: Member): ScoLoadCase[] {
   return m.loads.map((lc, i) => ({
     name: lc.label || `LC${i + 1}`,
@@ -144,6 +158,7 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode, project?
   if (ec2 && !project) {
     throw new Error('EC2 .SCO export needs the project (for the crack-width combo). Pass the project.');
   }
+  members = stripTorsion(members, project); // neglect-torsion → no Tu in the .SCO
   const files: ScoFile[] = [];
   for (const m of members) {
     if (isColumnSection(m)) {
@@ -350,6 +365,7 @@ export function buildGroupEnvelopeScoFiles(
   if (ec2 && !project) {
     throw new Error('EC2 .SCO export needs the project (for the crack-width combo). Pass the project.');
   }
+  members = stripTorsion(members, project); // neglect-torsion → no Tu in the .SCO
   const byId = new Map(members.map((m) => [m.id, m]));
   const usedNames = new Set<string>();
   const out: GroupEnvelopeScoFile[] = [];

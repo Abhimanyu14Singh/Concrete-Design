@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, designMemberEC2 } from '../ec2Beam';
+import { runDesign } from '../../index';
 import { designMember } from '../../../utils/concreteDesign';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../../types';
 
@@ -601,5 +602,31 @@ describe('designMemberEC2 — combined shear+torsion link DCR (VT_util)', () => 
     const r = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 1.25);
     expect(r.VT_util!).toBeGreaterThan(2.0);
     expect(r.VT_util!).toBeLessThan(2.25);
+  });
+});
+
+// ── Neglect-torsion project setting (runDesign ignoreTorsion) ─────────────────
+describe('runDesign — neglect torsion drops Tu to 0 for all beam checks', () => {
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 14, h: 28, coverClear: 1.5, stirrupDia: -10 };
+  const material: MaterialProps = { fc: 5800, fy: 72500, fyt: 72500, Es: 29_000_000, lambdaConcrete: 1 };
+  const rebar: RebarLayout = { topBars: [{ numBars: 3, barSize: 8 }], botBars: [{ numBars: 4, barSize: 8 }], ties: { barSize: -10, spacing: 4, legs: 2 } };
+  const load: LoadCase = { id: 't', label: 't', Mu_pos: 250, Mu_neg: 180, Vu: 40, Tu: 90, Pu: 0 }; // heavy torsion
+  const torWarn = (r: ReturnType<typeof runDesign>) => r.warnings.some(w => /6\.3|9\.2\.3/.test(w.code));
+
+  it('runs the torsion / shear+torsion checks normally when the flag is off', () => {
+    const r = runDesign(section, material, rebar, load, 20, 'EN1992-1-1');
+    expect(r.DCR_torsion).toBeGreaterThan(0);
+    expect(torWarn(r)).toBe(true);
+  });
+
+  it('with ignoreTorsion: DCR_torsion = 0, VT_util collapses to shear, no §6.3/§9.2.3 warnings', () => {
+    const r = runDesign(section, material, rebar, load, 20, 'EN1992-1-1', undefined, undefined, true);
+    expect(r.DCR_torsion).toBe(0);
+    expect(r.VT_util ?? 0).toBeLessThanOrEqual(r.DCR_shear + 1e-6);
+    expect(torWarn(r)).toBe(false);
+    // flexure / shear are unaffected
+    const ref = runDesign(section, material, rebar, load, 20, 'EN1992-1-1');
+    expect(r.DCR_shear).toBeCloseTo(ref.DCR_shear, 6);
+    expect(r.DCR_flex_pos).toBeCloseTo(ref.DCR_flex_pos, 6);
   });
 });

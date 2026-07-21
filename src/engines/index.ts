@@ -39,6 +39,7 @@ export function runDesign(
   code?: DesignCode | string,
   crack?: CrackControlParams,
   cotTheta?: number,   // EC2 §6.2.3 strut angle (default 2.5); ignored for ACI
+  ignoreTorsion?: boolean, // project "neglect torsion" setting — Tu is dropped to 0
 ): DesignResults {
   const isColumn = section.type === 'rectangular_column' || section.type === 'circular_column';
   if (isColumn) {
@@ -46,8 +47,13 @@ export function runDesign(
       ? designColumnEC2(section, material, rebar, load)
       : designColumnACI(section, material, rebar, load, span);
   }
+  // "Neglect torsion": zero Tu before the beam engines see it, so every torsion /
+  // shear+torsion check (DCR_torsion, VT_util combined links, §6.3.1/§6.3.2(3)
+  // longitudinal steel, §9.2.3(2) closed-link spacing) collapses to a no-op —
+  // no engine branch needed. The user's Tu data is preserved on the load itself.
+  const beamLoad = ignoreTorsion && load.Tu ? { ...load, Tu: 0 } : load;
   if (code === 'EN1992-1-1') {
-    return designMemberEC2(section, material, rebar, load, span, crack, cotTheta ?? 2.5);
+    return designMemberEC2(section, material, rebar, beamLoad, span, crack, cotTheta ?? 2.5);
   }
-  return designMember(section, material, rebar, load, span);
+  return designMember(section, material, rebar, beamLoad, span);
 }

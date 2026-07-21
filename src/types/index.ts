@@ -332,6 +332,11 @@ export interface Project {
    *  the most link-efficient EC2 value); lower = steeper strut = more conservative
    *  (matches checkers like S-CONCRETE that fix θ). Applies to EC2 beam checks. */
   cotTheta?: number;
+  /** "Neglect torsion" — when true, Tu is treated as 0 for every beam design
+   *  check (in-app DCR_torsion / VT_util / §6.3.x / §9.2.3(2) all skipped) and no
+   *  torsion is written into the S-Concrete .SCO. For members where torsion is
+   *  compatibility-only and redistributed, or handled outside this model. */
+  ignoreTorsion?: boolean;
   /** Last S-Concrete batch results, persisted so they survive tab switches and
    *  colour the model map by pass/fail. */
   sconcreteResults?: SconcreteResult[];

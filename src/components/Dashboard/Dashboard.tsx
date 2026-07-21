@@ -46,7 +46,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   const [dcrGroupFilter, setDcrGroupFilter] = useState<string>('__all__');
   const [dcrSeriesFilter, setDcrSeriesFilter] = useState<string>('__all__');
 
-  const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo, project.cotTheta));
+  const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo, project.cotTheta, project.ignoreTorsion));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;

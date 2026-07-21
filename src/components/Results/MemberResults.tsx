@@ -31,6 +31,7 @@ interface Props {
   slsCombo?: string;
   /** Project-level EC2 §6.2.3 strut angle cotθ (default 2.5). */
   cotTheta?: number;
+  ignoreTorsion?: boolean;
   /** Project engineer name — pre-fills the "Reviewed by" field on overrides. */
   engineer?: string;
   /** Persisted S-Concrete batch results (for the verification card). */
@@ -95,7 +96,7 @@ function dcrStyle(dcr: number): React.CSSProperties {
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
 const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, cotTheta, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, cotTheta, ignoreTorsion, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
   const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
@@ -105,7 +106,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   const cap = capacityLabels(code);
 
   const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo), cotTheta);
+  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo), cotTheta, ignoreTorsion);
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
@@ -116,7 +117,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   const appGovDCR = (() => {
     let worst = 0;
     for (const l of member.loads) {
-      const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta);
+      const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta, ignoreTorsion);
       const g = isColumn
         ? Math.max(r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.VT_util ?? 0)
         : Math.max(r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.DCR_crack ?? 0, r.VT_util ?? 0);
@@ -141,10 +142,11 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
     : {
         Flexure: Math.max(result.DCR_flex_pos, result.DCR_flex_neg),
         Shear: result.DCR_shear,
-        Torsion: result.DCR_torsion,
+        // Torsion checks are suppressed entirely when the project neglects torsion.
+        ...(ignoreTorsion ? {} : { Torsion: result.DCR_torsion }),
         // EC2 combined shear+torsion link check (S-CONCRETE "V&T Util") — only
-        // meaningful, and only shown, when torsion is applied.
-        ...(code === 'EN1992-1-1' && load.Tu > 0 ? { 'Shear + Torsion Links': result.VT_util ?? 0 } : {}),
+        // meaningful, and only shown, when torsion is applied (and not neglected).
+        ...(code === 'EN1992-1-1' && load.Tu > 0 && !ignoreTorsion ? { 'Shear + Torsion Links': result.VT_util ?? 0 } : {}),
         ...(code === 'EN1992-1-1' ? { 'Crack Width §7.3.4': crackDcr } : {}),
       };
   const maxSecDcr = Math.max(...Object.values(secDcr), 0);
@@ -168,7 +170,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   // C1: compute all-LC results to find governing cases
   const allResults = member.loads.map(l => ({
     id: l.id, label: l.label,
-    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta),
+    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta, ignoreTorsion),
   }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
@@ -187,7 +189,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta, ignoreTorsion));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 
@@ -507,6 +509,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
             tip="ACI §9.6.3 minimum transverse reinforcement: 0.75·√f'c/fyt·bw." />}
           </CheckSection>
 
+          {!ignoreTorsion && (
           <CheckSection title="Torsion" dcr={result.DCR_torsion} defaultOpen={isGov('Torsion')}>
           <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')}
             tip="Cracking torsion threshold. Torsion design required when Tu > φTcr." />
@@ -517,8 +520,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
               ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
               : 'Torsion DCR = Tu / φTn.'} />
           </CheckSection>
+          )}
 
-          {code === 'EN1992-1-1' && load.Tu > 0 && (result.VT_util ?? 0) > 0 && (
+          {code === 'EN1992-1-1' && load.Tu > 0 && !ignoreTorsion && (result.VT_util ?? 0) > 0 && (
             <CheckSection title="Shear + Torsion Links" dcr={result.VT_util} defaultOpen={isGov('Shear + Torsion Links')}>
               <KV k="  DCR" v={(result.VT_util ?? 0).toFixed(3)} dcr={result.VT_util}
                 tip="Combined shear + torsion transverse-steel utilisation (§6.3.1/§6.3.2). The outer stirrup legs carry the shear demand AND the torsion demand, which add — this is what S-CONCRETE reports as “V & T Util”. Governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening link spacing, adding legs, or using a steeper strut angle cot θ."
