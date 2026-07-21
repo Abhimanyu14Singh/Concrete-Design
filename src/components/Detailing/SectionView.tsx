@@ -42,7 +42,7 @@ export default function SectionView({
   onRebarChange,
   topFlag, botFlag, topFlag2,
 }: Props) {
-  const { fmt, units, toDisplay, fromDisplay } = useUnits();
+  const { fmt, fmtVal, label, units, toDisplay, fromDisplay } = useUnits();
   // EC2/SI: bar/stirrup spacings should read as round multiples of 25 mm (not the
   // 301/102 mm artefacts of an inch-stored value). Snap a stored (inch) spacing so
   // it displays on the 25 mm grid; imperial is left untouched.
@@ -347,15 +347,16 @@ export default function SectionView({
   function editableStirrupLabel(x: number, y: number): ReactElement | null {
     const t = rebar.ties;
     if (!t) return null;
-    const dec = rebar.tieZones ? 0 : 1; // three zoned values need to stay compact
+    // Zoned mode drops the per-value unit ("225 mm/225 mm/225 mm" → "225/225/225 mm")
+    // so all THREE span-third spacings fit the narrow card instead of clipping the last.
     const spacingTspan = (val: number, key: string, zoneIdx?: number) => (
       <tspan key={key} style={editTspan} textDecoration="underline"
         onClick={e => { e.stopPropagation(); bumpTie('spacing', -1, zoneIdx); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('spacing', 1, zoneIdx); }}
-      >{fmt(snapSpacingIn(val), 'length', dec)}</tspan>
+      >{rebar.tieZones ? fmtVal(snapSpacingIn(val), 'length', 0) : fmt(snapSpacingIn(val), 'length', 1)}</tspan>
     );
     return (
-      <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+      <text x={x} y={y} fontSize={rebar.tieZones ? 8.5 : 10} fill={BARS.tie} fontFamily={FONT.mono}>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpTie('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('size', -1); }}
@@ -366,7 +367,8 @@ export default function SectionView({
              <tspan key="s1" style={noHit}>/</tspan>,
              spacingTspan(rebar.tieZones[1].spacing, 'z1', 1),
              <tspan key="s2" style={noHit}>/</tspan>,
-             spacingTspan(rebar.tieZones[2].spacing, 'z2', 2)]
+             spacingTspan(rebar.tieZones[2].spacing, 'z2', 2),
+             <tspan key="zu" style={noHit}> {label('length')}</tspan>]
           : spacingTspan(t.spacing, 'z')}
         <tspan style={{ ...editTspan, fontWeight: 700 }} fill={rebar.tieZones ? '#7c3aed' : '#9ca3af'}
           onClick={e => { e.stopPropagation(); toggleTieZones(); }}> ⅓</tspan>
