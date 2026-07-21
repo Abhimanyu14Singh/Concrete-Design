@@ -266,10 +266,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         let bestRes: DesignResults | null = null;
         for (const l of m.loads) {
           const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolveCrack(m, project.code, project.slsCombo), project.cotTheta);
-          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0);
-          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear, bestRes.DCR_torsion, bestRes.DCR_crack ?? 0)) bestRes = r;
+          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.VT_util ?? 0);
+          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear, bestRes.DCR_torsion, bestRes.DCR_crack ?? 0, bestRes.VT_util ?? 0)) bestRes = r;
           dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);
-          dcrShear = Math.max(dcrShear, r.DCR_shear);
+          // Fold the combined shear+torsion link utilisation into the shear bucket
+          // so map colouring reflects it (torsion links add to the shear links).
+          dcrShear = Math.max(dcrShear, r.DCR_shear, r.VT_util ?? 0);
         }
         if (bestRes) results[m.id] = bestRes;
         const w = steelWeightPerFt(m);

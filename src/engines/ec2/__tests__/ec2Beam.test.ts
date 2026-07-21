@@ -565,3 +565,41 @@ describe('designMemberEC2 — §6.3.2(3) clears when longitudinal steel is provi
     expect(fires(designMemberEC2(section, material, withSide, load))).toBe(false);
   });
 });
+
+// ── Combined shear+torsion link utilisation (VT_util) — S-CONCRETE "V & T Util" ──
+describe('designMemberEC2 — combined shear+torsion link DCR (VT_util)', () => {
+  // S-CONCRETE benchmark B-07-04: 300×700 mm, fck 40, fy 500, Ø12@250 2-leg.
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 11.811, h: 27.559, coverClear: 1.9685, stirrupDia: -12 };
+  const material: MaterialProps = { fc: 5801.5, fy: 72518.9, fyt: 72518.9, Es: 29_000_000, lambdaConcrete: 1 };
+  const rebar: RebarLayout = {
+    topBars: [{ numBars: 4, barSize: -20 }, { numBars: 4, barSize: -20 }],
+    botBars: [{ numBars: 4, barSize: -25 }, { numBars: 4, barSize: -25 }],
+    ties: { barSize: -12, spacing: 9.843, legs: 2 },
+  };
+  // Governing shear+torsion case (Vz = 291.3 kN, T = 41.3 kNm), modest flexure so
+  // only the combined links govern.
+  const load: LoadCase = { id: 'glc170', label: 'GLC 170', Mu_pos: 120, Mu_neg: 120, Vu: 65.487, Tu: 30.461, Pu: 0 };
+
+  it('shear and torsion each pass alone, but their link demands add to > 1 → NG', () => {
+    const r = designMemberEC2(section, material, rebar, load); // cotθ = 2.5 (default)
+    expect(r.DCR_shear).toBeLessThan(1);         // ~0.55 on its own
+    expect(r.DCR_torsion).toBeLessThan(1);       // ~0.50 on its own
+    expect(r.DCR_flex_pos).toBeLessThan(1);
+    expect(r.DCR_crack ?? 0).toBeLessThan(1);
+    expect(r.VT_util ?? 0).toBeGreaterThan(1);   // the added link demand governs
+    expect(r.VT_util!).toBeGreaterThan(Math.max(r.DCR_shear, r.DCR_torsion));
+    expect(r.status).toBe('NG');                 // status now reflects the combined check
+  });
+
+  it('reduces to the shear-only demand when there is no torsion (never over-reports)', () => {
+    const noTorsion: LoadCase = { ...load, Tu: 0 };
+    const r = designMemberEC2(section, material, rebar, noTorsion);
+    expect(r.VT_util!).toBeLessThanOrEqual(r.DCR_shear + 1e-6);
+  });
+
+  it('matches S-CONCRETE V & T Util = 2.106 at the same strut angle (cotθ = 1.25)', () => {
+    const r = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 1.25);
+    expect(r.VT_util!).toBeGreaterThan(2.0);
+    expect(r.VT_util!).toBeLessThan(2.25);
+  });
+});

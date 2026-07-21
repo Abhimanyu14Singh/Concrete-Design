@@ -922,6 +922,15 @@ export function designMemberEC2(
   if (DCR_torsion > 1)
     warnings.push({ code: 'EC2 §6.3', message: `Torsion NG: T_Ed = ${TEd.toFixed(1)} kN·m > T_Rd = ${TRd.toFixed(1)} kN·m`, severity: 'error' });
 
+  // Combined shear + torsion transverse-steel utilization (§6.3.1/§6.3.2): the
+  // outer stirrup legs carry BOTH the shear and the torsion demand, which ADD.
+  // This is exactly what S-CONCRETE headlines as "V & T Util" (= shear-link
+  // utilisation + torsion-link utilisation). Reported here as VT_util so the
+  // governing DCR reflects it rather than leaving the overstress only in a
+  // warning. With no torsion it reduces to the shear-link demand (≤ DCR_shear),
+  // so it never over-reports a shear-only member.
+  const VT_util = Asw_s_prov_leg > 0 ? Asw_s_req_VT / Asw_s_prov_leg : 0;
+
   // Crack-width DCR = wk / w_limit, governing face (SLS §7.3.4).
   const DCR_crack = Math.max(
     crack.wLimitBot > 0 ? cw_bot.wk / crack.wLimitBot : 0,
@@ -929,7 +938,7 @@ export function designMemberEC2(
     wk_face !== undefined && crack.wLimitFace > 0 ? wk_face / crack.wLimitFace : 0,
   );
 
-  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_crack);
+  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_crack, VT_util);
   // Status reflects ACTUAL issues, not raw utilization: NG when any capacity
   // (incl. crack width) is exceeded; Warning only when a real code message
   // exists; otherwise OK — even at high (but passing) utilization.
@@ -949,6 +958,7 @@ export function designMemberEC2(
     DCR_flex_pos, DCR_flex_neg,
     Vc: toKip(VRdc), Vs: toKip(VRds), phi_Vn: toKip(VRd), DCR_shear,
     Tcr: toKipFt(TRdc_val), Tu_threshold: toKipFt(TRdc_val), phi_Tn: toKipFt(TRd), DCR_torsion,
+    VT_util, // combined shear+torsion transverse-steel utilisation (S-CONCRETE "V&T Util")
     // Flexure + torsion longitudinal share (§6.3.2(3)), floored at As,min.
     // The §6.2.3(7) shear tension shift is intentionally NOT included here
     // (see AsLongReqBot/Top above) — only flexure and torsion contribute.

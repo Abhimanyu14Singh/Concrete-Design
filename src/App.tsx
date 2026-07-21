@@ -873,7 +873,7 @@ export default function App() {
                     <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
                       Shear strut angle (cot θ)
                     </div>
-                    {([[2.5, '2.5 · θ = 21.8° (EC2 max)'], [2.0, '2.0 · θ = 26.6°'], [1.5, '1.5 · θ = 33.7°'], [1.0, '1.0 · θ = 45°']] as [number, string][]).map(([v, lbl]) => {
+                    {([[2.5, '2.5 · θ = 21.8° (EC2 max)'], [2.0, '2.0 · θ = 26.6°'], [1.5, '1.5 · θ = 33.7°'], [1.25, '1.25 · θ = 38.7° (S-CONCRETE)'], [1.0, '1.0 · θ = 45°']] as [number, string][]).map(([v, lbl]) => {
                       const cur = project.cotTheta ?? 2.5;
                       return (
                         <button

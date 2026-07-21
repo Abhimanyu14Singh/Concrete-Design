@@ -118,8 +118,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
     for (const l of member.loads) {
       const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta);
       const g = isColumn
-        ? Math.max(r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0)
-        : Math.max(r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.DCR_crack ?? 0);
+        ? Math.max(r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.VT_util ?? 0)
+        : Math.max(r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.DCR_crack ?? 0, r.VT_util ?? 0);
       if (g > worst) worst = g;
     }
     return worst;
@@ -142,6 +142,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
         Flexure: Math.max(result.DCR_flex_pos, result.DCR_flex_neg),
         Shear: result.DCR_shear,
         Torsion: result.DCR_torsion,
+        // EC2 combined shear+torsion link check (S-CONCRETE "V&T Util") — only
+        // meaningful, and only shown, when torsion is applied.
+        ...(code === 'EN1992-1-1' && load.Tu > 0 ? { 'Shear + Torsion Links': result.VT_util ?? 0 } : {}),
         ...(code === 'EN1992-1-1' ? { 'Crack Width §7.3.4': crackDcr } : {}),
       };
   const maxSecDcr = Math.max(...Object.values(secDcr), 0);
@@ -514,6 +517,14 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
               ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
               : 'Torsion DCR = Tu / φTn.'} />
           </CheckSection>
+
+          {code === 'EN1992-1-1' && load.Tu > 0 && (result.VT_util ?? 0) > 0 && (
+            <CheckSection title="Shear + Torsion Links" dcr={result.VT_util} defaultOpen={isGov('Shear + Torsion Links')}>
+              <KV k="  DCR" v={(result.VT_util ?? 0).toFixed(3)} dcr={result.VT_util}
+                tip="Combined shear + torsion transverse-steel utilisation (§6.3.1/§6.3.2). The outer stirrup legs carry the shear demand AND the torsion demand, which add — this is what S-CONCRETE reports as “V & T Util”. Governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening link spacing, adding legs, or using a steeper strut angle cot θ."
+                formula="V&T util = V_Ed/(n·z·f_ywd·cotθ)/(A_sw,leg/s) + T_Ed/(2·A_k·f_ywd·cotθ)/(A_sw,leg/s)" />
+            </CheckSection>
+          )}
 
           {code === 'EN1992-1-1' && (
             <CheckSection title="Crack Width §7.3.4" dcr={crackDcr} defaultOpen={isGov('Crack Width §7.3.4')}>

@@ -19,7 +19,7 @@ export interface MemberSummary {
 export function worstOf(r: DesignResults): number {
   return Math.max(
     r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
-    r.DCR_PM ?? 0, r.DCR_axial ?? 0,
+    r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.VT_util ?? 0,
   );
 }
 
