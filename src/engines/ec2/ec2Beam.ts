@@ -51,31 +51,69 @@ export function fctm(fck: number): number {
 
 // ── Flexure §6.1 ─────────────────────────────────────────────────────────────
 /**
- * M_Rd for a rectangular (or T/L with flange split) section.
- * All inputs SI: mm, MPa, mm². Returns kN·m.
+ * M_Rd for a rectangular (or T/L with flange split) section, with OPTIONAL
+ * compression reinforcement (doubly-reinforced, §6.1). Inputs SI: mm, MPa, mm².
+ * Returns kN·m.
+ *
+ * The neutral axis is solved from strain compatibility so BOTH the tension steel
+ * and the compression steel carry their true force (each stress magnitude capped
+ * at fyd). This credits bars sitting in the compression zone — the bottom bars
+ * under −M, the top bars under +M — which a singly-reinforced As·fyd·(d − λx/2)
+ * ignores. Ignoring them drives a heavily-reinforced section (e.g. a deep beam
+ * loaded with top steel to satisfy crack width) into a spuriously deep neutral
+ * axis on the over-reinforced plateau, understating M_Rd and inflating the
+ * flexural DCR. εcu = 0.0035 (fck ≤ 50), Es = 200 GPa.
+ *
+ * AsComp/dComp default to 0 → the classic singly-reinforced result. When the
+ * tension steel is over-reinforced its stress is likewise reduced below fyd
+ * rather than assumed to yield.
  */
 export function mRd(
   As: number, d: number, b: number, fck: number, fcd: number, fyd: number,
-  bw?: number, hf?: number,
-): { MRd: number; x: number } {
-  if (As <= 0 || d <= 0) return { MRd: 0, x: 0 };
+  bw?: number, hf?: number, AsComp = 0, dComp = 0,
+): { MRd: number; x: number; z: number; sigmaComp: number; compYields: boolean; tensionYields: boolean } {
+  if (As <= 0 || d <= 0) return { MRd: 0, x: 0, z: 0, sigmaComp: 0, compYields: false, tensionYields: false };
   const { lambda, eta } = lambdaEta(fck);
+  const ECU = 0.0035;      // §3.1.7 ultimate concrete strain (fck ≤ 50 MPa)
+  const Es = 200_000;      // MPa — EC2 design modulus for reinforcement
 
-  // Neutral axis depth assuming rectangular block within b
-  let x = (As * fyd) / (eta * fcd * lambda * b);
+  const isT = bw !== undefined && hf !== undefined && bw < b;
+  // Concrete compression resultant Fc(x) and its depth yc from the compression
+  // face — full-width rectangular, or flange overhang + web once λx passes hf.
+  const concrete = (x: number): { Fc: number; yc: number } => {
+    const a = lambda * x;
+    if (isT && a > hf!) {
+      const Ff = eta * fcd * (b - bw!) * hf!;   // flange overhangs
+      const Fw = eta * fcd * bw! * a;           // web block (full depth a)
+      const Fc = Ff + Fw;
+      return { Fc, yc: (Ff * (hf! / 2) + Fw * (a / 2)) / Fc };
+    }
+    const Fc = eta * fcd * b * a;
+    return { Fc, yc: a / 2 };
+  };
+  // Steel stresses from strain compatibility, magnitude-capped at fyd. Compression
+  // steel only acts while it lies inside the compression zone (x > dComp).
+  const sigT = (x: number) => Math.min(fyd, Es * ECU * (d - x) / x);
+  const sigC = (x: number) => (AsComp > 0 && x > dComp ? Math.min(fyd, Es * ECU * (x - dComp) / x) : 0);
 
-  if (bw !== undefined && hf !== undefined && lambda * x > hf && bw < b) {
-    // Compression extends below flange: split into flange overhang + web
-    const Ff = eta * fcd * (b - bw) * hf;          // N
-    const Fw = As * fyd - Ff;                       // N
-    const aw = Fw / (eta * fcd * bw);               // web block depth (mm)
-    x = (hf + aw) / lambda;
-    const MRd = (Ff * (d - hf / 2) + Fw * (d - hf - aw / 2)) / 1e6; // kN·m
-    return { MRd, x };
+  // Axial balance g(x) = Fc + A's·σ'sc − As·σs is monotonically increasing in x,
+  // so bisect for the single root in (0, d).
+  const g = (x: number) => concrete(x).Fc + AsComp * sigC(x) - As * sigT(x);
+  let lo = 1e-4, hi = d;
+  for (let i = 0; i < 100; i++) {
+    const mid = (lo + hi) / 2;
+    if (g(mid) > 0) hi = mid; else lo = mid;
   }
-
-  const MRd = As * fyd * (d - lambda * x / 2) / 1e6; // kN·m
-  return { MRd, x };
+  const x = (lo + hi) / 2;
+  const { Fc, yc } = concrete(x);
+  const sigmaComp = sigC(x);
+  // Moments taken about the tension-steel line (its force has zero lever there).
+  const MRd = (Fc * (d - yc) + AsComp * sigmaComp * (d - dComp)) / 1e6; // kN·m
+  return {
+    MRd, x, z: d - yc, sigmaComp,
+    compYields: AsComp > 0 && sigmaComp >= fyd - 1e-6,
+    tensionYields: sigT(x) >= fyd - 1e-6,
+  };
 }
 
 // ── Shear §6.2 ───────────────────────────────────────────────────────────────
@@ -599,6 +637,10 @@ export function designMemberEC2(
   const layerClear_mm = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
   const d_bot = h_mm - layerCentroidMm(rebar.botBars, cover_mm, stirrupD_mm, layerClear_mm);
   const d_top = h_mm - layerCentroidMm(rebar.topBars, cover_mm, stirrupD_mm, layerClear_mm);
+  // Compression-steel depth from the compression face for each bending sense —
+  // the opposite-face flexural bars act as compression steel (doubly-reinforced).
+  const dComp_pos = cover_mm + stirrupD_mm + topBarD_mm / 2; // +M: top steel in compression
+  const dComp_neg = cover_mm + stirrupD_mm + botBarD_mm / 2; // −M: bottom steel in compression
 
   const MEd_pos = load.Mu_pos * KIPFT_TO_KNM;
   const MEd_neg = load.Mu_neg * KIPFT_TO_KNM;
@@ -608,9 +650,12 @@ export function designMemberEC2(
 
   // ── Flexure ──
   const isT = section.type === 'T_beam' || section.type === 'L_beam';
+  // +M: bottom bars in tension, top bars credited as compression steel.
   const pos = mRd(As_bot_mm2, d_bot, isT ? bf_mm : b_mm, fck, fcd, fyd,
-    isT ? b_mm : undefined, isT ? hf_mm : undefined);
-  const neg = mRd(As_top_mm2, d_top, b_mm, fck, fcd, fyd);
+    isT ? b_mm : undefined, isT ? hf_mm : undefined, As_top_mm2, dComp_pos);
+  // −M: top bars in tension, bottom bars credited as compression steel.
+  const neg = mRd(As_top_mm2, d_top, b_mm, fck, fcd, fyd,
+    undefined, undefined, As_bot_mm2, dComp_neg);
 
   const MRd_pos = pos.MRd;
   const MRd_neg = neg.MRd;
@@ -831,9 +876,7 @@ export function designMemberEC2(
   const h0_mm = 2 * (b_mm * h_mm) / (2 * (b_mm + h_mm));
   const phiCreep = crack.creepPhi
     ?? creepCoefficient(fck, crack.creepRH ?? 50, crack.creepT0 ?? 28, 25550, h0_mm, crack.cementClass ?? 'N');
-  // Compression-steel depth from the compression face for each bending sense.
-  const dComp_pos = cover_mm + stirrupD_mm + topBarD_mm / 2; // +M: top steel in compression
-  const dComp_neg = cover_mm + stirrupD_mm + botBarD_mm / 2; // −M: bottom steel in compression
+  // (dComp_pos / dComp_neg defined above, alongside the flexural resistance.)
 
   // Bottom face (positive bending → bottom steel in tension)
   const cw_bot = crackWidth(Mqp_pos, As_bot_mm2, botBarD_mm, b_mm, h_mm, d_bot,

@@ -32,10 +32,15 @@
  *  Effective depth (engine formula: d = h − cc − Østirrup − Øbar/2):
  *    d_bot = 600 − 35 − 10 − 12.5 = 542.5 mm
  *
- *  FLEXURE §6.1:
- *    x  = As·fyd/(η·fcd·λ·b) = 1963.5×434.78/(1×17×0.8×400) = 157.0 mm
- *    M_Rd = 1963.5×434.78×(542.5 − 0.8×157/2)/1e6 = 409.5 kN·m
- *    DCR_flex = 400/409.5 = 0.977   (near limit — Warning status)
+ *  FLEXURE §6.1 (doubly reinforced — the 2H25 top bars are credited as
+ *  compression steel, EN 1992-1-1 §6.1):
+ *    Strain-compatibility NA:  η·fcd·b·λx + A's·σ'sc = As·fyd
+ *    A's = 981.7 mm² @ d' = 57.5 mm  →  x = 101.9 mm (x/d = 0.19),
+ *    σ'sc = 305 MPa (elastic — below fyd)
+ *    M_Rd = η·fcd·b·λx·(d − λx/2) + A's·σ'sc·(d − d') = 423.3 kN·m
+ *    DCR_flex = 400/423.3 = 0.945   (near limit — Warning status)
+ *    (A singly-reinforced As·fyd·(d − λx/2) that DROPS the top bars gives the
+ *     older 409.5 kN·m / DCR 0.977 — understated by ignoring the compression steel.)
  *
  *  SHEAR §6.2.2 V_Rd,c (no reinforcement):
  *    k     = 1 + √(200/542.5) = 1.607
@@ -119,11 +124,12 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
 
   // ── Engine routes to EC2, not ACI ──────────────────────────────────────────
 
-  it('EC2 code path taken: M_Rd ≈ 409.5 kN·m (fyd/γs design value, not ACI φ=0.9)', () => {
-    // EC2: fyd = 500/1.15 = 434.78 MPa with partial factors → M_Rd ≈ 409.5 kN·m
-    // ACI: φ=0.9 applied outside → φMn would be ≈ 0.9 × (unconstrained Mn) = different value
+  it('EC2 code path taken: M_Rd ≈ 423.3 kN·m (fyd/γs design value, not ACI φ=0.9)', () => {
+    // EC2 doubly-reinforced: fyd = 434.78 MPa, plus the 2H25 top bars credited as
+    // compression steel (σ'sc = 305 MPa elastic) → M_Rd ≈ 423.3 kN·m.
+    // ACI: φ=0.9 applied outside → φMn would be ≈ 0.9 × (unconstrained Mn) = different value.
     const MRd = r.phi_Mn_pos * KIPFT_TO_KNM;
-    expect(MRd).toBeCloseTo(409.5, 0);       // ± 0.5 kN·m
+    expect(MRd).toBeCloseTo(423.3, 0);       // ± 0.5 kN·m
   });
 
   it('EC2 φ ≠ 0.9: M_Rd is NOT reduced by a 0.9 strength-reduction factor', () => {
@@ -137,8 +143,8 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     expect(r.phi_Mn_pos * KIPFT_TO_KNM).toBeGreaterThan(400);
   });
 
-  it('DCR_flex_pos ≈ 0.977 (beam working near capacity)', () => {
-    expect(r.DCR_flex_pos).toBeCloseTo(400 / 409.5, 2);
+  it('DCR_flex_pos ≈ 0.945 (beam working near capacity)', () => {
+    expect(r.DCR_flex_pos).toBeCloseTo(400 / 423.3, 2);
   });
 
   it('DCR_flex_neg = 0 (pinned-pinned → no hogging moment)', () => {

@@ -82,22 +82,32 @@ export function generateBreakdownEC2(
   const topBarD = getBarDiam(rebar.topBars[0]?.barSize ?? 8) * IN_TO_MM;
   const MEd_neg = load.Mu_neg * KIPFT_TO_KNM;
   const topDesc = rebar.topBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
+  // Opposite-face bars act as compression steel (doubly-reinforced §6.1).
+  const dCompPos = cover + stirrupD + topBarD / 2; // +M: top steel in compression
+  const dCompNeg = cover + stirrupD + botBarD / 2; // −M: bottom steel in compression
 
-  const flex = mRd(As, d, b, fck, fcd, fyd);
-  const flex_neg = mRd(As_top, dTop, b, fck, fcd, fyd);
+  // Credit the compression steel (top bars under +M, bottom bars under −M): the
+  // NA is solved from strain compatibility rather than assuming a singly-reinforced
+  // As·fyd·(d − λx/2), which would ignore the opposite-face cage and overstate x.
+  const flex = mRd(As, d, b, fck, fcd, fyd, undefined, undefined, As_top, dCompPos);
+  const flex_neg = mRd(As_top, dTop, b, fck, fcd, fyd, undefined, undefined, As, dCompNeg);
+  const compNote = (sigmaComp: number, AsComp: number, dC: number, yields: boolean) =>
+    AsComp > 0 && sigmaComp > 0
+      ? `A's = ${f(AsComp, 0)} mm² @ d' = ${f(dC, 0)} mm, σ'sc = ${f(sigmaComp, 0)} MPa${yields ? ' (yields)' : ' (elastic)'}`
+      : `A's = 0 (singly reinforced)`;
 
   const flexSteps: CalcSection['steps'] = [
     { ref: '§6.1', label: 'Bottom steel (positive moment, tension at bottom)', equation: 'As,bot', substitution: `${botDesc}, As = ${f(As, 0)} mm²`, result: `As,bot = ${f(As, 0)} mm²` },
-    { ref: '§6.1', label: 'Neutral axis depth (positive)', equation: 'x = As·fyd / (η·fcd·λ·b)', substitution: `${f(As, 0)} × ${f(fyd, 0)} / (${f(eta, 2)} × ${f(fcd)} × ${f(lambda, 2)} × ${f(b, 0)})`, result: `x = ${f(flex.x, 1)} mm` },
-    { ref: '§6.1', label: 'M_Rd positive', equation: 'M_Rd = As·fyd·(d − λx/2)', substitution: `${f(As, 0)} × ${f(fyd, 0)} × (${f(d, 0)} − ${f(lambda * flex.x / 2, 1)}) / 10⁶`, result: `M_Rd⁺ = ${f(flex.MRd)} kN·m ${MEd <= flex.MRd ? '✓' : '✗'}`, note: `M_Ed⁺ = ${f(MEd)} kN·m → DCR = ${flex.MRd > 0 ? f(MEd / flex.MRd, 3) : '—'}` },
+    { ref: '§6.1', label: 'Neutral axis depth (positive)', equation: "η·fcd·b·λx + A's·σ'sc = As·fyd", substitution: `As = ${f(As, 0)} mm²; ${compNote(flex.sigmaComp, As_top, dCompPos, flex.compYields)}`, result: `x = ${f(flex.x, 1)} mm (x/d = ${f(flex.x / d, 3)})` },
+    { ref: '§6.1', label: 'M_Rd positive', equation: "M_Rd = η·fcd·b·λx·(d − λx/2) + A's·σ'sc·(d − d')", substitution: `z = ${f(flex.z, 0)} mm${flex.tensionYields ? '' : ' · tension steel below yield (over-reinforced)'}`, result: `M_Rd⁺ = ${f(flex.MRd)} kN·m ${MEd <= flex.MRd ? '✓' : '✗'}`, note: `M_Ed⁺ = ${f(MEd)} kN·m → DCR = ${flex.MRd > 0 ? f(MEd / flex.MRd, 3) : '—'}` },
     { ref: '§5.5', label: 'Ductility check (positive)', equation: 'x/d ≤ 0.45 (fck ≤ 50 MPa)', substitution: `${f(flex.x, 1)} / ${f(d, 0)}`, result: `x/d = ${f(flex.x / d, 3)} ${flex.x / d <= 0.45 ? '✓' : '✗'}` },
   ];
 
   if (As_top > 0) {
     flexSteps.push(
       { ref: '§6.1', label: 'Top steel (negative moment, tension at top)', equation: 'As,top', substitution: `${topDesc}, As,top = ${f(As_top, 0)} mm²`, result: `As,top = ${f(As_top, 0)} mm²` },
-      { ref: '§6.1', label: 'Neutral axis depth (negative)', equation: 'x = As,top·fyd / (η·fcd·λ·bw)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} / (${f(eta, 2)} × ${f(fcd)} × ${f(lambda, 2)} × ${f(b, 0)})`, result: `x = ${f(flex_neg.x, 1)} mm` },
-      { ref: '§6.1', label: 'M_Rd negative', equation: 'M_Rd⁻ = As,top·fyd·(d_top − λx/2)', substitution: `${f(As_top, 0)} × ${f(fyd, 0)} × (${f(dTop, 0)} − ${f(lambda * flex_neg.x / 2, 1)}) / 10⁶`, result: `M_Rd⁻ = ${f(flex_neg.MRd)} kN·m ${MEd_neg <= flex_neg.MRd ? '✓' : '✗'}`, note: `d_top = ${f(dTop, 0)} mm (top-layer centroid) · M_Ed⁻ = ${f(MEd_neg)} kN·m → DCR = ${flex_neg.MRd > 0 ? f(MEd_neg / flex_neg.MRd, 3) : '—'}` },
+      { ref: '§6.1', label: 'Neutral axis depth (negative)', equation: "η·fcd·b·λx + A's·σ'sc = As,top·fyd", substitution: `As,top = ${f(As_top, 0)} mm²; ${compNote(flex_neg.sigmaComp, As, dCompNeg, flex_neg.compYields)}`, result: `x = ${f(flex_neg.x, 1)} mm (x/d = ${f(flex_neg.x / dTop, 3)})` },
+      { ref: '§6.1', label: 'M_Rd negative', equation: "M_Rd⁻ = η·fcd·b·λx·(d_top − λx/2) + A's·σ'sc·(d_top − d')", substitution: `z = ${f(flex_neg.z, 0)} mm; bottom bars A's = ${f(As, 0)} mm² credited in compression${flex_neg.tensionYields ? '' : ' · tension steel below yield'}`, result: `M_Rd⁻ = ${f(flex_neg.MRd)} kN·m ${MEd_neg <= flex_neg.MRd ? '✓' : '✗'}`, note: `d_top = ${f(dTop, 0)} mm (top-layer centroid) · M_Ed⁻ = ${f(MEd_neg)} kN·m → DCR = ${flex_neg.MRd > 0 ? f(MEd_neg / flex_neg.MRd, 3) : '—'}` },
     );
   }
 

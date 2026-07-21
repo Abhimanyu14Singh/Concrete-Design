@@ -167,10 +167,13 @@ describe('designMemberEC2 — imperial in / imperial out', () => {
   });
 
   it('M_Rd matches direct SI calc converted to kip-ft', () => {
-    // d = 500 − 25 − 8 − 10 = 457 mm, As = 942.5 mm²
-    // UK NA: αcc = 0.85 → fcd_uk = 0.85 * fck / γc
+    // d = 500 − 25 − 8 − 10 = 457 mm, As,bot = 942.5 mm² (tension for +M).
+    // The 2Ø16 top bars (402 mm² @ d' = 41 mm) are credited as compression steel,
+    // so the reference mirrors the engine's doubly-reinforced call.
     const fcd_uk = 0.85 * fck / 1.5;
-    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd_uk, fyd).MRd / 1.35582;
+    const AsTop = 2 * Math.PI * 64;      // 2Ø16 = 402 mm²
+    const dCompPos = 25 + 8 + 16 / 2;    // cover + stirrup + topBar/2 = 41 mm
+    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd_uk, fyd, undefined, undefined, AsTop, dCompPos).MRd / 1.35582;
     expect(r.phi_Mn_pos).toBeCloseTo(expected, 0);
   });
 
