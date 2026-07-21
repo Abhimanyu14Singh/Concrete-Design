@@ -263,11 +263,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       if (m.memberType !== 'beam' || !m.loads.length) continue;
       try {
         let dcrFlex = 0, dcrShear = 0;
+        // Worst per-mode DCR across ALL rows — so the dashboard chips report the
+        // governing M⁺/M⁻/V/crack, not the single representative row's values
+        // (which understate a mode that peaks on a different load station).
+        let mFlexPos = 0, mFlexNeg = 0, mCrack = 0;
         let bestRes: DesignResults | null = null;
         for (const l of m.loads) {
           const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolveCrack(m, project.code, project.slsCombo), project.cotTheta, project.ignoreTorsion);
           const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.VT_util ?? 0);
           if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear, bestRes.DCR_torsion, bestRes.DCR_crack ?? 0, bestRes.VT_util ?? 0)) bestRes = r;
+          mFlexPos = Math.max(mFlexPos, r.DCR_flex_pos);
+          mFlexNeg = Math.max(mFlexNeg, r.DCR_flex_neg);
+          mCrack = Math.max(mCrack, r.DCR_crack ?? 0);
           dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);
           // Fold the combined shear+torsion link utilisation into the shear bucket
           // so map colouring reflects it (torsion links add to the shear links).
@@ -316,6 +323,15 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const dcrById = useMemo(() => {
     const out: Record<string, number> = {};
     for (const [id, info] of Object.entries(infoById)) out[id] = info.dcr;
+    return out;
+  }, [infoById]);
+
+  // Per-mode governing DCRs (worst M⁺/M⁻/V/crack across every load row) for the
+  // dashboard chips, so a mode that peaks on a different station than the overall-
+  // governing row is not shown in green.
+  const modeDcrById = useMemo(() => {
+    const out: Record<string, { flexPos: number; flexNeg: number; shear: number; wk: number }> = {};
+    for (const [id, info] of Object.entries(infoById)) if (info.modeDcr) out[id] = info.modeDcr;
     return out;
   }, [infoById]);
 
@@ -450,8 +466,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   // ── In-map Group Dashboard: distilled payload + card-selection focus ───────
   const dashboardPayload = useMemo(
-    () => buildDashboardPayload(groups, members, designResultsById, dcrById, project.code, units),
-    [groups, members, designResultsById, dcrById, project.code, units],
+    () => buildDashboardPayload(groups, members, designResultsById, dcrById, modeDcrById, project.code, units),
+    [groups, members, designResultsById, dcrById, modeDcrById, project.code, units],
   );
 
   // Selecting a card in either split (Dashboard or S-Concrete) isolates that group

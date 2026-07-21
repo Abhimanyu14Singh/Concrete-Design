@@ -19,6 +19,10 @@ export interface FrameInfo {
   dcr: number;
   dcrFlex: number;
   dcrShear: number;
+  /** Worst per-mode DCR across ALL load rows (M⁺ / M⁻ / V / crack) — not a single
+   *  representative row, so the dashboard chips never understate a mode that
+   *  governs on a different station than the overall-governing row. */
+  modeDcr?: { flexPos: number; flexNeg: number; shear: number; wk: number };
   top: string;
   bot: string;
   stirrups: string;

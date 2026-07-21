@@ -14,6 +14,10 @@ export interface MemberSummary {
   member: Member;
   worstResult: DesignResults;
   maxDCR: number;
+  /** Worst per-mode DCR across ALL load rows (governing M⁺/M⁻/V/crack). The chips
+   *  read this, not `worstResult`'s per-mode values — a single representative row
+   *  understates a mode that peaks on a different station. */
+  modeMax: { flexPos: number; flexNeg: number; shear: number; wk?: number };
 }
 
 export function worstOf(r: DesignResults): number {
@@ -28,7 +32,14 @@ export function summarize(m: Member, code: DesignCode, slsCombo?: string, cotThe
     runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo), cotTheta, ignoreTorsion));
   const maxDCR = Math.max(...results.map(worstOf));
   const worstResult = results.reduce((a, b) => worstOf(b) > worstOf(a) ? b : a);
-  return { member: m, worstResult, maxDCR };
+  const modeMax = {
+    flexPos: Math.max(...results.map(r => r.DCR_flex_pos)),
+    flexNeg: Math.max(...results.map(r => r.DCR_flex_neg)),
+    // Fold the combined shear+torsion link utilisation into the shear bucket.
+    shear: Math.max(...results.map(r => Math.max(r.DCR_shear, r.VT_util ?? 0))),
+    wk: code === 'EN1992-1-1' ? Math.max(...results.map(r => r.DCR_crack ?? 0)) : undefined,
+  };
+  return { member: m, worstResult, maxDCR, modeMax };
 }
 
 /** Per-failure-mode DCRs off a governing DesignResults (crack only for EC2). */
@@ -120,7 +131,7 @@ export function GroupDcrSummary({ members, summaryById, code }: { members: Membe
   for (const m of members) {
     const s = summaryById.get(m.id);
     if (!s) continue;
-    const md = modeDCRs(s.worstResult, code);
+    const md = s.modeMax;
     sp += md.flexPos; sn += md.flexNeg; ss += md.shear;
     if (md.wk !== undefined) { sw += md.wk; cw++; }
     gov.push(s.maxDCR);

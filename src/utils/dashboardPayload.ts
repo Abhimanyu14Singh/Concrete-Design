@@ -109,6 +109,9 @@ export function buildDashboardPayload(
   members: Member[],
   designResultsById: Record<string, DesignResults>,
   dcrById: Record<string, number>,
+  /** Worst per-mode DCR across ALL load rows, per member — governs the M⁺/M⁻/V
+   *  chips so they never read green while a different row pushes the mode past 1. */
+  modeDcrById: Record<string, { flexPos: number; flexNeg: number; shear: number; wk: number }>,
   code: DesignCode,
   units: 'imperial' | 'si',
 ): DashboardPayload {
@@ -127,8 +130,10 @@ export function buildDashboardPayload(
       const d = dcrById[m.id] ?? 0;
       if (d >= govDCR) { govDCR = d; govId = m.id; }
       const r = designResultsById[m.id];
-      if (r) {
-        const md = modeDCRs(r, code);
+      // Per-mode governing across all rows (fallback to the representative row only
+      // when the precomputed map is absent).
+      const md = modeDcrById[m.id] ?? (r ? modeDCRs(r, code) : null);
+      if (md) {
         maxFlexPos = Math.max(maxFlexPos, md.flexPos);
         maxFlexNeg = Math.max(maxFlexNeg, md.flexNeg);
         maxShear = Math.max(maxShear, md.shear);
@@ -197,7 +202,11 @@ export function buildDashboardPayload(
       groupId: gId,
       b: m.section.b,
       h: m.section.h ?? 0,
-      modeDCRs: modeDCRs(r, code),
+      // Per-mode governing DCRs (worst M⁺/M⁻/V across all rows), not the single
+      // representative row — so a mode that peaks on another station reads red here.
+      modeDCRs: modeDcrById[m.id]
+        ? { flexPos: modeDcrById[m.id].flexPos, flexNeg: modeDcrById[m.id].flexNeg, shear: modeDcrById[m.id].shear, wk: code === 'EN1992-1-1' ? modeDcrById[m.id].wk : undefined }
+        : modeDCRs(r, code),
       maxDCR: dcrById[m.id] ?? worstOf(r),
       status: r.status,
       warnings: r.warnings,
