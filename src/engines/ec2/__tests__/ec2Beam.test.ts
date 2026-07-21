@@ -547,3 +547,21 @@ describe('designMemberEC2 — configurable cotθ shear', () => {
     expect(def.DCR_shear).toBeCloseTo(explicit.DCR_shear, 6);
   });
 });
+
+// ── §6.3.2(3) torsion longitudinal steel credits what's provided ──────────────
+describe('designMemberEC2 — §6.3.2(3) clears when longitudinal steel is provided', () => {
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 14, h: 28, coverClear: 1.5, stirrupDia: -10 };
+  const material: MaterialProps = { fc: 5800, fy: 72500, fyt: 72500, Es: 29_000_000, lambdaConcrete: 1 };
+  // High torsion + moderate flexure (which consumes the chord steel), tight links.
+  const base: RebarLayout = { topBars: [{ numBars: 3, barSize: 8 }], botBars: [{ numBars: 4, barSize: 8 }], ties: { barSize: -10, spacing: 4, legs: 2 } };
+  const load: LoadCase = { id: 't', label: 't', Mu_pos: 250, Mu_neg: 180, Vu: 40, Tu: 90, Pu: 0 };
+  const fires = (r: ReturnType<typeof designMemberEC2>) => r.warnings.some(w => w.code === 'EC2 §6.3.2(3)');
+
+  it('fires when the section has no spare longitudinal steel for torsion', () => {
+    expect(fires(designMemberEC2(section, material, base, load))).toBe(true);
+  });
+  it('clears once ample side-face longitudinal steel is added', () => {
+    const withSide: RebarLayout = { ...base, sideBars: [{ numBars: 10, barSize: 6 }] };
+    expect(fires(designMemberEC2(section, material, withSide, load))).toBe(false);
+  });
+});

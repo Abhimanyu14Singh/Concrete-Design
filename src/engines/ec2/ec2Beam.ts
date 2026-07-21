@@ -790,11 +790,20 @@ export function designMemberEC2(
       });
   }
 
-  // §6.3.2(3): longitudinal torsion steel is distributed around the perimeter.
-  // The two horizontal faces (top/bot chords) carry ~half between them; report
-  // the total demand and the per-chord share that adds to flexural steel.
-  if (Asl_tor_mm2 > 0)
-    warnings.push({ code: 'EC2 §6.3.2(3)', message: `Torsion needs ΣAsl = ${Asl_tor_mm2.toFixed(0)} mm² longitudinal steel distributed around the perimeter, in addition to flexural reinforcement`, severity: 'warning' });
+  // §6.3.2(3): longitudinal torsion steel ΣAsl is distributed around the perimeter
+  // and is IN ADDITION to flexural steel. Credit what's actually spare for torsion —
+  // chord steel beyond the flexural demand, plus EVERY side-face bar (side bars carry
+  // no flexure) — and only warn on a genuine shortfall. Providing enough longitudinal
+  // steel (larger/extra top-bottom bars, or side-face bars) then clears the warning.
+  if (Asl_tor_mm2 > 0) {
+    const AsFlexBot = MEd_pos > 0 ? (MEd_pos * 1e6 / z_long) / fyd : 0;
+    const AsFlexTop = MEd_neg > 0 ? (MEd_neg * 1e6 / (0.9 * d_top)) / fyd : 0;
+    const AsSideTotal = 2 * (rebar.sideBars ?? []).reduce((s, g) => s + g.numBars * getBarArea(g.barSize) * IN2_TO_MM2, 0);
+    const AsTorAvail = Math.max(0, As_bot_mm2 - AsFlexBot) + Math.max(0, As_top_mm2 - AsFlexTop) + AsSideTotal;
+    const deficit = Asl_tor_mm2 - AsTorAvail;
+    if (deficit > 1) // 1 mm² tolerance — adequate provision clears the warning
+      warnings.push({ code: 'EC2 §6.3.2(3)', message: `Torsion needs ΣAsl = ${Asl_tor_mm2.toFixed(0)} mm² longitudinal steel around the perimeter (in addition to flexure) — only ${AsTorAvail.toFixed(0)} mm² is spare; add ~${deficit.toFixed(0)} mm² more (larger/extra top-bottom or side-face bars)`, severity: 'warning' });
+  }
 
   // ρw,min §9.2.2(5) and s_max §9.2.2(6)
   if (rebar.ties) {
