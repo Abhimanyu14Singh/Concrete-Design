@@ -603,7 +603,7 @@ export function designMemberEC2(
   material: MaterialProps,
   rebar: RebarLayout,
   load: LoadCase,
-  _span = 20,
+  span = 20,
   crack: CrackControlParams = DEFAULT_CRACK_PARAMS,
   // §6.2.3 variable strut inclination. 2.5 (θ = 21.8°) is the EC2 upper bound and
   // the most link-efficient choice; a lower value (steeper strut) is more
@@ -681,11 +681,22 @@ export function designMemberEC2(
     : (rebar.ties?.spacing ?? 0);
   const worstSpacing_mm = worstSpacing * IN_TO_MM;
 
+  // Shear CAPACITY is evaluated at the spacing of the zone where THIS row's shear
+  // acts (station position load.x). The worst (loosest) zone is mid-span, where
+  // shear is lowest; pairing that spacing with the peak END shear — which occur at
+  // different sections — spuriously fails a correctly-zoned beam (the per-zone
+  // breakdown in zonedShearCheckEC2 shows each third passing). Detailing (s_max),
+  // ρw and torsion keep the worst zone; rows without a station position fall back.
+  const zoneAtX = rebar.tieZones && rebar.tieZones.length === 3 && load.x !== undefined && span > 0
+    ? rebar.tieZones[Math.min(2, Math.max(0, Math.floor((load.x / span) * 3)))]
+    : undefined;
+  const shearSpacing_mm = zoneAtX ? zoneAtX.spacing * IN_TO_MM : worstSpacing_mm;
+
   let VRds = 0, VRdmax = 0, Asw_s = 0;
   if (rebar.ties) {
     const Asw_mm2 = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
     Asw_s = Asw_mm2 / worstSpacing_mm;
-    VRds = vRds(Asw_mm2, worstSpacing_mm, z, fywd, cotTheta);
+    VRds = vRds(Asw_mm2, shearSpacing_mm, z, fywd, cotTheta);
     VRdmax = vRdMax(b_mm, z, fck, fcd, cotTheta);
   }
 

@@ -73,6 +73,7 @@ export function stationLoadCases(forces: ComboForces[], envLabel?: string): Load
         id: `${combo}@${st.x.toFixed(2)}`,
         label: `${combo} @ ${st.x.toFixed(1)} ft`,
         Mu_pos, Mu_neg, Vu, Tu, Pu,
+        x: +st.x.toFixed(2), // station position → zone-aware shear spacing
       });
     }
   }

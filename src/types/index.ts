@@ -235,6 +235,12 @@ export interface LoadCase {
    */
   Vu2?: number;    // ETABS V2, strong-direction shear (kips)
   Vu3?: number;    // ETABS V3, weak-direction shear (kips)
+  /**
+   * Station position along the span (ft), when this row comes from a per-station
+   * expansion. Lets the shear check evaluate capacity at the stirrup spacing of
+   * the zone this station sits in (zoned beams) instead of the worst zone.
+   */
+  x?: number;
 }
 
 export interface DesignResults {
