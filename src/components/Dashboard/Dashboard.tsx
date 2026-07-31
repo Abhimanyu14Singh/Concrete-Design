@@ -4,7 +4,7 @@ import { useUnits } from '../../contexts/UnitsContext';
 import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, ACCENT, BORDER, INK, LABEL_STYLE, MONO_NUM, STATUS, SURFACE, TYPE } from '../../theme';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
-import { summarize, modeDCRs, DCRChip, DCRInlineCell, GroupDcrSummary, type MemberSummary } from './dashboardShared';
+import { summarize, DCRChip, DCRInlineCell, GroupDcrSummary, type MemberSummary } from './dashboardShared';
 import MemberEditor from '../SectionInput/MemberEditor';
 import MemberResults from '../Results/MemberResults';
 import GroupRebarEditor from '../ModelMap/GroupRebarEditor';
@@ -46,7 +46,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
   const [dcrGroupFilter, setDcrGroupFilter] = useState<string>('__all__');
   const [dcrSeriesFilter, setDcrSeriesFilter] = useState<string>('__all__');
 
-  const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo));
+  const summaries = project.members.map(m => summarize(m, project.code, project.slsCombo, project.cotTheta, project.ignoreTorsion));
   const okCount   = summaries.filter(s => s.worstResult.status === 'OK').length;
   const ngCount   = summaries.filter(s => s.worstResult.status === 'NG').length;
   const warnCount = summaries.filter(s => s.worstResult.status === 'Warning').length;
@@ -127,7 +127,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
     for (const m of members) {
       const s = summaryById.get(m.id);
       if (!s) continue;
-      const modes = modeDCRs(s.worstResult, project.code as DesignCode);
+      const modes = s.modeMax;
       flexPos = Math.max(flexPos, modes.flexPos);
       flexNeg = Math.max(flexNeg, modes.flexNeg);
       shear = Math.max(shear, modes.shear);
@@ -186,7 +186,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
     const status = s?.worstResult.status ?? 'OK';
     const active = selection.kind === 'member' && m.id === selection.id;
     const isGov = m.id === govId;
-    const modes = s ? modeDCRs(s.worstResult, project.code as DesignCode) : null;
+    const modes = s ? s.modeMax : null;
     return (
       <div
         onClick={() => handleMemberRowClick(m.id)}
@@ -435,7 +435,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                 </div>
                 {/* Right: live DCR / diagrams */}
                 <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '12px 14px' }}>
-                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate} />
+                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} cotTheta={project.cotTheta} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate} />
                 </div>
               </div>
             </>
@@ -738,7 +738,7 @@ function GroupPanel({
         </div>
         {group.members.map(m => {
           const s = summaryById.get(m.id);
-          const modes = s ? modeDCRs(s.worstResult, code) : null;
+          const modes = s ? s.modeMax : null;
           const status = s?.worstResult.status ?? 'OK';
           return (
             <div

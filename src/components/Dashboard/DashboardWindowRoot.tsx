@@ -49,9 +49,15 @@ export default function DashboardWindowRoot() {
         selectedGroupId={selectedGroupId}
         onSelectGroup={id => { setSelectedGroupId(id); api.sendDashboardCommand?.({ type: 'select-group', groupId: id }); }}
         onApplyRebar={apply}
+        onOpenMember={memberId => api.sendDashboardCommand?.({ type: 'open-member', memberId })}
         onMoveMember={(memberId, groupId) => api.sendDashboardCommand?.({ type: 'move-member', memberId, groupId })}
         onCreateGroupForMember={memberId => api.sendDashboardCommand?.({ type: 'create-group-for-member', memberId })}
         onSuggestAll={() => api.sendDashboardCommand?.({ type: 'suggest-all' })}
+        onToggleCurtailmentNote={(groupId, face, on) => api.sendDashboardCommand?.({ type: 'toggle-curtailment-note', groupId, face, on })}
+        onSetOppositeTop={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-opposite-top', groupId, bars })}
+        onSetMidThirdTop={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-mid-third-top', groupId, bars })}
+        onSetEndThirdBot={(groupId, bars) => api.sendDashboardCommand?.({ type: 'set-end-third-bot', groupId, bars })}
+        onSetReviewed={(groupId, on) => api.sendDashboardCommand?.({ type: 'set-reviewed', groupId, on })}
         canPopOut={false}
         onClose={() => api.sendDashboardCommand?.({ type: 'pop-in' })}
         closeLabel="⤡ Pop in"

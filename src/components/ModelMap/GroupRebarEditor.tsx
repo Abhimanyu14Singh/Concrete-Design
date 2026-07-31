@@ -6,10 +6,11 @@ import { useState, useEffect } from 'react';
 import type { DesignGroup, RebarLayout, BarGroup, Member, Project, TieZone } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
-import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
+import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
+import SuggestSizeDialog from '../common/SuggestSizeDialog';
 import HelpLink from '../Help/HelpLink';
 import { ACCENT, BORDER, INK, MONO_NUM, STATUS, TRACK } from '../../theme';
 
@@ -78,6 +79,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   const spacingMax = units === 'si' ? 600 : 24;  // 600 mm ≈ 24 in
   const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(units));
   const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
 
   // Re-seed only when the SELECTED group changes — keying on group.rebar too
   // would clobber an in-progress edit every time the parent re-renders (which
@@ -94,8 +96,8 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group.id]);
 
-  function handleSuggest() {
-    const r = suggestGroupRebar(members, code, targetDCR);
+  function runSuggest(floors?: SuggestFloors) {
+    const r = suggestGroupRebar(members, code, targetDCR, floors);
     if (isSuggestError(r)) {
       setSuggestNote({ kind: 'err', text: r.error });
       return;
@@ -149,12 +151,20 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         </div>
         <HelpLink section="suggest" title="How Suggest sizes the cage" />
         <button
-          onClick={handleSuggest}
+          onClick={() => setSuggestOpen(true)}
           title={`Pick the lightest practical layout meeting the group's worst demand at target DCR ${targetDCR.toFixed(2)}`}
           style={{ flexShrink: 0, padding: '3px 8px', background: 'white', color: '#7c3aed', border: '1px solid #c4b5fd', borderRadius: 5, cursor: 'pointer', fontWeight: 700, fontSize: 10 }}>
           ✨ Suggest
         </button>
       </div>
+      {suggestOpen && (
+        <SuggestSizeDialog
+          code={code}
+          title={`Suggest cage — ${group.label}`}
+          onCancel={() => setSuggestOpen(false)}
+          onConfirm={floors => { setSuggestOpen(false); runSuggest(floors); }}
+        />
+      )}
       {suggestNote && (
         <div style={{
           fontSize: 10, marginBottom: 8, padding: '4px 8px', borderRadius: 5,

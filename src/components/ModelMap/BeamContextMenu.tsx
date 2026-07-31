@@ -3,6 +3,7 @@
  * Provides: navigate to design, move to group, hide beam, delete beam.
  */
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { DesignGroup } from '../../types';
 import { BORDER, INK, MONO_NUM, STATUS } from '../../theme';
 
@@ -56,7 +57,13 @@ export default function BeamContextMenu({
 
   const dividerStyle: React.CSSProperties = { borderTop: '1px solid #f3f4f6', margin: '3px 0' };
 
-  return (
+  // Portal to <body> so the fixed-position menu is NOT trapped inside the app's
+  // `transform: scale(zoom)` Display-Scale wrapper. A transformed ancestor becomes
+  // the containing block for position:fixed descendants, which would re-base the
+  // menu's viewport (clientX/clientY) coords by the zoom factor — at any scale ≠
+  // 100% the menu lands off-screen or on top of the right-hand panel, swallowing
+  // clicks. Portaling escapes the transform so it appears at the true click point.
+  return createPortal(
     <div ref={ref} style={menuStyle}>
       {/* Frame name header */}
       <div style={{ padding: '6px 14px 4px', fontSize: 10, color: INK.muted, ...MONO_NUM, borderBottom: '1px solid #f3f4f6' }}>
@@ -139,6 +146,7 @@ export default function BeamContextMenu({
       >
         🗑 Delete beam
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

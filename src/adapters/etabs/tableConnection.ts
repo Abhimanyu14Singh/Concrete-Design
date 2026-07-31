@@ -29,6 +29,28 @@ import { matchesFilter } from './connection';
 
 export type TableRow = Record<string, unknown>;
 
+/**
+ * Coarse category from the Group Assignments "ObjectType" column. ETABS unique
+ * names are per-object-type — a frame "12" and a joint "12" are DIFFERENT objects
+ * that share the string "12" — so group membership must be matched by category as
+ * well as name, or a grouped joint/shell leaks its group onto a same-named frame.
+ *
+ * ETABS labels joints "Point" and shells/walls/slabs "Area"; frames are the
+ * "Line" object type (NOT "Frame"). So this is an EXCLUDE list: only the joint and
+ * area object types are pulled out — EVERYTHING else (Line/Frame/Beam/Column/
+ * Brace, plus any empty or unrecognised value) is treated as a frame. Erring
+ * toward frame means a group filter never silently drops real frames on a model
+ * whose exact ObjectType wording we don't recognise; the joints and shells we DO
+ * recognise are still excluded, which is the behaviour the user asked for.
+ */
+type ObjCategory = 'frame' | 'area' | 'point';
+export function objCategory(type: string): ObjCategory {
+  const s = type.trim().toLowerCase();
+  if (/point|joint|node/.test(s)) return 'point';
+  if (/area|shell|wall|slab|floor|deck|ramp|panel/.test(s)) return 'area';
+  return 'frame';
+}
+
 interface UnitFactors {
   lengthToFt: number;   // model length unit → ft
   forceToKip: number;   // model force unit → kip
@@ -206,7 +228,9 @@ export abstract class TableConnection implements EtabsConnection {
   private ctxCache: {
     coords: Map<string, { x: number; y: number; z: number }>;
     sectionByFrame: Map<string, string>;
-    groupsByObject: Map<string, string[]>;
+    /** Group names for an object, restricted to the caller's category (frames read
+     *  only frame memberships, areas only area memberships) + untyped fallback. */
+    groupsFor: (uniqueName: string, want: 'frame' | 'area') => string[];
   } | null = null;
 
   async connect(): Promise<EtabsConnectInfo> {
@@ -350,21 +374,30 @@ export abstract class TableConnection implements EtabsConnection {
       if (un && sect) sectionByFrame.set(un, sect);
     }
 
-    // ETABS groups: name list + per-object membership (all object types)
-    const groupsByObject = new Map<string, string[]>();
+    // ETABS groups: name list + per-object membership, keyed by (category, name)
+    // so a grouped joint/shell never leaks its group onto a same-unique-named
+    // frame. objCategory only pulls out Point and Area types; every other value
+    // (incl. the "Line" type ETABS uses for frames, and untyped rows) counts as a
+    // frame, so real frame memberships are never dropped.
+    const catGroups = new Map<string, string[]>(); // key: `${category}|${uniqueName}`
     const names = new Set<string>();
     for (const g of groupRows) {
       const group = str(g, 'GroupName', 'Group');
       const obj = str(g, 'ObjectUniqueName', 'UniqueName', 'ObjectName');
       if (!group || !obj) continue;
       names.add(group);
-      const list = groupsByObject.get(obj) ?? [];
+      const cat = objCategory(str(g, 'ObjectType', 'Type'));
+      const key = `${cat}|${obj}`;
+      const list = catGroups.get(key) ?? [];
       list.push(group);
-      groupsByObject.set(obj, list);
+      catGroups.set(key, list);
     }
     this.groupNames = [...names].sort();
 
-    this.ctxCache = { coords, sectionByFrame, groupsByObject };
+    const groupsFor = (uniqueName: string, want: 'frame' | 'area'): string[] =>
+      catGroups.get(`${want}|${uniqueName}`) ?? [];
+
+    this.ctxCache = { coords, sectionByFrame, groupsFor };
     return this.ctxCache;
   }
 
@@ -394,7 +427,7 @@ export abstract class TableConnection implements EtabsConnection {
         story: str(row, 'Story'),
         section,
         pt1, pt2,
-        groups: ctx.groupsByObject.get(un) ?? [],
+        groups: ctx.groupsFor(un, 'frame'),
         lengthFt: lengthRaw > 0
           ? lengthRaw * lf
           : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
@@ -435,7 +468,7 @@ export abstract class TableConnection implements EtabsConnection {
         story: str(row, 'Story'),
         section,
         pt1, pt2,
-        groups: ctx.groupsByObject.get(un) ?? [],
+        groups: ctx.groupsFor(un, 'frame'),
         heightFt: lengthRaw > 0
           ? lengthRaw * lf
           : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
@@ -496,7 +529,7 @@ export abstract class TableConnection implements EtabsConnection {
         : (isVerticalArea(points) ? 'wall' : 'slab');
       const section = sectionByArea.get(un) ?? '';
       if (section) this.sectionNamesUsed.add(section);
-      areas.push({ name: un, story, points, kind, section, groups: ctx.groupsByObject.get(un) ?? [] });
+      areas.push({ name: un, story, points, kind, section, groups: ctx.groupsFor(un, 'area') });
     }
     this.areasCache = areas;
     this.openingsCache = openings;

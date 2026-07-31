@@ -8,7 +8,9 @@ import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
-import { suggestGroupRebar, isSuggestError } from '../../utils/suggestRebar';
+import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
+import { beamMarkEnd } from '../../utils/curtailment';
+import SuggestSizeDialog from '../common/SuggestSizeDialog';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
@@ -115,6 +117,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     const v = Number(localStorage.getItem('mapDashboardSplit'));
     return Number.isFinite(v) && v > 0.15 && v < 0.85 ? v : 0.5;
   });
+  // Width of the right Design/Verify panel — draggable by its left edge, persisted.
+  const [rightPanelW, setRightPanelW] = useState<number>(() => {
+    const v = Number(localStorage.getItem('mapRightPanelW'));
+    return Number.isFinite(v) && v >= 280 && v <= 680 ? v : 320;
+  });
   const dashHostRef = useRef<HTMLDivElement>(null);
   const [rightTab, setRightTab] = useState<RightTab>(mapViewCache.rightTab ?? 'groups');
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
@@ -127,6 +134,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [autoGroupOverlay, setAutoGroupOverlay] = useState<AutoGroupBin[]>([]);
   const [contextMenu, setContextMenu] = useState<{ memberId: string; frameName: string; x: number; y: number } | null>(null);
   const [suggestAllNote, setSuggestAllNote] = useState<string | null>(null);
+  const [suggestAllOpen, setSuggestAllOpen] = useState(false);
   // User override for the metric color-ramp bounds (Steel% / Stirrups / Weight).
   // null = auto (data min/max). Lets the user refine the legend to highlight a band.
   const [metricOverride, setMetricOverride] = useState<{ min: number; max: number } | null>(null);
@@ -255,13 +263,22 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       if (m.memberType !== 'beam' || !m.loads.length) continue;
       try {
         let dcrFlex = 0, dcrShear = 0;
+        // Worst per-mode DCR across ALL rows — so the dashboard chips report the
+        // governing M⁺/M⁻/V/crack, not the single representative row's values
+        // (which understate a mode that peaks on a different load station).
+        let mFlexPos = 0, mFlexNeg = 0, mCrack = 0;
         let bestRes: DesignResults | null = null;
         for (const l of m.loads) {
-          const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolveCrack(m, project.code, project.slsCombo));
-          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0);
-          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear, bestRes.DCR_torsion, bestRes.DCR_crack ?? 0)) bestRes = r;
+          const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolveCrack(m, project.code, project.slsCombo), project.cotTheta, project.ignoreTorsion);
+          const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.VT_util ?? 0);
+          if (!bestRes || govDCR > Math.max(bestRes.DCR_flex_pos, bestRes.DCR_flex_neg, bestRes.DCR_shear, bestRes.DCR_torsion, bestRes.DCR_crack ?? 0, bestRes.VT_util ?? 0)) bestRes = r;
+          mFlexPos = Math.max(mFlexPos, r.DCR_flex_pos);
+          mFlexNeg = Math.max(mFlexNeg, r.DCR_flex_neg);
+          mCrack = Math.max(mCrack, r.DCR_crack ?? 0);
           dcrFlex = Math.max(dcrFlex, r.DCR_flex_pos, r.DCR_flex_neg);
-          dcrShear = Math.max(dcrShear, r.DCR_shear);
+          // Fold the combined shear+torsion link utilisation into the shear bucket
+          // so map colouring reflects it (torsion links add to the shear links).
+          dcrShear = Math.max(dcrShear, r.DCR_shear, r.VT_util ?? 0);
         }
         if (bestRes) results[m.id] = bestRes;
         const w = steelWeightPerFt(m);
@@ -286,21 +303,35 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       }
     }
     return { infoById: info, designResultsById: results };
-  }, [deferredMembers, project.code, project.slsCombo, fmtVal, label]);
+  }, [deferredMembers, project.code, project.slsCombo, project.cotTheta, fmtVal, label]);
 
   const errorMemberIds = useMemo(() => {
+    // Beams in an engineer-Reviewed group are accepted — they stop being flagged red
+    // on the plan (the sign-off "goes into the calculations" here too).
+    const reviewedMembers = new Set<string>();
+    for (const g of groups) if (g.reviewed) for (const id of g.memberIds) reviewedMembers.add(id);
     const out = new Set<string>();
     for (const [id, info] of Object.entries(infoById)) {
+      if (reviewedMembers.has(id)) continue;
       if (info.status === 'NG' || info.error || info.warnings?.some(w => w.severity === 'error')) {
         out.add(id);
       }
     }
     return out;
-  }, [infoById]);
+  }, [infoById, groups]);
 
   const dcrById = useMemo(() => {
     const out: Record<string, number> = {};
     for (const [id, info] of Object.entries(infoById)) out[id] = info.dcr;
+    return out;
+  }, [infoById]);
+
+  // Per-mode governing DCRs (worst M⁺/M⁻/V/crack across every load row) for the
+  // dashboard chips, so a mode that peaks on a different station than the overall-
+  // governing row is not shown in green.
+  const modeDcrById = useMemo(() => {
+    const out: Record<string, { flexPos: number; flexNeg: number; shear: number; wk: number }> = {};
+    for (const [id, info] of Object.entries(infoById)) if (info.modeDcr) out[id] = info.modeDcr;
     return out;
   }, [infoById]);
 
@@ -313,6 +344,21 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }
     return out;
   }, [members, diagramMode]);
+
+  // Per-beam "mark" end (the higher-hogging support) — drives where the group tag
+  // sits on each line in "Group + tags" mode. Only computed when that mode is on;
+  // reads station forces (no design run). Beams without station data are absent
+  // and fall back to the line midpoint.
+  const markEndById = useMemo(() => {
+    if (colorMode !== 'groupTags') return undefined;
+    const out: Record<string, 'start' | 'end'> = {};
+    for (const m of members) {
+      if (m.memberType && m.memberType !== 'beam') continue;
+      const me = beamMarkEnd(m);
+      if (me) out[m.id] = me;
+    }
+    return out;
+  }, [members, colorMode]);
 
   const isMetricMode = METRIC_MODES.includes(colorMode);
 
@@ -420,8 +466,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
   // ── In-map Group Dashboard: distilled payload + card-selection focus ───────
   const dashboardPayload = useMemo(
-    () => buildDashboardPayload(groups, members, designResultsById, dcrById, project.code, units),
-    [groups, members, designResultsById, dcrById, project.code, units],
+    () => buildDashboardPayload(groups, members, designResultsById, dcrById, modeDcrById, project.code, units),
+    [groups, members, designResultsById, dcrById, modeDcrById, project.code, units],
   );
 
   // Selecting a card in either split (Dashboard or S-Concrete) isolates that group
@@ -464,6 +510,27 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     window.addEventListener('mouseup', up);
   }
 
+  // Drag the right panel's LEFT edge: moving left grows the panel (its right edge is
+  // pinned to the window), moving right shrinks it. Width clamped [280, 680].
+  function onRightPanelDividerDown(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = rightPanelW;
+    const move = (ev: MouseEvent) => {
+      const w = Math.min(680, Math.max(280, startW - (ev.clientX - startX)));
+      setRightPanelW(w);
+      localStorage.setItem('mapRightPanelW', String(w));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   // ── Pop-out window sync (Electron; no-ops on web) ─────────────────────────
   // Broadcast the (distilled) payload to the popped-out window whenever it changes.
   useEffect(() => {
@@ -494,6 +561,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         handleCreateGroupForMember(cmd.memberId);
       } else if (cmd.type === 'suggest-all') {
         handleSuggestAllGroups();
+      } else if (cmd.type === 'toggle-curtailment-note') {
+        handleToggleCurtailmentNote(cmd.groupId, cmd.face, cmd.on);
+      } else if (cmd.type === 'set-opposite-top') {
+        handleSetOppositeTop(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'set-mid-third-top') {
+        handleSetMidThirdTop(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'set-end-third-bot') {
+        handleSetEndThirdBot(cmd.groupId, cmd.bars);
+      } else if (cmd.type === 'set-reviewed') {
+        handleSetReviewed(cmd.groupId, cmd.on);
+      } else if (cmd.type === 'open-member') {
+        // Double-click a beam in the popped-out window → open it on the main window's
+        // Member screen (main.cjs also raises the main window to the front).
+        onPickMember(cmd.memberId);
       } else if (cmd.type === 'pop-in') {
         setDashboardPoppedOut(false);
         api.closeDashboardWindow?.();
@@ -519,6 +600,65 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     }));
   }
 
+  // Pin/unpin a face's L/3 curtailment % to the beam-schedule notes (persisted on
+  // the group so the export can recompute the note against the current cage).
+  function handleToggleCurtailmentNote(groupId: string, face: 'top' | 'bot', on: boolean) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g =>
+        g.id === groupId ? { ...g, curtailmentNotes: { ...g.curtailmentNotes, [face]: on } } : g),
+    }));
+  }
+
+  // Set (or clear, when bars === null) a group's reduced opposite-end top cage.
+  function handleSetOppositeTop(groupId: string, bars: import('../../types').BarGroup[] | null) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!bars || !bars.length) { const { oppositeTopBars: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, oppositeTopBars: bars };
+      }),
+    }));
+  }
+
+  // Set (or clear, when bars === null) a group's reduced middle-third top cage.
+  function handleSetMidThirdTop(groupId: string, bars: import('../../types').BarGroup[] | null) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!bars || !bars.length) { const { midThirdTopBars: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, midThirdTopBars: bars };
+      }),
+    }));
+  }
+
+  // Set (or clear, when bars === null) a group's reduced end-third bottom cage.
+  function handleSetEndThirdBot(groupId: string, bars: import('../../types').BarGroup[] | null) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!bars || !bars.length) { const { endThirdBotBars: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, endThirdBotBars: bars };
+      }),
+    }));
+  }
+
+  // Engineer sign-off — mark (or clear) a group as Reviewed. Its NG/warnings then read
+  // "Reviewed" across the dashboard and its beams stop being flagged red on the plan.
+  function handleSetReviewed(groupId: string, on: boolean) {
+    onProjectChange(prev => ({
+      ...prev,
+      designGroups: (prev.designGroups ?? []).map(g => {
+        if (g.id !== groupId) return g;
+        if (!on) { const { reviewed: _drop, ...rest } = g; void _drop; return rest; }
+        return { ...g, reviewed: true };
+      }),
+    }));
+  }
+
   function handleDeleteGroupWithMembers(groupId: string) {
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
@@ -532,7 +672,12 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     if (activeGroupId === groupId) setActiveGroupId(null);
   }
 
-  function handleSuggestAllGroups() {
+  // The ✨ Suggest-all button opens the size-floor dialog first; runSuggestAllGroups
+  // does the work once the user confirms their minimum bar sizes (or accepts the
+  // defaults, which impose no floor — the original behavior).
+  function handleSuggestAllGroups() { setSuggestAllOpen(true); }
+
+  function runSuggestAllGroups(floors?: SuggestFloors) {
     const target = project.targetDCR ?? 0.9;
     let ok = 0, fail = 0;
     let firstError: string | null = null;
@@ -545,7 +690,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
       const designed = membersInGroup.filter(m => m.memberType === 'beam' && m.loads.length > 0);
       if (!designed.length) continue; // skip empty / no designed beams
-      const r = suggestGroupRebar(membersInGroup, project.code, target);
+      const r = suggestGroupRebar(membersInGroup, project.code, target, floors);
       if (isSuggestError(r)) {
         fail++;
         if (!firstError) firstError = r.error;
@@ -642,7 +787,10 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     ...(mapGrids.length ? [{ key: 'layer:grids', label: 'Grids' }] : []),
     ...(mapOpenings.length ? [{ key: 'layer:openings', label: 'Openings' }] : []),
   ];
-  const filterSections: FilterSection[] = [
+  // Two toolbar dropdowns. The 👁 "eye" governs plan *visibility* (what's drawn —
+  // member categories, imported walls/grids/openings, and floors); the ⧩ "filter"
+  // governs the design *facets* (groups, sections).
+  const visibilitySections: FilterSection[] = [
     { title: 'Show',
       items: [...presentTypes.map(t => ({ key: t, label: TYPE_LABEL[t] ?? t })), ...layerItems],
       hidden: new Set([...hiddenTypes, ...[...hiddenLayers].map(l => 'layer:' + l)]),
@@ -650,19 +798,24 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       onAll: show => { setHiddenTypes(show ? new Set() : new Set(presentTypes)); setHiddenLayers(show ? new Set() : new Set(['walls', 'grids', 'openings'])); } },
     { title: 'Floors', items: allStories.map(s => ({ key: s, label: s })), hidden: hiddenStories,
       onToggle: toggleStoryVisibility, onAll: show => onProjectChange(prev => ({ ...prev, hiddenStories: show ? [] : [...allStories] })) },
+  ];
+  const filterSections: FilterSection[] = [
     { title: 'Groups', items: groups.map((g, i) => ({ key: g.id, label: g.label, color: groupColor(g.color, i) })), hidden: hiddenGroupIds,
       onToggle: k => setHiddenGroupIds(s => toggleIn(s, k)), onAll: show => setHiddenGroupIds(show ? new Set() : new Set(groups.map(g => g.id))) },
     { title: 'Sections', items: sectionNames.map(s => ({ key: s, label: s })), hidden: hiddenSections,
       onToggle: k => setHiddenSections(s => toggleIn(s, k)), onAll: show => setHiddenSections(show ? new Set() : new Set(sectionNames)) },
   ];
-  // Badge counts things hidden FROM the default (on-by-default) view. Layers are
-  // opt-in OFF, so they don't inflate the count.
-  const filterHiddenCount = hiddenTypes.size + hiddenStories.size + hiddenGroupIds.size + hiddenSections.size;
-  const clearAllFilters = () => {
-    setHiddenTypes(new Set()); setHiddenGroupIds(new Set()); setHiddenSections(new Set());
+  // Eye badge counts hidden member categories + floors (imported layers are opt-in
+  // OFF by default, so they never inflate the count).
+  const visibilityHiddenCount = hiddenTypes.size + hiddenStories.size;
+  const clearVisibility = () => {
+    setHiddenTypes(new Set());
     setHiddenLayers(new Set(['walls', 'grids', 'openings']));
     onProjectChange(prev => ({ ...prev, hiddenStories: [] }));
   };
+  // Filter badge counts hidden groups + sections.
+  const filterHiddenCount = hiddenGroupIds.size + hiddenSections.size;
+  const clearAllFilters = () => { setHiddenGroupIds(new Set()); setHiddenSections(new Set()); };
 
   function handleFrameClick(frameName: string): boolean {
     if (!activeGroupId) return false;
@@ -798,6 +951,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         />
       )}
 
+      {/* ✨ Suggest size-floor dialog (per-group Suggest lives in GroupRebarEditor;
+          this instance backs "✨ Suggest all groups" and the popped-out dashboard). */}
+      {suggestAllOpen && (
+        <SuggestSizeDialog
+          code={project.code}
+          title="Suggest all groups"
+          onCancel={() => setSuggestAllOpen(false)}
+          onConfirm={floors => { setSuggestAllOpen(false); runSuggestAllGroups(floors); }}
+        />
+      )}
+
       {/* Plan | Dashboard split host */}
       <div ref={dashHostRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden', position: 'relative' }}>
       {/* Canvas area (plan pane) */}
@@ -806,8 +970,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         : { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
-          {/* Plan filter — member type / floors / groups / sections
-              (replaces the old story dropdown + "Floors:" chip row) */}
+          {/* 👁 Visibility — show/hide member categories, imported layers, floors */}
+          <MapFilterMenu sections={visibilitySections} hiddenCount={visibilityHiddenCount} onClearAll={clearVisibility}
+            icon="👁" label="Show" title="Show or hide what's drawn on the plan — members, walls, grids, openings, floors" />
+
+          {/* ⧩ Filter — narrow the plan by design group / section */}
           <MapFilterMenu sections={filterSections} hiddenCount={filterHiddenCount} onClearAll={clearAllFilters} />
 
           <div style={toolSep} />
@@ -923,6 +1090,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             height={canvasSize.h}
             diagramMode={diagramMode}
             diagramDataById={diagramMode !== 'off' ? diagramDataById : undefined}
+            markEndById={markEndById}
             metricById={metricById}
             metricRange={effectiveMetricRange}
             metricLabel={metricLabel}
@@ -948,6 +1116,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             showGrids={mapGrids.length > 0 && !hiddenLayers.has('grids')}
             showOpenings={mapOpenings.length > 0 && !hiddenLayers.has('openings')}
           />
+
+          {/* ETABS model filename — bottom-right of the plan, so the analyzed
+              model that produced these members is always identifiable. */}
+          {map?.modelName && (
+            <div
+              title={`ETABS model: ${map.modelName}`}
+              style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 5, maxWidth: '60%', display: 'flex', alignItems: 'center', gap: 5, padding: '3px 9px', background: 'rgba(255,255,255,0.92)', border: `1px solid ${BORDER.default}`, borderRadius: 6, fontSize: 11, color: INK.secondary, pointerEvents: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
+            >
+              <span aria-hidden style={{ fontSize: 11 }}>⇪</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{map.modelName}</span>
+            </div>
+          )}
 
           {/* Beam inspect card */}
           {inspectMode && inspectedMember && (
@@ -1016,6 +1196,11 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onMoveMember={handleMoveToGroup}
               onCreateGroupForMember={handleCreateGroupForMember}
               onSuggestAll={handleSuggestAllGroups}
+              onToggleCurtailmentNote={handleToggleCurtailmentNote}
+              onSetOppositeTop={handleSetOppositeTop}
+              onSetMidThirdTop={handleSetMidThirdTop}
+              onSetEndThirdBot={handleSetEndThirdBot}
+              onSetReviewed={handleSetReviewed}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
               onClose={() => setDashboardOpen(false)}
@@ -1083,8 +1268,17 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         </div>
       )}
 
+      {/* Right-panel resize handle — drag its left edge to grow/shrink the panel.
+          Hidden while a split dashboard owns the right half. */}
+      {!dashboardOpen && !sconcreteOpen && (
+        <div onMouseDown={onRightPanelDividerDown} title="Drag to resize the panel"
+          style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: SURFACE.subtle, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 3, height: 40, borderRadius: 2, background: BORDER.strong }} />
+        </div>
+      )}
+
       {/* Right panel */}
-      <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: (dashboardOpen || sconcreteOpen) ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+      <div style={{ width: rightPanelW, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: (dashboardOpen || sconcreteOpen) ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
         {/* Tab bar — the workflow (Design, then the two split dashboards) is primary;
             read-only analytics are tucked behind an "Analyze" picker. */}
         <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6 }}>
@@ -1214,7 +1408,8 @@ function CategoricalLegend({ title, rows, activeKey, onRowClick }: {
   const clickable = !!onRowClick;
   return (
     <div style={{
-      position: 'absolute', top: 8, right: 8, width: 210, maxHeight: '70%', overflowY: 'auto',
+      // Bottom-left so it never overlaps the beam summary card (top-right).
+      position: 'absolute', bottom: 8, left: 8, width: 210, maxHeight: '70%', overflowY: 'auto',
       background: 'white', borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
       boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
     }}>
@@ -1285,7 +1480,11 @@ function MetricLegendPanel({
 
   return (
     <div style={{
-      position: 'absolute', top: 8, right: 8, width: 250, background: 'white',
+      // Bottom-right, above the ETABS filename badge (which sits at bottom:8) — keeps
+      // the histogram clear of the top-right beam summary card. Bottom-anchored so a
+      // tall (histogram-open) panel grows upward; maxHeight stops it running off top.
+      position: 'absolute', bottom: 38, right: 8, width: 250, maxHeight: 'calc(100% - 52px)',
+      overflowY: 'auto', background: 'white',
       borderRadius: 8, padding: '8px 10px', border: `1px solid ${BORDER.default}`,
       boxShadow: '0 2px 10px rgba(0,0,0,0.08)', fontSize: 11, color: INK.base, zIndex: 20,
     }}>

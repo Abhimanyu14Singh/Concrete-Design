@@ -5,14 +5,16 @@
  * group-boundary sliders (Jenks or quantile clustering). Lets the user
  * preview and apply the groupings as DesignGroups.
  */
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import type { Member, DesignGroup, AutoGroupBin } from '../../types';
 import {
   suggestGroups, extractDemands, assignByBreaks,
   demandValueFor, governingFace,
+  jenksBreaks, quantileBreaks,
   ALL_BEAMS_FAMILY_KEY,
   type AutoGroupSuggestion,
 } from '../../utils/autoGroup';
+import { formatGroupName, depthCodeMm, GROUP_NAME_TOKENS } from '../../utils/autoGroupName';
 import type { Quantity } from '../../utils/units';
 import HistogramPanel from './HistogramPanel';
 import { GROUP_PALETTE } from './groupColors';
@@ -56,6 +58,15 @@ export default function AutoGroupPanel({
   const [groupAllBeams, setGroupAllBeams] = useState(false);
   const [splitByFace, setSplitByFace] = useState(false);
   const [totalGroupsDraft, setTotalGroupsDraft] = useState('');
+  // Optional group-name template (e.g. "{type}-{depth}-{seq}" → "B-07-01"). Empty
+  // keeps the legacy "letter_dim_faceN" naming untouched.
+  const [nameTemplate, setNameTemplate] = useState('');
+  const [templateSeeded, setTemplateSeeded] = useState(false);
+  // Typing in the template box drives the (heavy) plannedGroups recompute; defer
+  // it so the input stays responsive — the box updates instantly, the name
+  // preview catches up a beat later instead of blocking each keystroke.
+  const deferredTemplate = useDeferredValue(nameTemplate);
+  const NAME_TEMPLATE_HINT = '{type}-{depth}-{seq}';
 
   // Live suggestions (recomputed on algorithm / k / total change)
   const baseSuggestions = useMemo(
@@ -112,6 +123,21 @@ export default function AutoGroupPanel({
   const poolMetric = activeSuggestion?.metric ?? metric;
   const vals = familyDemands.map(d => demandValueFor(d, poolMetric));
   const binAssignment = vals.length ? assignByBreaks(vals, currentBreaks) : [];
+
+  // Per-family group-count override: re-cluster JUST the active family at the
+  // chosen k and store its breaks, so it overrides the global default without
+  // touching the other families. 'auto' clears the override (back to default).
+  const familyIsCustom = !!tweakedBreaks[activeFamily];
+  const familyGroupCount = currentBreaks.length + 1;
+  function setFamilyK(k: number | 'auto') {
+    if (!activeFamily) return;
+    if (k === 'auto') {
+      setTweakedBreaks(prev => { const n = { ...prev }; delete n[activeFamily]; return n; });
+      return;
+    }
+    const breakFn = algorithm === 'jenks' ? jenksBreaks : quantileBreaks;
+    setTweakedBreaks(prev => ({ ...prev, [activeFamily]: breakFn(vals, Math.max(1, Math.min(k, vals.length))) }));
+  }
 
   // Bin preview
   const numBins = currentBreaks.length + 1;
@@ -179,15 +205,20 @@ export default function AutoGroupPanel({
     onHighlightChange?.(new Set());
   }
 
-  function handleApply() {
-    const newGroups: DesignGroup[] = [];
+  // The exact groups a Commit would produce — shared by the name preview and
+  // handleApply so what you see is what you get. Deterministic (no ids/timestamps).
+  const plannedGroups = useMemo(() => {
+    type Planned = { label: string; memberIds: string[]; color: string; face?: 'top' | 'bot' };
+    const out: Planned[] = [];
     let groupCount = 0;
+    const seqByDepth: Record<string, number> = {}; // {seq} counts groups per depth code
+    const memberById = new Map(members.map(m => [m.id, m]));
     const sortedSuggestions = [...baseSuggestions].sort((a, b) => a.familyLabel.localeCompare(b.familyLabel));
     // In face-split mode both sub-pools share the same raw family key and letter
     const rawKeys = [...new Set(sortedSuggestions.map(s => s.rawFamilyKey ?? s.familyKey))].sort();
     const familyLetters = new Map(rawKeys.map((rk, i) => [rk, String.fromCharCode(65 + i)]));
+    const tmpl = deferredTemplate.trim();
     for (const sug of sortedSuggestions) {
-      // Use current breaks (already user-adjusted via the sliders)
       const breaks = getBreaks(sug.familyKey, sug);
       const famDemands = sug.familyKey === ALL_BEAMS_FAMILY_KEY
         ? demands
@@ -202,22 +233,46 @@ export default function AutoGroupPanel({
 
       bins.forEach((mIds, bi) => {
         if (!mIds.length) return;
-        const dimStr = displayFamilyLabel(sug.familyLabel, units).replace('×', 'x').replace(' mm', '');
-        const letter = familyLetters.get(sug.rawFamilyKey ?? sug.familyKey) ?? '?';
-        const faceSuffix = sug.face === 'bot' ? 'B' : sug.face === 'top' ? 'T' : '';
-        const label = `${letter}_${dimStr}_${faceSuffix}${bi + 1}`;
-        newGroups.push({
-          id: `auto-${sug.familyKey}-${bi}-${Date.now()}-${groupCount}`,
-          label,
-          memberIds: mIds,
-          // global running index keeps every committed group a distinct color,
-          // matching the preview swatches and the map plan
-          color: GROUP_PALETTE[groupCount % GROUP_PALETTE.length],
-          source: 'auto',
-        });
+        let label: string;
+        let face: 'top' | 'bot' | undefined;
+        if (tmpl) {
+          // Template naming — the T/B stays OUT of the name (kept as `face`).
+          const rep = memberById.get(mIds[0]);
+          const depthMm = (rep?.section.h ?? 24) * 25.4;
+          const widthMm = (rep?.section.bw ?? rep?.section.b ?? 12) * 25.4;
+          const isColumn = rep?.memberType === 'column';
+          const dKey = depthCodeMm(depthMm);
+          seqByDepth[dKey] = (seqByDepth[dKey] ?? 0) + 1;
+          label = formatGroupName(tmpl, {
+            isColumn, depthMm, widthMm, seq: seqByDepth[dKey], n: groupCount + 1,
+            face: sug.face, story: rep?.etabs?.story,
+          });
+          if (sug.face) face = sug.face;
+        } else {
+          // Legacy naming (unchanged): letter_dim_faceN, face baked in.
+          const dimStr = displayFamilyLabel(sug.familyLabel, units).replace('×', 'x').replace(' mm', '');
+          const letter = familyLetters.get(sug.rawFamilyKey ?? sug.familyKey) ?? '?';
+          const faceSuffix = sug.face === 'bot' ? 'B' : sug.face === 'top' ? 'T' : '';
+          label = `${letter}_${dimStr}_${faceSuffix}${bi + 1}`;
+        }
+        out.push({ label, memberIds: mIds, color: GROUP_PALETTE[groupCount % GROUP_PALETTE.length], ...(face ? { face } : {}) });
         groupCount++;
       });
     }
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseSuggestions, tweakedBreaks, demands, members, units, deferredTemplate]);
+
+  function handleApply() {
+    const stamp = Date.now();
+    const newGroups: DesignGroup[] = plannedGroups.map((g, i) => ({
+      id: `auto-${stamp}-${i}`,
+      label: g.label,
+      memberIds: g.memberIds,
+      color: g.color,
+      source: 'auto',
+      ...(g.face ? { face: g.face } : {}),
+    }));
     onApplySuggestion(newGroups);
   }
 
@@ -365,11 +420,43 @@ export default function AutoGroupPanel({
             options={baseSuggestions.map(s => {
               const count = s.bins.reduce((sum, b) => sum + b.memberIds.length, 0);
               const faceLabel = s.face === 'bot' ? ' — M⁺ gov' : s.face === 'top' ? ' — M⁻ gov' : '';
-              return { value: s.familyKey, label: `${displayFamilyLabel(s.familyLabel, units)}${faceLabel} (${count} beams)` };
+              // Mark families with a user-set group count (✎) vs auto-grouped.
+              const custom = !!tweakedBreaks[s.familyKey];
+              const grp = custom ? tweakedBreaks[s.familyKey].length + 1 : s.bins.length;
+              const tag = custom ? `✎ ${grp} grp` : `auto ${grp}`;
+              return { value: s.familyKey, label: `${displayFamilyLabel(s.familyLabel, units)}${faceLabel} (${count} beams) · ${tag}` };
             })}
             onChange={setSelectedFamily}
             style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, width: '100%' }}
           />
+        </div>
+      )}
+
+      {/* Per-family group-count override — set a custom number for JUST the family
+          selected above; every other family keeps the global "Groups / family". */}
+      {families.length > 1 && totalGroups === null && activeSuggestion && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ ...lbl, marginBottom: 0 }}>Groups for this family</div>
+            {familyIsCustom
+              ? <span style={{ fontSize: 9, color: ACCENT.primary, fontWeight: 700 }}>✎ custom ({familyGroupCount})</span>
+              : <span style={{ fontSize: 9, color: INK.muted }}>auto ({familyGroupCount})</span>}
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+            <button onClick={() => setFamilyK('auto')}
+              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: !familyIsCustom ? ACCENT.primary : 'white', color: !familyIsCustom ? 'white' : INK.base, cursor: 'pointer' }}>
+              Auto
+            </button>
+            {[2, 3, 4, 5].map(k => (
+              <button key={k} onClick={() => setFamilyK(k)}
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${BORDER.strong}`, background: familyIsCustom && familyGroupCount === k ? ACCENT.primary : 'white', color: familyIsCustom && familyGroupCount === k ? 'white' : INK.base, cursor: 'pointer' }}>
+                {k}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 9, color: INK.muted, marginTop: 3 }}>
+            Overrides “Groups / family” for {displayFamilyLabel(activeSuggestion.familyLabel, units)} only — the dropdown marks ✎ custom families.
+          </div>
         </div>
       )}
 
@@ -425,6 +512,38 @@ export default function AutoGroupPanel({
             </div>
           );
         })}
+      </div>
+
+      {/* Group name template + live preview. Empty = legacy "letter_dim_faceN". */}
+      <div style={{ borderTop: `1px solid ${BORDER.default}`, paddingTop: 8 }}>
+        <div style={lbl}>Group name template <span style={{ color: INK.muted }}>(optional)</span></div>
+        <input
+          value={nameTemplate}
+          onChange={e => setNameTemplate(e.target.value)}
+          // Seed the template on first click so the format is right there to
+          // tweak, not typed from scratch. Only once — clearing it stays cleared.
+          onFocus={() => { if (!templateSeeded && !nameTemplate) { setNameTemplate(NAME_TEMPLATE_HINT); setTemplateSeeded(true); } }}
+          placeholder="e.g.  {type}-{depth}-{seq}"
+          spellCheck={false}
+          style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 5, border: `1px solid ${nameTemplate.trim() ? ACCENT.primary : BORDER.strong}`, boxSizing: 'border-box', ...MONO_NUM }}
+        />
+        <div style={{ fontSize: 9, color: INK.muted, marginTop: 3, lineHeight: 1.6 }}>
+          {GROUP_NAME_TOKENS.map(t => `${t.token} ${t.desc}`).join('  ·  ')}
+        </div>
+        {plannedGroups.length > 0 && (
+          <div style={{ fontSize: 10.5, color: INK.secondary, marginTop: 5 }}>
+            Names:{' '}
+            <span style={{ color: ACCENT.primary, fontWeight: 600, ...MONO_NUM }}>
+              {plannedGroups.slice(0, 4).map(g => g.label).join(',  ')}{plannedGroups.length > 4 ? ' …' : ''}
+            </span>
+            {plannedGroups.some(g => g.face) && (
+              <div style={{ fontSize: 9.5, color: INK.muted, marginTop: 2 }}>
+                Split by face → the legend shows the name; the dashboard adds{' '}
+                <span style={{ color: '#7c3aed', fontWeight: 700 }}>(T)</span>/<span style={{ color: '#7c3aed', fontWeight: 700 }}>(B)</span>.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <button

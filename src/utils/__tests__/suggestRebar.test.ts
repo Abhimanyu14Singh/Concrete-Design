@@ -202,3 +202,62 @@ describe('suggestGroupRebar — deep EC2 beams the old search abandoned', () => 
     expect(r.error).toMatch(/strut|V_Rd,max|widen/i);
   });
 });
+
+// The Suggest size-floor dialog passes minimum bar sizes ("use this size or
+// larger"). The search must honor them while still returning a valid cage, and
+// must be a no-op when no floors are supplied (default suggestion unchanged).
+describe('suggestGroupRebar — size floors', () => {
+  it('raises both faces to at least the requested longitudinal minimum', () => {
+    const m = makeBeam({ id: 'b1' }); // light demand → unfloored search picks small bars
+    const floored = suggestGroupRebar([m], 'ACI318-19', 0.9, { minTopBar: 8, minBotBar: 8 });
+    expect(isSuggestError(floored)).toBe(false);
+    if (isSuggestError(floored)) return;
+    for (const g of [...floored.rebar.topBars, ...floored.rebar.botBars]) {
+      expect(g.barSize).toBeGreaterThanOrEqual(8);
+    }
+    // Still a valid cage at target.
+    expect(floored.worstDCRFlex).toBeLessThanOrEqual(0.9 + 1e-6);
+    expect(floored.worstDCRShear).toBeLessThanOrEqual(0.9 + 1e-6);
+  });
+
+  it('uses the LARGER of the two face minimums (top and bottom share one size)', () => {
+    const m = makeBeam({ id: 'b1' });
+    const r = suggestGroupRebar([m], 'ACI318-19', 0.9, { minTopBar: 6, minBotBar: 9 });
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    for (const g of [...r.rebar.topBars, ...r.rebar.botBars]) {
+      expect(g.barSize).toBeGreaterThanOrEqual(9);
+    }
+  });
+
+  it('raises the stirrup size to at least the requested minimum', () => {
+    const m = makeBeam({ id: 'b1', MuPos: 250, MuNeg: 200, Vu: 60 });
+    const r = suggestGroupRebar([m], 'ACI318-19', 0.9, { minStirrup: 6 });
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    expect(r.rebar.ties!.barSize).toBeGreaterThanOrEqual(6);
+  });
+
+  it('an empty floors object is a no-op (identical to no floors)', () => {
+    const m = makeBeam({ id: 'b1' });
+    const a = suggestGroupRebar([m], 'ACI318-19', 0.9);
+    const b = suggestGroupRebar([m], 'ACI318-19', 0.9, {});
+    expect(isSuggestError(a)).toBe(false);
+    expect(isSuggestError(b)).toBe(false);
+    if (isSuggestError(a) || isSuggestError(b)) return;
+    expect(b.rebar.topBars[0].barSize).toBe(a.rebar.topBars[0].barSize);
+    expect(b.rebar.botBars[0].barSize).toBe(a.rebar.botBars[0].barSize);
+    expect(b.rebar.ties!.barSize).toBe(a.rebar.ties!.barSize);
+  });
+
+  it('honors an EC2 longitudinal floor (Ø or larger)', () => {
+    const m = makeEC2Beam({ id: 'ec2', b: 400, h: 700, MuNeg: 300, MuPos: 200, Vu: 250 });
+    const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9, { minTopBar: -20, minBotBar: -20 });
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    // EC2 encodes bars as negative Ø; "Ø20 or larger" ⇒ |size| ≥ 20.
+    for (const g of [...r.rebar.topBars, ...r.rebar.botBars]) {
+      expect(Math.abs(g.barSize)).toBeGreaterThanOrEqual(20);
+    }
+  });
+});

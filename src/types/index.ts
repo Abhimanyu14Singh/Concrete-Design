@@ -91,6 +91,51 @@ export interface DesignGroup {
   rebar?: RebarLayout; // group template — fanned out to members on Apply
   /** 'auto' = created by auto-grouping (replaceable); 'manual' = user-created. */
   source?: 'auto' | 'manual';
+  /**
+   * Governing flexural face when the group was created by "Split by face" with a
+   * name template. 'top' = M⁻ (hogging) governed, 'bot' = M⁺ (sagging) governed.
+   * Kept OUT of the label (the legend stays clean); shown as a (T)/(B) badge on
+   * the group dashboard.
+   */
+  face?: 'top' | 'bot';
+  /**
+   * L/3 curtailment notes the user pinned via the section-card flags. When a face
+   * is true, the beam schedule carries a note stating what % of that face's steel
+   * the third-point demand needs (so the balance may be curtailed). Recomputed at
+   * export time from the current cage + station forces.
+   */
+  curtailmentNotes?: { top?: boolean; bot?: boolean };
+  /**
+   * Reduced TOP reinforcement for the OPPOSITE (non-governing) end of the beams.
+   * The group's `rebar.topBars` is the mark-side (governing-end) top steel; the
+   * lower-demand end can often take less. When set, the section card shows it and
+   * the beam schedule carries it as the opposite-end top bars.
+   */
+  oppositeTopBars?: BarGroup[];
+  /**
+   * Reduced TOP reinforcement kept CONTINUOUS through the MIDDLE third. Top steel
+   * is detailed for hogging at the supports (the end thirds); through mid-span it
+   * may be curtailed to a user-chosen percentage of the mark cage — never below
+   * code As,min. When set, the section card shows it and the moment diagram /
+   * schedule carry it as the middle-third top bars.
+   */
+  midThirdTopBars?: BarGroup[];
+  /**
+   * Reduced BOTTOM reinforcement kept CONTINUOUS through the END thirds. Bottom
+   * steel is detailed for sagging at mid-span; toward the supports (the end
+   * thirds) it may be curtailed to a user-chosen cage — never below code As,min.
+   * When set, the section card shows it, and the moment diagram / eye pop-out
+   * carry it as the end-third bottom bars. Unset ⇒ the auto ~continuous cage.
+   */
+  endThirdBotBars?: BarGroup[];
+  /**
+   * Engineer sign-off. When true, every failing / warned beam in the group is
+   * presented as "Reviewed" across the Group Dashboard (card + beam list), the
+   * group drops out of the error/warning tallies, and its beams stop being flagged
+   * red on the plan. A DISPLAY-LAYER override recording that an engineer has
+   * accepted the group's checks — the design engines still compute the true DCRs.
+   */
+  reviewed?: boolean;
 }
 
 /** A beam frame captured from the ETABS model (connectivity snapshot). */
@@ -190,6 +235,12 @@ export interface LoadCase {
    */
   Vu2?: number;    // ETABS V2, strong-direction shear (kips)
   Vu3?: number;    // ETABS V3, weak-direction shear (kips)
+  /**
+   * Station position along the span (ft), when this row comes from a per-station
+   * expansion. Lets the shear check evaluate capacity at the stirrup spacing of
+   * the zone this station sits in (zoned beams) instead of the worst zone.
+   */
+  x?: number;
 }
 
 export interface DesignResults {
@@ -283,6 +334,15 @@ export interface Project {
    * beam from stationForces. Chosen in the ETABS import wizard.
    */
   slsCombo?: string;
+  /** EC2 §6.2.3 shear/torsion strut angle as cotθ (1.0–2.5). Default 2.5 (θ=21.8°,
+   *  the most link-efficient EC2 value); lower = steeper strut = more conservative
+   *  (matches checkers like S-CONCRETE that fix θ). Applies to EC2 beam checks. */
+  cotTheta?: number;
+  /** "Neglect torsion" — when true, Tu is treated as 0 for every beam design
+   *  check (in-app DCR_torsion / VT_util / §6.3.x / §9.2.3(2) all skipped) and no
+   *  torsion is written into the S-Concrete .SCO. For members where torsion is
+   *  compatibility-only and redistributed, or handled outside this model. */
+  ignoreTorsion?: boolean;
   /** Last S-Concrete batch results, persisted so they survive tab switches and
    *  colour the model map by pass/fail. */
   sconcreteResults?: SconcreteResult[];
@@ -317,10 +377,16 @@ export interface CrackControlParams {
   slsLoadCaseId?: string;   // ID of the SLS quasi-permanent load case
   Mqp_pos?: number;         // kip-ft, resolved from slsLoadCaseId at call site
   Mqp_neg?: number;         // kip-ft, resolved from slsLoadCaseId at call site
+  // Creep model for the crack modular ratio αe = Es/(Ecm/(1+φ)), EN 1992-1-1 Annex B.
+  creepPhi?: number;        // effective creep coefficient φ; when set, used directly
+  creepRH?: number;         // ambient relative humidity % (default 50)
+  creepT0?: number;         // concrete age at first loading, days (default 28)
+  cementClass?: 'S' | 'N' | 'R'; // cement class for the loading-age maturity (default 'N')
 }
 
 export const DEFAULT_CRACK_PARAMS: CrackControlParams = {
   wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4,
+  creepRH: 50, creepT0: 28, cementClass: 'N',
 };
 
 /** Engineer override — stamps a failing member as reviewed & accepted. */

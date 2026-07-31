@@ -32,10 +32,15 @@
  *  Effective depth (engine formula: d = h − cc − Østirrup − Øbar/2):
  *    d_bot = 600 − 35 − 10 − 12.5 = 542.5 mm
  *
- *  FLEXURE §6.1:
- *    x  = As·fyd/(η·fcd·λ·b) = 1963.5×434.78/(1×17×0.8×400) = 157.0 mm
- *    M_Rd = 1963.5×434.78×(542.5 − 0.8×157/2)/1e6 = 409.5 kN·m
- *    DCR_flex = 400/409.5 = 0.977   (near limit — Warning status)
+ *  FLEXURE §6.1 (doubly reinforced — the 2H25 top bars are credited as
+ *  compression steel, EN 1992-1-1 §6.1):
+ *    Strain-compatibility NA:  η·fcd·b·λx + A's·σ'sc = As·fyd
+ *    A's = 981.7 mm² @ d' = 57.5 mm  →  x = 101.9 mm (x/d = 0.19),
+ *    σ'sc = 305 MPa (elastic — below fyd)
+ *    M_Rd = η·fcd·b·λx·(d − λx/2) + A's·σ'sc·(d − d') = 423.3 kN·m
+ *    DCR_flex = 400/423.3 = 0.945   (near limit — Warning status)
+ *    (A singly-reinforced As·fyd·(d − λx/2) that DROPS the top bars gives the
+ *     older 409.5 kN·m / DCR 0.977 — understated by ignoring the compression steel.)
  *
  *  SHEAR §6.2.2 V_Rd,c (no reinforcement):
  *    k     = 1 + √(200/542.5) = 1.607
@@ -74,6 +79,7 @@
 import { describe, it, expect } from 'vitest';
 import { runDesign } from '../../engines';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../types';
 
 // ── Conversion factors ────────────────────────────────────────────────────────
@@ -118,11 +124,12 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
 
   // ── Engine routes to EC2, not ACI ──────────────────────────────────────────
 
-  it('EC2 code path taken: M_Rd ≈ 409.5 kN·m (fyd/γs design value, not ACI φ=0.9)', () => {
-    // EC2: fyd = 500/1.15 = 434.78 MPa with partial factors → M_Rd ≈ 409.5 kN·m
-    // ACI: φ=0.9 applied outside → φMn would be ≈ 0.9 × (unconstrained Mn) = different value
+  it('EC2 code path taken: M_Rd ≈ 423.3 kN·m (fyd/γs design value, not ACI φ=0.9)', () => {
+    // EC2 doubly-reinforced: fyd = 434.78 MPa, plus the 2H25 top bars credited as
+    // compression steel (σ'sc = 305 MPa elastic) → M_Rd ≈ 423.3 kN·m.
+    // ACI: φ=0.9 applied outside → φMn would be ≈ 0.9 × (unconstrained Mn) = different value.
     const MRd = r.phi_Mn_pos * KIPFT_TO_KNM;
-    expect(MRd).toBeCloseTo(409.5, 0);       // ± 0.5 kN·m
+    expect(MRd).toBeCloseTo(423.3, 0);       // ± 0.5 kN·m
   });
 
   it('EC2 φ ≠ 0.9: M_Rd is NOT reduced by a 0.9 strength-reduction factor', () => {
@@ -136,8 +143,8 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     expect(r.phi_Mn_pos * KIPFT_TO_KNM).toBeGreaterThan(400);
   });
 
-  it('DCR_flex_pos ≈ 0.977 (beam working near capacity)', () => {
-    expect(r.DCR_flex_pos).toBeCloseTo(400 / 409.5, 2);
+  it('DCR_flex_pos ≈ 0.945 (beam working near capacity)', () => {
+    expect(r.DCR_flex_pos).toBeCloseTo(400 / 423.3, 2);
   });
 
   it('DCR_flex_neg = 0 (pinned-pinned → no hogging moment)', () => {
@@ -180,20 +187,29 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
   });
 
   // ── EC2-specific finding ②: crack width §7.3.4 ───────────────────────────────
+  // Crack width uses the Concrete-Institute long-hand method: creep-adjusted
+  // αe = Es/(Ecm/(1+φ)), fully-cracked transformed section incl. compression
+  // steel, k2 = 0.5, sr,max = min(eq 7.11, 7.14), and an un-cracked (Mcr) gate.
+  // M_qp = 0.6 × 400 = 240 kN·m → wk_bot ≈ 0.267 mm (< the 0.30 mm limit here).
 
-  it('EC2 §7.3.4 error fired: wk = 0.376 mm exceeds w_lim = 0.30 mm', () => {
-    // M_qp = 0.6 × 400 = 240 kN·m (quasi-permanent factor 0.6)
-    // This is an EC2 SLS check; ACI has no equivalent wk limit in the engine.
-    const err = r.warnings.find(w => w.code === 'EC2 §7.3.4');
-    expect(err).toBeDefined();
-    expect(err!.severity).toBe('error');
-    expect(err!.message).toContain('0.30 mm');   // limit
-    expect(err!.message).toContain('M_qp');       // quasi-permanent moment
+  it('wk_bot ≈ 0.267 mm (long-hand: creep αe + transformed section + k2 = 0.5)', () => {
+    expect(r.wk_bot).toBeDefined();
+    expect(r.wk_bot!).toBeCloseTo(0.267, 2);
   });
 
-  it('wk_bot ≈ 0.376 mm (crack width under quasi-permanent combination)', () => {
-    expect(r.wk_bot).toBeDefined();
-    expect(r.wk_bot!).toBeCloseTo(0.376, 2);
+  it('passes crack width at the default 0.30 mm limit (wk_bot < w_lim)', () => {
+    const err = r.warnings.find(w => w.code === 'EC2 §7.3.4' && w.severity === 'error');
+    expect(err).toBeUndefined();
+  });
+
+  it('EC2 §7.3.4 error fires when wk exceeds a stricter 0.25 mm limit', () => {
+    const rStrict = runDesign(section1, material1, rebar1, load1, span_ft, 'EN1992-1-1',
+      { ...DEFAULT_CRACK_PARAMS, wLimitBot: 0.25 });
+    const err = rStrict.warnings.find(w => w.code === 'EC2 §7.3.4');
+    expect(err).toBeDefined();
+    expect(err!.severity).toBe('error');
+    expect(err!.message).toContain('0.25 mm');   // the tighter limit
+    expect(err!.message).toContain('M_qp');       // quasi-permanent moment
   });
 
   // ── All warnings are EC2 clause references ────────────────────────────────────
@@ -202,12 +218,6 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     for (const w of r.warnings) {
       expect(w.code).toMatch(/^EC2 §/);
     }
-  });
-
-  it('exactly 1 error found (§7.3.4 crack width only — §6.2.3(7) excluded)', () => {
-    const errors = r.warnings.filter(w => w.severity === 'error');
-    expect(errors).toHaveLength(1);
-    expect(errors[0].code).toBe('EC2 §7.3.4');
   });
 
   it('DCR_crack is exposed and equals wk_bot / w_limit (0.30 mm)', () => {
@@ -278,8 +288,8 @@ describe('EC2 pinned-pinned beam — 4H25 bottom, UDL 50 kN/m, L=8 m', () => {
     });
 
     it('effective depth step result contains "mm" and shows 542 mm', () => {
-      // The effective depth equation is 'd = h − c − Øst − Øbar/2'
-      const step = sections[0].steps.find(s => s.equation.includes('Øst'));
+      // Effective depth is now the tension-layer CENTROID (single layer here → 542.5 mm).
+      const step = sections[0].steps.find(s => s.label.includes('Effective depth'));
       expect(step).toBeDefined();
       expect(step!.result).toContain('mm');
       expect(step!.result).toMatch(/54[23]/);   // d_bot = 542.5 mm → rounds to "543 mm"

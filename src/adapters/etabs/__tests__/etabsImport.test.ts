@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { MockConnection } from '../mock';
-import { envelopeLoadCase, zoneShearDemands, buildMembers, autoGroup } from '../index';
+import { envelopeLoadCase, stationLoadCases, zoneShearDemands, buildMembers, autoGroup } from '../index';
 import { seedRebar, pickBars, minSkinReinforcement } from '../rebarSeed';
 import { zonedShearCheck, getBarArea, effectiveDepth } from '../../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../../engines/ec2/ec2Beam';
@@ -69,6 +69,44 @@ describe('envelopeLoadCase', () => {
     const lc = envelopeLoadCase([]);
     expect(lc.Mu_pos).toBe(0);
     expect(lc.Vu).toBe(0);
+  });
+});
+
+describe('stationLoadCases', () => {
+  const forces: ComboForces[] = [
+    { combo: 'C1', stations: [{ x: 0, V: 40, M: -120 }, { x: 10, V: 0, M: 80 }, { x: 20, V: -40, M: -120 }] },
+    { combo: 'C2', stations: [{ x: 0, V: 55, M: -90 }, { x: 10, V: 5, M: 140 }, { x: 20, V: -30, M: -60 }] },
+  ];
+
+  it('expands to one row per DISTINCT station force state (not one envelope)', () => {
+    const rows = stationLoadCases(forces);
+    // C1 has two identical support states (|V|=40, M=−120) → collapsed to 1; C1 keeps
+    // {support, midspan} = 2, C2 keeps all 3 distinct → 5 rows total.
+    expect(rows.length).toBe(5);
+    expect(new Set(rows.map(r => r.id)).size).toBe(rows.length); // ids unique
+  });
+
+  it('sets Mu_pos OR Mu_neg from the signed station moment, keeping each station simultaneous', () => {
+    const rows = stationLoadCases(forces);
+    const sag = rows.find(r => r.Mu_pos === 140)!;      // C2 midspan: sagging + its own small shear
+    expect(sag).toBeTruthy();
+    expect(sag.Mu_neg).toBe(0);
+    expect(sag.Vu).toBe(5);                              // NOT the max |V| of 55 — the station's own V
+    const hog = rows.find(r => r.Mu_neg === 120)!;      // C1 support: hogging + its own shear
+    expect(hog.Mu_pos).toBe(0);
+    expect(hog.Vu).toBe(40);
+  });
+
+  it('carries per-station torsion and signed axial', () => {
+    const rows = stationLoadCases([{ combo: 'D', stations: [{ x: 5, V: 30, M: 100, T: 20, P: -15 }] }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ Mu_pos: 100, Vu: 30, Tu: 20, Pu: -15 });
+  });
+
+  it('falls back to a single envelope row when there is no station data', () => {
+    const rows = stationLoadCases([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Mu_pos).toBe(0);
   });
 });
 
@@ -153,7 +191,7 @@ describe('pickBars / seedRebar', () => {
 });
 
 describe('buildMembers + autoGroup', () => {
-  it('builds members with envelope loads, station forces, and ETABS links', async () => {
+  it('builds members with per-station loads, station forces, and ETABS links', async () => {
     const conn = new MockConnection();
     await conn.connect();
     const beams = await conn.getBeams({ stories: ['Level 2'] });
@@ -167,8 +205,12 @@ describe('buildMembers + autoGroup', () => {
     expect(m.memberType).toBe('beam');
     expect(m.etabs?.story).toBe('Level 2');
     expect(m.stationForces!.length).toBe(1);
-    expect(m.loads[0].Vu).toBeGreaterThan(0);
-    expect(m.loads[0].Mu_pos).toBeGreaterThan(0);
+    // One row per distinct station force state (not a single envelope): the
+    // parabolic mock beam yields hogging supports + a sagging midspan.
+    expect(m.loads.length).toBeGreaterThan(1);
+    expect(m.loads.some(l => l.Vu > 0)).toBe(true);
+    expect(m.loads.some(l => l.Mu_pos > 0)).toBe(true);   // sagging midspan
+    expect(m.loads.some(l => l.Mu_neg > 0)).toBe(true);   // hogging supports
     // section size came from the frame property
     const girder = members.find(x => x.etabs!.sectionName === 'B14X28')!;
     expect(girder.section.b).toBe(14);

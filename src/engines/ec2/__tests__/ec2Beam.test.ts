@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, designMemberEC2 } from '../ec2Beam';
+import { runDesign } from '../../index';
 import { designMember } from '../../../utils/concreteDesign';
 import type { SectionDimensions, MaterialProps, RebarLayout, LoadCase } from '../../../types';
 
@@ -166,10 +167,13 @@ describe('designMemberEC2 — imperial in / imperial out', () => {
   });
 
   it('M_Rd matches direct SI calc converted to kip-ft', () => {
-    // d = 500 − 25 − 8 − 10 = 457 mm, As = 942.5 mm²
-    // UK NA: αcc = 0.85 → fcd_uk = 0.85 * fck / γc
+    // d = 500 − 25 − 8 − 10 = 457 mm, As,bot = 942.5 mm² (tension for +M).
+    // The 2Ø16 top bars (402 mm² @ d' = 41 mm) are credited as compression steel,
+    // so the reference mirrors the engine's doubly-reinforced call.
     const fcd_uk = 0.85 * fck / 1.5;
-    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd_uk, fyd).MRd / 1.35582;
+    const AsTop = 2 * Math.PI * 64;      // 2Ø16 = 402 mm²
+    const dCompPos = 25 + 8 + 16 / 2;    // cover + stirrup + topBar/2 = 41 mm
+    const expected = mRd(3 * Math.PI * 100, 457, 300, fck, fcd_uk, fyd, undefined, undefined, AsTop, dCompPos).MRd / 1.35582;
     expect(r.phi_Mn_pos).toBeCloseTo(expected, 0);
   });
 
@@ -226,7 +230,7 @@ describe('code routing sanity', () => {
 });
 
 // ── Crack width §7.3.4 ────────────────────────────────────────────────────────
-import { crackWidth, ecm } from '../ec2Beam';
+import { crackWidth, sideFaceCrackWidth, ecm, creepCoefficient } from '../ec2Beam';
 import { DEFAULT_CRACK_PARAMS } from '../../../types';
 
 describe('crackWidth §7.3.4 — 300×500, 3Ø20, C30, B500', () => {
@@ -277,12 +281,55 @@ describe('crackWidth §7.3.4 — 300×500, 3Ø20, C30, B500', () => {
   });
 });
 
+// ── Creep coefficient (Annex B) reproduces the reference derivation ──────────
+describe('creepCoefficient — EN 1992-1-1 Annex B', () => {
+  it('φ(t,t0) ≈ 1.20 for C40, RH 85%, t0 28 d, cement N, h0 2000 mm, 70 yr', () => {
+    // Reproduces the Concrete-Institute spreadsheet: φ0 ≈ 1.218, βc ≈ 0.985.
+    expect(creepCoefficient(40, 85, 28, 70 * 365, 2000, 'N')).toBeCloseTo(1.20, 1);
+  });
+  it('drier air (lower RH) increases creep', () => {
+    const wet = creepCoefficient(40, 85, 28, 70 * 365, 2000, 'N');
+    const dry = creepCoefficient(40, 50, 28, 70 * 365, 2000, 'N');
+    expect(dry).toBeGreaterThan(wet);
+  });
+});
+
+// ── External validation: EN 1992-1-1 §7.3.4 worked example ───────────────────
+// Concrete-Institute long-hand crack-width spreadsheet, 500×1000 C40/500:
+// As=2454 (5Ø25 bottom), As'=1473 (3Ø25 top), d=925, d'=70, cover 63,
+// M_qp=500 kN·m, long-term. Driving crackWidth at the reference modular ratio
+// αe=11.89 reproduces the spreadsheet's x, σs, Mcr, sr,max, ρp,eff and wk.
+describe('crackWidth — Concrete-Institute §7.3.4 worked example (500×1000)', () => {
+  const phiRef = ecm(40) / (200_000 / 11.89) - 1;  // φ s.t. αe = 11.89
+  const cw = crackWidth(500, 2454, 25, 500, 1000, 925, 63, 40, 200_000, 0.4,
+    { AsComp: 1473, dComp: 70, phi: phiRef });
+
+  it('modular ratio αe ≈ 11.89 (creep-adjusted)', () => expect(cw.alpha_e).toBeCloseTo(11.89, 1));
+  it('cracking moment Mcr ≈ 352.6 kN·m → cracked (M_qp = 500 > Mcr)', () => {
+    expect(cw.Mcr).toBeCloseTo(352.6, 0);
+    expect(cw.cracked).toBe(true);
+  });
+  it('cracked transformed NA x ≈ 256.9 mm', () => expect(cw.x).toBeCloseTo(256.9, 0));
+  it('steel stress σs ≈ 242 MPa', () => expect(cw.sigma_s).toBeCloseTo(242, 0));
+  it('effective reinforcement ratio ρp,eff ≈ 0.0269', () => expect(cw.rho_p_eff).toBeCloseTo(0.0269, 3));
+  it('max crack spacing sr,max ≈ 372 mm', () => expect(cw.sr_max).toBeCloseTo(372, -1));
+  it('characteristic crack width wk ≈ 0.321 mm', () => expect(cw.wk).toBeCloseTo(0.321, 2));
+
+  it('below the cracking moment the section is un-cracked → wk = 0', () => {
+    const uncr = crackWidth(200, 2454, 25, 500, 1000, 925, 63, 40, 200_000, 0.4,
+      { AsComp: 1473, dComp: 70, phi: phiRef });
+    expect(uncr.Mcr).toBeGreaterThan(200);
+    expect(uncr.cracked).toBe(false);
+    expect(uncr.wk).toBe(0);
+  });
+});
+
 describe('designMemberEC2 crack width integration', () => {
   it('reports wk_bot and wk_top in results', () => {
     const r = designMemberEC2(section, material, rebar, load);
-    expect(r.wk_bot).toBeGreaterThan(0);
-    expect(r.wk_top).toBeGreaterThan(0);
-    expect(r.wk_face).toBeUndefined(); // no side bars in fixture
+    expect(r.wk_bot).toBeGreaterThan(0);  // bottom face cracks under +M (Mqp,pos > Mcr)
+    expect(r.wk_top).toBe(0);             // top face uncracked under the light −M (Mqp,neg ≤ Mcr)
+    expect(r.wk_face).toBeUndefined();    // no side bars in fixture
   });
 
   it('fires §7.3.4 warning when limit exceeded (tight user limit)', () => {
@@ -324,12 +371,15 @@ describe('designMemberEC2 crack width integration', () => {
   });
 });
 
-// ── S-CONCRETE 2026 large-beam benchmark (500×1200 mm) ───────────────────────
-// Reference: S-CONCRETE report for 500×1200mm rectangular beam, fck=40MPa,
-// fyk=500MPa, cover=50mm, Ø12@200 2-leg stirrups, top 7+7-Ø25 (two layers),
-// bottom 6+6-Ø25 (two layers), skin 8-Ø16@180mm vertical spacing.
-// Expected: shear DCR≈0.629, wk_face≈0.596mm, wk_top≈0.415mm, wk_bot≈0.181mm.
-describe('S-CONCRETE 500×1200mm large-beam benchmark', () => {
+// ── Large-beam benchmark (500×1200 mm) ───────────────────────────────────────
+// Geometry/shear from the S-CONCRETE report (500×1200mm, fck=40, fyk=500,
+// cover=50, Ø12@200 2-leg stirrups, top 7+7-Ø25, bottom 6+6-Ø25, skin 8-Ø16@180).
+// Shear DCR≈0.629 still tracks S-CONCRETE. Crack widths now follow the
+// Concrete-Institute long-hand method (creep αe, transformed section incl.
+// compression steel, k2=0.5, sr,max=min(7.11,7.14), un-cracked gate), so the
+// wk goldens below are the long-hand results — they intentionally differ from
+// the S-CONCRETE report's crack figures.
+describe('Large-beam benchmark 500×1200mm (shear vs S-CONCRETE, crack vs long-hand)', () => {
   const MM  = 1 / 25.4;           // mm → in
   const MPA = 1 / 0.00689476;    // MPa → psi  (1 MPa = 145.038 psi)
   const KNM = 1 / 1.35582;       // kN·m → kip-ft
@@ -412,19 +462,174 @@ describe('S-CONCRETE 500×1200mm large-beam benchmark', () => {
     expect(result.DCR_shear).toBeLessThan(0.629 * 1.05);
   });
 
-  it('wk_bot ≈ 0.181 mm (±20%)', () => {
-    expect(result.wk_bot).toBeGreaterThan(0.181 * 0.80);
-    expect(result.wk_bot).toBeLessThan(0.181 * 1.20);
+  it('wk_bot ≈ 0.125 mm (±20%, long-hand method)', () => {
+    expect(result.wk_bot).toBeGreaterThan(0.125 * 0.80);
+    expect(result.wk_bot).toBeLessThan(0.125 * 1.20);
   });
 
-  it('wk_top ≈ 0.415 mm (±20%)', () => {
-    expect(result.wk_top).toBeGreaterThan(0.415 * 0.80);
-    expect(result.wk_top).toBeLessThan(0.415 * 1.20);
+  it('wk_top ≈ 0.338 mm (±20%, long-hand method)', () => {
+    expect(result.wk_top).toBeGreaterThan(0.338 * 0.80);
+    expect(result.wk_top).toBeLessThan(0.338 * 1.20);
   });
 
-  it('wk_face ≈ 0.596 mm (±20%)', () => {
+  // Side-face wk now uses the PRECISE layered cracked section — the top (14-Ø25),
+  // bottom (12-Ø25) AND the 8-Ø16 skin bars all sit in ONE transformed section,
+  // k2 = 0.5 (EC2 §7.3.4(3) bending). Crediting the skin steel's own stiffness
+  // pushes the NA down (417 → 442 mm) and drops the skin-bar stress (185 → 162 MPa),
+  // so wk_face ≈ 0.309 mm — ~12 % below the old two-layer chord + interpolation
+  // (0.353 mm), which ignored the skin steel. (k2 = 1.0 read ≈ 0.590 mm.)
+  it('wk_face ≈ 0.309 mm (±15%, precise layered section)', () => {
     expect(result.wk_face).toBeDefined();
-    expect(result.wk_face!).toBeGreaterThan(0.596 * 0.80);
-    expect(result.wk_face!).toBeLessThan(0.596 * 1.20);
+    expect(result.wk_face!).toBeGreaterThan(0.309 * 0.85);
+    expect(result.wk_face!).toBeLessThan(0.309 * 1.15);
+  });
+});
+
+// ── Side-face crack: precise layered-section behaviour ───────────────────────
+// The refined side-face check folds the top, bottom AND skin bars into one
+// cracked transformed section, so the skin steel's own stiffness is credited.
+describe('sideFaceCrackWidth — layered section credits top/bottom + skin steel', () => {
+  const base = {
+    b: 500, h: 1200, cover: 50, stirrupD: 12,
+    fck: 40, Es: 200_000, kt: 0.4, phi: 2.0,
+    As_top: 6872, d_top: 1100, As_bot: 5890, d_bot: 1100, botBarD: 25,
+    sideBarD: 16, As_perBar: 201, s_v: 180,
+    Mqp_pos: 300, Mqp_neg: 800,
+  };
+
+  it('is cracked and returns a positive side-face crack width', () => {
+    const r = sideFaceCrackWidth({ ...base, nPerFace: 8 });
+    expect(r.cracked).toBe(true);
+    expect(r.wk).toBeGreaterThan(0);
+    expect(r.nSkinLevels).toBe(8);
+  });
+
+  it('MORE skin area at the same spacing → stiffer section → lower crack width', () => {
+    const few  = sideFaceCrackWidth({ ...base, nPerFace: 4 });
+    const many = sideFaceCrackWidth({ ...base, nPerFace: 8 });
+    // Same s_v ⇒ identical local ρ_eff, crack spacing and check location, so the
+    // extra skin AREA is the only difference: it pushes the NA down and lowers the
+    // skin-bar stress, dropping the crack width. (Vary s_v too and y_crit shifts,
+    // which the isolated comparison here deliberately avoids.)
+    expect(many.sr_side).toBeCloseTo(few.sr_side, 6); // spacing term unchanged
+    expect(many.x).toBeGreaterThan(few.x);
+    expect(many.sigma_skin).toBeLessThan(few.sigma_skin);
+    expect(many.wk).toBeLessThan(few.wk);
+  });
+
+  it('MORE bottom/top flexural steel → lower side-face crack width', () => {
+    const light = sideFaceCrackWidth({ ...base, nPerFace: 8, As_bot: 3000, As_top: 3000 });
+    const heavy = sideFaceCrackWidth({ ...base, nPerFace: 8, As_bot: 9000, As_top: 9000 });
+    expect(heavy.wk).toBeLessThan(light.wk); // chords stiffen the section too
+  });
+
+  it('below the cracking moment → uncracked, wk = 0', () => {
+    const r = sideFaceCrackWidth({ ...base, nPerFace: 8, Mqp_pos: 5, Mqp_neg: 5 });
+    expect(r.cracked).toBe(false);
+    expect(r.wk).toBe(0);
+  });
+});
+
+// ── Configurable strut angle cotθ (§6.2.3) ───────────────────────────────────
+describe('designMemberEC2 — configurable cotθ shear', () => {
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 12, h: 24, coverClear: 1.5, stirrupDia: -10 };
+  const material: MaterialProps = { fc: 5800, fy: 72500, fyt: 72500, Es: 29_000_000, lambdaConcrete: 1 };
+  // Moderate stirrups (Ø10 @ 10") so V_Rd,s (not strut crushing) governs at both angles.
+  const rebar: RebarLayout = { topBars: [{ numBars: 2, barSize: -20 }], botBars: [{ numBars: 4, barSize: -20 }], ties: { barSize: -10, spacing: 10, legs: 2 } };
+  const load: LoadCase = { id: 'x', label: 'x', Mu_pos: 120, Mu_neg: 80, Vu: 55, Tu: 0, Pu: 0 };
+
+  it('a steeper strut (lower cotθ) lowers V_Rd,s → higher shear DCR', () => {
+    const flat = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 2.5);
+    const steep = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 1.25);
+    // V_Rd,s ∝ cotθ, so halving cotθ roughly doubles the shear DCR.
+    expect(steep.DCR_shear).toBeGreaterThan(flat.DCR_shear * 1.5);
+  });
+
+  it('defaults to cotθ = 2.5 when the parameter is omitted', () => {
+    const def = designMemberEC2(section, material, rebar, load);
+    const explicit = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 2.5);
+    expect(def.DCR_shear).toBeCloseTo(explicit.DCR_shear, 6);
+  });
+});
+
+// ── §6.3.2(3) torsion longitudinal steel credits what's provided ──────────────
+describe('designMemberEC2 — §6.3.2(3) clears when longitudinal steel is provided', () => {
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 14, h: 28, coverClear: 1.5, stirrupDia: -10 };
+  const material: MaterialProps = { fc: 5800, fy: 72500, fyt: 72500, Es: 29_000_000, lambdaConcrete: 1 };
+  // High torsion + moderate flexure (which consumes the chord steel), tight links.
+  const base: RebarLayout = { topBars: [{ numBars: 3, barSize: 8 }], botBars: [{ numBars: 4, barSize: 8 }], ties: { barSize: -10, spacing: 4, legs: 2 } };
+  const load: LoadCase = { id: 't', label: 't', Mu_pos: 250, Mu_neg: 180, Vu: 40, Tu: 90, Pu: 0 };
+  const fires = (r: ReturnType<typeof designMemberEC2>) => r.warnings.some(w => w.code === 'EC2 §6.3.2(3)');
+
+  it('fires when the section has no spare longitudinal steel for torsion', () => {
+    expect(fires(designMemberEC2(section, material, base, load))).toBe(true);
+  });
+  it('clears once ample side-face longitudinal steel is added', () => {
+    const withSide: RebarLayout = { ...base, sideBars: [{ numBars: 10, barSize: 6 }] };
+    expect(fires(designMemberEC2(section, material, withSide, load))).toBe(false);
+  });
+});
+
+// ── Combined shear+torsion link utilisation (VT_util) — S-CONCRETE "V & T Util" ──
+describe('designMemberEC2 — combined shear+torsion link DCR (VT_util)', () => {
+  // S-CONCRETE benchmark B-07-04: 300×700 mm, fck 40, fy 500, Ø12@250 2-leg.
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 11.811, h: 27.559, coverClear: 1.9685, stirrupDia: -12 };
+  const material: MaterialProps = { fc: 5801.5, fy: 72518.9, fyt: 72518.9, Es: 29_000_000, lambdaConcrete: 1 };
+  const rebar: RebarLayout = {
+    topBars: [{ numBars: 4, barSize: -20 }, { numBars: 4, barSize: -20 }],
+    botBars: [{ numBars: 4, barSize: -25 }, { numBars: 4, barSize: -25 }],
+    ties: { barSize: -12, spacing: 9.843, legs: 2 },
+  };
+  // Governing shear+torsion case (Vz = 291.3 kN, T = 41.3 kNm), modest flexure so
+  // only the combined links govern.
+  const load: LoadCase = { id: 'glc170', label: 'GLC 170', Mu_pos: 120, Mu_neg: 120, Vu: 65.487, Tu: 30.461, Pu: 0 };
+
+  it('shear and torsion each pass alone, but their link demands add to > 1 → NG', () => {
+    const r = designMemberEC2(section, material, rebar, load); // cotθ = 2.5 (default)
+    expect(r.DCR_shear).toBeLessThan(1);         // ~0.55 on its own
+    expect(r.DCR_torsion).toBeLessThan(1);       // ~0.50 on its own
+    expect(r.DCR_flex_pos).toBeLessThan(1);
+    expect(r.DCR_crack ?? 0).toBeLessThan(1);
+    expect(r.VT_util ?? 0).toBeGreaterThan(1);   // the added link demand governs
+    expect(r.VT_util!).toBeGreaterThan(Math.max(r.DCR_shear, r.DCR_torsion));
+    expect(r.status).toBe('NG');                 // status now reflects the combined check
+  });
+
+  it('reduces to the shear-only demand when there is no torsion (never over-reports)', () => {
+    const noTorsion: LoadCase = { ...load, Tu: 0 };
+    const r = designMemberEC2(section, material, rebar, noTorsion);
+    expect(r.VT_util!).toBeLessThanOrEqual(r.DCR_shear + 1e-6);
+  });
+
+  it('matches S-CONCRETE V & T Util = 2.106 at the same strut angle (cotθ = 1.25)', () => {
+    const r = designMemberEC2(section, material, rebar, load, 20, DEFAULT_CRACK_PARAMS, 1.25);
+    expect(r.VT_util!).toBeGreaterThan(2.0);
+    expect(r.VT_util!).toBeLessThan(2.25);
+  });
+});
+
+// ── Neglect-torsion project setting (runDesign ignoreTorsion) ─────────────────
+describe('runDesign — neglect torsion drops Tu to 0 for all beam checks', () => {
+  const section: SectionDimensions = { type: 'rectangular_beam', b: 14, h: 28, coverClear: 1.5, stirrupDia: -10 };
+  const material: MaterialProps = { fc: 5800, fy: 72500, fyt: 72500, Es: 29_000_000, lambdaConcrete: 1 };
+  const rebar: RebarLayout = { topBars: [{ numBars: 3, barSize: 8 }], botBars: [{ numBars: 4, barSize: 8 }], ties: { barSize: -10, spacing: 4, legs: 2 } };
+  const load: LoadCase = { id: 't', label: 't', Mu_pos: 250, Mu_neg: 180, Vu: 40, Tu: 90, Pu: 0 }; // heavy torsion
+  const torWarn = (r: ReturnType<typeof runDesign>) => r.warnings.some(w => /6\.3|9\.2\.3/.test(w.code));
+
+  it('runs the torsion / shear+torsion checks normally when the flag is off', () => {
+    const r = runDesign(section, material, rebar, load, 20, 'EN1992-1-1');
+    expect(r.DCR_torsion).toBeGreaterThan(0);
+    expect(torWarn(r)).toBe(true);
+  });
+
+  it('with ignoreTorsion: DCR_torsion = 0, VT_util collapses to shear, no §6.3/§9.2.3 warnings', () => {
+    const r = runDesign(section, material, rebar, load, 20, 'EN1992-1-1', undefined, undefined, true);
+    expect(r.DCR_torsion).toBe(0);
+    expect(r.VT_util ?? 0).toBeLessThanOrEqual(r.DCR_shear + 1e-6);
+    expect(torWarn(r)).toBe(false);
+    // flexure / shear are unaffected
+    const ref = runDesign(section, material, rebar, load, 20, 'EN1992-1-1');
+    expect(r.DCR_shear).toBeCloseTo(ref.DCR_shear, 6);
+    expect(r.DCR_flex_pos).toBeCloseTo(ref.DCR_flex_pos, 6);
   });
 });

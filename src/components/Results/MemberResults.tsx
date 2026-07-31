@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride, SconcreteResult } from '../../types';
+import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride, SconcreteResult, BarGroup } from '../../types';
 import { memberScoSummary, scoAgreesWithApp } from '../../utils/sconcreteMemberResult';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import {
@@ -29,6 +29,9 @@ interface Props {
   code?: DesignCode;
   /** Project-level EC2 SLS quasi-permanent combo name (auto-applied to crack checks). */
   slsCombo?: string;
+  /** Project-level EC2 §6.2.3 strut angle cotθ (default 2.5). */
+  cotTheta?: number;
+  ignoreTorsion?: boolean;
   /** Project engineer name — pre-fills the "Reviewed by" field on overrides. */
   engineer?: string;
   /** Persisted S-Concrete batch results (for the verification card). */
@@ -36,6 +39,13 @@ interface Props {
   /** ISO timestamp of the last S-Concrete batch run. */
   sconcreteRanAt?: string;
   onRebarChange?: (updated: Member) => void;
+  /** The member's group per-region top cages — passed to the moment diagram so its
+   *  stepped hogging capacity reflects the middle-third / opposite-end top steel. */
+  midThirdTopBars?: BarGroup[];
+  oppositeTopBars?: BarGroup[];
+  /** The member's group reduced end-third bottom cage — passed to the moment
+   *  diagram so its stepped sagging capacity (φMn⁺) reflects the end-third steel. */
+  endThirdBotBars?: BarGroup[];
 }
 
 function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr?: number; tip?: string; formula?: string; overridden?: boolean }) {
@@ -60,13 +70,17 @@ function SectionLabel({ title }: { title: string }) {
 /** A collapsible results check. The governing check (highest DCR) opens by
  *  default; the rest collapse to a header + DCR chip so the column isn't a wall
  *  of 15-20 numbers. */
-function CheckSection({ title, dcr, defaultOpen, children }: { title: string; dcr?: number; defaultOpen: boolean; children: React.ReactNode }) {
+function CheckSection({ title, dcr, defaultOpen, onJumpToGoverning, children }: { title: string; dcr?: number; defaultOpen: boolean; onJumpToGoverning?: (title: string) => void; children: React.ReactNode }) {
   const [override, setOverride] = useState<boolean | null>(null);
   const open = override ?? defaultOpen;
   return (
     <div>
       <button
-        onClick={() => setOverride(!open)}
+        // Expanding a check jumps the applied loads / calc sheet / diagram to the
+        // load case that GOVERNS this specific check — so the numbers below (and the
+        // Calc Sheet) match the chip, which is the worst DCR across all load rows.
+        onClick={() => { const willOpen = !open; setOverride(willOpen); if (willOpen) onJumpToGoverning?.(title); }}
+        title={onJumpToGoverning ? `Show the load case that governs ${title} (the chip is the worst across all load rows)` : undefined}
         style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 0 4px', margin: 0 }}
       >
         <span style={LABEL_STYLE}>
@@ -86,8 +100,8 @@ function dcrStyle(dcr: number): React.CSSProperties {
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
 const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
-export default function MemberResults({ member, code = 'ACI318-19', slsCombo, engineer, sconcreteResults, sconcreteRanAt, onRebarChange }: Props) {
-  const [activeLoad, setActiveLoad] = useState(member.loads[0]?.id ?? '');
+export default function MemberResults({ member, code = 'ACI318-19', slsCombo, cotTheta, ignoreTorsion, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
+  const [activeLoad, setActiveLoad] = useState(''); // '' = auto (governing-overall case)
   const [showCalc, setShowCalc] = useState(false);
   const [showAllLC, setShowAllLC] = useState(false);
   const [elevZoom, setElevZoom] = useState(1);
@@ -95,8 +109,52 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   const { fmt } = useUnits();
   const cap = capacityLabels(code);
 
-  const load = member.loads.find(l => l.id === activeLoad) ?? member.loads[0];
-  const result: DesignResults = runDesign(member.section, member.material, member.rebar, load, member.span, code, resolveCrack(member, code, slsCombo));
+  // Design EVERY load row once. The member tab must report the GOVERNING DCR per
+  // check across all rows — a beam now carries many per-station rows and different
+  // rows govern different checks, so a single row (the old loads[0]) understated
+  // DCRs and could hide an NG on another row.
+  const crackP = resolveCrack(member, code, slsCombo);
+  const allRowResults = member.loads.map(l => ({
+    id: l.id,
+    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, crackP, cotTheta, ignoreTorsion),
+  }));
+  const rowMax = (r: DesignResults) => Math.max(
+    r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
+    r.DCR_crack ?? 0, r.VT_util ?? 0, r.DCR_PM ?? 0, r.DCR_axial ?? 0,
+  );
+  // The drill-in view (applied loads, section diagram, calc sheet) defaults to the
+  // worst-overall load case rather than loads[0]; the dropdown still lets the user
+  // pick any row.
+  const govOverallId = allRowResults.length
+    ? allRowResults.reduce((a, b) => rowMax(b.r) > rowMax(a.r) ? b : a).id : undefined;
+  const load = member.loads.find(l => l.id === (activeLoad || govOverallId)) ?? member.loads[0];
+  const result: DesignResults = allRowResults.find(a => a.id === load.id)?.r
+    ?? runDesign(member.section, member.material, member.rebar, load, member.span, code, crackP, cotTheta, ignoreTorsion);
+
+  // Governing display result: load-independent capacities (φMn, φVn, φTn, Vc, Vs,
+  // Tcr, As_min/max) are kept from the active case; DCRs, required steel, crack
+  // widths and warnings are lifted to the worst across ALL rows so the check chips
+  // and status reflect the true governing envelope, not one row.
+  const maxOf = (sel: (r: DesignResults) => number) => allRowResults.reduce((m, a) => Math.max(m, sel(a.r)), 0);
+  const seenW = new Set<string>();
+  const govWarnings = allRowResults.flatMap(a => a.r.warnings).filter(w => {
+    const k = `${w.code}|${w.message}`; if (seenW.has(k)) return false; seenW.add(k); return true;
+  });
+  const govPeak = allRowResults.reduce((m, a) => Math.max(m, rowMax(a.r)), 0);
+  const govResult: DesignResults = {
+    ...result,
+    DCR_flex_pos: maxOf(r => r.DCR_flex_pos), DCR_flex_neg: maxOf(r => r.DCR_flex_neg),
+    DCR_shear: maxOf(r => r.DCR_shear), DCR_torsion: maxOf(r => r.DCR_torsion),
+    DCR_PM: result.DCR_PM !== undefined ? maxOf(r => r.DCR_PM ?? 0) : undefined,
+    DCR_axial: result.DCR_axial !== undefined ? maxOf(r => r.DCR_axial ?? 0) : undefined,
+    VT_util: maxOf(r => r.VT_util ?? 0),
+    DCR_crack: maxOf(r => r.DCR_crack ?? 0),
+    wk_bot: maxOf(r => r.wk_bot ?? 0), wk_top: maxOf(r => r.wk_top ?? 0),
+    wk_face: result.wk_face !== undefined ? maxOf(r => r.wk_face ?? 0) : undefined,
+    As_req_pos: maxOf(r => r.As_req_pos), As_req_neg: maxOf(r => r.As_req_neg),
+    warnings: govWarnings,
+    status: govPeak > 1 ? 'NG' : (govWarnings.length ? 'Warning' : 'OK'),
+  };
 
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
 
@@ -104,35 +162,30 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   // the app's own governing DCR (worst across all its load cases) so the engineer
   // can see whether the two tools agree.
   const scoSummary = memberScoSummary(sconcreteResults, member.id);
-  const appGovDCR = (() => {
-    let worst = 0;
-    for (const l of member.loads) {
-      const r = runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo));
-      const g = isColumn
-        ? Math.max(r.DCR_PM ?? 0, r.DCR_axial ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0)
-        : Math.max(r.DCR_flex_pos ?? 0, r.DCR_flex_neg ?? 0, r.DCR_shear ?? 0, r.DCR_torsion ?? 0, r.DCR_crack ?? 0);
-      if (g > worst) worst = g;
-    }
-    return worst;
-  })();
+  const appGovDCR = govPeak; // worst DCR across all load rows (reused from above)
   const scoAgree = scoAgreesWithApp(scoSummary?.status ?? null, appGovDCR);
   const scoEligible = member.memberType === 'beam' || member.section.type === 'rectangular_column';
 
   // R6: per-section governing DCRs so the results column can collapse to the
   // governing check (the highest-DCR section stays open; the rest fold to a chip).
   const crackDcr = code === 'EN1992-1-1'
-    ? (result.DCR_crack ?? Math.max(
-        (result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3),
-        (result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3),
-        result.wk_face !== undefined ? result.wk_face / (member.crackParams?.wLimitFace ?? 0.3) : 0,
+    ? (govResult.DCR_crack ?? Math.max(
+        (govResult.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3),
+        (govResult.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3),
+        govResult.wk_face !== undefined ? govResult.wk_face / (member.crackParams?.wLimitFace ?? 0.3) : 0,
       ))
     : 0;
+  const anyTorsion = member.loads.some(l => l.Tu > 0);
   const secDcr: Record<string, number> = isColumn
-    ? { Axial: result.DCR_axial ?? 0, 'P-M Interaction': result.DCR_PM ?? 0, Shear: result.DCR_shear }
+    ? { Axial: govResult.DCR_axial ?? 0, 'P-M Interaction': govResult.DCR_PM ?? 0, Shear: govResult.DCR_shear }
     : {
-        Flexure: Math.max(result.DCR_flex_pos, result.DCR_flex_neg),
-        Shear: result.DCR_shear,
-        Torsion: result.DCR_torsion,
+        Flexure: Math.max(govResult.DCR_flex_pos, govResult.DCR_flex_neg),
+        Shear: govResult.DCR_shear,
+        // Torsion checks are suppressed entirely when the project neglects torsion.
+        ...(ignoreTorsion ? {} : { Torsion: govResult.DCR_torsion }),
+        // EC2 combined shear+torsion link check (S-CONCRETE "V&T Util") — only
+        // meaningful, and only shown, when torsion is applied (and not neglected).
+        ...(code === 'EN1992-1-1' && anyTorsion && !ignoreTorsion ? { 'Shear + Torsion Links': govResult.VT_util ?? 0 } : {}),
         ...(code === 'EN1992-1-1' ? { 'Crack Width §7.3.4': crackDcr } : {}),
       };
   const maxSecDcr = Math.max(...Object.values(secDcr), 0);
@@ -144,6 +197,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
       ? zonedShearCheckEC2(
           member.section, member.material, member.rebar,
           zoneShearDemands(member.stationForces, member.span ?? 20),
+          cotTheta ?? 2.5,
         )
       : zonedShearCheck(
           member.section, member.material, member.rebar,
@@ -155,7 +209,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   // C1: compute all-LC results to find governing cases
   const allResults = member.loads.map(l => ({
     id: l.id, label: l.label,
-    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo)),
+    r: runDesign(member.section, member.material, member.rebar, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta, ignoreTorsion),
   }));
   const govFlexPos  = allResults.reduce((a, b) => b.r.DCR_flex_pos  > a.r.DCR_flex_pos  ? b : a).id;
   const govFlexNeg  = allResults.reduce((a, b) => b.r.DCR_flex_neg  > a.r.DCR_flex_neg  ? b : a).id;
@@ -166,6 +220,22 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
     ? new Set([govPM, govShear])
     : new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
 
+  // The check chips report the GOVERNING DCR across all load rows, but the applied
+  // loads / calc sheet show ONE selected case. Expanding a check jumps the selected
+  // case to the row that governs THAT check, so the two agree. Keyed by section title.
+  const worstIdBy = (sel: (r: DesignResults) => number) =>
+    allResults.reduce((a, b) => sel(b.r) > sel(a.r) ? b : a).id;
+  const govCaseFor: Record<string, string> = {
+    Flexure: worstIdBy(r => Math.max(r.DCR_flex_pos, r.DCR_flex_neg)),
+    Shear: govShear,
+    Torsion: govTorsion,
+    'Shear + Torsion Links': worstIdBy(r => r.VT_util ?? 0),
+    'Crack Width §7.3.4': worstIdBy(r => r.DCR_crack ?? 0),
+    Axial: worstIdBy(r => r.DCR_axial ?? 0),
+    'P-M Interaction': govPM,
+  };
+  const jumpToGov = (title: string) => { const id = govCaseFor[title]; if (id) setActiveLoad(id); };
+
   function handleRebarChange(rebar: RebarLayout) {
     onRebarChange?.({ ...member, rebar });
   }
@@ -174,7 +244,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
   function handleOptimize() {
     let best = { ...member.rebar };
     const worstDCR = (r: RebarLayout) => {
-      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo)));
+      const allR = member.loads.map(l => runDesign(member.section, member.material, { ...member.rebar, ...r }, l, member.span, code, resolveCrack(member, code, slsCombo), cotTheta, ignoreTorsion));
       return Math.max(...allR.map(res => Math.max(res.DCR_flex_pos, res.DCR_flex_neg, res.DCR_shear)));
     };
 
@@ -207,12 +277,15 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
 
   // Engineer overrides (display-layer only — engine results keep true DCRs).
   const overrides = member.overrides;
-  const dispStatus = effectiveStatus(result, overrides);
-  const isReviewed = dispStatus === 'OK' && result.status !== 'OK';
+  // Status, warnings and the reviewable set all reflect the GOVERNING result across
+  // every load row — not the single drilled-in case — so the header pill can never
+  // read "All checks pass" while another row is NG.
+  const dispStatus = effectiveStatus(govResult, overrides);
+  const isReviewed = dispStatus === 'OK' && govResult.status !== 'OK';
   const statusColor = dispStatus === 'OK' ? DCR.pass : dispStatus === 'NG' ? DCR.fail : DCR.warn;
   const statusBg    = dispStatus === 'OK' ? DCR.passBg : dispStatus === 'NG' ? DCR.failBg : DCR.warnBg;
-  const shownWarnings = visibleWarnings(result.warnings, overrides);
-  const reviewable = failingKeys(result);
+  const shownWarnings = visibleWarnings(govResult.warnings, overrides);
+  const reviewable = failingKeys(govResult);
 
   function applyOverride(ov: MemberOverride) {
     onRebarChange?.({ ...member, overrides: { all: ov } });
@@ -232,9 +305,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
       {showCalc && (
         <CalcBreakdownModal
           member={member}
-          loadId={activeLoad || member.loads[0]?.id}
+          loadId={load.id}
           code={code}
           slsCombo={slsCombo}
+          cotTheta={cotTheta}
           onClose={() => setShowCalc(false)}
         />
       )}
@@ -245,7 +319,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={LABEL_STYLE}>Load Case</span>
           <Dropdown
-            value={activeLoad}
+            value={load.id}
             options={member.loads.map(l => ({ value: l.id, label: `${govSet.has(l.id) ? '★ ' : ''}${l.label}` }))}
             onChange={setActiveLoad}
             style={{ padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', cursor: 'pointer' }}
@@ -409,7 +483,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             </div>
           )}
           {member.memberType === 'beam' && (member.stationForces?.length ?? 0) > 0 && (
-            <ForceDiagram member={member} result={result} code={code} height={130} />
+            <ForceDiagram member={member} result={result} code={code} height={130} cotTheta={cotTheta}
+              midThirdTopBars={midThirdTopBars} oppositeTopBars={oppositeTopBars} endThirdBotBars={endThirdBotBars} />
           )}
           {onRebarChange && (
             <p style={{ fontSize: 10, color: INK.muted, margin: 0, textAlign: 'center' }}>
@@ -422,22 +497,22 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
           {isColumn ? (
             <>
-              <CheckSection title="Axial" dcr={result.DCR_axial ?? 0} defaultOpen={isGov('Axial')}>
+              <CheckSection title="Axial" dcr={govResult.DCR_axial ?? 0} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Axial')}>
                 <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
-                <KV k="  DCR" v={(result.DCR_axial ?? 0).toFixed(3)} dcr={result.DCR_axial ?? 0} overridden={isOverridden(overrides, 'DCR_axial')} />
+                <KV k="  DCR" v={(govResult.DCR_axial ?? 0).toFixed(3)} dcr={govResult.DCR_axial ?? 0} overridden={isOverridden(overrides, 'DCR_axial')} />
               </CheckSection>
 
-              <CheckSection title="P-M Interaction" dcr={result.DCR_PM ?? 0} defaultOpen={isGov('P-M Interaction')}>
+              <CheckSection title="P-M Interaction" dcr={govResult.DCR_PM ?? 0} onJumpToGoverning={jumpToGov} defaultOpen={isGov('P-M Interaction')}>
                 <KV k={code === 'EN1992-1-1' ? 'M_Rd,x @NEd' : 'φMnx @Pu'} v={fmt(result.phi_Mnx ?? 0, 'moment')} />
                 <KV k={code === 'EN1992-1-1' ? 'M_Rd,y @NEd' : 'φMny @Pu'} v={fmt(result.phi_Mny ?? 0, 'moment')} />
-                <KV k="  DCR" v={(result.DCR_PM ?? 0).toFixed(3)} dcr={result.DCR_PM ?? 0} overridden={isOverridden(overrides, 'DCR_PM')} />
+                <KV k="  DCR" v={(govResult.DCR_PM ?? 0).toFixed(3)} dcr={govResult.DCR_PM ?? 0} overridden={isOverridden(overrides, 'DCR_PM')} />
               </CheckSection>
 
-              <CheckSection title="Shear" dcr={result.DCR_shear} defaultOpen={isGov('Shear')}>
+              <CheckSection title="Shear" dcr={govResult.DCR_shear} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear')}>
                 <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
                 <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
                 <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
-                <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')} />
+                <KV k="  DCR" v={govResult.DCR_shear.toFixed(3)} dcr={govResult.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')} />
               </CheckSection>
 
               <CheckSection title="Steel Limits" defaultOpen={false}>
@@ -447,19 +522,19 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             </>
           ) : (
             <>
-          <CheckSection title="Flexure" dcr={Math.max(result.DCR_flex_pos, result.DCR_flex_neg)} defaultOpen={isGov('Flexure')}>
+          <CheckSection title="Flexure" dcr={Math.max(govResult.DCR_flex_pos, govResult.DCR_flex_neg)} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Flexure')}>
           <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')}
             tip="Sagging (positive) flexural capacity after applying φ=0.9 (ACI) or 1/γ (EC2). Must exceed Mu+."
             formula={code === 'EN1992-1-1' ? 'M_Rd = As·fyd·z·(1 − λ·x/(2d))' : 'φMn = φ·As·fy·(d − a/2)'} />
-          <KV k="  DCR" v={result.DCR_flex_pos.toFixed(3)} dcr={result.DCR_flex_pos} overridden={isOverridden(overrides, 'DCR_flex_pos')}
+          <KV k="  DCR" v={govResult.DCR_flex_pos.toFixed(3)} dcr={govResult.DCR_flex_pos} overridden={isOverridden(overrides, 'DCR_flex_pos')}
             tip="Demand-to-Capacity Ratio = Mu+ / φMn+. Must be ≤ 1.0. Values ≥ 0.9 are flagged in amber." />
           <KV k={`${cap.Mn}−`} v={fmt(result.phi_Mn_neg, 'moment')}
             tip="Hogging (negative) flexural capacity. Computed using top steel area." />
-          <KV k="  DCR" v={result.DCR_flex_neg.toFixed(3)} dcr={result.DCR_flex_neg} overridden={isOverridden(overrides, 'DCR_flex_neg')}
+          <KV k="  DCR" v={govResult.DCR_flex_neg.toFixed(3)} dcr={govResult.DCR_flex_neg} overridden={isOverridden(overrides, 'DCR_flex_neg')}
             tip="Demand-to-Capacity Ratio = Mu− / φMn−. Must be ≤ 1.0." />
-          <KV k="As req+" v={fmt(result.As_req_pos, 'area')}
+          <KV k="As req+" v={fmt(govResult.As_req_pos, 'area')}
             tip="Minimum bottom steel area to carry Mu+. The engine uses this to flag under-reinforced sections." />
-          <KV k="As req−" v={fmt(result.As_req_neg, 'area')}
+          <KV k="As req−" v={fmt(govResult.As_req_neg, 'area')}
             tip="Minimum top steel area to carry Mu−." />
           <KV k="As min" v={fmt(result.As_min, 'area')}
             tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 minimum: max(0.26·fctm/fyk, 0.0013)·bt·d' : 'ACI §9.6.1 minimum: max(3√f\'c/fy, 200/fy)·bw·d'} />
@@ -471,7 +546,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             tip="Top steel ratio ρ = As,top / (bw · d)." />
           </CheckSection>
 
-          <CheckSection title="Shear" dcr={result.DCR_shear} defaultOpen={isGov('Shear')}>
+          <CheckSection title="Shear" dcr={govResult.DCR_shear} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear')}>
           <KV k={cap.Vc} v={fmt(result.Vc, 'force')}
             tip={code === 'EN1992-1-1' ? 'Concrete shear resistance without links V_Rd,c (§6.2.2). Depends on ρl and fck.' : 'ACI concrete contribution Vc. Includes axial modification.'}
             formula={code === 'EN1992-1-1' ? 'V_Rd,c = [CRd,c·k·(100ρl·fck)^⅓]·bw·d' : undefined} />
@@ -480,7 +555,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             formula={code === 'EN1992-1-1' ? 'V_Rd,s = Asw/s · z · fywd · cotθ' : 'Vs = Av·fy·d/s'} />
           <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')}
             tip="Total design shear resistance = φ(Vc + Vs). Must exceed Vu." />
-          <KV k="  DCR" v={result.DCR_shear.toFixed(3)} dcr={result.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')}
+          <KV k="  DCR" v={govResult.DCR_shear.toFixed(3)} dcr={govResult.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')}
             tip="Shear DCR = Vu / φVn. Must be ≤ 1.0." />
           {zoneResults.map(z => (
             <KV key={z.zone} k={`  z${z.zone + 1}@${fmt(z.spacing, 'length')}`} v={z.DCR.toFixed(3)} dcr={z.DCR}
@@ -492,36 +567,46 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             tip="ACI §9.6.3 minimum transverse reinforcement: 0.75·√f'c/fyt·bw." />}
           </CheckSection>
 
-          <CheckSection title="Torsion" dcr={result.DCR_torsion} defaultOpen={isGov('Torsion')}>
+          {!ignoreTorsion && (
+          <CheckSection title="Torsion" dcr={govResult.DCR_torsion} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Torsion')}>
           <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')}
             tip="Cracking torsion threshold. Torsion design required when Tu > φTcr." />
           <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')}
             tip="Design torsional resistance from closed stirrups. Checked against Tu." />
-          <KV k="  DCR" v={result.DCR_torsion.toFixed(3)} dcr={result.DCR_torsion} overridden={isOverridden(overrides, 'DCR_torsion')}
+          <KV k="  DCR" v={govResult.DCR_torsion.toFixed(3)} dcr={govResult.DCR_torsion} overridden={isOverridden(overrides, 'DCR_torsion')}
             tip={code === 'EN1992-1-1'
               ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
               : 'Torsion DCR = Tu / φTn.'} />
           </CheckSection>
+          )}
+
+          {code === 'EN1992-1-1' && anyTorsion && !ignoreTorsion && (govResult.VT_util ?? 0) > 0 && (
+            <CheckSection title="Shear + Torsion Links" dcr={govResult.VT_util} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear + Torsion Links')}>
+              <KV k="  DCR" v={(govResult.VT_util ?? 0).toFixed(3)} dcr={govResult.VT_util}
+                tip="Combined shear + torsion transverse-steel utilisation (§6.3.1/§6.3.2). The outer stirrup legs carry the shear demand AND the torsion demand, which add — this is what S-CONCRETE reports as “V & T Util”. Governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening link spacing, adding legs, or using a steeper strut angle cot θ."
+                formula="V&T util = V_Ed/(n·z·f_ywd·cotθ)/(A_sw,leg/s) + T_Ed/(2·A_k·f_ywd·cotθ)/(A_sw,leg/s)" />
+            </CheckSection>
+          )}
 
           {code === 'EN1992-1-1' && (
-            <CheckSection title="Crack Width §7.3.4" dcr={crackDcr} defaultOpen={isGov('Crack Width §7.3.4')}>
-              <KV k="wk bot" v={`${(result.wk_bot ?? 0).toFixed(3)} mm`}
-                dcr={(result.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
+            <CheckSection title="Crack Width §7.3.4" dcr={crackDcr} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Crack Width §7.3.4')}>
+              <KV k="wk bot" v={`${(govResult.wk_bot ?? 0).toFixed(3)} mm`}
+                dcr={(govResult.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                 tip="Characteristic crack width at bottom face under quasi-permanent load combination."
                 formula="wk = sr,max · (εsm − εcm)" />
-              <KV k="wk top" v={`${(result.wk_top ?? 0).toFixed(3)} mm`}
-                dcr={(result.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
+              <KV k="wk top" v={`${(govResult.wk_top ?? 0).toFixed(3)} mm`}
+                dcr={(govResult.wk_top ?? 0) / (member.crackParams?.wLimitTop ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                 tip="Characteristic crack width at top face under quasi-permanent combination." />
-              {result.wk_face !== undefined && (
-                <KV k="wk face" v={`${result.wk_face.toFixed(3)} mm`}
-                  dcr={result.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
+              {govResult.wk_face !== undefined && (
+                <KV k="wk face" v={`${govResult.wk_face.toFixed(3)} mm`}
+                  dcr={govResult.wk_face / (member.crackParams?.wLimitFace ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                   tip="Side-face crack width (EC2 §7.3.3). Relevant when h > 1000 mm." />
               )}
               <KV k="w limit" v={`${(member.crackParams?.wLimitBot ?? 0.3).toFixed(2)} mm`}
                 tip="Crack width limit from EC2 Table 7.1N. Typically 0.30 mm (XC2–XC4) or 0.40 mm (XC1)." />
-              {code === 'EN1992-1-1' && (result.wk_bot !== undefined || result.wk_top !== undefined) && (() => {
+              {code === 'EN1992-1-1' && (govResult.wk_bot !== undefined || govResult.wk_top !== undefined) && (() => {
                 const cp = member.crackParams ?? DEFAULT_CRACK_PARAMS;
-                const slsFails = (result.wk_bot ?? 0) > cp.wLimitBot || (result.wk_top ?? 0) > cp.wLimitTop || (result.wk_face !== undefined && result.wk_face > cp.wLimitFace);
+                const slsFails = (govResult.wk_bot ?? 0) > cp.wLimitBot || (govResult.wk_top ?? 0) > cp.wLimitTop || (govResult.wk_face !== undefined && govResult.wk_face > cp.wLimitFace);
                 const comboLabel = slsCombo ? `SLS combo "${slsCombo}"` : 'ψ·M_Ed (ratio)';
                 return (
                   <div style={{ marginTop: 4 }}>
@@ -550,7 +635,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
             points={result.interaction}
             loads={member.loads}
             code={code}
-            activeLoadId={activeLoad}
+            activeLoadId={load.id}
           />
         </div>
       )}
@@ -582,10 +667,10 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, en
                   {allResults.map(({ id, label, r }) => (
                     <tr
                       key={id}
-                      style={{ background: id === activeLoad ? ACCENT.softBg : 'white', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}
+                      style={{ background: id === load.id ? ACCENT.softBg : 'white', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}
                       onClick={() => setActiveLoad(id)}
                     >
-                      <td style={{ padding: '5px 10px', fontWeight: id === activeLoad ? 700 : 400, color: INK.base }}>
+                      <td style={{ padding: '5px 10px', fontWeight: id === load.id ? 700 : 400, color: INK.base }}>
                         {govSet.has(id) && <span style={{ color: STATUS.warn, marginRight: 4 }}>★</span>}
                         {label}
                       </td>

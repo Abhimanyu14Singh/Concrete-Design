@@ -16,10 +16,12 @@ interface Props {
   code?: DesignCode;
   /** Project-level EC2 SLS quasi-permanent combo name (drives §7.3.4 M_qp). */
   slsCombo?: string;
+  /** Project-level EC2 §6.2.3 strut angle cotθ (default 2.5). */
+  cotTheta?: number;
   onClose: () => void;
 }
 
-export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, onClose }: Props) {
+export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, cotTheta, onClose }: Props) {
   const { fmt } = useUnits();
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
   const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
@@ -32,7 +34,7 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
         ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
         : generateColumnBreakdown(member.section, member.material, member.rebar, load))
     : (isEC2
-        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, crackParams, slsCombo)
+        ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, crackParams, slsCombo, cotTheta ?? 2.5)
         : generateBreakdown(
             member.section, member.material, member.rebar, load, member.span,
             member.rebar.tieZones && member.stationForces?.length
@@ -156,12 +158,12 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
               {expandedSections.has(section.title) && (
                 <div style={{
                   border: `1px solid ${BORDER.default}`, borderTop: 'none',
-                  borderRadius: '0 0 8px 8px', overflow: 'hidden',
+                  borderRadius: '0 0 8px 8px', overflowX: 'auto', overflowY: 'hidden',
                 }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
                       <tr style={{ background: SURFACE.subtle }}>
-                        {['ACI Ref', 'Description', 'Equation', 'Substitution', 'Result'].map(h => (
+                        {[isEC2 ? 'EC2 Ref' : 'ACI Ref', 'Description', 'Equation', 'Substitution', 'Result'].map(h => (
                           <th key={h} style={{
                             padding: '8px 12px', textAlign: 'left',
                             color: INK.secondary, fontWeight: 600, fontSize: 10,
@@ -217,7 +219,9 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
           ))}
 
           <p style={{ fontSize: 10, color: INK.muted, marginTop: 16, textAlign: 'center' }}>
-            All calculations per ACI 318-19 Strength Design Method. Verify independently before use in production design.
+            {isEC2
+              ? 'All calculations per EN 1992-1-1:2004 (Eurocode 2). Verify independently before use in production design.'
+              : 'All calculations per ACI 318-19 Strength Design Method. Verify independently before use in production design.'}
           </p>
         </div>
       </div>

@@ -202,6 +202,7 @@ const SECTIONS: Section[] = [
     node: (
       <>
         <P><B>Suggest</B> picks the lightest <em>practical</em> reinforcement that meets the group's worst demand at a target DCR (default <B>0.90</B>, editable). It is verification-driven — it doesn't guess a formula answer, it re-runs the real design engine on a trial cage and adjusts until it passes:</P>
+        <P>Clicking <B>✨ Suggest</B> first opens a small dialog to set the <B>minimum</B> top-bar, bottom-bar, and stirrup sizes — Suggest then uses <em>that size or larger</em>. Leave them at the defaults (the smallest practical size) to let it choose freely. Because top and bottom share one bar size, the larger of the two minimums applies. <B>✨ Suggest all groups</B> shows the same dialog and applies your minimums to every group.</P>
         <UL>
           <LI><B>Envelope the demand</B> — the worst required top/bottom steel and shear across the whole group; the highest-moment member governs the geometry.</LI>
           <LI><B>Size the bars</B> — start at the smallest practical bar size and fewest bars that hold the area (top &amp; bottom share one size), preferring a single layer, then two, and a <B>third layer only as a fallback</B> when no size fits in two.</LI>

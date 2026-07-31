@@ -67,8 +67,35 @@ export interface SuggestResult {
 
 export interface SuggestError { error: string }
 
+/**
+ * Optional user-supplied minimum bar sizes ("use this size or larger"), collected
+ * by the Suggest size-floor dialog. Sizes compare by DIAMETER (|size|): US #5<#6…,
+ * EC2 Ø10<Ø12…. Top and bottom share one longitudinal size (constructability), so
+ * the effective longitudinal floor is the larger of minTopBar / minBotBar. Any
+ * field left undefined imposes no floor on that action.
+ */
+export interface SuggestFloors {
+  minTopBar?: number;
+  minBotBar?: number;
+  minStirrup?: number;
+}
+
 export function isSuggestError(r: SuggestResult | SuggestError): r is SuggestError {
   return 'error' in r;
+}
+
+/**
+ * Practical Suggest candidate sizes for a design code, smallest→largest by
+ * diameter. The Suggest size-floor dialog offers these; suggestGroupRebar()
+ * searches them. Longitudinal US #5–#11 / EC2 Ø10–Ø32; stirrups US #4–#6 /
+ * EC2 Ø8–Ø12. (Encoding: US = positive #, EC2 = negative Ø mm.)
+ */
+export function suggestSizeCandidates(code: Project['code']): { long: number[]; stirrup: number[] } {
+  const isEC2 = code === 'EN1992-1-1';
+  return {
+    long: isEC2 ? LONG_BAR_SIZES_EC2 : LONG_BAR_SIZES_US,
+    stirrup: isEC2 ? STIRRUP_SIZES_EC2 : STIRRUP_SIZES_US,
+  };
 }
 
 /** Max bars per layer that fit the web width with ≥ max(1", db) clear spacing. */
@@ -131,6 +158,7 @@ export function suggestGroupRebar(
   members: Member[],
   code: Project['code'],
   targetDCR = 0.9,
+  floors?: SuggestFloors,
 ): SuggestResult | SuggestError {
   // Column groups use the dedicated column auto-design path (symmetric cage +
   // tie sizing against the P-M / axial / shear checks). Only fall through to the
@@ -143,9 +171,21 @@ export function suggestGroupRebar(
   if (!beams.length) return { error: 'No designed beam members with loads in this group.' };
 
   const isEC2 = code === 'EN1992-1-1';
-  const LONG_BAR_SIZES   = isEC2 ? LONG_BAR_SIZES_EC2   : LONG_BAR_SIZES_US;
-  const STIRRUP_SIZES    = isEC2 ? STIRRUP_SIZES_EC2    : STIRRUP_SIZES_US;
+  // Optional "use this size or larger" floors from the Suggest dialog. Sizes
+  // compare by diameter (|size|). Top and bottom share one longitudinal size, so
+  // the effective longitudinal floor is the larger of the two requested face
+  // minimums. Undefined → 0 → the full practical ladder (identical to the
+  // unconstrained search, so the default suggestion is unchanged).
+  const longFloorMag = Math.max(
+    floors?.minTopBar ? Math.abs(floors.minTopBar) : 0,
+    floors?.minBotBar ? Math.abs(floors.minBotBar) : 0,
+  );
+  const stirrupFloorMag = floors?.minStirrup ? Math.abs(floors.minStirrup) : 0;
+  const LONG_BAR_SIZES   = (isEC2 ? LONG_BAR_SIZES_EC2 : LONG_BAR_SIZES_US).filter(s => Math.abs(s) >= longFloorMag);
+  const STIRRUP_SIZES    = (isEC2 ? STIRRUP_SIZES_EC2  : STIRRUP_SIZES_US ).filter(s => Math.abs(s) >= stirrupFloorMag);
   const STIRRUP_SPACINGS = isEC2 ? STIRRUP_SPACINGS_EC2 : STIRRUP_SPACINGS_US;
+  if (!LONG_BAR_SIZES.length) return { error: 'No longitudinal bar size at or above the requested minimum is available — lower the bar-size floor.' };
+  if (!STIRRUP_SIZES.length)  return { error: 'No stirrup size at or above the requested minimum is available — lower the stirrup-size floor.' };
 
   // 1. One design pass per beam: surface hard errors up front, take the group's As,min
   //    floor / As,max cap, and record the governing member+LC for each action (worst

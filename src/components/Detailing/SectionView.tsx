@@ -24,6 +24,11 @@ interface Props {
   padT?: number;
   padB?: number;
   onRebarChange?: (r: RebarLayout) => void;
+  /** Small clickable ⚑ after the top/bottom bar label (L/3 curtailment flags). */
+  topFlag?: { color: string; title?: string; onClick: () => void } | null;
+  botFlag?: { color: string; title?: string; onClick: () => void } | null;
+  /** Second clickable icon (◨) after the top flag — opposite-end top-steel status. */
+  topFlag2?: { color: string; title?: string; onClick: () => void } | null;
 }
 
 export default function SectionView({
@@ -35,8 +40,16 @@ export default function SectionView({
   editStirrup = false,
   padL = 40, padR = 78, padT = 28, padB = 46,
   onRebarChange,
+  topFlag, botFlag, topFlag2,
 }: Props) {
-  const { fmt, units } = useUnits();
+  const { fmt, fmtVal, label, units, toDisplay, fromDisplay } = useUnits();
+  // EC2/SI: bar/stirrup spacings should read as round multiples of 25 mm (not the
+  // 301/102 mm artefacts of an inch-stored value). Snap a stored (inch) spacing so
+  // it displays on the 25 mm grid; imperial is left untouched.
+  const snapSpacingIn = (inchVal: number) =>
+    units === 'si'
+      ? fromDisplay(Math.max(25, Math.round(toDisplay(inchVal, 'length') / 25) * 25), 'length')
+      : inchVal;
   const pL = padL, pR = padR, pT = padT, pB = padB;
   const showLabels = barLabels ?? showDims;
 
@@ -184,12 +197,14 @@ export default function SectionView({
       onRebarChange({ ...rebar, ties: { ...rebar.ties, legs: Math.max(2, rebar.ties.legs + dir) } });
       return;
     }
+    // Step by 25 mm (SI/EC2) or 1 in (imperial), landing on the same round grid.
+    const step = units === 'si' ? fromDisplay(25, 'length') : 1;
     if (rebar.tieZones && zoneIdx !== undefined) {
-      const zones = rebar.tieZones.map((z, i) => (i === zoneIdx ? { spacing: Math.max(2, z.spacing + dir) } : z)) as [TieZone, TieZone, TieZone];
+      const zones = rebar.tieZones.map((z, i) => (i === zoneIdx ? { spacing: Math.max(step, snapSpacingIn(z.spacing + dir * step)) } : z)) as [TieZone, TieZone, TieZone];
       const gov = Math.min(...zones.map(z => z.spacing));
       onRebarChange({ ...rebar, tieZones: zones, ties: { ...rebar.ties, spacing: gov } });
     } else {
-      onRebarChange({ ...rebar, ties: { ...rebar.ties, spacing: Math.max(2, rebar.ties.spacing + dir) } });
+      onRebarChange({ ...rebar, ties: { ...rebar.ties, spacing: Math.max(step, snapSpacingIn(rebar.ties.spacing + dir * step)) } });
     }
   }
   function toggleTieZones() {
@@ -208,8 +223,28 @@ export default function SectionView({
     }
   }
 
-  // Skin / face reinforcement (side bars). numBars = bars per side face; spacing =
-  // vertical c/c. Dropping the count to 0 removes the skin entirely.
+  // Skin / face reinforcement (side bars). SPACING is the primary variable: the
+  // user sets the vertical c/c and the bar COUNT is fitted to it (numBars = bars
+  // that fill the clear web at that spacing), so the count and the drawing always
+  // agree with the spacing. Dropping the count to 0 removes the skin entirely.
+  const skinSnapStep = units === 'si' ? 25 : 1; // display step: 25 mm (or 1 in)
+  const snapLen = (mm: number) =>
+    fromDisplay(Math.max(skinSnapStep, Math.round(mm / skinSnapStep) * skinSnapStep), 'length');
+  // Clear web (internal units) between the innermost top and bottom bars — the
+  // height the skin bars are distributed over.
+  function skinWeb(): number {
+    const h = section.h ?? 0;
+    const cover = section.coverClear ?? 1.5;
+    const stir = getBarDiam(section.stirrupDia ?? (units === 'si' ? -10 : 4));
+    const topDia = getBarDiam(rebar.topBars[0]?.barSize ?? 8);
+    const botDia = getBarDiam(rebar.botBars[0]?.barSize ?? 8);
+    return Math.max(1, h - 2 * cover - 2 * stir - topDia - botDia);
+  }
+  // Even c/c of `n` skin bars per face over the clear web, snapped to 25 mm (1 in).
+  const skinSpacing = (n: number): number => snapLen(toDisplay(skinWeb() / (n + 1), 'length'));
+  // Bars per face that a given c/c spacing fills the web with (the inverse of
+  // skinSpacing): n bars leave n+1 even gaps, so n = web/spacing − 1. ≥ 1.
+  const skinCountFor = (spacing: number): number => Math.max(1, Math.round(skinWeb() / spacing) - 1);
   function bumpSide(field: 'count' | 'size' | 'spacing', dir: 1 | -1) {
     if (!onRebarChange) return;
     const cur = rebar.sideBars?.[0];
@@ -217,18 +252,24 @@ export default function SectionView({
     let newSide: RebarLayout['sideBars'];
     if (field === 'count') {
       const n = cur.numBars + dir;
-      newSide = n <= 0 ? undefined : [{ ...cur, numBars: n }];
+      // Recompute the spacing so more bars ⇒ tighter c/c (snapped to 25 mm).
+      newSide = n <= 0 ? undefined : [{ ...cur, numBars: n, spacing: skinSpacing(n) }];
     } else if (field === 'size') {
       newSide = [{ ...cur, barSize: barSizeStep(cur.barSize, dir) }];
     } else {
-      newSide = [{ ...cur, spacing: Math.max(2, (cur.spacing ?? 6) + dir) }];
+      // Spacing is primary: step it by 25 mm (or 1 in), then REFIT the bar count to
+      // that spacing so the count and the section drawing follow (click = tighter =
+      // more bars). dir = −1 tightens (label onClick), +1 loosens (right-click).
+      const curMm = toDisplay(cur.spacing ?? skinSpacing(cur.numBars), 'length');
+      const newSpacing = snapLen(curMm + dir * skinSnapStep);
+      newSide = [{ ...cur, numBars: skinCountFor(newSpacing), spacing: newSpacing }];
     }
     onRebarChange({ ...rebar, sideBars: newSide });
   }
   function addSkin() {
     if (!onRebarChange) return;
     const metric = (rebar.botBars[0]?.barSize ?? rebar.topBars[0]?.barSize ?? 5) < 0;
-    onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: 12 }] });
+    onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: skinSpacing(2) }] });
   }
 
   // pointerEvents:'auto' re-enables hit-testing even when the token sits inside a
@@ -237,16 +278,54 @@ export default function SectionView({
   const editTspan = { cursor: 'pointer', userSelect: 'none' as const, pointerEvents: 'auto' as const } as React.CSSProperties;
   const noHit = { pointerEvents: 'none' } as React.CSSProperties;
 
-  /** Editable face label: per-layer clickable count and bar-size tokens (e.g. "3-#8 + 2-#6"). */
+  /** Editable face label. Each reinforcement layer is drawn on its OWN line so the
+   *  clickable count/size tokens (and the ⚑/◨ flags) never crowd or overlap in the
+   *  narrow label gutter — the top face stacks downward from `y`, the bottom face
+   *  stacks upward toward `y`, so a multi-layer cage (e.g. "7-Ø25 / 7-Ø25") stays
+   *  fully clickable. `y` is the anchor line (line 1 for top, last line for bottom). */
+  const FACE_LINE_H = 11;
   function editableFaceLabel(face: 'top' | 'bot', x: number, y: number, fill: string): ReactElement {
     const bars = face === 'top' ? rebar.topBars : rebar.botBars;
-    const firstIdx = bars.findIndex(g => g.numBars > 0);
-    if (firstIdx === -1) return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>;
-    return (
-      <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>
-        {bars.map((g, li) => g.numBars > 0 ? (
-          <tspan key={li}>
-            {li > firstIdx && <tspan style={noHit}> + </tspan>}
+    const flag = face === 'top' ? topFlag : botFlag;
+    const flag2 = face === 'top' ? topFlag2 : null; // opposite-end status (top only)
+    const stackUp = face === 'bot';                 // bottom grows upward toward its anchor
+    const active = bars.map((g, li) => ({ g, li })).filter(o => o.g.numBars > 0);
+
+    if (active.length === 0) {
+      return <text x={x} y={y} fontSize="10" fill={fill} fontFamily={FONT.mono}>—</text>;
+    }
+
+    const n = active.length;
+    const y0 = stackUp ? y - (n - 1) * FACE_LINE_H : y;   // y of the first-drawn (top-most) line
+    // Anchor layer = the one drawn ON the passed baseline `y` (line 1 for top, last for bottom);
+    // the flags sit just after its short "N-size" text, so they can't overlap any token.
+    const anchor = stackUp ? active[n - 1] : active[0];
+    const anchorStr = `${anchor.g.numBars}-${displayBar(anchor.g.barSize)}`;
+    const flagsW = (flag ? 16 : 0) + (flag2 ? 15 : 0) + 4;
+    const flagX = Math.min(x + anchorStr.length * 6.2 + 8, width - flagsW);
+    const flagsGroup = (flag || flag2) ? (
+      <text x={flagX} y={y} fontSize="13" fontFamily={FONT.mono} style={{ pointerEvents: 'auto' }}>
+        {flag ? (
+          <tspan style={{ cursor: 'pointer', userSelect: 'none', fontWeight: 700 }} fill={flag.color}
+            onClick={e => { e.stopPropagation(); flag.onClick(); }}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag.onClick(); }}>
+            {flag.title ? <title>{flag.title}</title> : null}⚑
+          </tspan>
+        ) : null}
+        {flag2 ? (
+          <tspan dx={flag ? '4' : '0'} style={{ cursor: 'pointer', userSelect: 'none', fontWeight: 700 }} fill={flag2.color}
+            onClick={e => { e.stopPropagation(); flag2.onClick(); }}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); flag2.onClick(); }}>
+            {flag2.title ? <title>{flag2.title}</title> : null}◨
+          </tspan>
+        ) : null}
+      </text>
+    ) : null;
+
+    const labelText = (
+      <text x={x} y={y0} fontSize="10" fill={fill} fontFamily={FONT.mono}>
+        {active.map(({ g, li }, i) => (
+          <tspan key={li} x={x} dy={i === 0 ? 0 : FACE_LINE_H}>
             <tspan style={editTspan} textDecoration="underline"
               onClick={e => { e.stopPropagation(); bumpBars(face, li, 'count', 1); }}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'count', -1); }}
@@ -257,9 +336,10 @@ export default function SectionView({
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpBars(face, li, 'size', -1); }}
             >{displayBar(g.barSize)}</tspan>
           </tspan>
-        ) : null)}
+        ))}
       </text>
     );
+    return <g>{labelText}{flagsGroup}</g>;
   }
 
   /** Editable stirrup label: clickable bar-size + spacing tokens and a ⅓ zoned-spacing
@@ -267,15 +347,16 @@ export default function SectionView({
   function editableStirrupLabel(x: number, y: number): ReactElement | null {
     const t = rebar.ties;
     if (!t) return null;
-    const dec = rebar.tieZones ? 0 : 1; // three zoned values need to stay compact
+    // Zoned mode drops the per-value unit ("225 mm/225 mm/225 mm" → "225/225/225 mm")
+    // so all THREE span-third spacings fit the narrow card instead of clipping the last.
     const spacingTspan = (val: number, key: string, zoneIdx?: number) => (
       <tspan key={key} style={editTspan} textDecoration="underline"
         onClick={e => { e.stopPropagation(); bumpTie('spacing', -1, zoneIdx); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('spacing', 1, zoneIdx); }}
-      >{fmt(val, 'length', dec)}</tspan>
+      >{rebar.tieZones ? fmtVal(snapSpacingIn(val), 'length', 0) : fmt(snapSpacingIn(val), 'length', 1)}</tspan>
     );
     return (
-      <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+      <text x={x} y={y} fontSize={rebar.tieZones ? 8.5 : 10} fill={BARS.tie} fontFamily={FONT.mono}>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpTie('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('size', -1); }}
@@ -286,7 +367,8 @@ export default function SectionView({
              <tspan key="s1" style={noHit}>/</tspan>,
              spacingTspan(rebar.tieZones[1].spacing, 'z1', 1),
              <tspan key="s2" style={noHit}>/</tspan>,
-             spacingTspan(rebar.tieZones[2].spacing, 'z2', 2)]
+             spacingTspan(rebar.tieZones[2].spacing, 'z2', 2),
+             <tspan key="zu" style={noHit}> {label('length')}</tspan>]
           : spacingTspan(t.spacing, 'z')}
         <tspan style={{ ...editTspan, fontWeight: 700 }} fill={rebar.tieZones ? '#7c3aed' : '#9ca3af'}
           onClick={e => { e.stopPropagation(); toggleTieZones(); }}> ⅓</tspan>
@@ -311,19 +393,21 @@ export default function SectionView({
   }
 
   /** Editable skin / face reinforcement: "X-#Y @ Z" (bars per side · size · spacing),
-   *  each token click-editable; when absent, a "＋ skin" affordance to add it. */
-  function editableSkinLabel(x: number, y: number): ReactElement {
+   *  each token click-editable; when absent, a "＋ skin" affordance to add it.
+   *  `anchor='end'` right-aligns to `x` and wraps onto two lines (count-size / @ spacing)
+   *  so it can live in the LEFT gutter beside the side bars without clipping. */
+  function editableSkinLabel(x: number, y: number, anchor: 'start' | 'end' = 'start'): ReactElement {
     const s = rebar.sideBars?.[0];
     if (!s || s.numBars <= 0) {
       return (
-        <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+        <text x={x} y={y} textAnchor={anchor} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
           <tspan style={{ ...editTspan, fontWeight: 700 }} textDecoration="underline"
             onClick={e => { e.stopPropagation(); addSkin(); }}>＋ skin</tspan>
         </text>
       );
     }
-    return (
-      <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+    const countSize = (
+      <>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpSide('count', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('count', -1); }}
@@ -333,11 +417,25 @@ export default function SectionView({
           onClick={e => { e.stopPropagation(); bumpSide('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('size', -1); }}
         >{displayBar(s.barSize)}</tspan>
-        <tspan style={noHit}> @ </tspan>
-        <tspan style={editTspan} textDecoration="underline"
-          onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
-          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
-        >{fmt(s.spacing ?? 12, 'length', 0)}</tspan>
+      </>
+    );
+    const spacingTok = (
+      <tspan style={editTspan} textDecoration="underline"
+        onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
+      >{fmt(snapSpacingIn(s.spacing ?? 12), 'length', 0)}</tspan>
+    );
+    if (anchor === 'end') {
+      return (
+        <text x={x} y={y} textAnchor="end" fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+          <tspan x={x} dy={0}>{countSize}</tspan>
+          <tspan x={x} dy={11}><tspan style={noHit}>@ </tspan>{spacingTok}</tspan>
+        </text>
+      );
+    }
+    return (
+      <text x={x} y={y} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+        {countSize}<tspan style={noHit}> @ </tspan>{spacingTok}
       </text>
     );
   }
@@ -521,7 +619,7 @@ export default function SectionView({
                 {rebar.topBars.length ? rebar.topBars.filter(g => g.numBars > 0).map(g => `${g.numBars}-${displayBar(g.barSize)}`).join(' + ') : '—'}
               </text>
             )}
-          <text x={ox + scaledW + 8} y={topLabelY + 16}
+          <text x={ox + scaledW + 8} y={topLabelY + 16 + Math.max(0, rebar.topBars.filter(g => g.numBars > 0).length - 1) * FACE_LINE_H}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
             {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'top'}
             {editBarSize && interactive && (
@@ -559,7 +657,7 @@ export default function SectionView({
           )}
           {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
               or a "＋ skin" affordance when absent. */}
-          {!isColumn && editStirrup && editableSkinLabel(ox + scaledW + 8, oy + scaledH / 2 - 20)}
+          {!isColumn && editStirrup && editableSkinLabel(ox - 8, oy + scaledH / 2 - 6, 'end')}
           {showDims && result && !isColumn && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;

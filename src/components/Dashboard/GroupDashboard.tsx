@@ -5,7 +5,7 @@
  * Renders identically in-app or in a popped-out window; all data arrives as a plain
  * DashboardPayload and selection/edits flow out through callbacks.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { RebarLayout } from '../../types';
 import { membersForGroup, type DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
@@ -22,7 +22,7 @@ export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
   canPopOut, onPopOut, onClose, closeLabel = '✕',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
-  onSuggestAll,
+  onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot, onSetReviewed,
 }: {
   payload: DashboardPayload;
   selectedGroupId: string | null;
@@ -42,6 +42,16 @@ export default function GroupDashboard({
   onCreateGroupForMember?: (memberId: string) => void;
   /** Auto-size every group's cage to satisfy DCRs / clear errors. */
   onSuggestAll?: () => void;
+  /** Pin/unpin a face's L/3 curtailment % to the beam schedule notes. */
+  onToggleCurtailmentNote?: (groupId: string, face: 'top' | 'bot', on: boolean) => void;
+  /** Set (or clear) the group's reduced opposite-end top reinforcement. */
+  onSetOppositeTop?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
+  /** Set (or clear) the group's reduced middle-third top reinforcement. */
+  onSetMidThirdTop?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
+  /** Set (or clear) the group's reduced end-third bottom reinforcement. */
+  onSetEndThirdBot?: (groupId: string, bars: import('../../types').BarGroup[] | null) => void;
+  /** Mark (or clear) the group as engineer-Reviewed — NG/warnings shown as "Reviewed". */
+  onSetReviewed?: (groupId: string, on: boolean) => void;
 }) {
   const groups = payload.groups;
   const selGroup = groups.find(g => g.id === selectedGroupId) ?? null;
@@ -50,17 +60,63 @@ export default function GroupDashboard({
   // by that tag would empty this table (see membersForGroup).
   const selMembers = useMemo(() => membersForGroup(payload, selectedGroupId), [payload, selectedGroupId]);
   const govDCRs = selMembers.map(m => m.maxDCR);
+  // Engineer sign-off on the selected group: its beams read "Reviewed" and drop out
+  // of the flagged tallies. Driven by the group flag (correct for beams shared across
+  // groups — the same beam can be reviewed in one group, still flagged in another).
+  const reviewed = !!selGroup?.reviewed;
   // How many of the group's beams are failing (NG) vs merely warned.
-  const ngCount = selMembers.filter(m => m.status === 'NG').length;
-  const warnCount = selMembers.filter(m => m.status !== 'NG' && (m.status === 'Warning' || m.warnings.length > 0)).length;
+  const ngCount = reviewed ? 0 : selMembers.filter(m => m.status === 'NG').length;
+  const warnCount = reviewed ? 0 : selMembers.filter(m => m.status !== 'NG' && (m.status === 'Warning' || m.warnings.length > 0)).length;
 
   // Right-click row menu (move to group / new group). Kept local so the dashboard
   // works the same in-app or popped out; the host decides what the callbacks do.
   const [rowMenu, setRowMenu] = useState<{ memberId: string; x: number; y: number } | null>(null);
   const canContext = !!onMoveMember || !!onCreateGroupForMember;
 
+  // Draggable divider between the card grid (top) and the beam-list detail (bottom).
+  // Persisted (localStorage) so the split survives re-open and reads the same whether
+  // the dashboard is docked or in its own window — this component renders both.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [containerH, setContainerH] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => { for (const e of entries) setContainerH(e.contentRect.height); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const [detailH, setDetailH] = useState<number>(() => {
+    const v = Number(typeof localStorage !== 'undefined' ? localStorage.getItem('dashDetailH') : NaN);
+    return Number.isFinite(v) && v > 0 ? v : 300;
+  });
+  const MIN_DETAIL = 96;
+  // Leave headroom for the header + at least a couple of card rows above the divider.
+  const maxDetail = containerH > 0 ? Math.max(MIN_DETAIL, containerH - 220) : Number.MAX_SAFE_INTEGER;
+  const detailHClamped = Math.min(Math.max(detailH, MIN_DETAIL), maxDetail);
+
+  function startDetailDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = detailHClamped;
+    let latest = startH;
+    const move = (ev: MouseEvent) => {
+      // Drag up → taller beam list (the boundary follows the cursor).
+      latest = Math.min(Math.max(startH - (ev.clientY - startY), MIN_DETAIL), maxDetail);
+      setDetailH(latest);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+      try { localStorage.setItem('dashDetailH', String(Math.round(latest))); } catch { /* non-fatal */ }
+    };
+    document.body.style.cursor = 'row-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, flex: 1, width: '100%', background: SURFACE.app }}
+    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, flex: 1, width: '100%', background: SURFACE.app }}
       onMouseLeave={() => onHoverMember?.(null)}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
@@ -94,13 +150,29 @@ export default function GroupDashboard({
             selected={g.id === selectedGroupId}
             onSelect={() => onSelectGroup(g.id === selectedGroupId ? null : g.id)}
             onApplyRebar={onApplyRebar}
+            onToggleCurtailmentNote={onToggleCurtailmentNote}
+            onSetOppositeTop={onSetOppositeTop}
+            onSetMidThirdTop={onSetMidThirdTop}
+            onSetEndThirdBot={onSetEndThirdBot}
+            onSetReviewed={onSetReviewed}
           />
         ))}
       </div>
 
-      {/* Selected-group detail (bottom half) */}
+      {/* Draggable divider — drop it where you like; the beam list keeps that height. */}
       {selGroup && (
-        <div style={{ flexShrink: 0, maxHeight: '44%', overflow: 'auto', borderTop: `1px solid ${BORDER.default}`, background: 'white' }}>
+        <div
+          onMouseDown={startDetailDrag}
+          title="Drag to resize the beam list"
+          style={{ flexShrink: 0, height: 9, cursor: 'row-resize', background: SURFACE.subtle, borderTop: `1px solid ${BORDER.default}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <div style={{ width: 44, height: 3, borderRadius: 2, background: BORDER.strong }} />
+        </div>
+      )}
+
+      {/* Selected-group detail (bottom half) — height set by the divider above. */}
+      {selGroup && (
+        <div style={{ flexShrink: 0, height: detailHClamped, overflow: 'auto', background: 'white' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 12px', position: 'sticky', top: 0, background: 'white', borderBottom: `1px solid ${BORDER.default}`, zIndex: 1 }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: selGroup.color ?? INK.muted }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{selGroup.label}</span>
@@ -110,15 +182,19 @@ export default function GroupDashboard({
               <div>
                 <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>Beams flagged</div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', height: 30 }}>
-                  {ngCount === 0 && warnCount === 0 && (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok }}>✓ all pass</span>
-                  )}
-                  {ngCount > 0 && (
-                    <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} ✕</span>
-                  )}
-                  {warnCount > 0 && (
-                    <span title="Beams with warnings" style={{ fontSize: 12, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, padding: '2px 7px', borderRadius: 5 }}>{warnCount} ⚠</span>
-                  )}
+                  {reviewed ? (
+                    <span title="Engineer sign-off — this group's NG/warnings are accepted" style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok, background: STATUS.okBg, padding: '2px 7px', borderRadius: 5 }}>✓ Reviewed</span>
+                  ) : (<>
+                    {ngCount === 0 && warnCount === 0 && (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok }}>✓ all pass</span>
+                    )}
+                    {ngCount > 0 && (
+                      <span title="Beams failing a check (DCR > 1 / NG)" style={{ fontSize: 12, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, padding: '2px 7px', borderRadius: 5 }}>{ngCount} ✕</span>
+                    )}
+                    {warnCount > 0 && (
+                      <span title="Beams with warnings" style={{ fontSize: 12, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, padding: '2px 7px', borderRadius: 5 }}>{warnCount} ⚠</span>
+                    )}
+                  </>)}
                 </div>
               </div>
               <div>
@@ -131,10 +207,13 @@ export default function GroupDashboard({
           <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, padding: '5px 12px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
             {['Beam', 'M⁺', 'M⁻', 'V', 'DCR', 'Status', '⚠'].map(h => <span key={h} style={LABEL_STYLE}>{h}</span>)}
           </div>
-          {selMembers.map(m => (
-            <div key={m.id}
+          {selMembers.map(m => {
+            const showWarns = !reviewed && m.warnings.length > 0;
+            return (
+            <Fragment key={m.id}>
+            <div
               title={onOpenMember ? 'Double-click to open the member · right-click to move to another group' : undefined}
-              style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: '1px solid #f3f4f6', cursor: onOpenMember ? 'pointer' : 'default' }}
+              style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: showWarns ? 'none' : '1px solid #f3f4f6', cursor: onOpenMember ? 'pointer' : 'default' }}
               onMouseEnter={e => { onHoverMember?.(m.id); (e.currentTarget as HTMLDivElement).style.background = SURFACE.subtle; }}
               onMouseLeave={e => { onHoverMember?.(null); (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
               onDoubleClick={() => onOpenMember?.(m.id)}
@@ -145,10 +224,34 @@ export default function GroupDashboard({
               <DCRChip label="M⁻" value={m.modeDCRs.flexNeg} />
               <DCRChip label="V" value={m.modeDCRs.shear} />
               <span style={{ ...MONO_NUM, fontSize: 11, fontWeight: 700, color: dcrColor(m.maxDCR), background: dcrBg(m.maxDCR), padding: '1px 5px', borderRadius: 4, justifySelf: 'start' }}>{m.maxDCR.toFixed(2)}</span>
-              <span style={{ fontSize: 10, fontWeight: 700, color: m.status === 'OK' ? STATUS.ok : m.status === 'NG' ? STATUS.fail : STATUS.warn }}>{m.status}</span>
-              <span title={m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: m.warnings.length ? STATUS.warn : INK.muted }}>{m.warnings.length ? `${m.warnings.length}⚠` : '—'}</span>
+              {/* Reviewed group: a beam's NG/Warning verdict reads "Reviewed"; passing
+                  beams stay "OK" and warnings are hidden. */}
+              {reviewed && m.status !== 'OK' ? (
+                <span title="Engineer-reviewed — verdict accepted" style={{ fontSize: 10, fontWeight: 700, color: STATUS.ok }}>Reviewed</span>
+              ) : (
+                <span style={{ fontSize: 10, fontWeight: 700, color: m.status === 'OK' ? STATUS.ok : m.status === 'NG' ? STATUS.fail : STATUS.warn }}>{m.status}</span>
+              )}
+              <span title={reviewed ? 'Reviewed — warnings accepted' : m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: !reviewed && m.warnings.length ? STATUS.warn : INK.muted }}>{reviewed || !m.warnings.length ? '—' : `${m.warnings.length}⚠`}</span>
             </div>
-          ))}
+            {/* Visible warning-code chips per beam (e.g. §9.2.3(2), §6.3.2) — hover any
+                chip for its full message. Errors read red, warnings amber. */}
+            {showWarns && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 12px 6px 12px', borderBottom: '1px solid #f3f4f6' }}>
+                {m.warnings.map((w, i) => {
+                  const isErr = w.severity === 'error';
+                  return (
+                    <span key={i} title={w.message}
+                      style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'help',
+                        color: isErr ? STATUS.fail : STATUS.warn, background: isErr ? STATUS.failBg : STATUS.warnBg }}>
+                      {w.code.replace(/^(EC2|ACI)\s+/, '')}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            </Fragment>
+            );
+          })}
           {selMembers.length === 0 && <div style={{ padding: 14, fontSize: 12, color: INK.muted }}>No beams in this group.</div>}
         </div>
       )}

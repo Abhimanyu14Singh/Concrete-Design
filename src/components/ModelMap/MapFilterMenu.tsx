@@ -21,10 +21,16 @@ export interface FilterSection {
 
 const miniBtn: CSSProperties = { fontSize: 9, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' };
 
-export default function MapFilterMenu({ sections, hiddenCount, onClearAll }: {
+export default function MapFilterMenu({ sections, hiddenCount, onClearAll, icon = '⧩', label = 'Filter', title = "Filter what's shown on the plan — member type, floors, groups, sections" }: {
   sections: FilterSection[];
   hiddenCount: number;
   onClearAll: () => void;
+  /** Button glyph (defaults to the filter funnel). */
+  icon?: string;
+  /** Button + panel-header text (defaults to "Filter"). */
+  label?: string;
+  /** Button tooltip. */
+  title?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -40,15 +46,15 @@ export default function MapFilterMenu({ sections, hiddenCount, onClearAll }: {
   const active = hiddenCount > 0;
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)} title="Filter what's shown on the plan — member type, floors, groups, sections"
+      <button onClick={() => setOpen(o => !o)} title={title}
         style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: `1px solid ${active ? ACCENT.primary : BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: active ? ACCENT.softBg : 'white', color: active ? ACCENT.primary : INK.base, fontWeight: 600 }}>
-        <span aria-hidden style={{ fontSize: 12 }}>⧩</span> Filter
+        <span aria-hidden style={{ fontSize: 12 }}>{icon}</span> {label}
         {active && <span style={{ background: ACCENT.primary, color: 'white', borderRadius: 8, fontSize: 9, padding: '0 5px', fontWeight: 700 }}>{hiddenCount}</span>}
       </button>
       {open && (
         <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, boxShadow: '0 6px 24px rgba(0,0,0,0.15)', minWidth: 232, maxHeight: 480, overflow: 'auto', padding: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', padding: '2px 8px 6px' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: INK.strong }}>Filter</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: INK.strong }}>{label}</span>
             {active && <button onClick={onClearAll} style={{ marginLeft: 'auto', fontSize: 10, color: ACCENT.primary, background: 'none', border: 'none', cursor: 'pointer' }}>Reset</button>}
           </div>
           {sections.filter(s => s.items.length > 0).map(sec => (

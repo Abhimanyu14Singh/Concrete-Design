@@ -37,6 +37,51 @@ export function envelopeLoadCase(forces: ComboForces[], label = 'ETABS Envelope'
   };
 }
 
+/**
+ * Expand station forces into ONE LoadCase per station per combo, preserving the
+ * simultaneous {M, V, T, P} state at each output station instead of collapsing to
+ * a single worst-of-each envelope. An envelope over-designs because max moment,
+ * max shear, max torsion and max axial never occur at the same station — with the
+ * real station rows each check sees the forces that actually act together (this is
+ * what S-CONCRETE receives: many sectional-load rows, one per station/combo).
+ *
+ * A station's signed moment M sets Mu_pos (sagging, M > 0) OR Mu_neg (hogging), not
+ * both. Vu/Tu are magnitudes; Pu keeps its sign (+ compression). All-zero stations
+ * are dropped, and exact duplicate rows collapsed, to keep the list tight. Falls
+ * back to the single envelope row when no station data is available.
+ */
+export function stationLoadCases(forces: ComboForces[], envLabel?: string): LoadCase[] {
+  const out: LoadCase[] = [];
+  const seen = new Set<string>();
+  for (const cf of forces) {
+    const combo = cf.combo || 'LC';
+    for (const st of cf.stations) {
+      const M = st.M ?? 0;
+      const V = Math.abs(st.V ?? 0);
+      const T = st.T !== undefined ? Math.abs(st.T) : 0;
+      const P = st.P ?? 0;
+      if (Math.abs(M) < 1e-6 && V < 1e-6 && T < 1e-6 && Math.abs(P) < 1e-6) continue;
+      const Mu_pos = M > 0 ? +M.toFixed(2) : 0;
+      const Mu_neg = M < 0 ? +Math.abs(M).toFixed(2) : 0;
+      const Vu = +V.toFixed(2), Tu = +T.toFixed(2), Pu = +P.toFixed(2);
+      // Collapse exact-duplicate force states (same combo can repeat a value at
+      // adjacent stations) so the row list stays as tight as the demand allows.
+      const key = `${combo}|${Mu_pos}|${Mu_neg}|${Vu}|${Tu}|${Pu}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: `${combo}@${st.x.toFixed(2)}`,
+        label: `${combo} @ ${st.x.toFixed(1)} ft`,
+        Mu_pos, Mu_neg, Vu, Tu, Pu,
+        x: +st.x.toFixed(2), // station position → zone-aware shear spacing
+      });
+    }
+  }
+  // No station data (e.g. a forces-less file import) → keep the envelope row so the
+  // member still has something to design against.
+  return out.length ? out : [envelopeLoadCase(forces, envLabel)];
+}
+
 export { zoneShearDemands } from '../../utils/concreteDesign';
 
 const DEFAULT_MATERIAL: MaterialProps = {
@@ -85,7 +130,7 @@ export function buildMembers(
       material: materialFor(beam.section, sections, materials),
       section: sectionDims,
       rebar: seedRebar(sectionDims, seed, code),
-      loads: [envelopeLoadCase(forces)],
+      loads: stationLoadCases(forces),
       span: +beam.lengthFt.toFixed(2),
       etabs: {
         frameName: beam.name,

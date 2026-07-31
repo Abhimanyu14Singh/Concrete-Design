@@ -5,8 +5,9 @@ import { runDesign } from './engines';
 import { resolveCrack } from './utils/resolveCrack';
 import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
-import { exportExcel } from './utils/export/excelExport';
-import { buildSchedulePDF } from './utils/export/schedulePdfExport';
+import { exportExcel, exportDcrList } from './utils/export/excelExport';
+import { buildSchedulePDF, buildDcrListPDF } from './utils/export/schedulePdfExport';
+import { exportGroupScheduleExcel } from './utils/export/groupScheduleExcel';
 import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
 import HelpView from './components/Help/HelpView';
@@ -28,10 +29,10 @@ const hdrBtn: React.CSSProperties = {
 
 /** Governing status for a member (respecting engineer overrides), used for the
  *  sidebar group NG/warn badges. 'Warning' → near-capacity, 'NG' → inadequate. */
-function memberBadge(m: Member, code: DesignCode, slsCombo?: string): 'OK' | 'warn' | 'NG' {
+function memberBadge(m: Member, code: DesignCode, slsCombo?: string, cotTheta?: number, ignoreTorsion?: boolean): 'OK' | 'warn' | 'NG' {
   let sawNG = false, sawWarn = false;
   for (const l of m.loads) {
-    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo));
+    const r = runDesign(m.section, m.material, m.rebar, l, m.span, code, resolveCrack(m, code, slsCombo), cotTheta, ignoreTorsion);
     const st = effectiveStatus(r, m.overrides);
     if (st === 'NG') sawNG = true;
     else if (st !== 'OK') sawWarn = true;
@@ -43,16 +44,11 @@ export default function App() {
   // ── Core state ────────────────────────────────────────────────────────────
   const [project, setProjectRaw] = useState<Project>(defaultProject);
   const [activeMemberId, setActiveMemberId] = useState<string>(project.members[0].id);
-  const [tab, setTab] = useState<Tab>('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarW, setSidebarW] = useState(220);
-  const sidebarDragging = useRef(false);
-  const sidebarDragStartX = useRef(0);
-  const sidebarDragStartW = useRef(220);
-  // The Map tab has its own right-hand group panel, so the left member list is
-  // redundant there and eats canvas width — auto-collapse it on Map, keep it open
-  // on the member/dashboard tabs. The manual ◀/▶ toggle still works within a tab.
-  useEffect(() => { setSidebarOpen(tab !== 'map'); }, [tab]);
+  const [tab, setTab] = useState<Tab>('map');
+  // The member list is a pull-down overlay (a "Members" button in the header) rather
+  // than a docked column, so no view loses canvas width to it. Closed by default;
+  // opened on demand and dismissed by clicking outside.
+  const [membersOpen, setMembersOpen] = useState(false);
   const [zoom, setZoom] = useState<number>(() => {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
@@ -95,19 +91,17 @@ export default function App() {
   const splitStartPos = useRef(360);
 
   const activeMember = project.members.find(m => m.id === activeMemberId) ?? project.members[0];
+  // The design group the active member belongs to (first match) — supplies the
+  // per-region top cages that step the moment diagram's hogging capacity.
+  const activeGroup = (project.designGroups ?? []).find(g => g.memberIds.includes(activeMember.id));
 
   // Per-member governing status → sidebar group NG/warn badges (memoized so the
   // design engine only re-runs when members / code / SLS combo actually change).
   const badgeById = useMemo(() => {
     const out: Record<string, 'OK' | 'warn' | 'NG'> = {};
-    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo);
+    for (const m of project.members) out[m.id] = memberBadge(m, project.code, project.slsCombo, project.cotTheta, project.ignoreTorsion);
     return out;
-  }, [project.members, project.code, project.slsCombo]);
-
-  // Workflow progress for the ribbon: import → design → verify.
-  const hasImport = !!project.modelMap;
-  const hasGroups = (project.designGroups?.length ?? 0) > 0;
-  const hasVerify = (project.sconcreteResults?.length ?? 0) > 0;
+  }, [project.members, project.code, project.slsCombo, project.cotTheta, project.ignoreTorsion]);
 
   // ── Project mutation wrapper (marks dirty, tracks history) ────────────────
   function setProject(p: Project | ((prev: Project) => Project)) {
@@ -230,16 +224,17 @@ export default function App() {
 
   // ── Click outside to close popovers ───────────────────────────────────────
   useEffect(() => {
-    if (!showPrefs && !showExport) return;
+    if (!showPrefs && !showExport && !membersOpen) return;
     function close(e: MouseEvent) {
       if (!(e.target as Element).closest('[data-popover]')) {
         setShowPrefs(false);
         setShowExport(false);
+        setMembersOpen(false);
       }
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
-  }, [showPrefs, showExport]);
+  }, [showPrefs, showExport, membersOpen]);
 
   // ── A1: Split-pane drag ───────────────────────────────────────────────────
   function onSplitMouseDown(e: React.MouseEvent) {
@@ -303,12 +298,14 @@ export default function App() {
   ) {
     if (applyUnits) setUnits(applyUnits);
     setProject(p => {
-      // Re-imports replace members with the same frame id
-      const incoming = new Set(members.map(m => m.id));
+      // Fresh import: the imported members/groups fully REPLACE whatever was in
+      // the project (the default sample members and any prior import). This is
+      // why importing one group no longer drags in unrelated frames like the
+      // sample C1/C2 columns.
       return {
         ...p,
-        members: [...p.members.filter(m => !incoming.has(m.id)), ...members],
-        designGroups: [...(p.designGroups ?? []).filter(g => !g.memberIds.some(id => incoming.has(id))), ...groups],
+        members,
+        designGroups: groups,
         ...(modelMap ? { modelMap } : {}),
         slsCombo: slsCombo || undefined,
         ...(applyCode ? { code: applyCode } : {}),
@@ -332,10 +329,25 @@ export default function App() {
   }
 
   function handleUpdateMember(updated: Member) {
-    setProject(p => ({
-      ...p,
-      members: p.members.map(m => m.id === updated.id ? updated : m),
-    }));
+    setProject(p => {
+      const prev = p.members.find(m => m.id === updated.id);
+      const members = p.members.map(m => m.id === updated.id ? updated : m);
+      // A member's cage IS its group's cage. When the member designer changes the
+      // rebar (inline edit or Optimize), fan it back to the group and its siblings
+      // so the Group Dashboard card always matches the member designer. Non-rebar
+      // edits (section/span/loads) stay member-local (reference check on rebar).
+      const rebarChanged = !!prev && prev.rebar !== updated.rebar;
+      const groups = p.designGroups ?? [];
+      const owning = groups.filter(g => g.memberIds.includes(updated.id));
+      if (!rebarChanged || !owning.length) return { ...p, members };
+      const owningIds = new Set(owning.map(g => g.id));
+      const siblingIds = new Set(owning.flatMap(g => g.memberIds));
+      return {
+        ...p,
+        designGroups: groups.map(g => owningIds.has(g.id) ? { ...g, rebar: updated.rebar } : g),
+        members: members.map(m => (m.id !== updated.id && siblingIds.has(m.id)) ? { ...m, rebar: updated.rebar } : m),
+      };
+    });
   }
 
   function addMember() {
@@ -501,33 +513,22 @@ export default function App() {
       {showReport && (
         <ReportModal project={project} onClose={() => setShowReport(false)} />
       )}
-      {/* Sidebar */}
-      <aside id="app-sidebar" style={{ width: sidebarOpen ? sidebarW : 48, flexShrink: 0, background: 'white', borderRight: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', borderBottom: `1px solid ${BORDER.default}` }}>
-          <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
-            SD
+      {/* Members pull-down overlay — opened from the header "Members" button; a
+          floating panel (not a docked column) so no view loses canvas width. */}
+      {membersOpen && (
+        <aside id="app-sidebar" data-popover="" style={{ position: 'fixed', top: 52, left: 12, bottom: 12, width: 288, zIndex: 300, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, boxShadow: '0 16px 40px rgba(15,23,42,0.20)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Heading */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: `1px solid ${BORDER.default}` }}>
+          <span style={{ fontWeight: 700, fontSize: 13, color: INK.strong }}>Members</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
+            <button onClick={() => setMembersOpen(false)} style={{ color: INK.muted, fontSize: 15, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Close">✕</button>
           </div>
-          {sidebarOpen && (
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong }}>S-Dashboard</div>
-              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
-            </div>
-          )}
-          <button onClick={() => setSidebarOpen(o => !o)} style={{ marginLeft: 'auto', color: INK.muted, fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
-            {sidebarOpen ? '◀' : '▶'}
-          </button>
         </div>
 
         {/* Members list — grouped sections */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {sidebarOpen && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 6px' }}>
-              <span style={LABEL_STYLE}>Members</span>
-              <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
-            </div>
-          )}
-          {sidebarOpen ? buildSidebarSections().map(section => {
+          {buildSidebarSections().map(section => {
             const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
             const ngCount = section.members.filter(m => badgeById[m.id] === 'NG').length;
             const warnCount = section.members.filter(m => badgeById[m.id] === 'warn').length;
@@ -614,60 +615,52 @@ export default function App() {
                 ))}
               </div>
             );
-          }) : (
-            // Collapsed sidebar — just member dots
-            project.members.map(m => (
-              <button key={m.id} onClick={() => handleSelectMember(m.id)}
-                style={{ display: 'block', width: '100%', padding: '8px 0', background: 'none', border: 'none', cursor: 'pointer' }}
-                title={m.id}
-              >
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam, margin: '0 auto' }} />
-              </button>
-            ))
-          )}
+          })}
         </div>
 
-        {/* Resize handle */}
-        {sidebarOpen && (
-          <div
-            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, cursor: 'col-resize', zIndex: 10, background: 'transparent' }}
-            onMouseDown={e => {
-              sidebarDragging.current = true;
-              sidebarDragStartX.current = e.clientX;
-              sidebarDragStartW.current = sidebarW;
-              const onMove = (me: MouseEvent) => {
-                if (!sidebarDragging.current) return;
-                const dx = me.clientX - sidebarDragStartX.current;
-                setSidebarW(Math.max(160, Math.min(480, sidebarDragStartW.current + dx)));
-              };
-              const onUp = () => { sidebarDragging.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-              window.addEventListener('mousemove', onMove);
-              window.addEventListener('mouseup', onUp);
-              e.preventDefault();
-            }}
-            title="Drag to resize"
-          />
-        )}
-
-        {sidebarOpen && (
-          <div style={{ padding: '10px 12px', borderTop: `1px solid ${BORDER.default}` }}>
-            {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
-              <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
-                <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </aside>
+        {/* Legend footer */}
+        <div style={{ padding: '10px 14px', borderTop: `1px solid ${BORDER.default}` }}>
+          {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
+            <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
+              <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
+            </div>
+          ))}
+        </div>
+        </aside>
+      )}
 
       {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Top bar */}
         <header id="app-header" style={{ background: 'white', borderBottom: `1px solid ${BORDER.default}`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+          {/* Brand */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 2 }}>
+            <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
+              SD
+            </div>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong, lineHeight: 1.15 }}>S-Dashboard</div>
+              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
+            </div>
+          </div>
+
+          {/* Members pull-down toggle (replaces the old docked member column) */}
+          <div data-popover="" style={{ position: 'relative' }}>
+            <button
+              onClick={() => { setMembersOpen(v => !v); setShowExport(false); setShowPrefs(false); }}
+              style={{ ...hdrBtn, background: membersOpen ? ACCENT.softBg : 'white', color: membersOpen ? ACCENT.primary : INK.base }}
+              title="Show the member list"
+            >
+              ☰ Members
+            </button>
+          </div>
+
+          <div style={{ width: 1, height: 20, background: BORDER.default }} />
+
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {([['dashboard', 'Dashboard'], ['map', 'Map'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
+            {([['map', '🗺 Viewer'], ['dashboard', 'Dashboard'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
@@ -711,10 +704,8 @@ export default function App() {
 
           <div style={{ width: 1, height: 20, background: BORDER.default }} />
 
-          {/* File actions */}
-          <button onClick={handleNewProject} style={hdrBtn} title="New project (Ctrl+N)">New</button>
-          <button onClick={handleOpen}       style={hdrBtn} title="Open project (Ctrl+O)">Open</button>
-          <button onClick={handleSave}       style={hdrBtn} title="Save project (Ctrl+S)">Save</button>
+          {/* File actions (New / Open / Save) live in the native File menu and the
+              Ctrl+N/O/S shortcuts — no header buttons. */}
           <button
             onClick={() => setShowEtabsImport(true)}
             style={{ ...hdrBtn, borderColor: ACCENT.primary, color: ACCENT.primary }}
@@ -754,6 +745,34 @@ export default function App() {
                   Excel Summary
                 </button>
                 <button
+                  onClick={() => { exportDcrList(project); setShowExport(false); }}
+                  title="One row per member: governing DCR + per-mode DCRs (flexure / shear / torsion / crack / P-M) and status"
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(Spreadsheet)</span>
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowExport(false);
+                    const bytes = await buildDcrListPDF(project);
+                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${(project.name ?? 'dcr').replace(/\s+/g, '_')}_DCR_schedule.pdf`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  title="A few-page PDF: one row per member with per-mode + governing DCR and status (reviewed members show 'Reviewed', not NG)"
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(PDF)</span>
+                </button>
+                <button
                   onClick={async () => {
                     setShowExport(false);
                     const bytes = await buildSchedulePDF(project, { mode: 'group' });
@@ -770,6 +789,14 @@ export default function App() {
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
                   Group Schedule PDF
+                </button>
+                <button
+                  onClick={() => { exportGroupScheduleExcel(project); setShowExport(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  Group Schedule (Spreadsheet)
                 </button>
                 <button
                   onClick={async () => {
@@ -817,6 +844,77 @@ export default function App() {
                 boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '12px 8px', minWidth: 190,
               }}>
                 <div style={{ ...LABEL_STYLE, padding: '0 8px', marginBottom: 8 }}>
+                  Design code
+                </div>
+                {(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => (
+                  <button
+                    key={c}
+                    onClick={() => {
+                      // Follow the code's native unit system: EC2 → SI, ACI → imperial.
+                      if (c === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
+                      else if (c !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
+                      setProject(p => ({ ...p, code: c }));
+                    }}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                      background: project.code === c ? ACCENT.softBg : 'none',
+                      color: project.code === c ? ACCENT.primary : INK.base,
+                      fontWeight: project.code === c ? 700 : 400,
+                    }}
+                  >
+                    <span>{c}</span>
+                    {project.code === c && <span style={{ fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
+                {project.code === 'EN1992-1-1' && (
+                  <>
+                    <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
+                      Shear strut angle (cot θ)
+                    </div>
+                    {([[2.5, '2.5 · θ = 21.8° (EC2 max)'], [2.0, '2.0 · θ = 26.6°'], [1.5, '1.5 · θ = 33.7°'], [1.25, '1.25 · θ = 38.7° (S-CONCRETE)'], [1.0, '1.0 · θ = 45°']] as [number, string][]).map(([v, lbl]) => {
+                      const cur = project.cotTheta ?? 2.5;
+                      return (
+                        <button
+                          key={v}
+                          onClick={() => setProject(p => ({ ...p, cotTheta: v }))}
+                          title="EC2 §6.2.3 variable strut inclination. Lower cot θ = steeper strut = more conservative shear/torsion capacity — use it to match a checker (e.g. S-CONCRETE) that fixes θ."
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                            cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                            background: cur === v ? ACCENT.softBg : 'none',
+                            color: cur === v ? ACCENT.primary : INK.base,
+                            fontWeight: cur === v ? 700 : 400,
+                          }}
+                        >
+                          <span>{lbl}</span>
+                          {cur === v && <span style={{ fontSize: 11 }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
+                  Torsion
+                </div>
+                <button
+                  onClick={() => setProject(p => ({ ...p, ignoreTorsion: !p.ignoreTorsion }))}
+                  title="Neglect torsion for all beams: Tu is treated as 0, the in-app torsion / shear+torsion checks (DCR_torsion, V&T links, §6.3.x, §9.2.3) are skipped, and no torsion is written into the S-Concrete .SCO export. Use when torsion is compatibility-only and can be redistributed, or is handled outside this model."
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
+                    cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                    background: project.ignoreTorsion ? ACCENT.softBg : 'none',
+                    color: project.ignoreTorsion ? ACCENT.primary : INK.base,
+                    fontWeight: project.ignoreTorsion ? 700 : 400,
+                  }}
+                >
+                  <span>Neglect torsion (Tu = 0)</span>
+                  <span style={{ fontSize: 11 }}>{project.ignoreTorsion ? '✓' : ''}</span>
+                </button>
+                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
                   Display Scale
                 </div>
                 {[0.75, 0.9, 1.0, 1.1, 1.25, 1.5].map(z => (
@@ -863,57 +961,6 @@ export default function App() {
           {/* Project info */}
           <div style={{ fontSize: 11, color: INK.secondary }}>{project.name}</div>
         </header>
-
-        {/* Workflow ribbon — Import → Design → Verify, always visible so the
-            S-Concrete verification step is reachable from any screen. The design
-            code lives here because it drives the .SCO handed to S-Concrete. */}
-        <div id="app-ribbon" style={{ background: SURFACE.subtle, borderBottom: `1px solid ${BORDER.default}`, padding: '5px 16px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
-          {([
-            { key: 'import', num: '1', label: 'Import', hint: 'from ETABS', done: hasImport, onClick: () => setShowEtabsImport(true) },
-            { key: 'design', num: '2', label: 'Design', hint: 'group & rebar', done: hasGroups, onClick: () => setTab('map') },
-            { key: 'verify', num: '3', label: 'Verify', hint: '⚙ S-Concrete', done: hasVerify, onClick: () => setTab('map') },
-          ] as const).map((stage, i, arr) => {
-            // Current stage = the first not-yet-done step (all done ⇒ Verify).
-            const firstTodo = arr.find(s => !s.done)?.key ?? 'verify';
-            const current = stage.key === firstTodo;
-            return (
-              <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  onClick={stage.onClick}
-                  title={`${stage.label} — ${stage.hint}`}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 14, cursor: 'pointer',
-                    border: `1px solid ${current ? ACCENT.primary : stage.done ? STATUS.okBorder : BORDER.default}`,
-                    background: current ? ACCENT.softBg : stage.done ? STATUS.okBg : 'white',
-                  }}
-                >
-                  <span style={{
-                    width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 10, fontWeight: 700, color: 'white',
-                    background: stage.done ? STATUS.ok : current ? ACCENT.primary : INK.muted,
-                  }}>{stage.done ? '✓' : stage.num}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: current ? ACCENT.primary : stage.done ? STATUS.ok : INK.secondary }}>{stage.label}</span>
-                  <span style={{ fontSize: 11, color: INK.muted }}>{stage.hint}</span>
-                </button>
-                {i < arr.length - 1 && <span style={{ color: BORDER.strong, fontSize: 12 }}>→</span>}
-              </div>
-            );
-          })}
-          <div style={{ flex: 1 }} />
-          <span style={LABEL_STYLE}>Design code</span>
-          <Dropdown
-            value={project.code}
-            options={(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => ({ value: c, label: c }))}
-            onChange={v => {
-              const newCode = v as DesignCode;
-              // Follow the code's native unit system: EC2 → SI, ACI → imperial.
-              if (newCode === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
-              else if (newCode !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
-              setProject(p => ({ ...p, code: newCode }));
-            }}
-            style={{ fontSize: 11, background: ACCENT.softBg, color: ACCENT.primary, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 6, padding: '2px 6px', fontWeight: 700, cursor: 'pointer', outline: 'none' }}
-          />
-        </div>
 
         {/* Content */}
         <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>
@@ -991,10 +1038,15 @@ export default function App() {
                       member={activeMember}
                       code={project.code}
                       slsCombo={project.slsCombo}
+                      cotTheta={project.cotTheta}
+                      ignoreTorsion={project.ignoreTorsion}
                       engineer={project.engineer}
                       sconcreteResults={project.sconcreteResults}
                       sconcreteRanAt={project.sconcreteRanAt}
                       onRebarChange={handleUpdateMember}
+                      midThirdTopBars={activeGroup?.midThirdTopBars}
+                      oppositeTopBars={activeGroup?.oppositeTopBars}
+                      endThirdBotBars={activeGroup?.endThirdBotBars}
                     />
                   </ErrorBoundary>
                 </div>

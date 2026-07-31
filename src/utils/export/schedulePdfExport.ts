@@ -11,10 +11,12 @@
  */
 import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import type { Project, Member, MapFrame, DesignGroup, LoadCase } from '../../types';
+import type { Project, Member, MapFrame, DesignGroup, LoadCase, DesignCode } from '../../types';
 import { formatBarLabel } from '../rebar';
+import { barsStr, skinStr, stirrupZoneStr, continuousBars } from './scheduleData';
 import { winAnsiSafe } from './pdfExport';
 import { runDesign } from '../../engines';
+import { analyzeGroupCurtailment, curtailmentNote } from '../curtailment';
 
 // ── colour palette ─────────────────────────────────────────────────────────
 
@@ -65,6 +67,15 @@ function strokeRect(ctx: Ctx, x: number, y: number, w: number, h: number) {
 
 function hline(ctx: Ctx, x1: number, y: number, x2: number, thickness = 0.4, color = C.mid) {
   ctx.page.drawLine({ start: { x: x1, y }, end: { x: x2, y }, thickness, color });
+}
+
+/** Largest font size ≤ base (down to min) at which `s` fits within `maxW` points —
+ *  keeps long multi-layer bar strings from bleeding into the next column. */
+function fitSize(font: PDFFont, s: string, maxW: number, base: number, min = 5): number {
+  const str = winAnsiSafe(String(s));
+  let size = base;
+  while (size > min && font.widthOfTextAtSize(str, size) > maxW) size -= 0.25;
+  return size;
 }
 
 // ── rebar formatting ───────────────────────────────────────────────────────
@@ -119,6 +130,53 @@ function computeMaxDCR(m: Member, code: string): number {
   return best;
 }
 
+// ── L/3 curtailment notes ────────────────────────────────────────────────────
+
+export interface CurtailNote { group: string; note: string; red: boolean; }
+
+/** Collect the curtailment notes the user pinned (per-face) on each group, with
+ *  percentages recomputed against the group's current cage + station forces. */
+export function buildCurtailmentNotes(
+  groups: DesignGroup[],
+  memberById: Map<string, Member>,
+  code: DesignCode,
+): CurtailNote[] {
+  const out: CurtailNote[] = [];
+  for (const g of groups) {
+    if (!g.curtailmentNotes?.top && !g.curtailmentNotes?.bot) continue;
+    const gm = g.memberIds.map(id => memberById.get(id)).filter((m): m is Member => !!m);
+    const rebar = g.rebar ?? gm[0]?.rebar;
+    if (!rebar) continue;
+    const cu = analyzeGroupCurtailment(gm, rebar, code);
+    if (g.curtailmentNotes?.top && cu.top) out.push({ group: g.label, note: `${curtailmentNote(cu.top)} Keep ${continuousBars(rebar, 'top', cu.top)} continuous.`, red: cu.top.flag === 'red' });
+    if (g.curtailmentNotes?.bot && cu.bot) out.push({ group: g.label, note: `${curtailmentNote(cu.bot)} Keep ${continuousBars(rebar, 'bot', cu.bot)} continuous.`, red: cu.bot.flag === 'red' });
+  }
+  return out;
+}
+
+function drawNotesPage(
+  doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont,
+  notes: CurtailNote[], projectName: string, pageNum: number,
+): number {
+  const ctx = addPage(doc, fontReg, fontBold);
+  drawPageFrame(ctx, 'Schedule Notes', projectName, pageNum);
+  const { margin } = ctx;
+  let y = 595 - 60;
+  txt(ctx, 'L/3 Bar-Curtailment Notes', margin, y, 12, C.navy, fontBold);
+  y -= 16;
+  txt(ctx, 'Percentage of each face required through the third-points; the balance may be curtailed (respect development + code minimum).', margin, y, 8, C.mid);
+  y -= 20;
+  for (const n of notes) {
+    if (y < 40) { break; }
+    const col = n.red ? C.red : rgb(0.49, 0.29, 0.86); // purple for curtailment opportunities
+    fillRect(ctx, margin, y - 1, 8, 8, col); // red = keep >50% continuous · purple = curtailment opportunity
+    txt(ctx, winAnsiSafe(n.group), margin + 14, y, 8.5, C.dark, fontBold);
+    txt(ctx, winAnsiSafe(n.note), margin + 14, y - 11, 8, C.dark);
+    y -= 26;
+  }
+  return pageNum + 1;
+}
+
 // ── font loading ───────────────────────────────────────────────────────────
 
 let _regularBytes: ArrayBuffer | null = null;
@@ -154,10 +212,10 @@ function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont, margin = 36): C
   return { page, font, bold, w, h, margin };
 }
 
-function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum: number) {
+function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum: number, banner = 'Beam Schedule') {
   const { w, h, margin } = ctx;
   fillRect(ctx, 0, h - 28, w, 28, C.navy);
-  txt(ctx, 'S-Dashboard — Beam Schedule', margin, h - 19, 9, C.white, ctx.bold);
+  txt(ctx, `S-Dashboard — ${banner}`, margin, h - 19, 9, C.white, ctx.bold);
   txt(ctx, pageTitle, w / 2 - 60, h - 19, 9, C.white);
   txt(ctx, projectName, w - margin - 140, h - 19, 8, C.mid);
   fillRect(ctx, 0, 0, w, 16, C.navy);
@@ -166,32 +224,53 @@ function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum
 
 // ── GROUP schedule (compact — one row per design group) ────────────────────
 
-const GRP_COL_DEFS = [
-  { key: 'idx',      header: '#',                  w: 22  },
-  { key: 'label',    header: 'Group',              w: 135 },
-  { key: 'section',  header: 'Section (b×h)',      w: 80  },
-  { key: 'count',    header: 'Beams',              w: 40  },
-  { key: 'top',      header: 'Top bars',           w: 120 },
-  { key: 'bot',      header: 'Bottom bars',        w: 120 },
-  { key: 'skin',     header: 'Skin bars',          w: 80  },
-  { key: 'stirrups', header: 'Stirrups (z1/z2/z3)', w: 150 },
-  { key: 'dcr',      header: 'Max DCR',            w: 50  },
+// Group schedule columns. Top bars, bottom bars and stirrups are each split into
+// their three L/3 regions (mark end / middle / opposite end) under a spanning
+// super-header via `group`. Top is full at the supports & curtailed mid-span;
+// bottom is full at mid-span & curtailed toward the supports.
+type GrpGroup = 'top' | 'bottom' | 'stirrups';
+const GRP_COL_DEFS: { key: string; header: string; w: number; group?: GrpGroup }[] = [
+  { key: 'idx',      header: '#',              w: 20  },
+  { key: 'label',    header: 'Group',          w: 100 },
+  { key: 'section',  header: 'Section (b×h)',  w: 62  },
+  { key: 'count',    header: 'Beams',          w: 30  },
+  { key: 'topMark',  header: 'Mark End',       w: 58, group: 'top' },
+  { key: 'topMid',   header: 'Middle',         w: 58, group: 'top' },
+  { key: 'topOpp',   header: 'Opp. End',       w: 58, group: 'top' },
+  { key: 'botMark',  header: 'Mark End',       w: 58, group: 'bottom' },
+  { key: 'botMid',   header: 'Middle',         w: 58, group: 'bottom' },
+  { key: 'botOpp',   header: 'Opp. End',       w: 58, group: 'bottom' },
+  { key: 'skin',     header: 'Skin (n-size@sp)', w: 66 },
+  { key: 'stirMark', header: 'Mark End',       w: 52, group: 'stirrups' },
+  { key: 'stirMid',  header: 'Middle',         w: 52, group: 'stirrups' },
+  { key: 'stirOpp',  header: 'Opp. End',       w: 52, group: 'stirrups' },
 ];
+// Spanning super-headers over the grouped sub-columns.
+const GRP_SUPERHEADERS: Record<GrpGroup, string> = {
+  top: 'Top bars',
+  bottom: 'Bottom bars',
+  stirrups: 'Stirrups (size-spacing-legs)',
+};
 const TABLE_MARGIN_LEFT = 36;
 const ROW_H = 17;
-const HEADER_H = 22;
+const HEADER_H = 22;      // single-band header (beam schedule)
+const GRP_HEADER_H = 30;  // two-band header (group schedule)
 
 interface GroupSchedRow {
   idx: string;
   label: string;
   section: string;
   count: string;
-  top: string;
-  bot: string;
+  topMark: string;
+  topMid: string;
+  topOpp: string;
+  botMark: string;
+  botMid: string;
+  botOpp: string;
   skin: string;
-  stirrups: string;
-  dcr: string;
-  dcrVal: number;
+  stirMark: string;
+  stirMid: string;
+  stirOpp: string;
   groupIdx: number; // for colour swatch
 }
 
@@ -209,27 +288,37 @@ function buildGroupRows(
     const repMember = groupMembers[0];
     const rebar = g.rebar ?? repMember?.rebar;
 
-    const top      = rebar ? rebarStr(rebar.topBars) : '—';
-    const bot      = rebar ? rebarStr(rebar.botBars) : '—';
-    const skin     = rebar ? rebarStr(rebar.sideBars ?? []) : '—';
-    const stirrups = rebar ? stirrupStr(rebar, isEC2) : '—';
+    // Top bars split into the three L/3 regions: mark end (governing-end cage),
+    // middle third (user curtailment cage), and opposite end.
+    const topMark  = rebar ? barsStr(rebar.topBars) : '—';
+    // Middle-third / opposite-end top: the group's explicit reduced cage when set,
+    // else the mark cage runs through (matches the eye pop-out & moment diagram).
+    const topMid   = g.midThirdTopBars?.length ? barsStr(g.midThirdTopBars) : topMark;
+    const topOpp   = g.oppositeTopBars?.length ? barsStr(g.oppositeTopBars) : topMark;
+    // Bottom bars split the same way: full through mid-span, curtailed toward the
+    // supports (mark / opposite end) — the group's explicit end-third bottom cage
+    // when set, else the auto ~continuous cage the ⚑ bottom flag represents.
+    const beams = groupMembers.filter(m => m.memberType === 'beam' || !m.memberType);
+    const cu = rebar && beams.length ? analyzeGroupCurtailment(beams, rebar, code as DesignCode) : undefined;
+    const botMid  = rebar ? barsStr(rebar.botBars) : '—';
+    const botEnd  = g.endThirdBotBars?.length
+      ? barsStr(g.endThirdBotBars)
+      : (rebar ? (cu?.bot ? continuousBars(rebar, 'bot', cu.bot) : barsStr(rebar.botBars)) : '—');
+    const skin     = rebar ? skinStr(rebar.sideBars, isEC2) : '—';
+    // Stirrups split into the three zones (end / middle / end).
+    const stirMark = rebar ? stirrupZoneStr(rebar, 0, isEC2) : '—';
+    const stirMid  = rebar ? stirrupZoneStr(rebar, 1, isEC2) : '—';
+    const stirOpp  = rebar ? stirrupZoneStr(rebar, 2, isEC2) : '—';
     const section  = repMember ? sectionLabel(repMember, isEC2) : '—';
-
-    // Worst DCR across all group members
-    let maxDCR = 0;
-    for (const m of groupMembers) {
-      const d = computeMaxDCR(m, code);
-      if (d > maxDCR) maxDCR = d;
-    }
 
     return {
       idx: String(i + 1),
       label: g.label,
       section,
       count: String(groupMembers.length),
-      top, bot, skin, stirrups,
-      dcr: maxDCR > 0 ? maxDCR.toFixed(2) : '—',
-      dcrVal: maxDCR,
+      topMark, topMid, topOpp,
+      botMark: botEnd, botMid, botOpp: botEnd,
+      skin, stirMark, stirMid, stirOpp,
       groupIdx: i,
     };
   });
@@ -237,11 +326,47 @@ function buildGroupRows(
 
 function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
   const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
-  fillRect(ctx, x0, y, totalW, HEADER_H, C.navy);
-  let x = x0;
-  for (const col of GRP_COL_DEFS) {
-    txt(ctx, col.header, x + 3, y + 7, 7.5, C.white, ctx.bold);
-    x += col.w;
+  fillRect(ctx, x0, y, totalW, GRP_HEADER_H, C.navy);
+  const bandY = y + GRP_HEADER_H - 13; // divider between super-header band and sub-headers
+
+  // Collect each super-group's horizontal span.
+  const spans: Partial<Record<GrpGroup, { x0: number; w: number }>> = {};
+  {
+    let x = x0;
+    for (const col of GRP_COL_DEFS) {
+      if (col.group) {
+        const s = spans[col.group] ?? (spans[col.group] = { x0: x, w: 0 });
+        s.w += col.w;
+      }
+      x += col.w;
+    }
+  }
+  // Super-headers, centred over their span in the top band.
+  for (const key of ['top', 'bottom', 'stirrups'] as const) {
+    const s = spans[key];
+    if (!s) continue;
+    const label = winAnsiSafe(GRP_SUPERHEADERS[key]);
+    const tw = ctx.bold.widthOfTextAtSize(label, 7);
+    txt(ctx, GRP_SUPERHEADERS[key], s.x0 + Math.max(2, (s.w - tw) / 2), y + GRP_HEADER_H - 10, 7, C.white, ctx.bold);
+    hline(ctx, s.x0, bandY, s.x0 + s.w, 0.5, C.mid);
+  }
+  // Column headers: grouped ones sit in the lower band; the rest span both bands.
+  {
+    let x = x0;
+    for (const col of GRP_COL_DEFS) {
+      if (col.group) txt(ctx, col.header, x + 3, y + 5, 6.8, C.white, ctx.bold);
+      else           txt(ctx, col.header, x + 3, y + GRP_HEADER_H / 2 - 3, 7.2, C.white, ctx.bold);
+      x += col.w;
+    }
+  }
+  // Vertical separators: full-height at group boundaries, lower-band only within a group.
+  {
+    let x = x0;
+    for (let i = 0; i < GRP_COL_DEFS.length - 1; i++) {
+      x += GRP_COL_DEFS[i].w;
+      const sameGroup = GRP_COL_DEFS[i].group && GRP_COL_DEFS[i].group === GRP_COL_DEFS[i + 1].group;
+      ctx.page.drawLine({ start: { x, y }, end: { x, y: sameGroup ? bandY : y + GRP_HEADER_H }, thickness: 0.3, color: C.mid });
+    }
   }
 }
 
@@ -249,7 +374,12 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
   const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
   if (shade) fillRect(ctx, x0, y, totalW, ROW_H, C.light);
 
-  const cells = [row.idx, row.label, row.section, row.count, row.top, row.bot, row.skin, row.stirrups, row.dcr];
+  const cells = [
+    row.idx, row.label, row.section, row.count,
+    row.topMark, row.topMid, row.topOpp,
+    row.botMark, row.botMid, row.botOpp,
+    row.skin, row.stirMark, row.stirMid, row.stirOpp,
+  ];
   let x = x0;
 
   GRP_COL_DEFS.forEach((col, i) => {
@@ -260,11 +390,10 @@ function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade
       x += col.w;
       return;
     }
-    const cellColor = i === 8 && row.dcrVal > 0
-      ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
-      : C.dark;
-    txt(ctx, cells[i], x + 3, y + 5, 8, cellColor,
-      i === 1 ? ctx.bold : ctx.font);
+    const f = i === 1 ? ctx.bold : ctx.font;
+    // Shrink to fit the column so long multi-layer strings never bleed across.
+    const size = fitSize(f, cells[i], col.w - 6, i >= 4 ? 7 : 8);
+    txt(ctx, cells[i], x + 3, y + 5, size, C.dark, f);
     x += col.w;
   });
   hline(ctx, x0, y, x0 + totalW);
@@ -337,7 +466,8 @@ function drawBeamRow(ctx: Ctx, row: BeamSchedRow, x0: number, y: number, shade: 
     const cellColor = i === 8 && row.dcrVal > 0
       ? row.dcrVal > 1 ? C.red : row.dcrVal > 0.9 ? C.amber : C.green
       : C.dark;
-    txt(ctx, cells[i], x + 3, y + 5, 8, cellColor, i === 0 ? ctx.bold : ctx.font);
+    const f = i === 0 ? ctx.bold : ctx.font;
+    txt(ctx, cells[i], x + 3, y + 5, fitSize(f, cells[i], col.w - 6, 8), cellColor, f);
     x += col.w;
   });
   hline(ctx, x0, y, x0 + totalW);
@@ -351,9 +481,10 @@ function drawScheduleTable(
   startPageNum: number,
 ): number {
   const colDefs = isGroup ? GRP_COL_DEFS : BEAM_COL_DEFS;
+  const headerH = isGroup ? GRP_HEADER_H : HEADER_H;
   const tableW = colDefs.reduce((s, c) => s + c.w, 0);
   const topY = 595 - 44;
-  const rowsPerPage = Math.floor((topY - 24 - HEADER_H) / ROW_H);
+  const rowsPerPage = Math.floor((topY - 24 - headerH) / ROW_H);
   let pageNum = startPageNum;
 
   for (let start = 0; start < rows.length; start += rowsPerPage) {
@@ -361,12 +492,12 @@ function drawScheduleTable(
     drawPageFrame(ctx, isGroup ? 'Group Schedule' : 'Beam Schedule', projectName, pageNum++);
 
     if (isGroup) {
-      drawGroupTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+      drawGroupTableHeader(ctx, TABLE_MARGIN_LEFT, topY - headerH);
     } else {
-      drawBeamTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+      drawBeamTableHeader(ctx, TABLE_MARGIN_LEFT, topY - headerH);
     }
 
-    let y = topY - HEADER_H - ROW_H;
+    let y = topY - headerH - ROW_H;
     const chunk = rows.slice(start, start + rowsPerPage);
     chunk.forEach((row, i) => {
       if (isGroup) drawGroupRow(ctx, row as GroupSchedRow, TABLE_MARGIN_LEFT, y, i % 2 === 0);
@@ -374,14 +505,14 @@ function drawScheduleTable(
       y -= ROW_H;
     });
 
-    strokeRect(ctx, TABLE_MARGIN_LEFT, y, tableW, topY - y - HEADER_H - ROW_H + ROW_H);
+    strokeRect(ctx, TABLE_MARGIN_LEFT, y, tableW, topY - y - headerH);
 
-    // Column dividers
+    // Column dividers (body only — header draws its own)
     let cx = TABLE_MARGIN_LEFT;
     for (const col of colDefs.slice(0, -1)) {
       cx += col.w;
       ctx.page.drawLine({
-        start: { x: cx, y: topY - HEADER_H },
+        start: { x: cx, y: topY - headerH },
         end:   { x: cx, y: y + ROW_H },
         thickness: 0.3, color: C.mid,
       });
@@ -552,6 +683,12 @@ export async function buildSchedulePDF(
     pageNum = drawScheduleTable(doc, fontReg, fontBold, rows, false, projectName, pageNum);
   }
 
+  // ── L/3 curtailment notes (only the faces the user pinned) ──────────────────
+  const curtailNotes = buildCurtailmentNotes(groups, memberById, code as DesignCode);
+  if (curtailNotes.length) {
+    pageNum = drawNotesPage(doc, fontReg, fontBold, curtailNotes, projectName, pageNum);
+  }
+
   // ── Plan pages ─────────────────────────────────────────────────────────────
   const frames = project.modelMap?.frames ?? [];
   const stories = options.story
@@ -569,5 +706,165 @@ export async function buildSchedulePDF(
     drawPlanPage(ctx, storyFrames, story, memberById, groups, projectName, pageNum++);
   }
 
+  return doc.save();
+}
+
+// ── Member DCR list (a few pages: one row per member, per-mode + governing DCR) ──
+// Reviewed members (in an engineer-Reviewed group) never read "NG"/"Warning" — the
+// Status column shows "Reviewed" and the governing DCR is drawn neutral, not red.
+
+const DCR_COL_DEFS: { key: string; header: string; w: number; align: 'l' | 'r' | 'c' }[] = [
+  { key: 'idx',     header: '#',       w: 22,  align: 'c' },
+  { key: 'label',   header: 'Member',  w: 152, align: 'l' },
+  { key: 'group',   header: 'Group',   w: 112, align: 'l' },
+  { key: 'section', header: 'Section', w: 58,  align: 'l' },
+  { key: 'mpos',    header: 'M+',      w: 40,  align: 'r' },
+  { key: 'mneg',    header: 'M-',      w: 40,  align: 'r' },
+  { key: 'shear',   header: 'V',       w: 38,  align: 'r' },
+  { key: 'tor',     header: 'T',       w: 38,  align: 'r' },
+  { key: 'crack',   header: 'Crack',   w: 44,  align: 'r' },
+  { key: 'pm',      header: 'P-M',     w: 40,  align: 'r' },
+  { key: 'gov',     header: 'Gov DCR', w: 52,  align: 'r' },
+  { key: 'status',  header: 'Status',  w: 64,  align: 'c' },
+];
+const DCR_TABLE_W = DCR_COL_DEFS.reduce((s, c) => s + c.w, 0);
+
+interface DcrRow {
+  idx: string; label: string; group: string; section: string;
+  mpos: number; mneg: number; shear: number; tor: number; crack: number; pm: number | null;
+  gov: number; status: string; reviewed: boolean;
+}
+
+function govResultOf(m: Member, code: string): ReturnType<typeof runDesign> | null {
+  let worst: ReturnType<typeof runDesign> | null = null;
+  let worstMax = -1;
+  const consider = (r: ReturnType<typeof runDesign>) => {
+    const mx = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.DCR_PM ?? 0);
+    if (mx > worstMax) { worstMax = mx; worst = r; }
+  };
+  if (m.results?.length) for (const r of m.results) consider(r);
+  else for (const lc of m.loads) consider(runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams));
+  return worst;
+}
+
+function buildDcrRows(members: Member[], groups: DesignGroup[], isEC2: boolean, code: string): DcrRow[] {
+  const groupLabel = new Map<string, string>();
+  const reviewed = new Set<string>();
+  for (const g of groups)
+    for (const id of g.memberIds) { groupLabel.set(id, g.label); if (g.reviewed) reviewed.add(id); }
+  const rows: DcrRow[] = [];
+  members.forEach((m, i) => {
+    const r = govResultOf(m, code);
+    if (!r) return;
+    const gov = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.DCR_PM ?? 0);
+    const isRev = reviewed.has(m.id);
+    rows.push({
+      idx: String(i + 1), label: m.label, group: groupLabel.get(m.id) ?? '—',
+      section: sectionLabel(m, isEC2),
+      mpos: r.DCR_flex_pos, mneg: r.DCR_flex_neg, shear: r.DCR_shear, tor: r.DCR_torsion,
+      crack: r.DCR_crack ?? 0, pm: r.DCR_PM ?? null, gov,
+      status: isRev && r.status !== 'OK' ? 'Reviewed' : r.status, reviewed: isRev,
+    });
+  });
+  return rows;
+}
+
+const dcrColorFor = (v: number) => (v > 1.0 ? C.red : v > 0.9 ? C.amber : C.dark);
+const statusColorFor = (s: string) => (s === 'NG' ? C.red : s === 'Warning' ? C.amber : C.green);
+
+function drawCell(ctx: Ctx, s: string, x: number, w: number, y: number, align: 'l' | 'r' | 'c', color = C.dark, font?: PDFFont) {
+  const f = font ?? ctx.font;
+  const size = fitSize(f, s, w - 6, 8.5);
+  const tw = f.widthOfTextAtSize(winAnsiSafe(String(s)), size);
+  const tx = align === 'r' ? x + w - 3 - tw : align === 'c' ? x + (w - tw) / 2 : x + 3;
+  txt(ctx, s, tx, y, size, color, f);
+}
+
+function drawDcrTableHeader(ctx: Ctx, x0: number, y: number) {
+  fillRect(ctx, x0, y, DCR_TABLE_W, HEADER_H, C.navy);
+  let x = x0;
+  for (const col of DCR_COL_DEFS) { drawCell(ctx, col.header, x, col.w, y + 7, col.align, C.white, ctx.bold); x += col.w; }
+}
+
+function drawDcrRow(ctx: Ctx, row: DcrRow, x0: number, y: number, zebra: boolean) {
+  if (zebra) fillRect(ctx, x0, y - 4, DCR_TABLE_W, ROW_H, C.light);
+  let x = x0;
+  for (const col of DCR_COL_DEFS) {
+    let s = '';
+    let color = C.dark;
+    let font: PDFFont | undefined;
+    switch (col.key) {
+      case 'idx': s = row.idx; break;
+      case 'label': s = row.label; break;
+      case 'group': s = row.group; color = C.mid; break;
+      case 'section': s = row.section; break;
+      case 'mpos': s = row.mpos.toFixed(2); break;
+      case 'mneg': s = row.mneg.toFixed(2); break;
+      case 'shear': s = row.shear.toFixed(2); break;
+      case 'tor': s = row.tor.toFixed(2); break;
+      case 'crack': s = row.crack.toFixed(2); break;
+      case 'pm': s = row.pm == null ? '—' : row.pm.toFixed(2); break;
+      case 'gov': s = row.gov.toFixed(2); color = row.reviewed ? C.dark : dcrColorFor(row.gov); font = ctx.bold; break;
+      case 'status': s = row.status; color = statusColorFor(row.status); font = ctx.bold; break;
+    }
+    drawCell(ctx, s, x, col.w, y, col.align, color, font);
+    x += col.w;
+  }
+}
+
+function drawDcrTable(doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont, rows: DcrRow[], projectName: string, startPage: number): number {
+  const topY = 595 - 44;
+  const rowsPerPage = Math.floor((topY - 24 - HEADER_H) / ROW_H);
+  let pageNum = startPage;
+  for (let start = 0; start < rows.length; start += rowsPerPage) {
+    const ctx = addPage(doc, fontReg, fontBold);
+    drawPageFrame(ctx, 'Member DCR Schedule', projectName, pageNum++, 'DCR Schedule');
+    drawDcrTableHeader(ctx, TABLE_MARGIN_LEFT, topY - HEADER_H);
+    let y = topY - HEADER_H - ROW_H;
+    rows.slice(start, start + rowsPerPage).forEach((row, i) => { drawDcrRow(ctx, row, TABLE_MARGIN_LEFT, y, i % 2 === 0); y -= ROW_H; });
+    strokeRect(ctx, TABLE_MARGIN_LEFT, y, DCR_TABLE_W, topY - y - HEADER_H);
+    let cx = TABLE_MARGIN_LEFT;
+    for (const col of DCR_COL_DEFS.slice(0, -1)) {
+      cx += col.w;
+      ctx.page.drawLine({ start: { x: cx, y: topY - HEADER_H }, end: { x: cx, y: y + ROW_H }, thickness: 0.3, color: C.mid });
+    }
+  }
+  return pageNum;
+}
+
+/** A few-page "DCR schedule": one row per member with per-mode + governing DCR and
+ *  status. Members in an engineer-Reviewed group show "Reviewed" instead of NG. */
+export async function buildDcrListPDF(project: Project): Promise<Uint8Array> {
+  const { regular, bold } = await getFontBytes();
+  const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkit);
+  const fontReg = await doc.embedFont(regular);
+  const fontBold = await doc.embedFont(bold);
+
+  const isEC2 = project.code === 'EN1992-1-1';
+  const code = project.code ?? 'ACI318-19';
+  const projectName = winAnsiSafe(project.name ?? 'Unnamed Project');
+  const groups = project.designGroups ?? [];
+  const members = (project.members ?? []).filter(m => !m.memberType || m.memberType === 'beam');
+  const rows = buildDcrRows(members, groups, isEC2, code);
+  const ngCount = rows.filter(r => r.status === 'NG').length;
+  const reviewedCount = rows.filter(r => r.reviewed).length;
+
+  // Cover page
+  {
+    const cover = doc.addPage([842, 595]);
+    const { width: w, height: h } = cover.getSize();
+    cover.drawRectangle({ x: 0, y: 0, width: w, height: h, color: C.navy });
+    cover.drawRectangle({ x: 40, y: 120, width: w - 80, height: 3, color: C.blue });
+    cover.drawText('S-Dashboard', { x: 44, y: h - 80, size: 18, color: C.mid, font: fontBold });
+    cover.drawText('Member DCR Schedule', { x: 44, y: h - 110, size: 28, color: C.white, font: fontBold });
+    cover.drawText(projectName, { x: 44, y: h - 148, size: 14, color: C.mid, font: fontReg });
+    const today = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+    cover.drawText(today, { x: 44, y: 100, size: 10, color: C.mid, font: fontReg });
+    cover.drawText(`${rows.length} members  ·  ${ngCount} NG  ·  ${reviewedCount} reviewed  ·  ${isEC2 ? 'EN 1992-1-1' : code}`, { x: 44, y: 82, size: 10, color: C.mid, font: fontReg });
+    cover.drawText('DCR = utilisation (demand / capacity). "Reviewed" = engineer sign-off; failing checks accepted.', { x: 44, y: 62, size: 8.5, color: C.mid, font: fontReg });
+  }
+
+  drawDcrTable(doc, fontReg, fontBold, rows, projectName, 2);
   return doc.save();
 }

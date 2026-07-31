@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildGroupScoFiles, parseBatchResults } from '../scoBatch';
 import { buildBeamScoText } from '../scoWriter';
 import type { BeamMember } from '../../../types/beam';
-import type { Member } from '../../../types';
+import type { Member, Project } from '../../../types';
 
 const beam = (id: string, label: string): BeamMember => ({
   id,
@@ -28,6 +28,18 @@ describe('buildBeamScoText', () => {
     expect(t.includes('Member Type\t 1')).toBe(true);
     expect(t.includes('Member Type\t 3')).toBe(false);
     expect(t.includes('Member Status\t 3')).toBe(true); // unrelated token preserved
+  });
+});
+
+describe('buildGroupScoFiles — neglect torsion strips Tu from the .SCO', () => {
+  it('ignoreTorsion produces the SAME .SCO as a genuinely zero-Tu beam', () => {
+    const bTor = beam('b1', 'B1');                                   // Tu = 8
+    const bZero: Member = { ...bTor, loads: bTor.loads.map(l => ({ ...l, Tu: 0 })) };
+    const stripped = buildGroupScoFiles([bTor], 'ACI318-19', { ignoreTorsion: true } as unknown as Project)[0].text;
+    const genuineZero = buildGroupScoFiles([bZero], 'ACI318-19')[0].text;
+    expect(stripped).toBe(genuineZero);                              // torsion fully removed
+    const withTorsion = buildGroupScoFiles([bTor], 'ACI318-19')[0].text;
+    expect(withTorsion).not.toBe(genuineZero);                      // torsion normally written
   });
 });
 
