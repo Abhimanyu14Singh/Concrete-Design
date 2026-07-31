@@ -27,6 +27,9 @@ release
 # .NET build output
 tools/EtabsHelper/bin/
 tools/EtabsHelper/obj/
+tools/SConcreteHelper/bin/
+tools/SConcreteHelper/obj/
 build-helper/
+build-helper-sconcrete/
 .claude/*
 !.claude/commands/

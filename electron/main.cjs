@@ -3,7 +3,15 @@ const path = require('path');
 const fs   = require('fs');
 const { registerEtabsBridge, killHelper } = require('./etabsBridge.cjs');
 const { registerSconcreteBridge } = require('./sconcreteBridge.cjs');
-const isDev = process.env.NODE_ENV === 'development';
+// Dev mode = load the Vite dev server instead of the built dist/.
+// `NODE_ENV=development` only works on a POSIX shell; npm scripts run through
+// cmd.exe on Windows, where that prefix is a syntax error. The `--dev` flag is
+// shell-independent, so it is what `npm run electron:dev` passes. The env var is
+// still honoured for anyone (or any tooling) that already sets it.
+// `!app.isPackaged` gates both: an INSTALLED app must never chase localhost:5173
+// just because the machine happens to export NODE_ENV=development.
+const isDev = !app.isPackaged
+  && (process.env.NODE_ENV === 'development' || process.argv.includes('--dev'));
 
 // The single main window + an optional popped-out Group Dashboard window. The two
 // renderers can't message each other directly, so the main process relays between

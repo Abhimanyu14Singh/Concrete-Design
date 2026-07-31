@@ -11,8 +11,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "electron:dev": "NODE_ENV=development electron electron/main.cjs",
+    "electron:dev": "electron electron/main.cjs --dev",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
     "electron:build": "npm run build && electron-builder",
+    "gate": "tsc -b && vitest run && vite build",
     "lint": "eslint .",
     "build:helper": "dotnet publish tools/EtabsHelper -c Release -r win-x64 --no-self-contained -o build-helper && dotnet publish tools/SConcreteHelper -c Release -r win-x64 --no-self-contained -o build-helper-sconcrete"
   },
