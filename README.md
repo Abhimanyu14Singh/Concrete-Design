@@ -231,7 +231,13 @@ Imported members keep their ETABS link (frame name, story, groups, node coordina
 
 ### Prerequisites
 
-[Node.js 18+](https://nodejs.org/en/download) — free, one-time install (~70 MB).
+[Node.js 22 LTS](https://nodejs.org/en/download) — free, one-time install (~70 MB).
+(Electron requires Node ≥ 22.12 and Vite ≥ 20.19; 22 LTS is what CI builds with.)
+
+> **Working on the app day to day?** See
+> **[docs/local-development.md](docs/local-development.md)** — the local Windows
+> loop: edit with Claude Code in your terminal, see it live in the browser, and
+> build the installer yourself instead of waiting on GitHub Actions.
 
 ### Option A — Browser (development server)
 
@@ -251,9 +257,13 @@ npm run electron:build
 ```
 
 Produces an installer in `release/`:
-- **Windows** — `release/S-Concrete Design Setup x.x.x.exe`
-- **macOS** — `release/S-Concrete Design-x.x.x.dmg`
-- **Linux** — `release/S-Concrete Design-x.x.x.AppImage`
+- **Windows** — `release/S-Dashboard Setup x.x.x.exe`
+- **macOS** — `release/S-Dashboard-x.x.x.dmg`
+- **Linux** — `release/S-Dashboard-x.x.x.AppImage`
+
+On Windows, prefer `.\scripts\build-installer.ps1` — it mirrors the CI build
+(including the .NET sidecars that ETABS and S-Concrete need) and fails early if
+they would be missing. See [docs/local-development.md](docs/local-development.md).
 
 Once installed, the app runs with no Node.js or browser required.
 
@@ -268,10 +278,12 @@ npm run build
 ### Development commands
 
 ```bash
-npm run dev           # Hot-reload dev server
-npm test              # Run unit tests (Vitest)
-npm run test:watch    # Watch mode
-npm run electron:dev  # Electron dev mode with hot-reload
+npm run dev            # Hot-reload dev server (browser)
+npm run dev:desktop    # Electron + hot reload, one command
+npm run gate           # Typecheck + all tests + production build
+npm test               # Run unit tests (Vitest)
+npm run test:watch     # Watch mode
+npm run electron:dev   # Electron against an already-running dev server
 ```
 
 ---
