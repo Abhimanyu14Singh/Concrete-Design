@@ -6,7 +6,14 @@ import { useState, useMemo } from 'react';
 import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { GROUP_PALETTE as PALETTE, groupColor } from './groupColors';
-import { ACCENT, BORDER, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
+import { Icon } from '../common/Icon';
+import { ACCENT, BORDER, ICON, INK, MONO_NUM, STATUS, SURFACE } from '../../theme';
+
+/** Shared shape for the header action row, so the icons and labels line up. */
+const actionBtn: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+  padding: '6px 8px', borderRadius: 6, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap',
+};
 
 interface Props {
   groups: DesignGroup[];
@@ -22,13 +29,15 @@ interface Props {
   onDeleteGroupWithMembers?: (groupId: string) => void;
   onSuggestAll?: () => void;
   suggestAllNote?: string | null;
+  /** Open the Auto-group panel (lives on this Design tab, not under Analyze). */
+  onAutoGroup?: () => void;
 }
 
 export default function GroupPanel({
   groups, frames, selected, activeGroupId,
   onGroupsChange, onActiveGroupChange, onSelectionChange, dcrById = {},
   designResultsById = {}, members = [],
-  onDeleteGroupWithMembers, onSuggestAll, suggestAllNote,
+  onDeleteGroupWithMembers, onSuggestAll, suggestAllNote, onAutoGroup,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
@@ -53,6 +62,15 @@ export default function GroupPanel({
       g.memberIds.map(id => framesByMember.get(id)?.frameName).filter(Boolean) as string[]
     );
     onSelectionChange(frameNames);
+  }
+
+  /** Wipe the grouping without touching the members themselves. */
+  function deleteAllGroups() {
+    if (!groups.length) return;
+    if (!confirm(`Delete all ${groups.length} design group(s)?\n\nThe members stay in the project — only the grouping is removed.`)) return;
+    onGroupsChange([]);
+    onActiveGroupChange(null);
+    setCheckedGroups(new Set());
   }
 
   function createGroupFromSelection() {
@@ -174,25 +192,50 @@ export default function GroupPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 12 }}>
-      {/* Header actions */}
+      {/* Header actions — "+ Group selection", then Delete All · Auto-Group · Suggest. */}
       <div style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER.default}`, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button
           onClick={createGroupFromSelection}
           disabled={selected.size === 0}
-          style={{ flex: 1, padding: '6px 8px', background: selected.size ? ACCENT.primary : BORDER.default, color: selected.size ? 'white' : INK.muted, border: 'none', borderRadius: 6, cursor: selected.size ? 'pointer' : 'default', fontWeight: 600, fontSize: 11 }}
+          style={{ ...actionBtn, flex: '1 1 100%', justifyContent: 'center', background: selected.size ? ACCENT.primary : BORDER.default, color: selected.size ? 'white' : INK.muted, border: 'none', cursor: selected.size ? 'pointer' : 'default', fontWeight: 600 }}
         >
-          + Group selection ({selected.size})
+          <Icon name="groupSelection" size={ICON.sm} />
+          Group selection ({selected.size})
         </button>
+
+        <button
+          onClick={deleteAllGroups}
+          disabled={groups.length === 0}
+          title="Delete every design group. Members are kept — only the grouping is removed."
+          style={{ ...actionBtn, flex: 1, background: groups.length ? '#fee2e2' : '#f3f4f6', color: groups.length ? STATUS.fail : INK.muted, border: `1px solid ${groups.length ? '#fca5a5' : BORDER.default}`, cursor: groups.length ? 'pointer' : 'default' }}
+        >
+          <Icon name="delete" size={ICON.sm} />
+          Delete All
+        </button>
+
+        {onAutoGroup && (
+          <button
+            onClick={onAutoGroup}
+            title="Auto-group — propose design groups by binning similar members"
+            style={{ ...actionBtn, flex: 1, background: 'white', color: ACCENT.primary, border: `1px solid ${ACCENT.softBorder}`, cursor: 'pointer' }}
+          >
+            <Icon name="autoGroup" size={ICON.sm} />
+            Auto-Group
+          </button>
+        )}
+
         {onSuggestAll && (
           <button
             onClick={onSuggestAll}
             disabled={groups.length === 0}
             title="Suggest the lightest practical rebar for every group at once"
-            style={{ flexShrink: 0, padding: '6px 8px', background: groups.length ? 'white' : '#f3f4f6', color: groups.length ? '#7c3aed' : INK.muted, border: `1px solid ${groups.length ? '#c4b5fd' : BORDER.default}`, borderRadius: 6, cursor: groups.length ? 'pointer' : 'default', fontWeight: 700, fontSize: 11 }}
+            style={{ ...actionBtn, flex: 1, background: groups.length ? 'white' : '#f3f4f6', color: groups.length ? '#7c3aed' : INK.muted, border: `1px solid ${groups.length ? '#c4b5fd' : BORDER.default}`, cursor: groups.length ? 'pointer' : 'default' }}
           >
-            ✨ Suggest all groups
+            <Icon name="suggest" size={ICON.sm} />
+            Suggest
           </button>
         )}
+
         {suggestAllNote && (
           <div style={{ flexBasis: '100%', fontSize: 10, color: '#6d28d9' }}>{suggestAllNote}</div>
         )}
@@ -204,9 +247,10 @@ export default function GroupPanel({
               if (checkedGroups.has(activeGroupId ?? '')) onActiveGroupChange(null);
               setCheckedGroups(new Set());
             }}
-            style={{ flexShrink: 0, padding: '6px 8px', background: '#fee2e2', color: STATUS.fail, border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 11 }}
+            style={{ ...actionBtn, flexBasis: '100%', justifyContent: 'center', background: '#fee2e2', color: STATUS.fail, border: '1px solid #fca5a5', cursor: 'pointer' }}
           >
-            🗑 Delete {checkedGroups.size}
+            <Icon name="delete" size={ICON.sm} />
+            Delete {checkedGroups.size} checked
           </button>
         )}
       </div>

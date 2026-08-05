@@ -21,7 +21,7 @@ import type {
 } from '../../types';
 import type { ZoneShearResult } from '../../utils/concreteDesign';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
-import { getBarArea, getBarDiam } from '../../utils/concreteDesign';
+import { coverFor, getBarArea, getBarDiam, zoneIndexAtX } from '../../utils/concreteDesign';
 
 // ── Unit factors (imperial → SI) ─────────────────────────────────────────────
 const IN_TO_MM   = 25.4;
@@ -298,10 +298,12 @@ export function crackWidth(
   fck: number,     // MPa
   Es: number,      // MPa
   kt: number,      // 0.4 long-term / 0.6 short-term
-  opts: { AsComp?: number; dComp?: number; phi?: number } = {},
+  // Ecm: engineer-supplied secant modulus (MPa); omitted ⇒ §3.1.3 Ecm(fck).
+  opts: { AsComp?: number; dComp?: number; phi?: number; Ecm?: number } = {},
 ): CrackWidthResult {
   const phi = opts.phi ?? 0;
-  const alpha_e = Es / (ecm(fck) / (1 + phi));  // creep-adjusted modular ratio
+  const Ec = opts.Ecm ?? ecm(fck);
+  const alpha_e = Es / (Ec / (1 + phi));        // creep-adjusted modular ratio
   const AsComp = opts.AsComp ?? 0;              // compression steel (mm²)
   const dComp = opts.dComp ?? 0;                // its depth from the compression face
 
@@ -437,23 +439,51 @@ export interface SideFaceCrackResult {
  */
 export function sideFaceCrackWidth(p: {
   b: number; h: number;              // web width, overall depth (mm)
+  /**
+   * BOTTOM-face vertical cover — sets the lower bound of the skin-bar band.
+   * NOT the §7.3.4 cover for this check: see `coverSide`.
+   */
   cover: number; stirrupD: number;   // clear cover, link Ø (mm)
+  /**
+   * TOP-face vertical cover (mm); defaults to `cover`. The skin band is bounded by
+   * a DIFFERENT face at each end, so one value cannot serve both: with a deep top
+   * cover every skin level was placed too high, skewing the layered Icr and ρside.
+   */
+  coverTop?: number;
+  /**
+   * SIDE-face clear cover (mm) for the §7.3.4 terms that are about the side face:
+   * hc,side and sr,max. Defaults to `cover` for callers with one cover everywhere.
+   *
+   * These were previously the same argument, so once covers were split per face
+   * this check silently read the BOTTOM cover — inflating sr,max by k3·Δc and the
+   * side-face wk by ~25-30% on a beam cast against ground (side 40 / bottom 75),
+   * or under-reporting it with the covers reversed.
+   */
+  coverSide?: number;
   fck: number; Es: number; kt: number; phi: number;
+  /** Secant modulus override (MPa); omitted ⇒ §3.1.3 Ecm(fck). */
+  Ecm?: number;
   As_top: number; d_top: number;     // top steel area (mm²) & depth from top (mm)
   As_bot: number; d_bot: number; botBarD: number;  // bottom steel (+ bar Ø for auto-spacing)
   sideBarD: number; As_perBar: number; nPerFace: number; s_v?: number;  // skin bars
   Mqp_pos: number; Mqp_neg: number;  // quasi-permanent moments (kN·m)
 }): SideFaceCrackResult {
   const { b, h, cover, stirrupD, fck, Es, kt, phi } = p;
-  const alpha_e = Es / (ecm(fck) / (1 + phi));
+  const coverSide = p.coverSide ?? cover;
+  const coverTopV = p.coverTop ?? cover;   // vertical bound at the TOP face
+  // Depth from each face to the first level the skin bars can occupy.
+  const insetTop = coverTopV + stirrupD + p.botBarD;
+  const insetBot = cover + stirrupD + p.botBarD;
+  const alpha_e = Es / ((p.Ecm ?? ecm(fck)) / (1 + phi));
   const useHogging = p.Mqp_neg >= p.Mqp_pos;
   const govMqp = useHogging ? p.Mqp_neg : p.Mqp_pos;
   const nSkin = Math.max(0, Math.floor(p.nPerFace));
 
   // Vertical skin-bar spacing: user value, else uniform over the clear web height.
+  const clearWeb = h - insetTop - insetBot;
   const s_v = (p.s_v && p.s_v > 0)
     ? p.s_v
-    : (nSkin > 1 ? (h - 2 * (cover + stirrupD + p.botBarD)) / (nSkin - 1) : h - 2 * (cover + stirrupD + p.botBarD));
+    : (nSkin > 1 ? clearWeb / (nSkin - 1) : clearWeb);
 
   const nil: SideFaceCrackResult = {
     cracked: false, wk: 0, sigma_skin: 0, sigma_chord: 0, sr_side: 0, eps: 0, rho_side: 0,
@@ -480,8 +510,8 @@ export function sideFaceCrackWidth(p: {
   // the exact placement barely moves Icr; what matters is the tension-side area.
   // The nominal s_v above is kept for the LOCAL effective ratio / crack spacing.
   const skinAreaPerLevel = 2 * p.As_perBar;      // both faces share each level
-  const webTop = Math.min(cover + stirrupD + p.botBarD, h / 2);
-  const webBot = Math.max(h - (cover + stirrupD + p.botBarD), h / 2);
+  const webTop = Math.min(insetTop, h / 2);
+  const webBot = Math.max(h - insetBot, h / 2);
   for (let j = 0; j < nSkin; j++) {
     const dFromTop = nSkin > 1 ? webTop + j * (webBot - webTop) / (nSkin - 1) : h / 2;
     layers.push({ As: skinAreaPerLevel, d: toComp(dFromTop) });
@@ -503,10 +533,11 @@ export function sideFaceCrackWidth(p: {
   const sigma_skin = Icr > 0 && y_crit > x ? alpha_e * M_Nmm * (y_crit - x) / Icr : 0;
 
   // Local effective ratio + max crack spacing at the skin bar (§7.3.2 / §7.3.4).
-  const hc_side = Math.min(2.5 * (cover + stirrupD + p.sideBarD / 2), h / 2);
+  // These two are about the SIDE face, so they take the side cover.
+  const hc_side = Math.min(2.5 * (coverSide + stirrupD + p.sideBarD / 2), h / 2);
   const rho_side = p.As_perBar / (s_v * hc_side);
   const k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425;  // k2 = 0.5 (bending) — EC2 §7.3.4(3)
-  const sr_side = k3 * (cover + stirrupD) + k1 * k2 * k4 * p.sideBarD / Math.max(rho_side, 1e-4);
+  const sr_side = k3 * (coverSide + stirrupD) + k1 * k2 * k4 * p.sideBarD / Math.max(rho_side, 1e-4);
 
   const fct_eff = fctm(fck);
   const eps = Math.max(
@@ -617,7 +648,12 @@ export function designMemberEC2(
   const bf_mm = section.b * IN_TO_MM;                      // flange/full width
   const h_mm  = (section.h ?? 12) * IN_TO_MM;
   const hf_mm = (section.hf ?? section.h ?? 12) * IN_TO_MM;
-  const cover_mm = section.coverClear * IN_TO_MM;
+  // Per-face cover (all three collapse to coverClear unless the project sets
+  // them separately): depths come off the top/bottom faces, bar and stirrup-leg
+  // spacing across the width comes off the sides.
+  const coverTop_mm  = coverFor(section, 'top')  * IN_TO_MM;
+  const coverBot_mm  = coverFor(section, 'bot')  * IN_TO_MM;
+  const coverSide_mm = coverFor(section, 'side') * IN_TO_MM;
   const stirrupD_mm = getBarDiam(section.stirrupDia) * IN_TO_MM;
 
   const fck  = material.fc * PSI_TO_MPA;
@@ -635,12 +671,12 @@ export function designMemberEC2(
   // Multi-layer centroid: when there is only one BarGroup the centroid equals
   // the single-layer formula; for multiple layers it is the area-weighted mean.
   const layerClear_mm = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
-  const d_bot = h_mm - layerCentroidMm(rebar.botBars, cover_mm, stirrupD_mm, layerClear_mm);
-  const d_top = h_mm - layerCentroidMm(rebar.topBars, cover_mm, stirrupD_mm, layerClear_mm);
+  const d_bot = h_mm - layerCentroidMm(rebar.botBars, coverBot_mm, stirrupD_mm, layerClear_mm);
+  const d_top = h_mm - layerCentroidMm(rebar.topBars, coverTop_mm, stirrupD_mm, layerClear_mm);
   // Compression-steel depth from the compression face for each bending sense —
   // the opposite-face flexural bars act as compression steel (doubly-reinforced).
-  const dComp_pos = cover_mm + stirrupD_mm + topBarD_mm / 2; // +M: top steel in compression
-  const dComp_neg = cover_mm + stirrupD_mm + botBarD_mm / 2; // −M: bottom steel in compression
+  const dComp_pos = coverTop_mm + stirrupD_mm + topBarD_mm / 2; // +M: top steel in compression
+  const dComp_neg = coverBot_mm + stirrupD_mm + botBarD_mm / 2; // −M: bottom steel in compression
 
   const MEd_pos = load.Mu_pos * KIPFT_TO_KNM;
   const MEd_neg = load.Mu_neg * KIPFT_TO_KNM;
@@ -685,10 +721,15 @@ export function designMemberEC2(
   // acts (station position load.x). The worst (loosest) zone is mid-span, where
   // shear is lowest; pairing that spacing with the peak END shear — which occur at
   // different sections — spuriously fails a correctly-zoned beam (the per-zone
-  // breakdown in zonedShearCheckEC2 shows each third passing). Detailing (s_max),
-  // ρw and torsion keep the worst zone; rows without a station position fall back.
+  // breakdown in zonedShearCheckEC2 shows each third passing). Detailing (s_max
+  // and ρw) keeps the worst zone; rows without a station position fall back.
+  //
+  // Binning goes through the SHARED zoneIndexAtX — a local Math.floor here made
+  // this the one caller that disagreed with zoneShearDemands / tieSpacingAtX /
+  // the calc sheet, so a third-point station read one zone for the headline DCR
+  // and another for the table printed beside it.
   const zoneAtX = rebar.tieZones && rebar.tieZones.length === 3 && load.x !== undefined && span > 0
-    ? rebar.tieZones[Math.min(2, Math.max(0, Math.floor((load.x / span) * 3)))]
+    ? rebar.tieZones[zoneIndexAtX(load.x, span)]
     : undefined;
   const shearSpacing_mm = zoneAtX ? zoneAtX.spacing * IN_TO_MM : worstSpacing_mm;
 
@@ -719,11 +760,19 @@ export function designMemberEC2(
   let Asw_s_prov_leg = 0;     // mm²/mm provided per leg
   // Distance from concrete surface to centroid of the longitudinal bar
   // (clear cover + link Ø + ½ main bar Ø) — sets the §6.3.2(1) tef floor.
-  const coverToCentre = cover_mm + stirrupD_mm + botBarD_mm / 2;
+  // t_ef is ONE section-wide wall thickness, so its §6.3.2(1) floor must be set by
+  // the GOVERNING (deepest-cover) face. Binding it to the bottom cover understated
+  // t_ef whenever another face was deeper, which inflates A_k = (b−t_ef)(h−t_ef)
+  // and so over-reports T_Rd and the §6.3.2(4) V+T interaction. Before covers were
+  // split per face this could not happen — one cover served every face.
+  const coverToCentre = Math.max(coverTop_mm, coverBot_mm, coverSide_mm)
+    + stirrupD_mm + botBarD_mm / 2;
   if (rebar.ties) {
     const AtLeg_mm2 = getBarArea(rebar.ties.barSize) * IN2_TO_MM2; // one leg
-    // Worst-zone spacing governs (see worstSpacing definition above).
-    const s_mm = worstSpacing_mm;
+    // Torsion capacity, like shear, belongs to the section the demand acts on:
+    // T_Ed comes from this load row, so pair it with that row's zone spacing.
+    // (Detailing limits below keep the worst zone — they judge the member.)
+    const s_mm = shearSpacing_mm;
     const t = tRd(b_mm, h_mm, AtLeg_mm2, s_mm, fywd, fck, fcd, cotTheta, coverToCentre);
     TRd = Math.min(t.TRds, t.TRdMax);
     TRdc_val = t.TRdc;
@@ -757,10 +806,15 @@ export function designMemberEC2(
       const s_tor_shear = 0.75 * d_bot;
       const s_tor_least = Math.min(b_mm, h_mm);
       const s_tor_max = Math.min(s_tor_u8, s_tor_shear, s_tor_least);
-      if (s_mm > s_tor_max + 0.5)
+      // DETAILING limit → the loosest zone, deliberately NOT the row's `s_mm`.
+      // Torsion peaks at the supports, so every torsion-carrying row sits in a
+      // tight end zone; judging this at s_mm let an illegal middle third ship
+      // with a clean warnings list.
+      const s_detail_mm = worstSpacing_mm;
+      if (s_detail_mm > s_tor_max + 0.5)
         warnings.push({
           code: 'EC2 §9.2.3(2)',
-          message: `Torsion link spacing ${s_mm.toFixed(0)} mm > s_max = ${s_tor_max.toFixed(0)} mm (min of u/8 = ${s_tor_u8.toFixed(0)}, 0.75d = ${s_tor_shear.toFixed(0)}, least dim = ${s_tor_least.toFixed(0)} mm) — tighten the closed torsion links`,
+          message: `Torsion link spacing ${s_detail_mm.toFixed(0)} mm > s_max = ${s_tor_max.toFixed(0)} mm (min of u/8 = ${s_tor_u8.toFixed(0)}, 0.75d = ${s_tor_shear.toFixed(0)}, least dim = ${s_tor_least.toFixed(0)} mm) — tighten the closed torsion links${rebar.tieZones ? ' (worst of the zoned spacings)' : ''}`,
           severity: 'warning',
         });
     }
@@ -815,7 +869,7 @@ export function designMemberEC2(
     const db = getBarDiam(grp.barSize) * IN_TO_MM;
     const sMin = Math.max(k1 * db, DG_MM + k2, 20);
     // Clear gap = (width − 2·cover − 2·stirrupØ − Σbar Ø) / (n − 1)
-    const clear = (b_mm - 2 * cover_mm - 2 * stirrupD_mm - grp.numBars * db) / (grp.numBars - 1);
+    const clear = (b_mm - 2 * coverSide_mm - 2 * stirrupD_mm - grp.numBars * db) / (grp.numBars - 1);
     if (clear < sMin)
       warnings.push({
         code: 'EC2 §8.2',
@@ -837,7 +891,7 @@ export function designMemberEC2(
   if (rebar.ties && rebar.ties.legs >= 2) {
     const s_trans_max = Math.min(0.75 * d_bot, 600); // mm
     // Transverse leg spacing = (bw − 2·cover − 2·stirrupØ) / (nLegs − 1)
-    const s_trans = (b_mm - 2 * cover_mm - 2 * stirrupD_mm) / (rebar.ties.legs - 1);
+    const s_trans = (b_mm - 2 * coverSide_mm - 2 * stirrupD_mm) / (rebar.ties.legs - 1);
     if (s_trans > s_trans_max + 0.5)
       warnings.push({
         code: 'EC2 §9.2.2(8)',
@@ -879,6 +933,9 @@ export function designMemberEC2(
 
   // ── Crack width §7.3.4 (quasi-permanent combination) ──
   const Es_MPa = material.Es * PSI_TO_MPA;
+  // Secant modulus for the crack modular ratio: the project's override when the
+  // engineer has taken control of Ec, otherwise §3.1.3 Ecm(fck) inside crackWidth().
+  const Ecm_MPa = material.Ec ? material.Ec * PSI_TO_MPA : undefined;
   const Mqp_pos = crack.Mqp_pos !== undefined ? crack.Mqp_pos * KIPFT_TO_KNM : crack.qpFactor * MEd_pos;
   const Mqp_neg = crack.Mqp_neg !== undefined ? crack.Mqp_neg * KIPFT_TO_KNM : crack.qpFactor * MEd_neg;
 
@@ -891,10 +948,12 @@ export function designMemberEC2(
 
   // Bottom face (positive bending → bottom steel in tension)
   const cw_bot = crackWidth(Mqp_pos, As_bot_mm2, botBarD_mm, b_mm, h_mm, d_bot,
-    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt, { AsComp: As_top_mm2, dComp: dComp_pos, phi: phiCreep });
+    coverBot_mm + stirrupD_mm, fck, Es_MPa, crack.kt,
+    { AsComp: As_top_mm2, dComp: dComp_pos, phi: phiCreep, Ecm: Ecm_MPa });
   // Top face (negative bending → top steel in tension)
   const cw_top = crackWidth(Mqp_neg, As_top_mm2, topBarD_mm, b_mm, h_mm, d_top,
-    cover_mm + stirrupD_mm, fck, Es_MPa, crack.kt, { AsComp: As_bot_mm2, dComp: dComp_neg, phi: phiCreep });
+    coverTop_mm + stirrupD_mm, fck, Es_MPa, crack.kt,
+    { AsComp: As_bot_mm2, dComp: dComp_neg, phi: phiCreep, Ecm: Ecm_MPa });
 
   if (cw_bot.wk > crack.wLimitBot)
     warnings.push({ code: 'EC2 §7.3.4', message: `Bottom face crack width wk = ${cw_bot.wk.toFixed(2)} mm > limit ${crack.wLimitBot.toFixed(2)} mm (σs = ${cw_bot.sigma_s.toFixed(0)} MPa under M_qp = ${Mqp_pos.toFixed(1)} kN·m)`, severity: 'error' });
@@ -910,8 +969,11 @@ export function designMemberEC2(
   if (rebar.sideBars && rebar.sideBars.length > 0) {
     const firstSideGroup = rebar.sideBars[0];
     const sf = sideFaceCrackWidth({
-      b: b_mm, h: h_mm, cover: cover_mm, stirrupD: stirrupD_mm,
-      fck, Es: Es_MPa, kt: crack.kt, phi: phiCreep,
+      // `cover` places the skin bars over the web height between the top and
+      // bottom bar levels — a VERTICAL dimension, so the bottom-face cover.
+      // `coverSide` is the §7.3.4 cover for the side-face hc,side / sr,max terms.
+      b: b_mm, h: h_mm, cover: coverBot_mm, coverTop: coverTop_mm, coverSide: coverSide_mm, stirrupD: stirrupD_mm,
+      fck, Es: Es_MPa, kt: crack.kt, phi: phiCreep, Ecm: Ecm_MPa,
       As_top: As_top_mm2, d_top, As_bot: As_bot_mm2, d_bot, botBarD: botBarD_mm,
       sideBarD: getBarDiam(firstSideGroup.barSize) * IN_TO_MM,
       As_perBar: getBarArea(firstSideGroup.barSize) * IN2_TO_MM2,
@@ -1049,10 +1111,14 @@ export function zonedShearCheckEC2(
 
   const b_mm = (section.bw ?? section.b) * IN_TO_MM;
   const h_mm = (section.h ?? 12) * IN_TO_MM;
-  const cover_mm = section.coverClear * IN_TO_MM;
+  const coverBot_mm = coverFor(section, 'bot') * IN_TO_MM;
   const stirrupD_mm = getBarDiam(section.stirrupDia) * IN_TO_MM;
-  const botBarD_mm = getBarDiam(rebar.botBars[0]?.barSize ?? 8) * IN_TO_MM;
-  const d_bot = h_mm - cover_mm - stirrupD_mm - botBarD_mm / 2;
+  const layerClear_mm = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
+  // Same area-weighted multi-layer centroid designMemberEC2 uses. A single-layer
+  // d here made this table disagree with the headline check for the SAME zone
+  // spacing on any beam with more than one layer of bottom bars — the per-zone
+  // row could read OK beside a Shear chip reading NG for the identical station.
+  const d_bot = h_mm - layerCentroidMm(rebar.botBars, coverBot_mm, stirrupD_mm, layerClear_mm);
   const z = 0.9 * d_bot;
   // cotTheta is a parameter (default 2.5) — see the function signature.
 

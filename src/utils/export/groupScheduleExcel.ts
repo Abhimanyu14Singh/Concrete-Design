@@ -27,7 +27,7 @@ export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
   ];
   const data: (string | number)[][] = [
     [`Group Reinforcement Schedule — ${project.name ?? ''}`],
-    [`Code: ${project.code}    Engineer: ${project.engineer ?? '—'}    Date: ${project.date ?? '—'}`],
+    [`Code: ${project.code}    Date: ${project.date ?? '—'}`],
     [],
     header,
   ];

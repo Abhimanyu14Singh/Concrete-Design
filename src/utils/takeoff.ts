@@ -53,10 +53,6 @@ export interface ProjectTakeoff {
 /** Gross cross-section area (in²) for any supported section type. */
 export function sectionAreaIn2(s: SectionDimensions): number {
   switch (s.type) {
-    case 'circular_column': {
-      const D = s.diameter ?? s.b;
-      return (Math.PI * D * D) / 4;
-    }
     case 'T_beam':
     case 'L_beam': {
       const bw = s.bw ?? s.b;
@@ -79,7 +75,7 @@ export function memberLengthFt(m: Member): number {
     return Math.hypot(e.pt2.x - e.pt1.x, e.pt2.y - e.pt1.y, e.pt2.z - e.pt1.z);
   }
   if (m.span && m.span > 0) return m.span;
-  return m.memberType === 'column' ? 10 : 20;
+  return 20;
 }
 
 /** Concrete volume + reinforcement weight for one member. */
@@ -104,7 +100,6 @@ export function memberTakeoff(m: Member): MemberTakeoff {
 function emptyByType(): Record<MemberType, TakeoffByType> {
   return {
     beam: { count: 0, concreteFt3: 0, steelLb: 0 },
-    column: { count: 0, concreteFt3: 0, steelLb: 0 },
   };
 }
 

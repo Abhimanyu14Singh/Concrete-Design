@@ -1,11 +1,15 @@
 import type { Project, Member, MaterialProps, RebarLayout } from '../types';
+import { settingsFromProject } from './projectSettings';
 
 /**
  * Current on-disk schema version. Bump when the persisted shape changes in a
  * way migrateProject() needs to know about. Older files are always accepted —
  * migrateProject() fills in any fields added since they were saved.
+ *
+ * 1.2 — project-wide `settings` (design standards) + per-face cover and the
+ *       optional Ec/Gc overrides on each member.
  */
-const FILE_VERSION = '1.1';
+const FILE_VERSION = '1.2';
 const FILE_EXT = '.scdb';
 
 /** Standard material fallbacks (psi) for fields added after v1.0. */
@@ -30,6 +34,10 @@ function migrateMaterial(m: Partial<MaterialProps> | undefined): MaterialProps {
     fyt: m?.fyt ?? fy,
     Es: m?.Es ?? MATERIAL_DEFAULTS.Es,
     lambdaConcrete: m?.lambdaConcrete ?? MATERIAL_DEFAULTS.lambdaConcrete,
+    // Ec/Gc are absent unless the project overrode them — leave them absent so
+    // consumers keep falling back to the code formula.
+    ...(m?.Ec ? { Ec: m.Ec } : {}),
+    ...(m?.Gc ? { Gc: m.Gc } : {}),
   };
 }
 
@@ -71,7 +79,7 @@ export function migrateProject(raw: Record<string, unknown>): Project {
   if (!Array.isArray(data.members)) {
     throw new Error('Not a valid S-Concrete project file (missing members list).');
   }
-  return {
+  const project = {
     ...data,
     id: data.id ?? `proj-${Date.now()}`,
     name: data.name ?? 'Untitled Project',
@@ -79,11 +87,25 @@ export function migrateProject(raw: Record<string, unknown>): Project {
     description: data.description ?? '',
     engineer: data.engineer ?? '',
     date: data.date ?? new Date().toISOString().slice(0, 10),
-    members: data.members.map(m => migrateMember(m as Partial<Member>)),
+    // Columns were dropped when the app became beam-only. A file saved by an
+    // older build can still contain them, so they are filtered out here rather
+    // than loaded into an app that has no engine, editor or .SCO writer for them.
+    members: data.members
+      .filter(m => {
+        const t = (m as Partial<Member>).section?.type as string | undefined;
+        return t !== 'rectangular_column' && t !== 'circular_column';
+      })
+      .map(m => migrateMember(m as Partial<Member>)),
     designGroups: Array.isArray(data.designGroups) ? data.designGroups : undefined,
     hiddenMemberIds: Array.isArray(data.hiddenMemberIds) ? data.hiddenMemberIds : undefined,
     hiddenStories: Array.isArray(data.hiddenStories) ? data.hiddenStories : undefined,
   } as Project;
+  // Files written before the setup dialog existed have no project standards.
+  // Read them back off the first member rather than imposing generic defaults,
+  // so opening an old project and then opening Settings shows what it was
+  // actually designed with. Members are NOT rewritten here — migration must not
+  // silently change anyone's design.
+  return project.settings ? project : { ...project, settings: settingsFromProject(project) };
 }
 
 export function deserializeProject(json: string): Project {

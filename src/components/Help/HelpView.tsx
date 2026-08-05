@@ -13,7 +13,9 @@
  */
 import { useState, useEffect } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { INK, SURFACE, BORDER, ACCENT, STATUS, MONO_NUM, LABEL_STYLE } from '../../theme';
+import { INK, SURFACE, BORDER, ACCENT, STATUS, MONO_NUM, LABEL_STYLE, ICON } from '../../theme';
+import { Icon } from '../common/Icon';
+import type { IconName } from '../common/Icon';
 
 // ── Prose primitives ──────────────────────────────────────────────────────────
 const P = ({ children }: { children: ReactNode }) => (
@@ -50,15 +52,48 @@ const Callout = ({ children, tone = 'info' }: { children: ReactNode; tone?: 'inf
     </div>
   );
 };
+/** Reference table — the default for anything that gets looked up rather than read.
+ *  `align` marks right-aligned (numeric) columns per index. */
+const Table = ({ head, rows, align }: { head: string[]; rows: ReactNode[][]; align?: ('l' | 'r')[] }) => (
+  <div style={{ overflowX: 'auto', margin: '0 0 12px' }}>
+    <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12.5 }}>
+      <thead>
+        <tr>{head.map((h, i) => (
+          <th key={i} style={{ ...LABEL_STYLE, padding: '6px 10px 7px', borderBottom: `2px solid ${BORDER.default}`, textAlign: align?.[i] === 'r' ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+        ))}</tr>
+      </thead>
+      <tbody>{rows.map((r, ri) => (
+        <tr key={ri}>{r.map((c, ci) => (
+          <td key={ci} style={{ padding: '7px 10px', borderBottom: `1px solid ${BORDER.subtle}`, color: INK.base, lineHeight: 1.5, textAlign: align?.[ci] === 'r' ? 'right' : 'left', verticalAlign: 'top' }}>{c}</td>
+        ))}</tr>
+      ))}</tbody>
+    </table>
+  </div>
+);
+
+/** An icon beside its label on one line — <Icon> is display:block, so without this
+ *  the pair wraps in a narrow table cell. Pass no children for a bare icon. */
+const IconLabel = ({ name, children }: { name: IconName; children?: ReactNode }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+    <Icon name={name} size={ICON.sm} />{children && <B>{children}</B>}
+  </span>
+);
+
+/** Where a control actually lives, e.g. <Path>Viewer › Design › Suggest</Path>.
+ *  Engineers ask "where is it" far more often than "what is it called". */
+const Path = ({ children }: { children: ReactNode }) => (
+  <span style={{ ...MONO_NUM, fontSize: 11.5, background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, color: ACCENT.primaryHover, borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap' }}>{children}</span>
+);
+
 const numBadge: CSSProperties = {
   width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   fontSize: 11, fontWeight: 700, color: 'white', background: ACCENT.primary,
 };
-const PageTitle = ({ icon, title, sub }: { icon: string; title: string; sub: string }) => (
+const PageTitle = ({ icon, title, sub }: { icon: IconName; title: string; sub: string }) => (
   <div style={{ marginBottom: 18 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span style={{ fontSize: 22 }}>{icon}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: INK.strong }}>
+      <Icon name={icon} size={ICON.xl} />
       <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: INK.strong }}>{title}</h2>
     </div>
     <p style={{ fontSize: 13, color: INK.secondary, margin: '4px 0 0' }}>{sub}</p>
@@ -74,14 +109,31 @@ const SECTIONS: Section[] = [
     title: 'What S-Dashboard is',
     node: (
       <>
-        <P><B>S-Dashboard</B> takes a reinforced-concrete frame from <B>ETABS</B>, lets you group members and design their reinforcement, and then verifies that reinforcement in <B>S-Concrete</B> — all from one project file. It is built around a three-step workflow shown in the ribbon at the top of every screen:</P>
-        <P>
-          <Tag bg={ACCENT.softBg} fg={ACCENT.primary}>1 · Import</Tag>{' → '}
-          <Tag bg={ACCENT.softBg} fg={ACCENT.primary}>2 · Design</Tag>{' → '}
-          <Tag bg={ACCENT.softBg} fg={ACCENT.primary}>3 · Verify</Tag>
-        </P>
-        <P>You <B>import</B> beams and columns (with their analysis forces) from ETABS, <B>design</B> them by putting similar members into groups and assigning one reinforcement "cage" per group, and <B>verify</B> those cages by running the S-Concrete batch. Results (pass/fail, demand-capacity ratios, warnings) are read back onto the model so you can see at a glance what still needs attention.</P>
-        <P>The app supports <B>ACI 318-19 / 318-14</B> (US) and <B>EN 1992-1-1</B> (Eurocode 2), in imperial or SI units. It designs <B>beams</B> and <B>columns</B>.</P>
+        <P><B>S-Dashboard</B> takes a reinforced-concrete frame from <B>ETABS</B>, lets you group members and design their reinforcement, then verifies that reinforcement in <B>S-Concrete</B> — all from one project file.</P>
+        <P>The work runs in three steps. Each one lives in a specific place:</P>
+        <Table
+          head={['Step', 'What you do', 'Where']}
+          rows={[
+            [<><Tag bg={ACCENT.softBg} fg={ACCENT.primary}>1 · Import</Tag></>,
+              'Pull beams, with their analysis forces, out of ETABS.',
+              <Path>Header › ETABS</Path>],
+            [<><Tag bg={ACCENT.softBg} fg={ACCENT.primary}>2 · Design</Tag></>,
+              'Put similar members in a group; give the group one reinforcement cage.',
+              <Path>Viewer › Design</Path>],
+            [<><Tag bg={ACCENT.softBg} fg={ACCENT.primary}>3 · Verify</Tag></>,
+              'Write an .SCO per group, run the S-Concrete batch, read results back.',
+              <Path>Viewer › Verify</Path>],
+          ]}
+        />
+        <P>Results — pass/fail, demand-capacity ratios, warnings — are read back onto the model, so the plan itself shows what still needs attention.</P>
+        <Table
+          head={['', 'Supported']}
+          rows={[
+            ['Codes', <><Code>ACI 318-19</Code>, <Code>ACI 318-14</Code>, <Code>EN 1992-1-1</Code> (Eurocode 2)</>],
+            ['Members', 'Beams — rectangular, T and L sections'],
+            ['Units', 'Imperial (in · psi · kips) or SI (mm · MPa · kN)'],
+          ]}
+        />
       </>
     ),
   },
@@ -90,19 +142,46 @@ const SECTIONS: Section[] = [
     title: 'How the screen is organized',
     node: (
       <>
-        <P>The window has three fixed parts:</P>
-        <UL>
-          <LI><B>The header</B> — the view tabs (<Code>Dashboard</Code>, <Code>Map</Code>, <Code>Member</Code>, <Code>Help</Code>), the save state, undo/redo, and the file actions (<Code>New</Code>, <Code>Open</Code>, <Code>Save</Code>, <Code>⇪ ETABS</Code>, <Code>Export ▾</Code>, <Code>⚙</Code> preferences).</LI>
-          <LI><B>The workflow ribbon</B> — the <B>Import → Design → Verify</B> steps (a step turns green with a ✓ when it is done) and the <B>Design code</B> selector. The code lives here because it drives the checks and the .SCO handed to S-Concrete.</LI>
-          <LI><B>The content area</B> — whichever view tab is active.</LI>
-        </UL>
-        <H3>The three working views</H3>
-        <UL>
-          <LI><B>Dashboard</B> — a table of every member with its governing DCR; the place to edit one member's inputs and read its full results.</LI>
-          <LI><B>Map</B> — a 2D/3D plan of the whole model, colored by any metric (DCR, steel %, …); this is where you group members, design cages, and run the S-Concrete verification.</LI>
-          <LI><B>Member</B> — the detailed single-member design screen: inputs on the left, code results and the section drawing on the right.</LI>
-        </UL>
-        <Callout>Two selectors are always available: the <B>units</B> toggle (imperial ↔ SI, in ⚙ preferences) and the <B>Design code</B> (in the ribbon). Switching either re-runs every check.</Callout>
+        <P>A header strip across the top, and one of four views below it.</P>
+        <H3>The four views</H3>
+        <Table
+          head={['Tab', 'What it is', 'Use it to']}
+          rows={[
+            [<B>Viewer</B>, 'The model in 2D plan or rotatable 3D, coloured by any metric.',
+              'Group members, design cages, run the S-Concrete batch. Most of the work happens here.'],
+            [<B>Dashboard</B>, 'Every member in one table, grouped by design group.',
+              'Scan the whole job for hot spots; apply skin reinforcement in bulk.'],
+            [<B>Member</B>, 'One member in full: inputs left, code results and section drawing right.',
+              'Check or hand-edit a single member and read its calc sheet.'],
+            [<B>Help</B>, 'This guide.', 'Look things up.'],
+          ]}
+        />
+        <H3>The header</H3>
+        <Table
+          head={['Control', 'Does']}
+          rows={[
+            [<IconLabel name="members">Members</IconLabel>, 'Member list — slides out over the view; click a member to open it.'],
+            [<B>Saved / Unsaved</B>, 'Whether the project has unwritten changes.'],
+            [<span style={{ display: 'inline-flex', gap: 6 }}><Icon name="undo" size={ICON.sm} /><Icon name="redo" size={ICON.sm} /></span>, 'Undo / redo the last edit.'],
+            [<B>ETABS</B>, 'Open the import wizard — the start of every job.'],
+            [<B>Export</B>, 'PDF report, spreadsheets, rebar schedules. See Saving & exporting.'],
+            [<IconLabel name="settings">Settings</IconLabel>, <>Project settings — design code, units, default materials, cot θ, torsion, display scale.</>],
+          ]}
+        />
+        <H3>Project settings</H3>
+        <P>Everything that applies to the <em>whole</em> project lives in one dialog, opened from the settings icon beside <B>Export</B>. On a brand-new project it opens by itself as <B>"Set up your project"</B>.</P>
+        <Table
+          head={['Setting', 'Notes']}
+          rows={[
+            ['Design code', <>Drives every check, the clause references, and the .SCO handed to S-Concrete. Choosing <Code>EN 1992-1-1</Code> also switches display to SI.</>],
+            ['Units', 'Display only — the design never changes, just how numbers are shown.'],
+            ['Concrete / Reinforcing steel', 'Default f′c, λ, fy, fyt for new members.'],
+            [<>Shear strut angle (cot&nbsp;θ)</>, <>EC2 §6.2.3. Default 2.5 (θ = 21.8°, most link-efficient); lower is more conservative and matches checkers that fix θ.</>],
+            ['Neglect torsion', <>Sets T<sub>u</sub> = 0 on every beam check and omits torsion from the .SCO.</>],
+            ['Display scale', 'Zooms the whole UI.'],
+          ]}
+        />
+        <Callout tone="warn">Changing the <B>design code</B> or <B>cot θ</B> re-runs every check in the project. Set them before you detail, not after.</Callout>
       </>
     ),
   },
@@ -111,11 +190,11 @@ const SECTIONS: Section[] = [
     title: '1 · Import from ETABS',
     node: (
       <>
-        <P>Click <Code>⇪ ETABS</Code> in the header (or <B>Import</B> in the ribbon) to open the import wizard. You can connect to a running ETABS model through the CSI API, or read an exported tables file.</P>
+        <P><Path>Header › ETABS</Path> opens the import wizard. Connect to a running ETABS model through the CSI API, or read an exported tables file. Four steps: <B>Connect</B> → <B>Filter</B> → <B>Rebar Defaults</B> → <B>Review &amp; Import</B>.</P>
         <H3>Units — read them, then override if needed</H3>
         <P>The wizard detects the model's units and shows a live <B>"Reads as"</B> sample of an imported value so you can confirm they look sensible. Detection trusts ETABS's <em>present-units</em> setting first (what the tables are actually formatted in), then the model's saved units. If a value looks wrong (e.g. a 300&nbsp;mm beam reading as 0.3&nbsp;in, or material strengths in the thousands), override <B>Force</B>, <B>Length</B>, and <B>Material</B> units directly in the panel — the sample updates as you change them, and a red warning appears when the numbers look implausible.</P>
         <H3>Force source — Design vs Analysis</H3>
-        <P>Beam/column forces can come from two different ETABS tables, and they are <em>not</em> the same number:</P>
+        <P>Beam forces can come from two different ETABS tables, and they are <em>not</em> the same number:</P>
         <UL>
           <LI><B>Design forces</B> (default) — values at the design stations / face of support.</LI>
           <LI><B>Element (Analysis) forces</B> — the raw per-combination analysis forces, i.e. what the ETABS frame-force display shows.</LI>
@@ -124,7 +203,7 @@ const SECTIONS: Section[] = [
         <H3>What comes in</H3>
         <UL>
           <LI>The <B>model map</B> — the frame connectivity used to draw the 2D/3D plan.</LI>
-          <LI><B>Members</B> — beams and columns, with their section, material, and the envelope of the load combinations you chose (plus station forces along the span, used for crack checks).</LI>
+          <LI><B>Members</B> — beams, with their section, material, and the envelope of the load combinations you chose (plus station forces along the span, used for crack checks).</LI>
         </UL>
       </>
     ),
@@ -138,9 +217,9 @@ const SECTIONS: Section[] = [
         <H3>Input</H3>
         <UL>
           <LI><B>General / Materials</B> — label, span, member type; concrete f′c (cylinder), steel fy / fyt.</LI>
-          <LI><B>Section</B> — rectangular / T / L beam or rectangular / circular column, with width, depth, flange, clear cover, and stirrup size.</LI>
+          <LI><B>Section</B> — rectangular, T or L beam, with width, depth, flange, clear cover, and stirrup size.</LI>
           <LI><B>Reinforcement</B> — top and bottom bars entered as one or more <B>layers</B> (count × size). <Code>+ Add layer</Code> stacks a second/third layer; the outer layer is nearest the face. Skin (side-face) bars and stirrups (size, spacing, legs, optional 3-zone spacing) are set here too.</LI>
-          <LI><B>Load cases</B> — the factored combinations, each with M, V, T (and P for columns). The worst case governs.</LI>
+          <LI><B>Load cases</B> — the factored combinations, each with M, V and T. The worst case governs.</LI>
         </UL>
         <H3>Results</H3>
         <UL>
@@ -164,18 +243,49 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'map',
-    title: 'The Map view',
+    title: 'The Viewer',
     node: (
       <>
-        <P>The Map draws the model in <B>2D plan</B> or a rotatable <B>3D</B> view. Use it to see the whole job at once and to run the design/verify steps.</P>
-        <UL>
-          <LI><B>Colour by</B> — recolor every frame by DCR, Steel %, Stirrups, Weight, its group, or its section. The <B>DCR bands</B> go green (&lt; 0.70) → lime (0.70–0.90) → amber (0.90–1.00) → red (≥ 1.00).</LI>
-          <LI><B>Diagram / M / V</B> — overlay moment or shear diagrams on the frames.</LI>
-          <LI><B>Floors</B> — filter to one story or show all.</LI>
-          <LI><B>Fit</B> re-centers the model; <B>Re-sync</B> re-pulls forces from ETABS.</LI>
-          <LI>Click a beam to inspect it (a card shows its DCR, cage, and forces); click again while a group is active to add/remove it from that group.</LI>
-        </UL>
-        <P>The right-hand <B>Design + Verify</B> panel is where steps 2 and 3 happen (below). When you select a group, its reinforcement editor slides out as its own column between the map and the panel.</P>
+        <P>The <B>Viewer</B> draws the model in <B>2D plan</B> or a rotatable <B>3D</B> view — the <Code>3D</Code> button beside the filter icon switches between them. It is where steps 2 and 3 happen.</P>
+        <H3>The panel on the right</H3>
+        <P>One bar, always visible, with three workflow tabs and two analyses:</P>
+        <Table
+          head={['Tab', 'Shows']}
+          rows={[
+            [<IconLabel name="design">Design</IconLabel>, 'Group list + the reinforcement editor. Auto-group is a sub-view here — use ← Back to groups to return.'],
+            [<IconLabel name="groupDashboard">Dashboard</IconLabel>, 'Section cards and the per-group DCR table, split beside the plan.'],
+            [<IconLabel name="verify">Verify</IconLabel>, 'The S-Concrete batch — push, run, read results per group.'],
+            [<IconLabel name="savings">Savings</IconLabel>, 'Tonnage you could save by merging groups at the target DCR.'],
+            [<IconLabel name="takeoff">Takeoff</IconLabel>, 'Concrete and steel quantities, by member type and per gross floor area.'],
+          ]}
+        />
+        <P>You can move between all five at any time. The two analyses are toggles — click the lit one again to go back to <B>Design</B>. Selecting a group opens its rebar editor as its own column between the plan and the panel.</P>
+        <H3>The toolbar above the plan</H3>
+        <Table
+          head={['Control', 'Does']}
+          rows={[
+            ['Show / Filter', 'Hide or isolate stories, member types, walls, grids, openings, columns.'],
+            [<B>3D</B>, <>Switch between the 2D plan and a 3D axonometric view. Everything else — colouring, diagrams, inspect, selection, grouping — behaves identically in both. <B>Drag empty space to orbit</B>; hold <Kbd>Shift</Kbd> while dragging to lasso-select instead. Columns, walls and slabs from the ETABS model are drawn as context so the frame reads as a building — they are geometry only and are never designed, selected or exported.</>],
+            [<B>Colour by</B>, <>Recolour every frame by DCR, design group, section, flexural steel %, stirrups, weight, depth, width, concrete or steel grade, or the S-Concrete result.</>],
+            [<>M&nbsp;/&nbsp;V</>, 'Overlay the moment or shear envelope on each frame.'],
+            [<IconLabel name="inspect">Inspect</IconLabel>, 'Click a beam for a card with its section sketch, DCR, cage and V/M diagrams.'],
+            [<IconLabel name="warning">Warnings</IconLabel>, 'Highlight members with design errors or warnings.'],
+            [<IconLabel name="resync">Re-sync</IconLabel>, 'Re-pull forces from the live ETABS model.'],
+            ['Fit', 'Re-centre and zoom the model to the window.'],
+          ]}
+        />
+        <H3>DCR colour bands</H3>
+        <Table
+          head={['Band', 'DCR', 'Means']}
+          align={['l', 'r', 'l']}
+          rows={[
+            [<Tag bg={STATUS.okBg} fg={STATUS.ok}>green</Tag>, <Code>&lt; 0.70</Code>, 'Comfortable.'],
+            [<Tag bg="#ecfccb" fg="#4d7c0f">lime</Tag>, <Code>0.70 – 0.90</Code>, 'Working, with headroom.'],
+            [<Tag bg={STATUS.warnBg} fg={STATUS.warn}>amber</Tag>, <Code>0.90 – 1.00</Code>, 'At or past the practical target — review.'],
+            [<Tag bg={STATUS.failBg} fg={STATUS.fail}>red</Tag>, <Code>≥ 1.00</Code>, 'Demand exceeds capacity. Fails.'],
+          ]}
+        />
+        <P>Clicking a frame inspects it. Clicking it while a group is active adds or removes it from that group.</P>
       </>
     ),
   },
@@ -187,22 +297,22 @@ const SECTIONS: Section[] = [
         <P>Rather than detailing every beam individually, you put <B>similar members into a group</B> and give the group <em>one</em> reinforcement cage. The cage is designed against the group's <B>worst</B> demand, so it is safe for every member in it.</P>
         <H3>Making groups</H3>
         <UL>
-          <LI>Select frames on the map and create a group from the selection, or</LI>
-          <LI>Use <B>Auto-group</B> (the <em>Analyze</em> menu) to cluster members by size/demand automatically, then accept the suggestion.</LI>
+          <LI>Select frames on the plan and create a group from the selection, or</LI>
+          <LI>Open <B>Auto-group</B> from inside <Path>Viewer › Design</Path> to cluster members by size and demand automatically, then accept the clusters. It drills in over the group list — <Code>← Back to groups</Code> returns.</LI>
         </UL>
         <H3>The reinforcement editor</H3>
         <P>Click a group to open its editor (the slide-out column). Set the cage — <B>top</B> and <B>bottom</B> bars (each as one or more layers), <B>skin</B> bars per face, and <B>stirrups</B> (size, spacing, legs, optional zoned spacing over the thirds of the span). Then press <Code>Apply to N members</Code> to write the cage onto every member in the group. The map DCR colors and warnings refresh immediately.</P>
-        <Callout>A cage you didn't design by hand? Press <B>✨ Suggest</B> and the app sizes a practical cage for you — see the next section.</Callout>
+        <Callout>A cage you didn't design by hand? Press <B>Suggest</B> and the app sizes a practical cage for you — see the next section.</Callout>
       </>
     ),
   },
   {
     id: 'suggest',
-    title: 'The ✨ Suggest auto-designer',
+    title: 'The Suggest auto-designer',
     node: (
       <>
         <P><B>Suggest</B> picks the lightest <em>practical</em> reinforcement that meets the group's worst demand at a target DCR (default <B>0.90</B>, editable). It is verification-driven — it doesn't guess a formula answer, it re-runs the real design engine on a trial cage and adjusts until it passes:</P>
-        <P>Clicking <B>✨ Suggest</B> first opens a small dialog to set the <B>minimum</B> top-bar, bottom-bar, and stirrup sizes — Suggest then uses <em>that size or larger</em>. Leave them at the defaults (the smallest practical size) to let it choose freely. Because top and bottom share one bar size, the larger of the two minimums applies. <B>✨ Suggest all groups</B> shows the same dialog and applies your minimums to every group.</P>
+        <P>Clicking <B>Suggest</B> first opens a small dialog to set the <B>minimum</B> top-bar, bottom-bar, and stirrup sizes — Suggest then uses <em>that size or larger</em>. Leave them at the defaults (the smallest practical size) to let it choose freely. Because top and bottom share one bar size, the larger of the two minimums applies. <B>Suggest all groups</B> shows the same dialog and applies your minimums to every group.</P>
         <UL>
           <LI><B>Envelope the demand</B> — the worst required top/bottom steel and shear across the whole group; the highest-moment member governs the geometry.</LI>
           <LI><B>Size the bars</B> — start at the smallest practical bar size and fewest bars that hold the area (top &amp; bottom share one size), preferring a single layer, then two, and a <B>third layer only as a fallback</B> when no size fits in two.</LI>
@@ -210,8 +320,8 @@ const SECTIONS: Section[] = [
           <LI><B>Verify &amp; bump</B> — re-run every member; if a face or the shear is over target, add bars / a layer / tighten stirrups and try again.</LI>
           <LI><B>Deep beams</B> — code-based <B>skin (side-face) bars</B> are added automatically (ACI h&nbsp;&gt;&nbsp;36″ / EC2 h&nbsp;&gt;&nbsp;1000&nbsp;mm).</LI>
         </UL>
-        <P>On success the note reads e.g. <Code>Flex 0.87 · Shear 0.62 at target 0.90 — review, then Apply.</Code> (columns also show P-M, axial, and ρ). Minimum steel is a hard floor; over-reinforcement is caught automatically because the strength-reduction factor drops and pushes the DCR up. If the section genuinely can't work, Suggest returns a red note (e.g. <em>"No practical bar layout fits this section"</em> — the area won't fit even in three layers). <B>Suggest all groups</B> does the same for every group and reports how many met target.</P>
-        <Callout tone="warn">Suggest sizes flexure, shear, and deep-beam skin bars. It does <B>not</B> size closed <B>torsion</B> stirrups, and columns use a separate column auto-designer. Always review the suggested cage before applying.</Callout>
+        <P>On success the note reads e.g. <Code>Flex 0.87 · Shear 0.62 at target 0.90 — review, then Apply.</Code> Minimum steel is a hard floor; over-reinforcement is caught automatically because the strength-reduction factor drops and pushes the DCR up. If the section genuinely can't work, Suggest returns a red note (e.g. <em>"No practical bar layout fits this section"</em> — the area won't fit even in three layers). <B>Suggest all groups</B> does the same for every group and reports how many met target.</P>
+        <Callout tone="warn">Suggest sizes flexure, shear, and deep-beam skin bars. It does <B>not</B> size closed <B>torsion</B> stirrups. Always review the suggested cage before applying.</Callout>
       </>
     ),
   },
@@ -220,7 +330,7 @@ const SECTIONS: Section[] = [
     title: '3 · Verify with S-Concrete',
     node: (
       <>
-        <P>Designing in the app is fast but approximate; <B>S-Concrete</B> is the authoritative check. The <B>Verify</B> block (bottom of the Map's Design + Verify panel) writes an <B>.SCO</B> file per group from your current cage, runs the S-Concrete batch, and reads the results back.</P>
+        <P>Designing in the app is fast but approximate; <B>S-Concrete</B> is the authoritative check. <Path>Viewer › Verify</Path> writes an <B>.SCO</B> file per group from your current cage, runs the S-Concrete batch, and reads the results back.</P>
         <UL>
           <LI><B>Batch · N groups</B> — build the .SCO files and run them. For EC2 beams this emits a <B>ULS</B> file (strength) and a separate <B>SLS crack</B> file, because crack-width is a serviceability check evaluated under the quasi-permanent loads — it must not run against factored ULS forces.</LI>
           <LI><B>Re-run existing folder</B> — re-run the .SCO files already on disk (keeps hand-edits; does <em>not</em> pick up app changes made since).</LI>
@@ -238,15 +348,20 @@ const SECTIONS: Section[] = [
       <>
         <P>Every number in the app is a <B>DCR — demand ÷ capacity</B>. <B>≤ 1.00 passes</B>; the app's practical target is 0.90 so there's headroom. Colors: green &lt; 0.90, amber 0.90–1.00, red ≥ 1.00.</P>
         <H3>What's checked</H3>
-        <UL>
-          <LI><B>Flexure</B> — positive (sagging) and negative (hogging) moment capacity vs demand, with strength-reduction / tension-controlled behaviour built in.</LI>
-          <LI><B>Shear</B> — concrete + stirrup capacity, with the section-crushing / strut limit (past that, adding stirrups can't help — the section must grow).</LI>
-          <LI><B>Torsion</B> — where present.</LI>
-          <LI><B>Crack width</B> (EC2) — side-face and main-face crack widths under the SLS quasi-permanent moment, against a limit (default 0.3&nbsp;mm).</LI>
-          <LI><B>Detailing</B> — minimum and maximum steel, bar spacing, and deep-beam <B>skin reinforcement</B> (required when h &gt; 36″ / 1000&nbsp;mm).</LI>
-        </UL>
+        <Table
+          head={['Check', 'Applies to', 'What it compares']}
+          rows={[
+            [<B>Flexure</B>, 'Beams', 'Sagging (M⁺) and hogging (M⁻) capacity vs demand, with strength-reduction / tension-controlled behaviour and compression steel credited.'],
+            [<B>Shear</B>, 'Beams', 'Concrete + stirrup capacity, including the strut-crushing limit — past that, more stirrups cannot help and the section must grow.'],
+            [<B>Torsion</B>, 'Beams', <>Where present. Suppressed entirely by <B>Neglect torsion</B> in project settings.</>],
+            [<>Shear&nbsp;+&nbsp;torsion links</>, 'Beams', 'The combined link demand from shear and torsion.'],
+            [<B>Crack width</B>, <>Beams — <Code>EC2</Code> only</>, <>Side-face and main-face widths under the <B>SLS quasi-permanent</B> moment, against a limit (default 0.3&nbsp;mm). §7.3.4.</>],
+            [<B>Steel limits</B>, 'All', <>Minimum and maximum steel, bar spacing, and deep-beam skin reinforcement (h &gt; 36″ / 1000&nbsp;mm).</>],
+          ]}
+        />
+        <Callout>Each check reports the <B>governing</B> DCR — the worst across every load row, not the first row. Two checks can be governed by different load cases; expanding a check jumps the loads and calc sheet to the case that governs <em>that</em> check.</Callout>
         <H3>ACI vs EC2</H3>
-        <P>Switch the <B>Design code</B> in the ribbon between <Code>ACI318-19</Code>, <Code>ACI318-14</Code>, and <Code>EN1992-1-1</Code>. The engine, the warnings, and the .SCO handed to S-Concrete all change accordingly. Choosing EC2 also switches the app to SI units.</P>
+        <P>Switch the <B>Design code</B> in project settings between <Code>ACI 318-19</Code>, <Code>ACI 318-14</Code> and <Code>EN 1992-1-1</Code>. The engine, the clause references, the warnings and the .SCO handed to S-Concrete all change with it. Choosing EC2 also switches display to SI.</P>
       </>
     ),
   },
@@ -254,44 +369,51 @@ const SECTIONS: Section[] = [
     id: 'units',
     title: 'Units',
     node: (
-      <P>The app works in <B>imperial</B> (in / psi / kips / kip-ft) or <B>SI</B> (mm / MPa / kN / kN·m). Toggle it in <Code>⚙</Code> preferences. Everything is stored in one canonical unit set internally and converted for display, so switching units never changes the design — only how the numbers are shown. In the ETABS wizard you can additionally override the units of the <em>incoming</em> data field-by-field.</P>
-    ),
-  },
-  {
-    id: 'columns',
-    title: 'Columns',
-    node: (
-      <P>Columns are first-class members. They import from ETABS with their axial + biaxial moments, appear on the map, and can be grouped like beams. A column group's ✨ Suggest sizes a <B>symmetric cage</B> (longitudinal steel held between ρ = 1% and 8%) checked against the <B>P-M interaction</B> and axial demand, then sizes ties for shear. The <B>Column stacks</B> analysis (Analyze menu) rolls a column up its stories and shows the capacity curve. Column .SCO export includes biaxial shear and circular sections.</P>
+      <>
+        <P>The app works in <B>imperial</B> (in · psi · kips · kip-ft) or <B>SI</B> (mm · MPa · kN · kN·m). Switch it in project settings — <Path>Header › settings icon</Path>.</P>
+        <Callout>Everything is stored internally in one canonical unit set and converted only for display, so <B>switching units never changes the design</B> — only how numbers are shown. The one place units do affect data is the ETABS wizard, where you override the units of the <em>incoming</em> file field-by-field.</Callout>
+      </>
     ),
   },
   {
     id: 'export',
     title: 'Saving & exporting',
     node: (
-      <UL>
-        <LI><B>Save / Open</B> — the whole project (members, groups, cages, S-Concrete results) is one file you can save and reopen.</LI>
-        <LI><B>Export ▾ → Report</B> — a formatted PDF calculation report.</LI>
-        <LI><B>Export ▾ → Excel</B> — a formula-traceable spreadsheet.</LI>
-        <LI><B>Export ▾ → Schedule</B> — a rebar schedule PDF.</LI>
-        <LI><B>Print</B> — the current view.</LI>
-      </UL>
+      <>
+        <P>The whole project — members, groups, cages, S-Concrete results — is a single <Code>.scdb</Code> file. <Code>Save</Code> and <Code>Open</Code> round-trip all of it.</P>
+        <H3>Export menu</H3>
+        <Table
+          head={['Item', 'Format', 'Contains']}
+          rows={[
+            [<B>PDF Report…</B>, 'PDF', 'A formatted calculation report; a dialog lets you pick the title block and which sections to include.'],
+            [<B>Excel Summary</B>, 'Spreadsheet', 'Formula-traceable workbook of the design.'],
+            [<B>Member DCR List</B>, 'Spreadsheet · PDF', 'One row per member with its governing DCR per check.'],
+            [<B>Group Schedule</B>, 'PDF · Spreadsheet', 'The rebar schedule, one entry per design group.'],
+          ]}
+        />
+        <Callout>Print the current view with the browser/OS print command — the header and member list are hidden automatically in print.</Callout>
+      </>
     ),
   },
   {
     id: 'glossary',
     title: 'Glossary',
     node: (
-      <UL>
-        <LI><B>DCR</B> — Demand-Capacity Ratio; demand ÷ capacity. ≤ 1 passes.</LI>
-        <LI><B>Cage</B> — the full set of reinforcement for a member (top/bottom/skin bars + stirrups).</LI>
-        <LI><B>Group</B> — a set of members that share one cage, designed to the group's worst demand.</LI>
-        <LI><B>ULS / SLS</B> — Ultimate (strength, factored loads) / Serviceability (e.g. crack width, quasi-permanent loads) Limit States.</LI>
-        <LI><B>Quasi-permanent</B> — the long-term service load combination used for crack-width checks.</LI>
-        <LI><B>Envelope</B> — the worst value across the load combinations you selected.</LI>
-        <LI><B>Governing</B> — the check or member producing the worst DCR.</LI>
-        <LI><B>Skin / side-face reinforcement</B> — bars on the sides of a deep beam to control side-face cracking.</LI>
-        <LI><B>.SCO</B> — the S-Concrete input file the app writes for each group.</LI>
-      </UL>
+      <Table
+        head={['Term', 'Meaning']}
+        rows={[
+          [<B>DCR</B>, 'Demand-Capacity Ratio — demand ÷ capacity. ≤ 1.00 passes; the app targets 0.90 for headroom.'],
+          [<B>Cage</B>, 'The full reinforcement for a member: top and bottom bars, skin bars, stirrups.'],
+          [<B>Group</B>, "A set of members sharing one cage, sized to the group's worst demand."],
+          [<B>Envelope</B>, 'The worst value across the load combinations you imported.'],
+          [<B>Governing</B>, 'The check, load row, or member producing the worst DCR.'],
+          [<>ULS / SLS</>, 'Ultimate (strength, factored loads) / Serviceability (crack width, service loads) Limit States.'],
+          [<B>Quasi-permanent</B>, 'The long-term service combination used for EC2 crack-width checks.'],
+          [<>Skin / side-face bars</>, 'Bars on the sides of a deep beam controlling side-face cracking.'],
+          [<Code>.SCO</Code>, 'The S-Concrete input file written for each group.'],
+          [<Code>.scdb</Code>, 'The project file — everything, in one place.'],
+        ]}
+      />
     ),
   },
 ];
@@ -299,7 +421,7 @@ const SECTIONS: Section[] = [
 function GuidePage({ scrollTo }: { scrollTo: (id: string) => void }) {
   return (
     <>
-      <PageTitle icon="📖" title="Doc Resources" sub="The full user guide — how the app works, end to end. Read straight through, or jump to a section." />
+      <PageTitle icon="docs" title="Doc Resources" sub="The full user guide — how the app works, end to end. Read straight through, or jump to a section." />
       <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
         <nav style={{ position: 'sticky', top: 0, width: 210, flexShrink: 0, alignSelf: 'flex-start' }}>
           <div style={{ ...LABEL_STYLE, marginBottom: 8 }}>On this page</div>
@@ -349,30 +471,30 @@ const Step = ({ n, title, children }: { n: number; title: string; children: Reac
 function StartPage() {
   return (
     <div style={{ maxWidth: 760 }}>
-      <PageTitle icon="🚀" title="Your first model" sub="Eight steps from an ETABS model to a verified, documented design." />
+      <PageTitle icon="quickstart" title="Your first model" sub="Eight steps from an ETABS model to a verified, documented design." />
       <Step n={1} title="Set the design code and units">
-        Pick your <B>Design code</B> in the ribbon (ACI 318-19/-14 or EN 1992-1-1) and your units in <Code>⚙</Code> preferences. Do this first — both re-run every check. Choosing EC2 switches to SI automatically.
+        <Path>Header › settings icon</Path> — pick the <B>Design code</B> (ACI 318-19/-14 or EN 1992-1-1), units, and default materials. On a new project this dialog opens by itself as <B>"Set up your project"</B>. Do this first: changing the code re-runs every check. EC2 switches display to SI automatically.
       </Step>
       <Step n={2} title="Import your model">
-        Click <Code>⇪ ETABS</Code>. In the wizard, confirm the <B>units</B> against the "Reads as" sample (override Force/Length/Material if a value looks wrong), choose the <B>Force source</B> (Design vs Element), and select the load combinations to envelope. Import.
+        <Path>Header › ETABS</Path> — connect to a running model or read a tables file. Confirm the <B>units</B> against the "Reads as" sample (override Force/Length/Material if a value looks wrong), choose the <B>Force source</B> (Design vs Element), and select the load combinations to envelope.
       </Step>
       <Step n={3} title="Look the model over">
-        On the <B>Dashboard</B> you get every member with its DCR; on the <B>Map</B>, colour by <B>DCR</B> to see hot spots. Click any member to open it in the <B>Member</B> view and check its inputs.
+        On the <B>Dashboard</B> you get every member with its DCR. In the <B>Viewer</B>, set <B>Colour by → DCR</B> to see hot spots. Click any member to open it in the <B>Member</B> view and check its inputs before you detail anything.
       </Step>
       <Step n={4} title="Group similar members">
-        In the Map's <B>Design + Verify</B> panel, select similar frames and make a group — or run <B>Auto-group</B> (Analyze menu) and accept the clusters. Each group will share one reinforcement cage.
+        <Path>Viewer › Design</Path> — select similar frames on the plan and make a group, or open <B>Auto-group</B> and accept the clusters. Each group shares one cage.
       </Step>
       <Step n={5} title="Reinforce each group">
-        Click a group to open its editor. Press <B>✨ Suggest</B> for a practical cage (or set bars by hand), <B>review</B> the result, then <Code>Apply to N members</Code>. Use <B>✨ Suggest all groups</B> to do them all at once. The map recolours immediately.
+        Click a group to open its rebar editor. Press <B>Suggest</B> for a practical cage (or set bars by hand), <B>review</B> it, then <Code>Apply to N members</Code>. <B>Suggest all groups</B> does the lot. The plan recolours immediately.
       </Step>
       <Step n={6} title="Verify in S-Concrete (desktop)">
-        In the <B>Verify</B> block press <B>Batch · N groups</B>. The app writes an .SCO per group, runs S-Concrete, and reads the Status/DCR/warnings back onto the map. (This step needs the Windows desktop app.)
+        <Path>Viewer › Verify</Path> — press <B>Batch · N groups</B>. The app writes an .SCO per group, runs S-Concrete, and reads Status / DCR / warnings back onto the plan. Needs the Windows desktop app.
       </Step>
       <Step n={7} title="Chase the reds">
-        Anything red failed. Open it, see why (the warning tells you), give the group a bigger cage or a bigger section, re-Suggest, and re-run the batch. Repeat until the map is green.
+        Anything red failed. Open it, read the warning, give the group a bigger cage or a bigger section, re-Suggest, re-run the batch. Repeat until nothing is red.
       </Step>
       <Step n={8} title="Export the deliverables">
-        <Code>Export ▾</Code> → a PDF <B>Report</B>, a formula-traceable <B>Excel</B>, or a rebar <B>Schedule</B>. <Code>Save</Code> keeps the whole project (design + results) in one file.
+        <Path>Header › Export</Path> — PDF report, Excel summary, member DCR list, or group rebar schedule. <Kbd>Ctrl</Kbd><Kbd>S</Kbd> keeps the whole project in one <Code>.scdb</Code> file.
       </Step>
       <Callout tone="ok">No ETABS handy? The app opens with a small sample project, so you can practise steps 3–8 (Dashboard → Group → Suggest → Export) without importing anything.</Callout>
     </div>
@@ -390,19 +512,29 @@ const KeyRow = ({ keys, action }: { keys: ReactNode; action: ReactNode }) => (
 function KeysPage() {
   return (
     <div style={{ maxWidth: 700 }}>
-      <PageTitle icon="⌨️" title="Keyboard shortcuts" sub="On macOS use ⌘ where ⌃ Ctrl is shown." />
-      <div>
+      <PageTitle icon="keyboard" title="Keyboard shortcuts" sub="On macOS use ⌘ where ⌃ Ctrl is shown." />
+      <div style={{ ...LABEL_STYLE, margin: '0 0 6px' }}>File</div>
+      <div style={{ marginBottom: 18 }}>
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>N</Kbd></>} action="New project" />
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>O</Kbd></>} action="Open a project file" />
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>S</Kbd></>} action="Save the project" />
+      </div>
+
+      <div style={{ ...LABEL_STYLE, margin: '0 0 6px' }}>Editing</div>
+      <div style={{ marginBottom: 18 }}>
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>Z</Kbd></>} action="Undo" />
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>Y</Kbd>{'  '}<span style={{ color: INK.muted, fontSize: 12 }}>or</span>{'  '}<Kbd>Ctrl</Kbd><Kbd>⇧</Kbd><Kbd>Z</Kbd></>} action="Redo" />
-        <KeyRow keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} action="Previous / next member (in the Member view)" />
-        <KeyRow keys={<Kbd>Esc</Kbd>} action="Close the open menu or dialog" />
-        <KeyRow keys={<Kbd>F1</Kbd>} action="Open Help (desktop app) — also under the Help menu" />
         <KeyRow keys={<><Kbd>Enter</Kbd>{'  '}<span style={{ color: INK.muted, fontSize: 12 }}>/</span>{'  '}<Kbd>Esc</Kbd></>} action="Commit / cancel a group rename" />
       </div>
-      <Callout>In the <B>desktop app</B>, Save and Open use the operating system's native file dialogs; the rest of the shortcuts work everywhere.</Callout>
+
+      <div style={{ ...LABEL_STYLE, margin: '0 0 6px' }}>Navigation</div>
+      <div style={{ marginBottom: 18 }}>
+        <KeyRow keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} action={<>Previous / next member — <B>Member view only</B></>} />
+        <KeyRow keys={<Kbd>Esc</Kbd>} action="Close an open dropdown or the project-settings dialog" />
+        <KeyRow keys={<Kbd>F1</Kbd>} action={<>Open this guide — <B>desktop app only</B> (also under the Help menu)</>} />
+      </div>
+
+      <Callout>In the <B>desktop app</B>, <Kbd>Ctrl</Kbd><Kbd>N</Kbd> / <Kbd>Ctrl</Kbd><Kbd>O</Kbd> / <Kbd>Ctrl</Kbd><Kbd>S</Kbd> come from the native File menu and use the OS file dialogs. In a browser they are handled in-page: Save downloads the <Code>.scdb</Code>, Open shows a file picker.</Callout>
     </div>
   );
 }
@@ -418,7 +550,7 @@ const QA = ({ q, children }: { q: string; children: ReactNode }) => (
 function FaqPage() {
   return (
     <div style={{ maxWidth: 760 }}>
-      <PageTitle icon="💬" title="FAQ & troubleshooting" sub="The questions that come up most often." />
+      <PageTitle icon="faq" title="FAQ & troubleshooting" sub="The questions that come up most often." />
       <QA q="The moments/shears I imported don't match ETABS.">
         Two reasons. First, the <B>Force source</B>: switch it to <B>Element (Analysis)</B> in the wizard to match the ETABS frame-force display (the default <em>Design</em> forces are taken at design stations). Second, the app envelopes only the <B>combinations you selected</B> — a higher value in ETABS usually means a combo you didn't import.
       </QA>
@@ -440,8 +572,11 @@ function FaqPage() {
       <QA q="Why did applying one cage change my whole group?">
         That's by design — a <B>group shares one cage</B>, sized to its worst member, so every member in it is safe. Edit a member on its own in the Member view if it needs a different cage (but re-applying the group overwrites it).
       </QA>
-      <QA q="Clicking a step in the workflow ribbon doesn't open a screen.">
-        <B>Import</B> opens the ETABS wizard; <B>Design</B> and <B>Verify</B> jump to the Map's <B>Design + Verify</B> panel, where those actions live.
+      <QA q="Where did Import / Design / Verify go? I don't see a workflow ribbon.">
+        There isn't one. <B>Import</B> is the <Code>ETABS</Code> button in the header; <B>Design</B> and <B>Verify</B> are tabs on the right-hand panel of the <B>Viewer</B>, alongside <B>Dashboard</B>. The <B>Design code</B> that used to sit in the ribbon now lives in project settings, opened from the settings icon beside <Code>Export</Code>.
+      </QA>
+      <QA q="I opened Dashboard or Verify and now I can't get back to Design.">
+        You can — the <B>Design · Dashboard · Verify</B> bar stays visible in all three, so click straight between them. <B>Savings</B> and <B>Takeoff</B> sit beside them as icon toggles; clicking the lit one again returns you to Design.
       </QA>
       <QA q="The disk / a save failed with “no space left.”">
         You're out of the session's disk allowance. Delete large temporary files (old exports, folders) and try again — freed space is usable immediately.
@@ -452,11 +587,11 @@ function FaqPage() {
 
 // ── Container ───────────────────────────────────────────────────────────────────
 const HELP_TABS = [
-  { key: 'guide', label: '📖 Doc Resources' },
-  { key: 'start', label: '🚀 Your first model' },
-  { key: 'keys', label: '⌨️ Keyboard shortcuts' },
-  { key: 'faq', label: '💬 FAQ & troubleshooting' },
-] as const;
+  { key: 'guide', label: 'Doc Resources', icon: 'docs' },
+  { key: 'start', label: 'Your first model', icon: 'quickstart' },
+  { key: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard' },
+  { key: 'faq', label: 'FAQ & troubleshooting', icon: 'faq' },
+] as const satisfies readonly { key: string; label: string; icon: IconName }[];
 type HelpTab = typeof HELP_TABS[number]['key'];
 
 export default function HelpView({ target }: { target?: { tab?: string; section?: string } | null }) {
@@ -493,8 +628,10 @@ export default function HelpView({ target }: { target?: { tab?: string; section?
               fontSize: 13, fontWeight: 600, marginBottom: -1,
               borderBottom: `2px solid ${helpTab === t.key ? ACCENT.primary : 'transparent'}`,
               color: helpTab === t.key ? ACCENT.primary : INK.secondary,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
           >
+            <Icon name={t.icon} />
             {t.label}
           </button>
         ))}

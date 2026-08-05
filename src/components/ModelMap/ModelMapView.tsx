@@ -2,7 +2,7 @@
  * ModelMapView — top-level Map tab: canvas (left) + tabbed right panel
  * (Groups | Auto-Group | Savings).
  */
-import { useState, useMemo, useRef, useLayoutEffect, useCallback, useEffect, useDeferredValue, startTransition } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect, useDeferredValue, startTransition } from 'react';
 import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
@@ -14,7 +14,6 @@ import SuggestSizeDialog from '../common/SuggestSizeDialog';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
 import GroupPanel from './GroupPanel';
 import GroupRebarEditor from './GroupRebarEditor';
-import ColumnForceGrid from './ColumnForceGrid';
 import AutoGroupPanel from './AutoGroupPanel';
 import TopProgressBar from '../common/TopProgressBar';
 import HistogramPanel from './HistogramPanel';
@@ -25,16 +24,22 @@ import SavingsPanel from './SavingsPanel';
 import TakeoffPanel from './TakeoffPanel';
 import BeamContextMenu from './BeamContextMenu';
 import BeamInspectCard from './BeamInspectCard';
-import HelpLink from '../Help/HelpLink';
 import GroupDashboard from '../Dashboard/GroupDashboard';
 import SconcreteDashboard from '../Dashboard/SconcreteDashboard';
 import { buildDashboardPayload } from '../../utils/dashboardPayload';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
-import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE, dcrBandsFrom, DEFAULT_DCR_THRESHOLDS } from '../../theme';
+import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE, ICON, dcrBandsFrom, DEFAULT_DCR_THRESHOLDS } from '../../theme';
+import { Icon } from '../common/Icon';
+import type { IconName } from '../common/Icon';
 import MapFilterMenu, { type FilterSection } from './MapFilterMenu';
 
 type RightTab = 'groups' | 'autogroup' | 'savings' | 'takeoff';
+/** The three steps of the map workflow. Design lives in the right panel; the other
+ *  two open as a split pane beside the plan — but all three stay one tab bar. */
+type WorkflowMode = 'design' | 'dashboard' | 'verify';
+/** The two read-only analyses reachable from the same bar; null = neither open. */
+type AnalyzeView = 'savings' | 'takeoff' | null;
 type FlexFace = 'top' | 'bot';
 
 interface Props {
@@ -92,6 +97,7 @@ const mapViewCache: {
   rightTab?: RightTab; activeGroupId?: string | null;
   dashboardOpen?: boolean; dashboardSelectedGroupId?: string | null;
   sconcreteOpen?: boolean; sconcreteSelectedGroupId?: string | null;
+  view3d?: boolean;
 } = {};
 
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
@@ -124,6 +130,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   });
   const dashHostRef = useRef<HTMLDivElement>(null);
   const [rightTab, setRightTab] = useState<RightTab>(mapViewCache.rightTab ?? 'groups');
+  // 2D plan ↔ 3D axonometric. Cached like the other view settings so switching
+  // tabs and coming back doesn't dump you back into plan.
+  const [view3d, setView3d] = useState<boolean>(mapViewCache.view3d ?? false);
   const [highlightedFrames, setHighlightedFrames] = useState<Set<string>>(new Set());
   const [inspectMode, setInspectMode] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
@@ -158,12 +167,26 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set());
   // Imported non-frame layers (walls/grids/openings) — default hidden (opt-in),
   // matching MapCanvas's opt-in show* defaults.
-  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(() => new Set(['walls', 'grids', 'openings']));
+  // Walls and columns are ON by default: they are what makes the 3D view read as
+  // a building rather than floating beams. Grids and openings stay off — they are
+  // annotation, and they clutter the plan.
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(() => new Set(['grids', 'openings']));
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
-  useLayoutEffect(() => {
-    const el = canvasWrapRef.current;
+  // Measurement is attached with a CALLBACK REF, not a mount-only effect. This
+  // component early-returns the "No model map yet" placeholder until an import
+  // lands, so on mount the canvas wrapper does not exist. A `useLayoutEffect(…, [])`
+  // therefore bailed on the null ref and — having no deps to retrigger it — never
+  // ran again once the map finally rendered: no ResizeObserver was ever attached
+  // and canvasSize stayed pinned to its initial 900×600 for the whole session, so
+  // the plan drew as a small box in the corner of a much larger pane. A callback
+  // ref fires whenever the node attaches, whatever the render order.
+  const canvasRO = useRef<ResizeObserver | null>(null);
+  const attachCanvasWrap = useCallback((el: HTMLDivElement | null) => {
+    canvasWrapRef.current = el;
+    canvasRO.current?.disconnect();
+    canvasRO.current = null;
     if (!el) return;
     // Apply a measured size, deduping no-op updates. Uses layout (untransformed)
     // dimensions so the canvas fills its box correctly at any preferences zoom.
@@ -172,7 +195,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         setCanvasSize(prev => (prev.w === w && prev.h === h ? prev : { w, h }));
       }
     };
-    // Measure synchronously on mount — the ResizeObserver's first callback can be
+    // Measure synchronously on attach — the ResizeObserver's first callback can be
     // dropped in Electron/Chromium when the element is sized in the same frame it
     // is observed, which would leave the canvas stuck at its default size.
     apply(el.clientWidth, el.clientHeight);
@@ -181,8 +204,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       apply(Math.floor(r.width), Math.floor(r.height));
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    canvasRO.current = ro;
   }, []);
+  useEffect(() => () => canvasRO.current?.disconnect(), []);
 
   // Persist the working context so a member-tab round-trip returns to this view.
   useEffect(() => {
@@ -191,12 +215,13 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     mapViewCache.flexFace = flexFace;
     mapViewCache.diagramMode = diagramMode;
     mapViewCache.rightTab = rightTab;
+    mapViewCache.view3d = view3d;
     mapViewCache.activeGroupId = activeGroupId;
     mapViewCache.dashboardOpen = dashboardOpen;
     mapViewCache.dashboardSelectedGroupId = dashboardSelectedGroupId;
     mapViewCache.sconcreteOpen = sconcreteOpen;
     mapViewCache.sconcreteSelectedGroupId = sconcreteSelectedGroupId;
-  }, [colorMode, story, flexFace, diagramMode, rightTab, activeGroupId, dashboardOpen, dashboardSelectedGroupId, sconcreteOpen, sconcreteSelectedGroupId]);
+  }, [colorMode, story, flexFace, diagramMode, rightTab, activeGroupId, dashboardOpen, dashboardSelectedGroupId, sconcreteOpen, sconcreteSelectedGroupId, view3d]);
 
   // A restored story filter from a previous model would blank a newly-loaded one —
   // fall back to "All" if the remembered story isn't in the current model.
@@ -363,7 +388,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const isMetricMode = METRIC_MODES.includes(colorMode);
 
   // Hotspot metric memos. Steel% / Stirrups / Weight are beam-only; Height / Width
-  // cover every member (beams + columns) and are converted to the display length unit.
+  // cover every member and are converted to the display length unit.
   const { metricById, metricRange, metricLabel, metricValues } = useMemo(() => {
     if (!METRIC_MODES.includes(colorMode)) {
       return { metricById: undefined, metricRange: undefined, metricLabel: undefined, metricValues: [] as number[] };
@@ -378,8 +403,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       const v = colorMode === 'flexSteel' ? flexSteelRatioPct(m, flexFace)
         : colorMode === 'stirrups' ? stirrupAvPerFt(m)
         : colorMode === 'weight' ? steelWeightPerFt(m).totalLbFt
-        : colorMode === 'height' ? toDisplay(s.type === 'circular_column' ? (s.diameter ?? s.b) : s.h, 'length')
-        : toDisplay(s.type === 'circular_column' ? (s.diameter ?? s.b) : (s.bw ?? s.b), 'length'); // width
+        : colorMode === 'height' ? toDisplay(s.h, 'length')
+        : toDisplay(s.bw ?? s.b, 'length'); // width
       out[m.id] = v;
       vals.push(v);
       if (v < min) min = v;
@@ -412,7 +437,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     const out: Record<string, number> = {};
     for (const m of members) {
       const s = m.section;
-      out[m.id] = s.type === 'circular_column' ? (s.diameter ?? s.b) : (s.bw ?? s.b);
+      out[m.id] = s.bw ?? s.b;
     }
     return out;
   }, [members]);
@@ -734,16 +759,49 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // A split pane (Dashboard or S-Concrete Verify) occupies the right half of the map;
   // while open, the plan narrows and the 320px right panel + slide-out editor hide.
   const splitPaneOpen = (dashboardOpen && !dashboardPoppedOut) || sconcreteOpen;
+
+  // Design / Dashboard / Verify are three MODES of the same workflow, not one tab
+  // plus two "open a thing" buttons. Deriving the mode from the open flags keeps the
+  // tab bar honest wherever it is rendered, and makes every tab reachable from every
+  // other one — previously Dashboard and Verify hid the bar that had opened them, so
+  // the only way back to Design was the pane's ✕.
+  const workflowMode: WorkflowMode = sconcreteOpen ? 'verify' : dashboardOpen ? 'dashboard' : 'design';
+  /** Leaving a popped-out dashboard also closes its window, mirroring "Pop in";
+   *  otherwise the separate window lingers with nothing pointing at it. */
+  const leavePoppedOut = () => {
+    if (!dashboardPoppedOut) return;
+    setDashboardPoppedOut(false);
+    window.electronAPI?.closeDashboardWindow?.();
+  };
+  const goWorkflow = (mode: WorkflowMode) => {
+    if (mode !== 'dashboard') leavePoppedOut();
+    setDashboardOpen(mode === 'dashboard');
+    setSconcreteOpen(mode === 'verify');
+    if (mode === 'design') setRightTab('groups');
+  };
+
+  // Savings / Takeoff are read-only analyses, not workflow steps — they sit apart
+  // from the three tabs but stay reachable from all of them. Both render in the
+  // right panel, so selecting one closes whichever split pane was covering it.
+  const analyzeView: AnalyzeView = rightTab === 'savings' || rightTab === 'takeoff' ? rightTab : null;
+  const goAnalyze = (view: Exclude<AnalyzeView, null>) => {
+    leavePoppedOut();
+    setDashboardOpen(false);
+    setSconcreteOpen(false);
+    setRightTab(analyzeView === view ? 'groups' : view); // click the active one to go back
+  };
   const allStories = map ? map.stories : [];
   const frames = enrichedFrames;
 
   // Imported geometry layers → plain {x,y} for the canvas (z unused in plan).
   const mapWalls = useMemo(() => (project.modelMap?.walls ?? []).map(w =>
-    ({ id: w.id, story: w.story, kind: w.kind, memberId: w.memberId, points: w.points.map(p => ({ x: p.x, y: p.y })) })), [project.modelMap]);
+    ({ id: w.id, story: w.story, kind: w.kind, memberId: w.memberId, points: w.points.map(p => ({ x: p.x, y: p.y, z: p.z })) })), [project.modelMap]);
   const mapGrids = useMemo(() => (project.modelMap?.grids ?? []).map(g =>
-    ({ id: g.id, label: g.label, p1: { x: g.p1.x, y: g.p1.y }, p2: { x: g.p2.x, y: g.p2.y } })), [project.modelMap]);
+    ({ id: g.id, label: g.label, p1: { x: g.p1.x, y: g.p1.y, z: g.p1.z }, p2: { x: g.p2.x, y: g.p2.y, z: g.p2.z } })), [project.modelMap]);
+  const mapColumns = useMemo(() => (project.modelMap?.columns ?? []).map(c =>
+    ({ id: c.id, story: c.story, sectionName: c.sectionName, pt1: c.pt1, pt2: c.pt2 })), [project.modelMap]);
   const mapOpenings = useMemo(() => (project.modelMap?.openings ?? []).map(o =>
-    ({ id: o.id, story: o.story, points: o.points.map(p => ({ x: p.x, y: p.y })) })), [project.modelMap]);
+    ({ id: o.id, story: o.story, points: o.points.map(p => ({ x: p.x, y: p.y, z: p.z })) })), [project.modelMap]);
 
   // ── Plan Filter → members hidden by the Filter menu (never deleted) ──────────
   const sectionNames = useMemo(
@@ -779,13 +837,14 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     [hiddenMemberIds, filterHiddenMemberIds],
   );
   const toggleIn = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; };
-  const TYPE_LABEL: Record<string, string> = { beam: 'Beams', column: 'Columns' };
+  const TYPE_LABEL: Record<string, string> = { beam: 'Beams' };
   // Imported layers appear in the "Show" section (only when present), keyed
   // 'layer:*' so their toggles route to hiddenLayers, not member types.
   const layerItems = [
-    ...(mapWalls.length ? [{ key: 'layer:walls', label: 'Walls' }] : []),
+    ...(mapWalls.length ? [{ key: 'layer:walls', label: 'Walls & slabs' }] : []),
     ...(mapGrids.length ? [{ key: 'layer:grids', label: 'Grids' }] : []),
     ...(mapOpenings.length ? [{ key: 'layer:openings', label: 'Openings' }] : []),
+    ...(mapColumns.length ? [{ key: 'layer:columns', label: 'Columns (3D)' }] : []),
   ];
   // Two toolbar dropdowns. The 👁 "eye" governs plan *visibility* (what's drawn —
   // member categories, imported walls/grids/openings, and floors); the ⧩ "filter"
@@ -886,16 +945,60 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     borderBottom: active ? `2px solid ${ACCENT.primary}` : '2px solid transparent',
     color: active ? ACCENT.primary : INK.secondary, fontWeight: active ? 700 : 500,
     fontSize: 11, cursor: 'pointer', textAlign: 'center',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
   });
+
+  /** A read-only analysis toggle. Icon-only and always present, so the bar is
+   *  identical in all three modes; the label lives in the tooltip + aria-label. */
+  const analyzeBtn = (view: Exclude<AnalyzeView, null>, icon: IconName, label: string, tip: string) => {
+    const on = analyzeView === view;
+    return (
+      <button
+        onClick={() => goAnalyze(view)}
+        title={tip}
+        aria-label={label}
+        aria-pressed={on}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px 7px',
+          border: `1px solid ${on ? ACCENT.primary : BORDER.strong}`, borderRadius: 6,
+          background: on ? ACCENT.primary : 'white', color: on ? 'white' : INK.base, cursor: 'pointer',
+        }}
+      >
+        <Icon name={icon} size={ICON.sm} />
+      </button>
+    );
+  };
+
+  /** The workflow tab bar. Rendered at the top of the right panel in Design mode and
+   *  at the top of the split pane in Dashboard/Verify mode, so it is always on screen
+   *  — and always with the same controls, analyses included. */
+  const workflowTabs = () => (
+    <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6, flexShrink: 0 }}>
+      {/* Auto-group is a sub-view of Design, so the tab stays lit for both. */}
+      <button style={tabStyle(workflowMode === 'design' && (rightTab === 'groups' || rightTab === 'autogroup'))}
+        onClick={() => goWorkflow('design')}
+        title="Group members on the map and design their cage"><Icon name="design" size={ICON.sm} />Design</button>
+      <button style={tabStyle(workflowMode === 'dashboard')}
+        onClick={() => goWorkflow('dashboard')}
+        title="Group Dashboard — section cards + per-group DCR table, split beside the plan"><Icon name="groupDashboard" size={ICON.sm} />Dashboard</button>
+      <button style={tabStyle(workflowMode === 'verify')}
+        onClick={() => goWorkflow('verify')}
+        title="S-Concrete Verify — push & run the batch, read results per group, split beside the plan"><Icon name="verify" size={ICON.sm} />Verify</button>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', paddingLeft: 8, marginLeft: 4, borderLeft: `1px solid ${BORDER.default}`, flexShrink: 0 }}>
+        {analyzeBtn('savings', 'savings', 'Savings', 'Savings — tonnage you could save by merging groups at the target DCR')}
+        {analyzeBtn('takeoff', 'takeoff', 'Takeoff', 'Takeoff — concrete and steel quantities for the model')}
+      </div>
+    </div>
+  );
 
   const inspectedMember = inspectedMemberId ? members.find(m => m.id === inspectedMemberId) : null;
 
   if (!map) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, color: INK.secondary }}>
-        <div style={{ fontSize: 48 }}>🗺️</div>
+        <div style={{ color: BORDER.strong }}><Icon name="viewer" size={56} /></div>
         <div style={{ fontSize: 16, fontWeight: 700, color: INK.strong }}>No model map yet</div>
-        <div style={{ fontSize: 13 }}>Connect to ETABS or open a tables file to import beams (and columns).</div>
+        <div style={{ fontSize: 13 }}>Connect to ETABS or open a tables file to import beams.</div>
         <button
           onClick={onOpenEtabsImport}
           style={{ padding: '10px 24px', background: ACCENT.primary, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
@@ -970,17 +1073,37 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         : { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12, gap: 8 }}>
         {/* Toolbar — clustered: View · Colour · Overlay · Model */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
-          {/* 👁 Visibility — show/hide member categories, imported layers, floors */}
+          {/* Visibility (eye) — show/hide member categories, imported layers, floors */}
           <MapFilterMenu sections={visibilitySections} hiddenCount={visibilityHiddenCount} onClearAll={clearVisibility}
-            icon="👁" label="Show" title="Show or hide what's drawn on the plan — members, walls, grids, openings, floors" />
+            icon="visibility" label="Show" title="Show or hide what's drawn on the plan — members, walls, grids, openings, floors" />
 
-          {/* ⧩ Filter — narrow the plan by design group / section */}
+          {/* Filter (funnel) — narrow the plan by design group / section */}
           <MapFilterMenu sections={filterSections} hiddenCount={filterHiddenCount} onClearAll={clearAllFilters} />
+
+          {/* 2D ↔ 3D. Everything else on this toolbar keeps working in 3D; only the
+              projection changes. Drag empty space to orbit. */}
+          <button
+            onClick={() => setView3d(v => !v)}
+            aria-pressed={view3d}
+            title={view3d
+              ? 'Back to the 2D plan'
+              : 'Switch to the 3D view — drag empty space to orbit, shift-drag to lasso-select'}
+            style={{
+              padding: '5px 9px', border: `1px solid ${view3d ? ACCENT.primary : BORDER.strong}`,
+              borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              background: view3d ? ACCENT.primary : 'white', color: view3d ? 'white' : INK.base,
+            }}
+          >
+            3D
+          </button>
 
           <div style={toolSep} />
 
-          {/* Colour by: one dropdown replaces the 8 mode buttons */}
-          <span style={{ fontSize: 11, color: INK.secondary }}>Colour</span>
+          {/* Colour by: one dropdown replaces the 8 mode buttons. The palette icon
+              stands for the whole range of schemes the plan can be painted with. */}
+          <span title="Colour the plan by…" style={{ display: 'flex', color: INK.secondary }}>
+            <Icon name="colourBy" title="Colour the plan by" />
+          </span>
           <Dropdown
             value={colorMode}
             options={[
@@ -1012,44 +1135,55 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           <div style={toolSep} />
 
           {/* Line weight — stroke thickness proportional to beam width */}
-          <span style={{ fontSize: 11, color: INK.secondary }}>Line wt</span>
+          <span title="Line weight" style={{ display: 'flex', color: INK.secondary }}>
+            <Icon name="lineWeight" title="Line weight" />
+          </span>
           <input
+            className="slim-range"
             type="range" min={0} max={1} step={0.05} value={lineWeightScale}
             onChange={e => setLineWeightScale(parseFloat(e.target.value))}
             title="Line weight — thicker lines for wider beams (0 = uniform)"
-            style={{ width: 84, cursor: 'pointer', accentColor: ACCENT.primary }}
+            style={{ width: 84 }}
           />
 
           <div style={toolSep} />
 
           {/* Overlay: diagram + inspect + errors */}
+          {/* M / V are self-toggling: clicking the active one turns the overlay off,
+              so the old third "Diag" (= off) button is redundant. diagramMode is a
+              single value, so picking one inherently clears the other — the two
+              envelopes can never be drawn at once. */}
           <div style={{ display: 'flex', gap: 2 }}>
-            {(['off', 'moment', 'shear'] as DiagramMode[]).map(m => (
-              <button key={m} onClick={() => setDiagramMode(m)}
-                style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: diagramMode === m ? '#7c3aed' : 'white', color: diagramMode === m ? 'white' : INK.base }}
-                title={m === 'off' ? 'No force-diagram overlay' : m === 'moment' ? 'Moment envelope overlay' : 'Shear envelope overlay'}>
-                {m === 'off' ? 'Diag' : m === 'moment' ? 'M' : 'V'}
-              </button>
-            ))}
+            {([['moment', 'M', 'Moment envelope overlay'], ['shear', 'V', 'Shear envelope overlay']] as [DiagramMode, string, string][]).map(([m, lbl, tip]) => {
+              const on = diagramMode === m;
+              return (
+                <button key={m} onClick={() => setDiagramMode(on ? 'off' : m)}
+                  aria-pressed={on}
+                  style={{ padding: '5px 9px', border: `1px solid ${on ? '#7c3aed' : BORDER.strong}`, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: on ? '#7c3aed' : 'white', color: on ? 'white' : INK.base }}
+                  title={on ? `${tip} — click to turn off` : tip}>
+                  {lbl}
+                </button>
+              );
+            })}
           </div>
           <button
             onClick={() => { setInspectMode(m => !m); setInspectedMemberId(null); }}
-            style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: inspectMode ? '#7c3aed' : 'white', color: inspectMode ? 'white' : INK.base }}
+            style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, display: 'flex', cursor: 'pointer', background: inspectMode ? '#7c3aed' : 'white', color: inspectMode ? 'white' : INK.base }}
             title="Inspect: click a beam to see its section sketch and V/M diagrams">
-            🔍
+            <Icon name="inspect" title="Inspect" />
           </button>
           <button
             onClick={() => setShowErrors(s => !s)}
-            style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: showErrors ? STATUS.fail : 'white', color: showErrors ? 'white' : INK.base }}
+            style={{ padding: '5px 9px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, display: 'flex', cursor: 'pointer', background: showErrors ? STATUS.fail : 'white', color: showErrors ? 'white' : INK.base }}
             title="Highlight members with design errors or warnings">
-            ⚠
+            <Icon name="warning" title="Show design errors" />
           </button>
 
           <div style={{ flex: 1 }} />
           <button onClick={onOpenEtabsImport}
             title="Re-import / re-sync from ETABS"
-            style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: INK.base, fontWeight: 600 }}>
-            ↻ Re-sync
+            style={{ padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, cursor: 'pointer', background: 'white', color: INK.base, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="resync" size={ICON.sm} />Re-sync
           </button>
         </div>
 
@@ -1067,8 +1201,15 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           </div>
         )}
 
-        {/* Map canvas */}
-        <div ref={canvasWrapRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {/* Map canvas. Centered: the SVG is hard-sized to the MEASURED box, so any
+            time that measurement trails the wrapper — the first paint before the
+            layout effect runs, a dropped ResizeObserver callback, sub-pixel
+            rounding — the canvas is smaller than this container. In normal flow it
+            would then sit in the top-left corner with dead space to the right and
+            below; centering keeps the plan mid-screen in every one of those cases.
+            The overlay children (legend, inspect card, model-name chip) are all
+            position:absolute, so they are out of flow and unaffected. */}
+        <div ref={attachCanvasWrap} style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <MapCanvas
             frames={frames}
             dcrById={dcrById}
@@ -1115,6 +1256,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             showWalls={mapWalls.length > 0 && !hiddenLayers.has('walls')}
             showGrids={mapGrids.length > 0 && !hiddenLayers.has('grids')}
             showOpenings={mapOpenings.length > 0 && !hiddenLayers.has('openings')}
+            columns={mapColumns}
+            showColumns={mapColumns.length > 0 && !hiddenLayers.has('columns')}
+            view3d={view3d}
           />
 
           {/* ETABS model filename — bottom-right of the plan, so the analyzed
@@ -1185,7 +1329,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             style={{ width: 8, flexShrink: 0, cursor: 'col-resize', background: '#eef2f7', borderLeft: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ width: 3, height: 40, borderRadius: 2, background: '#cbd5e1' }} />
           </div>
-          <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            {workflowTabs()}
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             <GroupDashboard
               payload={dashboardPayload}
               selectedGroupId={dashboardSelectedGroupId}
@@ -1203,8 +1349,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onSetReviewed={handleSetReviewed}
               canPopOut={canPopOut}
               onPopOut={() => { setDashboardPoppedOut(true); window.electronAPI?.openDashboardWindow?.(); }}
-              onClose={() => setDashboardOpen(false)}
+              onClose={() => goWorkflow('design')}
             />
+            </div>
           </div>
         </>
       )}
@@ -1223,7 +1370,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             style={{ width: 8, flexShrink: 0, cursor: 'col-resize', background: '#eef2f7', borderLeft: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ width: 3, height: 40, borderRadius: 2, background: '#cbd5e1' }} />
           </div>
-          <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            {workflowTabs()}
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             <SconcreteDashboard
               payload={dashboardPayload}
               project={project}
@@ -1232,8 +1381,9 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               selectedGroupId={sconcreteSelectedGroupId}
               onSelectGroup={setSconcreteSelectedGroupId}
               onOpenMember={onPickMember}
-              onClose={() => setSconcreteOpen(false)}
+              onClose={() => goWorkflow('design')}
             />
+            </div>
           </div>
         </>
       )}
@@ -1244,7 +1394,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           right panel whenever a group is active, so the cage is visible without
           scrolling the Design pane. Dismiss with ✕ or by re-clicking the group row.
           The map (flex:1) narrows and its ResizeObserver re-fits the canvas. */}
-      {!dashboardOpen && !sconcreteOpen && activeGroup && (
+      {!splitPaneOpen && activeGroup && (
         <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', background: SURFACE.raised, overflow: 'hidden', animation: 'slideInCol 160ms ease-out' }}>
           <div style={{ ...sectionHdr, justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeGroup.label} · Reinforcement</span>
@@ -1258,101 +1408,88 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               code={project.code}
               targetDCR={project.targetDCR ?? 0.9}
             />
-            {members.some(m => activeGroup.memberIds.includes(m.id) && m.memberType === 'column') && (
-              <ColumnForceGrid
-                members={members.filter(m => activeGroup.memberIds.includes(m.id))}
-                onProjectChange={onProjectChange}
-              />
-            )}
           </div>
         </div>
       )}
 
       {/* Right-panel resize handle — drag its left edge to grow/shrink the panel.
           Hidden while a split dashboard owns the right half. */}
-      {!dashboardOpen && !sconcreteOpen && (
+      {!splitPaneOpen && (
         <div onMouseDown={onRightPanelDividerDown} title="Drag to resize the panel"
           style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: SURFACE.subtle, borderLeft: `1px solid ${BORDER.default}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: 3, height: 40, borderRadius: 2, background: BORDER.strong }} />
         </div>
       )}
 
-      {/* Right panel */}
-      <div style={{ width: rightPanelW, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: (dashboardOpen || sconcreteOpen) ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
-        {/* Tab bar — the workflow (Design, then the two split dashboards) is primary;
-            read-only analytics are tucked behind an "Analyze" picker. */}
-        <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, paddingRight: 6 }}>
-          <button style={tabStyle(rightTab === 'groups')} onClick={() => setRightTab('groups')}
-            title="Group members on the map and design their cage">① Design</button>
-          <button style={tabStyle(false)} onClick={() => { setDashboardOpen(true); setSconcreteOpen(false); setRightTab('groups'); }}
-            title="Open the Group Dashboard — section cards + per-group DCR table, split beside the plan">📊 Dashboard</button>
-          <button style={tabStyle(false)} onClick={() => { setSconcreteOpen(true); setDashboardOpen(false); setRightTab('groups'); }}
-            title="Open the S-Concrete Verify dashboard — push & run the batch, read results per group, split beside the plan">🔬 Verify</button>
-          <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 10, color: INK.muted, marginRight: 4 }}>Analyze:</span>
-          <Dropdown
-            value={rightTab === 'groups' ? '' : rightTab}
-            options={[
-              { value: '', label: '—' },
-              { value: 'autogroup', label: 'Auto-group' },
-              { value: 'savings', label: 'Savings' },
-              { value: 'takeoff', label: 'Takeoff' },
-            ]}
-            onChange={v => setRightTab((v || 'groups') as RightTab)}
-            style={{ padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 11, background: 'white', margin: '4px 0' }}
-          />
-        </div>
+      {/* Right panel — hidden only while a split pane actually occupies the right half.
+          A popped-out dashboard leaves the panel (and its tab bar) in place. */}
+      <div style={{ width: rightPanelW, flexShrink: 0, borderLeft: `1px solid ${BORDER.default}`, display: splitPaneOpen ? 'none' : 'flex', flexDirection: 'column', background: 'white', overflow: 'hidden' }}>
+        {workflowTabs()}
 
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {rightTab === 'groups' && (
+          {(rightTab === 'groups' || rightTab === 'autogroup') && (
             /* ① Design fills the pane; ② Verify (the S-Concrete batch) now lives in the
                🔬 Verify split dashboard, reached from the footer button below or the tab. */
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-                {/* ① DESIGN — group members, then set or ✨-suggest the cage. The active
-                    group's rebar editor opens as a slide-out column beside this panel. */}
-                <div style={sectionHdr}>① Design<span style={sectionHint}>group members on the map, then set or ✨-suggest the cage</span><div style={{ flex: 1 }} /><HelpLink section="design" title="How grouping & the cage work" /></div>
-                <GroupPanel
-                  groups={groups}
-                  frames={frames}
-                  selected={selectedFrames}
-                  activeGroupId={activeGroupId}
-                  onGroupsChange={handleGroupsChange}
-                  onActiveGroupChange={setActiveGroupId}
-                  onSelectionChange={setSelectedFrames}
-                  dcrById={dcrById}
-                  designResultsById={designResultsById}
-                  members={members}
-                  onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
-                  onSuggestAll={handleSuggestAllGroups}
-                  suggestAllNote={suggestAllNote}
-                />
+                {/* The section header row is gone — with its title and help link both
+                    removed there was nothing left but an empty rule. The action row
+                    below is the panel's first element. The active group's rebar editor
+                    opens as a slide-out column beside this panel. */}
+                {rightTab === 'autogroup' ? (
+                  /* Auto-group drills in over the group list; the header button is
+                     hidden while it is open, so this is the way back. */
+                  <>
+                    <button
+                      onClick={() => setRightTab('groups')}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', border: 'none', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle, padding: '7px 12px', cursor: 'pointer', fontSize: 11, fontWeight: 700, color: ACCENT.primary }}
+                    >
+                      ← Back to groups
+                    </button>
+                    <AutoGroupPanel
+                      members={members}
+                      onHighlightChange={setHighlightedFrames}
+                      onApplySuggestion={handleAcceptSuggestion}
+                      onOverlayChange={handleOverlayChange}
+                    />
+                  </>
+                ) : (
+                  <GroupPanel
+                    groups={groups}
+                    frames={frames}
+                    selected={selectedFrames}
+                    activeGroupId={activeGroupId}
+                    onGroupsChange={handleGroupsChange}
+                    onActiveGroupChange={setActiveGroupId}
+                    onSelectionChange={setSelectedFrames}
+                    dcrById={dcrById}
+                    designResultsById={designResultsById}
+                    members={members}
+                    onDeleteGroupWithMembers={onDeleteMembers ? handleDeleteGroupWithMembers : undefined}
+                    onSuggestAll={handleSuggestAllGroups}
+                    suggestAllNote={suggestAllNote}
+                    onAutoGroup={() => setRightTab('autogroup')}
+                  />
+                )}
               </div>
               {/* ② VERIFY — opens the S-Concrete dashboard split beside the plan. */}
               <button
-                onClick={() => { setSconcreteOpen(true); setDashboardOpen(false); }}
+                onClick={() => goWorkflow('verify')}
                 title="Open the S-Concrete Verify dashboard beside the plan — push & run the batch, read results per group"
                 style={{ display: 'flex', alignItems: 'baseline', gap: 6, width: '100%', textAlign: 'left', border: 'none', borderTop: `1px solid ${BORDER.default}`, background: SURFACE.subtle, padding: '9px 10px', cursor: 'pointer', flexShrink: 0 }}
               >
                 <span style={{ fontSize: 11, fontWeight: 700, color: INK.strong }}>② Verify</span>
                 <span style={sectionHint}>run the S-Concrete batch · results per group</span>
                 <div style={{ flex: 1 }} />
-                <span style={{ fontSize: 11, fontWeight: 700, color: ACCENT.primary }}>🔬 Open →</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: ACCENT.primary, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <Icon name="verify" size={ICON.sm} />Open →
+                </span>
               </button>
             </div>
           )}
 
-          {rightTab !== 'groups' && (
+          {rightTab !== 'groups' && rightTab !== 'autogroup' && (
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-              {rightTab === 'autogroup' && (
-                <AutoGroupPanel
-                  members={members}
-                  onHighlightChange={setHighlightedFrames}
-                  onApplySuggestion={handleAcceptSuggestion}
-                  onOverlayChange={handleOverlayChange}
-                />
-              )}
-
               {rightTab === 'savings' && (
                 <SavingsPanel
                   members={members}

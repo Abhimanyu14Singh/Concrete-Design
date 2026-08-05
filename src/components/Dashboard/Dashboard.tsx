@@ -1,7 +1,8 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import type { Project, Member, DesignCode, RebarLayout } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
-import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, ACCENT, BORDER, INK, LABEL_STYLE, MONO_NUM, STATUS, SURFACE, TYPE } from '../../theme';
+import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, ACCENT, BORDER, INK, LABEL_STYLE, MONO_NUM, STATUS, SURFACE, TYPE , ICON } from '../../theme';
+import { Icon } from '../common/Icon';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
 import { summarize, DCRChip, DCRInlineCell, GroupDcrSummary, type MemberSummary } from './dashboardShared';
@@ -235,13 +236,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
 
   const barData = dcrSummaries.map(s => {
     const r = s.worstResult;
-    const isColumn = s.member.memberType === 'column';
     return {
       name: s.member.label.length > 12 ? s.member.label.slice(0, 12) + '…' : s.member.label,
       'Flex+':   parseFloat(r.DCR_flex_pos.toFixed(3)),
       'Flex-':   parseFloat(r.DCR_flex_neg.toFixed(3)),
       Shear:     parseFloat(r.DCR_shear.toFixed(3)),
-      Torsion:   isColumn ? 0 : parseFloat(r.DCR_torsion.toFixed(3)),
+      Torsion:   parseFloat(r.DCR_torsion.toFixed(3)),
       'P-M':     parseFloat((r.DCR_PM ?? 0).toFixed(3)),
     };
   });
@@ -339,7 +339,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
         {/* Left panel — resizable */}
         <div style={{ width: leftWidth, flexShrink: 0, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, overflow: 'auto' }}>
           <div style={{ padding: '10px 16px', borderBottom: `1px solid ${BORDER.default}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
-            <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>Members by Group</span>
+            <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="members" size={ICON.sm} />Members by Group</span>
             <span style={{ fontSize: 11, color: INK.muted }}>{project.members.length} members</span>
           </div>
           {allGroups.map(sec => {
@@ -643,7 +643,7 @@ function GroupMaterialEditor({ group, project, onProjectUpdate }: GroupMaterialE
 
   return (
     <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: 14 }}>
-      <div style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, marginBottom: 10 }}>Group Material Properties</div>
+      <div style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}><Icon name="materials" size={ICON.sm} />Group Material Properties</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 10, color: INK.secondary, marginBottom: 3, display: 'flex', alignItems: 'center' }}>
@@ -711,7 +711,7 @@ function GroupPanel({
       {/* Group reinforcement — full interactive editor */}
       <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, overflow: 'hidden' }}>
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle }}>
-          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>Group Reinforcement</span>
+          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="reinforcement" size={ICON.sm} />Group Reinforcement</span>
         </div>
         <GroupRebarEditor
           group={{ id: group.id, label: group.label, color: group.color, rebar: group.rebar, memberIds: group.members.map(m => m.id) }}
@@ -728,7 +728,7 @@ function GroupPanel({
       {/* Member results mini-table */}
       <div style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, overflow: 'hidden' }}>
         <div style={{ padding: '8px 14px', borderBottom: `1px solid ${BORDER.default}`, background: SURFACE.subtle }}>
-          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base }}>Member Results</span>
+          <span style={{ ...LABEL_STYLE, fontSize: TYPE.label, color: INK.base, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="member" size={ICON.sm} />Member Results</span>
         </div>
         {/* Table header */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px 60px 60px 60px 60px', gap: 0, padding: '6px 14px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>

@@ -6,6 +6,7 @@
  * currently hidden. Purely presentational — the host owns the hidden-sets.
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Icon, type IconName } from '../common/Icon';
 import { ACCENT, BORDER, INK, SURFACE } from '../../theme';
 
 export interface FilterItem { key: string; label: string; color?: string }
@@ -21,13 +22,14 @@ export interface FilterSection {
 
 const miniBtn: CSSProperties = { fontSize: 9, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' };
 
-export default function MapFilterMenu({ sections, hiddenCount, onClearAll, icon = '⧩', label = 'Filter', title = "Filter what's shown on the plan — member type, floors, groups, sections" }: {
+export default function MapFilterMenu({ sections, hiddenCount, onClearAll, icon = 'filter', label = 'Filter', title = "Filter what's shown on the plan — member type, floors, groups, sections" }: {
   sections: FilterSection[];
   hiddenCount: number;
   onClearAll: () => void;
   /** Button glyph (defaults to the filter funnel). */
-  icon?: string;
-  /** Button + panel-header text (defaults to "Filter"). */
+  icon?: IconName;
+  /** Panel-header text and the button's accessible name (defaults to "Filter").
+   *  The trigger itself is icon-only — this is not rendered on it. */
   label?: string;
   /** Button tooltip. */
   title?: string;
@@ -46,9 +48,11 @@ export default function MapFilterMenu({ sections, hiddenCount, onClearAll, icon 
   const active = hiddenCount > 0;
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)} title={title}
-        style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: `1px solid ${active ? ACCENT.primary : BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: active ? ACCENT.softBg : 'white', color: active ? ACCENT.primary : INK.base, fontWeight: 600 }}>
-        <span aria-hidden style={{ fontSize: 12 }}>{icon}</span> {label}
+      {/* Icon-only trigger: `label` moves to aria-label (and the panel header), so
+          the control keeps its name for assistive tech and the tooltip. */}
+      <button onClick={() => setOpen(o => !o)} title={title} aria-label={label}
+        style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px', border: `1px solid ${active ? ACCENT.primary : BORDER.strong}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', background: active ? ACCENT.softBg : 'white', color: active ? ACCENT.primary : INK.base, fontWeight: 600 }}>
+        <Icon name={icon} />
         {active && <span style={{ background: ACCENT.primary, color: 'white', borderRadius: 8, fontSize: 9, padding: '0 5px', fontWeight: 700 }}>{hiddenCount}</span>}
       </button>
       {open && (

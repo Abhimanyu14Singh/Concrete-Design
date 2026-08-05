@@ -11,7 +11,7 @@ import type { EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterial
 import { FORCE_UNITS, LENGTH_UNITS, STRESS_UNITS } from '../../adapters/etabs/tableConnection';
 import { MockConnection } from '../../adapters/etabs/mock';
 import { ComConnection } from '../../adapters/etabs/comClient';
-import { buildMembers, buildColumnMembers, autoGroup, stationLoadCases } from '../../adapters/etabs';
+import { buildMembers, autoGroup, stationLoadCases } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
@@ -105,14 +105,6 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   // (analysis) forces — what "Display → Forces → Frames" shows. Switch to
   // 'element' to match the numbers you read off the ETABS model directly.
   const [forceSource, setForceSource] = useState<'design' | 'element'>('design');
-  // Member scope — the first decision in the filter step: beams (default),
-  // columns, or both. Columns need a connection that supports getColumns; the
-  // selector disables them and falls back to beams-only otherwise. Column design
-  // forces start at zero (entered after import).
-  const [scope, setScope] = useState<'beams' | 'columns' | 'both'>('beams');
-  const [hasColumns, setHasColumns] = useState(false); // connection supports getColumns
-  const includeColumns = hasColumns && scope !== 'beams';
-  const includeBeams = !includeColumns || scope === 'both';
 
   // step 3 — stirrup size defaults to Ø10 in SI, #4 in imperial (display only;
   // spacings are stored in inches and converted for display when SI)
@@ -197,9 +189,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, wizardCode, dcrVersion]);
 
-  // Review-step tallies (members holds both beams + any imported columns).
-  const beamCount = members.filter(m => m.memberType === 'beam').length;
-  const colCount = members.filter(m => m.memberType === 'column').length;
+  const beamCount = members.length;
 
   const filter = useMemo(() => ({
     stories: selStories.size ? [...selStories] : undefined,
@@ -227,7 +217,6 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       // label is "force-length" (e.g. "kn-m", "kip-ft"); the length part decides.
       const lenPart = info.units.split('-')[1]?.trim().toLowerCase() ?? '';
       setWizardUnits(['mm', 'cm', 'm'].includes(lenPart) ? 'si' : 'imperial');
-      setHasColumns(!!conn.getColumns);
       const [st, gr, sec, mat, cmb] = await Promise.all([
         conn.getStories(), conn.getGroups(), conn.getFrameSections(),
         conn.getMaterials(), conn.getCombos(),
@@ -290,9 +279,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       // Get all beams (no filter) for the connectivity map snapshot — always
       // captured so the plan map shows the full model as context.
       const allBeams = await conn.getBeams({});
-      // Get filtered beams for design (only when beams are in scope).
-      const beams = includeBeams ? await conn.getBeams(filter) : [];
-      if (includeBeams && !beams.length) throw new Error('No beams match the current filter.');
+      const beams = await conn.getBeams(filter);
+      if (!beams.length) throw new Error('No beams match the current filter.');
       const sourceGroup = selGroups.size === 1 ? [...selGroups][0] : undefined;
       // Always fetch the SLS combo's forces too, even if it wasn't selected for
       // ULS import, so per-beam crack-width resolution from stationForces works.
@@ -302,41 +290,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
         ? await conn.getStationForces(beams.map(b => b.name), [...forceCombos], sourceGroup)
         : {};
       let built = buildMembers(beams, sections, materials, forces, seed, wizardCode);
-      // Columns (optional): bring in geometry + section so they appear on the map
-      // and can be grouped/designed. Forces start at zero (entered after import).
-      let allColumns: import('../../adapters/etabs/connection').EtabsColumnGeom[] = [];
-      if (includeColumns && conn.getColumns) {
-        allColumns = await conn.getColumns({});
-        const filteredCols = await conn.getColumns(filter);
-        let colMembers = buildColumnMembers(filteredCols, sections, materials, seed);
-        // Import column design forces (read-only, enveloped per combo) so columns
-        // don't land at zero. Maps ETABS → app: Pu = −P (compression positive),
-        // Mux = M3, Muy = M2, Vu = max(|V2|,|V3|), Tu = T. Falls back to the zero
-        // placeholder (entered later in the force grid) if the source has no column
-        // force table or the analysis wasn't run.
-        if (conn.getColumnForces && filteredCols.length) {
-          try {
-            const colForces = await conn.getColumnForces(filteredCols.map((c) => c.name), [...forceCombos], sourceGroup);
-            colMembers = colMembers.map((m) => {
-              const cfs = colForces[m.id];
-              if (!cfs || !cfs.length) return m;
-              return {
-                ...m,
-                loads: cfs.map((cf, i) => ({
-                  id: cf.combo || `LC${i + 1}`, label: cf.combo || `LC${i + 1}`,
-                  // Vu keeps the enveloped max for the app's single-shear engine;
-                  // Vu2/Vu3 preserve both directions for the biaxial S-Concrete .SCO.
-                  Pu: -cf.P, Mux: cf.M3, Muy: cf.M2, Vu: Math.max(cf.V2, cf.V3), Tu: cf.T,
-                  Vu2: cf.V2, Vu3: cf.V3,
-                  Mu_pos: 0, Mu_neg: 0,
-                })),
-              };
-            });
-          } catch { /* leave columns at zero — the user can enter forces in the grid */ }
-        }
-        built = [...built, ...colMembers];
-      }
-      if (!built.length) throw new Error('No members match the current filter.');
+      if (!built.length) throw new Error('No beams match the current filter.');
       // Apply global material overrides if the user enabled them.
       if (matOverride.enabled) {
         const toInternal = (v: string) => {
@@ -364,25 +318,21 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
       // Optional geometry layers (walls / grids / openings). Sources without an
       // area/grid table simply omit the method; a source-side error degrades to an
       // empty layer so the import never breaks.
+      // Vertical frames — geometry only, for the 3D view. Never become members.
+      const cols     = conn.getColumns  ? await conn.getColumns({}).catch(() => [])  : [];
       const areas    = conn.getAreas    ? await conn.getAreas({}).catch(() => [])    : [];
       const grids    = conn.getGrids    ? await conn.getGrids().catch(() => [])      : [];
       const openings = conn.getOpenings ? await conn.getOpenings({}).catch(() => []) : [];
 
-      // Build modelMap from all beam + column geometry (+ area/grid/opening layers)
+      // Build modelMap from beam geometry (+ area/grid/opening layers)
       const uniqueStories = [...new Set([
-        ...allBeams.map(b => b.story), ...allColumns.map(c => c.story),
+        ...allBeams.map(b => b.story), ...cols.map(c => c.story),
         ...areas.map(a => a.story), ...openings.map(o => o.story),
       ])].sort();
-      const frames: MapFrame[] = [
-        ...allBeams.map(b => ({
-          frameName: b.name, story: b.story, sectionName: b.section, pt1: b.pt1, pt2: b.pt2,
-          memberId: builtById.get(b.name),
-        })),
-        ...allColumns.map(c => ({
-          frameName: c.name, story: c.story, sectionName: c.section, pt1: c.pt1, pt2: c.pt2,
-          memberId: builtById.get(c.name),
-        })),
-      ];
+      const frames: MapFrame[] = allBeams.map(b => ({
+        frameName: b.name, story: b.story, sectionName: b.section, pt1: b.pt1, pt2: b.pt2,
+        memberId: builtById.get(b.name),
+      }));
       const modelMap: ModelMap = {
         source,
         modelName: connInfo?.modelName ?? 'ETABS model',
@@ -392,6 +342,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
         walls: areas.map(a => ({ id: a.name, story: a.story, points: a.points, kind: a.kind, sectionName: a.section || undefined })),
         grids: grids.map(g => ({ id: g.id, label: g.label, p1: g.p1, p2: g.p2 })),
         openings: openings.map(o => ({ id: o.name, story: o.story, points: o.points })),
+        columns: cols.map(c => ({ id: c.name, story: c.story, sectionName: c.section || undefined, pt1: c.pt1, pt2: c.pt2 })),
       };
       setCapturedModelMap(modelMap);
 
@@ -448,9 +399,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     // of-each envelope), and all rows flow through member design + the S-CONCRETE
     // .SCO. The SLS quasi-permanent combo is stored at PROJECT level (project.slsCombo)
     // and resolved per beam from stationForces at design time — no per-member id.
-    const labeled = members.map(m => m.memberType === 'beam'
-      ? { ...m, loads: stationLoadCases(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`) }
-      : m); // columns keep their (user-entered / placeholder) loads
+    const labeled = members.map(m => ({
+      ...m, loads: stationLoadCases(m.stationForces ?? [], `ETABS env (${[...selCombos].join(', ')})`, m.span),
+    }));
     onImport(
       labeled, designGroups, pickId, capturedModelMap ?? undefined,
       slsComboId || undefined,
@@ -631,23 +582,11 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
               )}
 
-              {/* First decision: what to import. Columns are disabled when the
-                  source can't expose them (keeps the choice honest). */}
+              {/* What gets imported. Beams only — this is a beam-design app, so
+                  there is no scope choice to make. */}
               <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <div style={{ ...lbl, marginBottom: 0 }}>Import</div>
-                {([
-                  ['beams', 'Beams', true],
-                  ['columns', 'Columns', hasColumns],
-                  ['both', 'Beams + Columns', hasColumns],
-                ] as [typeof scope, string, boolean][]).map(([val, text, enabled]) => (
-                  <button key={val} disabled={!enabled} onClick={() => setScope(val)}
-                    style={{ ...btn(scope === val), padding: '5px 16px', opacity: enabled ? 1 : 0.4, cursor: enabled ? 'pointer' : 'not-allowed' }}>
-                    {text}
-                  </button>
-                ))}
-                {!hasColumns
-                  ? <span style={{ fontSize: 10, color: INK.muted }}>This source doesn't expose columns.</span>
-                  : includeColumns && <span style={{ fontSize: 10, color: INK.secondary }}>Columns import with geometry + section; enter design forces after import.</span>}
+                <span style={{ fontSize: 12, fontWeight: 600, color: INK.base }}>Beams</span>
                 <div style={{ flex: 1 }} />
                 {/* How the section sizes below are DISPLAYED (mm vs in) — a view
                     toggle only, independent of the model-unit interpretation above. */}
@@ -681,7 +620,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                 </div>
                 <div style={card}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <div style={lbl}>{!includeBeams ? 'Column sections' : includeColumns ? 'Sections' : 'Beam sections'}</div>
+                    <div style={lbl}>Beam sections</div>
                     {(selSections.size > 0 || selGroups.size > 0) && (
                       <span style={{ fontSize: 10, color: INK.secondary }}>sections ∪ groups — members matching either are imported</span>
                     )}
@@ -738,7 +677,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                     Selected ETABS groups become design groups with the same name; remaining beams group by story · section.
                   </div>
                 </div>
-                {includeBeams && <div style={card}>
+                <div style={card}>
                   {/* Force source — which ETABS table the imported moments/shears come
                       from. Switch to Analysis to match the numbers you read directly off
                       the ETABS frame-force display. */}
@@ -817,7 +756,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                       If selected, this combo's moments are used as M_qp for EC2 §7.3.4 crack width checks.
                     </div>
                   </div>
-                </div>}
+                </div>
               </div>
               {/* Materials preview folded into Advanced to keep the filter step light. */}
               <details style={card}>
@@ -838,10 +777,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               </details>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <button style={btn()} onClick={() => setStep(0)}>← Back</button>
-                {includeBeams && <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>}
-                {includeBeams && matchCount != null && <span style={{ fontSize: 12, color: INK.base, fontWeight: 600 }}>{matchCount} beams match</span>}
+                <button style={btn()} disabled={busy} onClick={refreshMatchCount}>Count matching beams</button>
+                {matchCount != null && <span style={{ fontSize: 12, color: INK.base, fontWeight: 600 }}>{matchCount} beams match</span>}
                 <div style={{ flex: 1 }} />
-                <button style={btn(true)} disabled={busy || (includeBeams && selCombos.size === 0)} onClick={() => setStep(2)}>
+                <button style={btn(true)} disabled={busy || selCombos.size === 0} onClick={() => setStep(2)}>
                   Next: Rebar defaults →
                 </button>
               </div>
@@ -1051,7 +990,7 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: INK.strong }}>
-                    {beamCount} beams{colCount ? ` · ${colCount} columns` : ''} · {selStories.size ? (selStories.size === 1 ? [...selStories][0] : `${selStories.size} stories`) : 'all stories'}
+                    {beamCount} beams · {selStories.size ? (selStories.size === 1 ? [...selStories][0] : `${selStories.size} stories`) : 'all stories'}
                   </span>
                   <div style={{ flex: 1 }} />
                   <label style={{ fontSize: 11, color: INK.secondary }}>
@@ -1105,11 +1044,6 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   {/* Next-steps summary — closes the wizard by naming the workflow. */}
                   <div style={{ background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#1e40af', lineHeight: 1.5 }}>
                     <b>Next:</b> group members → design rebar → run S-Concrete to verify.
-                    {colCount > 0 && (
-                      <div style={{ marginTop: 4, color: '#b45309' }}>
-                        ⚠ {colCount} column{colCount === 1 ? '' : 's'} imported with zero forces — enter Pu / Mux / Muy in Map → ① Design before running S-Concrete.
-                      </div>
-                    )}
                   </div>
                   <button style={btn()} onClick={() => setStep(2)}>← Back to rebar</button>
                   <button style={btn(true)} onClick={() => commit()}>

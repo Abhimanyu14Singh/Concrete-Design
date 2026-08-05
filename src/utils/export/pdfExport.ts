@@ -3,12 +3,11 @@ import { PDFDocument, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, DesignResults, LoadCase, DesignCode } from '../../types';
 import { runDesign } from '../../engines';
-import { getBarDiam, zoneShearDemands } from '../concreteDesign';
+import { coverFor, getBarDiam, zoneShearDemands } from '../concreteDesign';
 import { generateBreakdown, type CalcSection } from '../calcBreakdown';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
 import { resolveCrack } from '../resolveCrack';
-import { generateColumnBreakdown } from '../calcBreakdownColumn';
-import { generateColumnBreakdownEC2 } from '../calcBreakdownColumnEC2';
+import { settingsFromProject } from '../projectSettings';
 import {
   OVERRIDE_KEY_LABEL, isOverridden, visibleWarnings, overrideEntries, effectiveStatus,
 } from '../overrides';
@@ -31,8 +30,6 @@ export interface ReportOptions {
   revision?: string;
   /** Override project name on cover page. */
   reportName?: string;
-  /** Override engineer name on cover page. */
-  reportEngineer?: string;
   /** Override date on cover page. */
   reportDate?: string;
   /** Honor engineer overrides — suppress reviewed warnings, show review stamps,
@@ -89,19 +86,19 @@ function makeU(isEC2: boolean): UCtx {
   };
 }
 
+/** Cover for the member sheet: one figure when all faces match, else T/B/S. */
+function coverLabel(m: Member, u: UCtx): string {
+  const t = coverFor(m.section, 'top'), b = coverFor(m.section, 'bot'), s = coverFor(m.section, 'side');
+  return t === b && b === s ? u.dim(t) : `${u.dim(t)}/${u.dim(b)}/${u.dim(s)}`;
+}
+
 // Project-level SLS quasi-permanent combo for the current report; set by
 // buildReportBytes so the EC2 crack-width sheet + design results honour it
 // (mirrors the module-level _resultCache lifecycle).
 let _slsCombo: string | undefined;
 
 function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] {
-  const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
   const isEC2 = code === 'EN1992-1-1';
-  if (isColumn) {
-    return isEC2
-      ? generateColumnBreakdownEC2(m.section, m.material, m.rebar, lc)
-      : generateColumnBreakdown(m.section, m.material, m.rebar, lc);
-  }
   return isEC2
     ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, resolveCrack(m, code, _slsCombo), _slsCombo)
     : generateBreakdown(
@@ -239,27 +236,6 @@ function drawSectionSketch(ctx: DrawCtx, m: Member, x: number, y: number, boxW: 
   rect(ctx, x, y, boxW, boxH, C.light);
   text(ctx, 'Section', x + 6, y + boxH - 12, 8, C.dark, ctx.bold);
 
-  if (s.type === 'circular_column') {
-    const D = s.diameter ?? s.b;
-    const scale = Math.min(innerW / D, innerH / D);
-    const R = (D / 2) * scale;
-    const cx = x + boxW / 2, cy = y + pad + innerH / 2;
-    ctx.page.drawCircle({ x: cx, y: cy, size: R, borderColor: C.dark, borderWidth: 1, color: C.white });
-    const stOff = (s.coverClear + getBarDiam(s.stirrupDia) / 2) * scale;
-    ctx.page.drawCircle({ x: cx, y: cy, size: R - stOff, borderColor: C.blue, borderWidth: 0.8, color: undefined });
-    const groups = [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])].filter(g => g.numBars > 0);
-    const n = groups.reduce((t, g) => t + g.numBars, 0);
-    if (n > 0) {
-      const rb = Math.max(1.5, (getBarDiam(groups[0].barSize) / 2) * scale);
-      const ringR = R - stOff - rb - 1;
-      for (let i = 0; i < n; i++) {
-        const ang = (2 * Math.PI * i) / n - Math.PI / 2;
-        circle(ctx, cx + ringR * Math.cos(ang), cy + ringR * Math.sin(ang), rb);
-      }
-    }
-    text(ctx, `dia ${u.dim(D)}${u.dimSfx}`, cx - 14, y + 4, 7, C.mid);
-    return;
-  }
 
   // Rectangular beam / column (T/L drawn as web rectangle for simplicity)
   const secW = s.type === 'T_beam' || s.type === 'L_beam' ? (s.bw ?? s.b) : s.b;
@@ -526,7 +502,6 @@ export async function buildReportBytes(
   const isEC2 = project.code === 'EN1992-1-1';
   const u = makeU(isEC2);
   const reportName     = opts.reportName     ?? project.name;
-  const reportEngineer = opts.reportEngineer ?? project.engineer;
   const reportDate     = opts.reportDate     ?? project.date;
 
   const doc   = await PDFDocument.create();
@@ -543,10 +518,10 @@ export async function buildReportBytes(
   text(ctx, 'S-Concrete Design', margin, h - 44, 24, C.white, bold);
   text(ctx, `${project.code}  Reinforced Concrete Design Report`, margin, h - 66, 11, C.mid);
 
+  // No engineer/author name on the cover — the report identifies the project and
+  // the code it was checked against, not a person.
   text(ctx, 'Project', margin, h - 130, 9, C.mid);
   text(ctx, reportName, margin, h - 145, 14, C.dark, bold);
-  text(ctx, 'Engineer', margin + 300, h - 130, 9, C.mid);
-  text(ctx, reportEngineer, margin + 300, h - 145, 12, C.dark);
   text(ctx, 'Date', margin, h - 168, 9, C.mid);
   text(ctx, reportDate, margin, h - 181, 10, C.dark);
   text(ctx, 'Design Code', margin + 300, h - 168, 9, C.mid);
@@ -557,15 +532,57 @@ export async function buildReportBytes(
 
   line(ctx, margin, h - 208, w - margin, h - 208);
 
+  // ── Design standards ──────────────────────────────────────────────────────
+  // The project-wide values every member was checked against. Printing them on
+  // the cover means a reviewer can see the basis of the whole report at a glance
+  // instead of inferring it from the per-member pages.
+  const std = project.settings ?? settingsFromProject(project);
+  text(ctx, 'Design Standards', margin, h - 226, 11, C.dark, bold);
+  // Short label/value pairs only — each cell is a third of the text column wide,
+  // so a combined "Ec / Gc" value would run into its neighbour.
+  const custom = std.autoModuli ? '' : ' *';
+  const stdPairs: [string, string][] = [
+    ["Concrete f'c", u.stressVal(std.fc)],
+    ['λ (concrete)', std.lambdaConcrete.toFixed(2)],
+    ['Steel fy', u.stressBarVal(std.fy)],
+    ['Steel fyt', u.stressBarVal(std.fyt)],
+    ['Es', u.stressBarVal(std.Es) + custom],
+    [isEC2 ? 'Ecm' : 'Ec', u.stressBarVal(std.Ec) + custom],
+    ['Gc', u.stressBarVal(std.Gc) + custom],
+    ['Cover, top', u.dim(std.coverTop) + u.dimSfx],
+    ['Cover, bottom', u.dim(std.coverBottom) + u.dimSfx],
+    ['Cover, side', u.dim(std.coverSide) + u.dimSfx],
+    ...(isEC2
+      ? ([['Crack limit w_max', `${std.crackWidthLimit.toFixed(2)} mm`],
+          ['Strut angle cot θ', std.cotTheta.toFixed(2)]] as [string, string][])
+      : []),
+    ...(std.ignoreTorsion ? ([['Torsion', 'Neglected (Tu = 0)']] as [string, string][]) : []),
+  ];
+  // Three columns down the page, so the block stays three or four rows tall.
+  const stdColW = (w - 2 * margin) / 3;
+  stdPairs.forEach((pair, i) => {
+    const x = margin + (i % 3) * stdColW;
+    const y = h - 242 - Math.floor(i / 3) * 12;
+    text(ctx, pair[0], x, y, 7.5, C.mid);
+    text(ctx, pair[1], x + 78, y, 8, C.dark, bold);
+  });
+  let stdBottom = h - 242 - (Math.ceil(stdPairs.length / 3) - 1) * 12 - 10;
+  if (!std.autoModuli) {
+    text(ctx, '* engineer-specified value, used in place of the code formula', margin, stdBottom + 2, 7, C.mid);
+    stdBottom -= 10;
+  }
+  line(ctx, margin, stdBottom, w - margin, stdBottom);
+
   // Member summary table
   // cols: Label(0) Type(120) Section(178) f'c(258) Flex+(302) Flex-(344) Shear(386) Tors(428) Status(470)
-  text(ctx, 'Member Summary', margin, h - 228, 11, C.dark, bold);
+  const sumTop = stdBottom - 18;
+  text(ctx, 'Member Summary', margin, sumTop, 11, C.dark, bold);
   const cols = [0, 120, 178, 258, 302, 344, 386, 428, 470];
   const hdrs = ['Label', 'Type', 'Section', "f'c", 'Flex+', 'Flex-', 'Shear', 'Tors.', 'Status'];
-  rect(ctx, margin, h - 254, w - 2 * margin, 16, C.navy);
-  hdrs.forEach((hdr, i) => text(ctx, hdr, margin + cols[i], h - 251, 8, C.white, bold));
+  rect(ctx, margin, sumTop - 26, w - 2 * margin, 16, C.navy);
+  hdrs.forEach((hdr, i) => text(ctx, hdr, margin + cols[i], sumTop - 23, 8, C.white, bold));
 
-  let row = h - 268;
+  let row = sumTop - 40;
   for (const m of members) {
     const r = worstResult(m, project.code);
     if (!r) continue;
@@ -573,9 +590,7 @@ export async function buildReportBytes(
     if (row < margin + 20) { ctx = await addPage(doc, font, bold); row = ctx.h - margin; }
     const bg = members.indexOf(m) % 2 === 0 ? C.light : C.white;
     rect(ctx, margin, row - 2, w - 2 * margin, 14, bg);
-    const sec = m.section.type === 'circular_column'
-      ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
-      : `${u.dim(m.section.b)}${u.dimSfx}x${u.dim(m.section.h)}${u.dimSfx}`;
+    const sec = `${u.dim(m.section.b)}${u.dimSfx}x${u.dim(m.section.h)}${u.dimSfx}`;
     const fcLabel = isEC2 ? `${(m.material.fc * 0.00689476).toFixed(0)}MPa` : `${(m.material.fc / 1000).toFixed(0)}ksi`;
     const dp2 = (n: number) => n.toFixed(2);
     const vals = [clipText(font, m.label, 8, 116), m.memberType, clipText(font, sec, 8, 76),
@@ -603,9 +618,7 @@ export async function buildReportBytes(
     // Member header
     rect(ctx, margin, y - 34, w - 2 * margin, 38, C.navy);
     text(ctx, `${m.id} — ${m.label}`, margin + 8, y - 14, 13, C.white, bold);
-    const secStr = m.section.type === 'circular_column'
-      ? `dia${u.dim(m.section.diameter ?? m.section.b)}${u.dimSfx}`
-      : `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
+    const secStr = `${u.dim(m.section.b)}${u.dimSfx}×${u.dim(m.section.h)}${u.dimSfx}`;
     text(ctx, `${m.section.type.replace(/_/g, ' ')}  ${secStr}  f'c=${u.stressVal(m.material.fc)}  fy=${u.stressBarVal(m.material.fy)}  span=${m.span != null ? u.span(m.span) + u.spanSfx : '-'}`,
       margin + 8, y - 28, 8, C.mid);
     y -= 50;
@@ -615,7 +628,7 @@ export async function buildReportBytes(
     rect(ctx, margin, y - 50, halfW, 52, C.light);
     text(ctx, 'Section & Material', margin + 6, y - 12, 8, C.dark, bold);
     const props = [
-      [`b=${u.dim(m.section.b)}${u.dimSfx}`, `h=${u.dim(m.section.h)}${u.dimSfx}`, `cc=${u.dim(m.section.coverClear)}${u.dimSfx}`],
+      [`b=${u.dim(m.section.b)}${u.dimSfx}`, `h=${u.dim(m.section.h)}${u.dimSfx}`, `cc=${coverLabel(m, u)}${u.dimSfx}`],
       [`f'c=${u.stressVal(m.material.fc)}`, `fy=${u.stressBarVal(m.material.fy)}`, `fyt=${u.stressBarVal(m.material.fyt)}`],
       [`lambda=${m.material.lambdaConcrete}`, `Stirrup ${formatBarLabel(m.section.stirrupDia)}`, `Span ${m.span != null ? u.span(m.span) + u.spanSfx : '-'}`],
     ];
@@ -675,9 +688,8 @@ export async function buildReportBytes(
       text(ctx, 'DCR Summary (governing)', margin, y - 8, 10, C.dark, bold);
       y -= 22;
       const barW = (w - 2 * margin) * 0.7;
-      const dcrRows: [string, number][] = m.memberType === 'column'
-        ? [['P-M', worst.DCR_PM ?? 0], ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion]]
-        : [['Flexure +', worst.DCR_flex_pos], ['Flexure -', worst.DCR_flex_neg],
+      const dcrRows: [string, number][] = [
+          ['Flexure +', worst.DCR_flex_pos], ['Flexure -', worst.DCR_flex_neg],
            ['Shear', worst.DCR_shear], ['Torsion', worst.DCR_torsion],
            ...(worst.DCR_crack != null && worst.DCR_crack > 0
              ? [['Crack (SLS)', worst.DCR_crack] as [string, number]] : [])];

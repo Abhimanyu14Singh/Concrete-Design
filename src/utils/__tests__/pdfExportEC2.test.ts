@@ -77,24 +77,11 @@ const ec2Beam: Member = {
     qpFactor: 0.6, kt: 0.4,
   },
 };
-const ec2Column: Member = {
-  id: 'C-EC2', label: 'Ground-Floor Corner Column',
-  memberType: 'column',
-  material: { fc: mpa(30), fy: mpa(500), fyt: mpa(500), Es: mpa(200_000), lambdaConcrete: 1.0 },
-  section: { type: 'rectangular_column', b: mm(400), h: mm(400), coverClear: mm(40), stirrupDia: -10 },
-  rebar: {
-    topBars: [{ numBars: 4, barSize: -20 }], botBars: [{ numBars: 4, barSize: -20 }],
-    ties: { barSize: -10, spacing: mm(200), legs: 2 },
-  },
-  loads: [{ id: 'lc1', label: '1.35G+1.5Q', Mu_pos: 0, Mu_neg: 0, Vu: kn(40), Tu: 0, Pu: kn(1200), Mux: knm(80), Muy: knm(40) }],
-  span: 3.5 * M_TO_FT,
-};
-
 function makeEC2Project(): Project {
   return {
     id: 'ec2-si-sanity', name: 'EC2 SI Sanity Check',
     code: 'EN1992-1-1', description: '', engineer: 'Test', date: '2026-06-21',
-    members: [ec2Beam, ec2Column],
+    members: [ec2Beam],
   };
 }
 

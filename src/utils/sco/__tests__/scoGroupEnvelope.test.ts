@@ -45,18 +45,6 @@ function beam(id: string, label: string, loads: LC[], over: Partial<Member['sect
     loads, span: 20,
   };
 }
-function col(id: string, label: string, loads: LC[], over: Partial<Member['section']> = {}): Member {
-  return {
-    id, label, memberType: 'column', material: { ...MAT, fc: 5000 },
-    section: { type: 'rectangular_column', b: 20, h: 24, coverClear: 1.5, stirrupDia: 4, ...over },
-    rebar: { topBars: [{ numBars: 3, barSize: 9 }], botBars: [{ numBars: 3, barSize: 9 }], sideBars: [{ numBars: 4, barSize: 9 }], ties: { barSize: 4, spacing: 12, legs: 2 }, tieType: 'tied' },
-    loads, span: 12,
-  };
-}
-function circ(id: string, label: string): Member {
-  return { ...beam(id, label, [lc({ Mu_pos: 100 })]), memberType: 'column',
-    section: { type: 'circular_column', b: 24, h: 24, diameter: 24, coverClear: 1.5, stirrupDia: 4 } };
-}
 const group = (id: string, label: string, memberIds: string[], rebar?: RebarLayout): DesignGroup =>
   ({ id, label, memberIds, ...(rebar ? { rebar } : {}) });
 
@@ -128,19 +116,6 @@ describe('buildGroupEnvelopeScoFiles — one .SCO per group', () => {
 });
 
 describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
-  it('pools a rectangular-column group into one Type-3 file with biaxial forces', () => {
-    const members = [
-      col('c1', 'C1', [lc({ Pu: 600, Mux: 120, Muy: 80, Vu: 30, Tu: 5 })]),
-      col('c2', 'C2', [lc({ Pu: 750, Mux: 60, Muy: 140, Vu: 40 })]),
-    ];
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'Cols', ['c1', 'c2'])], members, 'ACI318-19');
-    expect(file.text).toContain('Member Type\t 3');
-    const rows = rowsOf(file.text);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ Nf: -600, Mfy: 120, Mfz: 80 });   // P compression-negative; M3↔Mux, M2↔Muy
-    expect(rows[1]).toMatchObject({ Nf: -750, Mfy: 60, Mfz: 140 });
-  });
-
   it('flags a geometrically mixed group and uses the most common section', () => {
     const members = [
       beam('b1', 'B1', [lc({ Mu_pos: 100 })]),                    // 14×24 (×2 — modal)
@@ -175,58 +150,6 @@ describe('buildGroupEnvelopeScoFiles — sections, types, eligibility', () => {
     b2.rebar = { ...b2.rebar, botBars: [{ numBars: 5, barSize: 9 }] };
     const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'], b1.rebar)], [b1, b2], 'ACI318-19');
     expect(file.mixedRebar).toBe(false);   // group.rebar set → the file used the template, not a member's cage
-  });
-
-  it('sub-groups a mixed beam+column group into a beam file AND a column file (nobody dropped)', () => {
-    const members = [
-      beam('b1', 'B1', [lc({ Mu_pos: 100 })]), beam('b2', 'B2', [lc({ Mu_pos: 120 })]),
-      col('c1', 'C1', [lc({ Pu: 600, Mux: 120 })]),
-    ];
-    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2', 'c1'])], members, 'ACI318-19');
-    expect(files).toHaveLength(2);
-    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
-    expect(byName['G_beam.SCO'].memberCount).toBe(2);
-    expect(byName['G_beam.SCO'].text).toContain('Member Type\t 1');
-    expect(byName['G_col.SCO'].memberCount).toBe(1);
-    expect(byName['G_col.SCO'].text).toContain('Member Type\t 3');
-    for (const f of files) expect(f.excludedMemberIds).toEqual([]);   // every eligible member covered
-  });
-
-  it('records a truly-unsupported member (EC2 circular column) as excluded, not dropped silently', () => {
-    // ACI circular is now emittable; EC2 circular still has no sample, so it is
-    // the remaining "unsupported" case that must be reported, not dropped.
-    const project = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
-    const members = [beam('b1', 'B1', [lc({ Mu_pos: 100 })]), circ('c1', 'C1')];
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'EN1992-1-1', project);
-    expect(file.memberCount).toBe(1);                 // beam only
-    expect(file.excludedMemberIds).toEqual(['c1']);   // EC2 circular column reported
-  });
-
-  it('includes an ACI circular column as its own Member-Type-4 envelope', () => {
-    const members = [beam('b1', 'B1', [lc({ Mu_pos: 100 })]), circ('c1', 'C1')];
-    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'c1'])], members, 'ACI318-19');
-    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
-    // Beam + circular column → sub-grouped by member type into two envelopes.
-    expect(byName['G_beam.SCO'].text).toContain('Member Type\t 1');   // beam
-    expect(byName['G_col.SCO'].text).toContain('Member Type\t 4');    // circular column
-    for (const f of files) expect(f.excludedMemberIds).toEqual([]);   // nobody dropped
-  });
-
-  it('produces NO file for a group with no eligible members (EC2 circular only)', () => {
-    const project = { id: 'p', name: 'P', code: 'EN1992-1-1' as const, description: '', engineer: 'E', date: 'd', members: [] };
-    const files = buildGroupEnvelopeScoFiles([group('g', 'G', ['c1'])], [circ('c1', 'C1')], 'EN1992-1-1', project);
-    expect(files).toEqual([]);
-  });
-
-  it('a column group whose members all have EMPTY loads still emits one valid zero row', () => {
-    const c1 = col('c1', 'C1', []);
-    const c2 = col('c2', 'C2', []);   // e.g. imported columns before forces are entered
-    const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['c1', 'c2'])], [c1, c2], 'ACI318-19');
-    expect(file.loadCaseCount).toBe(1);            // fallback single zero row
-    const rows = rowsOf(file.text);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ Nf: 0, Mfy: 0, Mfz: 0 });
-    for (const v of Object.values(rows[0])) expect(typeof v === 'number' ? Number.isNaN(v) : false).toBe(false);
   });
 
   it('produces NO file for an empty group and skips unknown member ids', () => {
@@ -298,23 +221,6 @@ describe('buildGroupEnvelopeScoFiles — EC2 routing', () => {
       .toThrow(/needs the project/);
   });
 
-  it('a mixed beam+column EC2 group yields beam-ULS + beam-crack + column files (full dispatch)', () => {
-    const cp = { wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4 };
-    const b1: Member = { ...beam('b1', 'B1', [lc({ Mu_pos: 200 })]), crackParams: cp,
-      stationForces: [{ combo: 'QP', stations: [{ x: 0, V: 15, M: 120 }] }] };
-    const c1 = col('c1', 'C1', [lc({ Pu: 600, Mux: 120, Muy: 80 })]);
-    const files = buildGroupEnvelopeScoFiles([group('g', 'Mix', ['b1', 'c1'])], [b1, c1], 'EN1992-1-1', { ...proj, slsCombo: 'QP' });
-
-    expect(files.map(f => f.fileName).sort()).toEqual(['Mix_beam.SCO', 'Mix_beam_crack.SCO', 'Mix_col.SCO']);
-    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
-    expect(byName['Mix_beam.SCO'].kind).toBe('uls');
-    expect(byName['Mix_beam.SCO'].text).toContain('Member Type\t 2');   // EC2 beam
-    expect(byName['Mix_beam_crack.SCO'].kind).toBe('crack');
-    expect(byName['Mix_beam_crack.SCO'].text).toContain('Bm CheckCracks\t 1');
-    expect(byName['Mix_col.SCO'].kind).toBe('single');
-    expect(byName['Mix_col.SCO'].text).toContain('Member Type\t 3');    // EC2 column
-    for (const f of files) expect(f.excludedMemberIds).toEqual([]);     // nobody dropped
-  });
 });
 
 describe('buildGroupEnvelopeScoFiles — metric bar size reaches the EC2 .SCO (European table)', () => {

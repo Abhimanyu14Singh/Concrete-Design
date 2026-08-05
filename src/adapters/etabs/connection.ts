@@ -59,19 +59,18 @@ export interface EtabsBeamGeom {
   lengthFt: number;
 }
 
-/** A column frame — the same geometry shape as a beam, but (near-)vertical:
- *  pt1 = base node, pt2 = top node, spanning the story it rises through. */
+/** A wall/slab area object — a planar polygon of corner nodes. */
+/** A vertical frame (column/brace) — the same geometry shape as a beam, but
+ *  (near-)vertical: pt1 = base node, pt2 = top node. Geometry only: this app
+ *  does not design columns, it just draws them for context. */
 export interface EtabsColumnGeom {
   name: string;
   story: string;
   section: string;
-  pt1: Point3D;       // base, ft
-  pt2: Point3D;       // top, ft
-  groups: string[];
-  heightFt: number;
+  pt1: Point3D;
+  pt2: Point3D;
 }
 
-/** A wall/slab area object — a planar polygon of corner nodes. */
 export interface EtabsAreaGeom {
   name: string;
   story: string;
@@ -102,16 +101,6 @@ export interface BeamFilter {
   groups?: string[];    // beam must belong to at least one
 }
 
-/** A column's design forces for one combo, enveloped over the member's stations.
- *  ETABS sign convention: axial compression is NEGATIVE. Units: kip, kip-ft. */
-export interface ColumnComboForce {
-  combo: string;
-  P: number;            // axial (compression negative)
-  V2: number; V3: number;
-  M2: number; M3: number;
-  T: number;
-}
-
 export interface EtabsConnection {
   readonly kind: 'com' | 'file' | 'mock' | 'bridge';
   connect(): Promise<EtabsConnectInfo>;
@@ -133,28 +122,25 @@ export interface EtabsConnection {
   getMaterials(): Promise<EtabsMaterialInfo[]>;
   getCombos(): Promise<string[]>;
   getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]>;
-  /** Columns in the model (optional — sources without a column table omit it).
-   *  Used to show columns on the model map and, in future, design them. */
-  getColumns?(filter: BeamFilter): Promise<EtabsColumnGeom[]>;
   /** Wall/slab area objects (optional — sources without an area table omit it).
    *  Shown as filterable map layers. */
   getAreas?(filter: BeamFilter): Promise<EtabsAreaGeom[]>;
+  /** Vertical frames for the 3D view (optional — sources without a column table
+   *  omit it). Geometry only; nothing downstream designs these. */
+  getColumns?(filter: BeamFilter): Promise<EtabsColumnGeom[]>;
   /** Grid lines (optional). Grid axes are model-global, so no filter arg. */
   getGrids?(): Promise<EtabsGridGeom[]>;
   /** Opening area objects (optional — penetrations in walls/slabs). */
   getOpenings?(filter: BeamFilter): Promise<EtabsOpeningGeom[]>;
   /** Station forces per frame for the selected combos. Key = frame name. */
   getStationForces(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ComboForces[]>>;
-  /** Column design forces per frame for the selected combos, enveloped per combo
-   *  (optional — sources without a column force table omit it). Key = frame name. */
-  getColumnForces?(frameNames: string[], combos: string[], sourceGroup?: string): Promise<Record<string, ColumnComboForce[]>>;
   /** Push design groups back to the ETABS model: create each named group and
    *  assign its member frames. Only the live COM connection supports this
    *  (optional — file/mock sources omit it). */
   pushGroups?(groups: Array<{ name: string; frameNames: string[] }>): Promise<PushGroupResult[]>;
 }
 
-/** Filter predicate shared by beams and columns (both carry story/section/groups). */
+/** Filter predicate for beams (story/section/groups). */
 export function matchesFilter(beam: { story: string; section: string; groups: string[] }, filter: BeamFilter): boolean {
   // Story is a hard scope — AND.
   if (filter.stories?.length && !filter.stories.includes(beam.story)) return false;

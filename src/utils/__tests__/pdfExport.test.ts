@@ -7,8 +7,8 @@
 /// <reference types="node" />
 import { readFileSync } from 'fs';
 import path from 'path';
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { winAnsiSafe, exportPDF, buildReportBytes, setFontLoader } from '../export/pdfExport';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { winAnsiSafe, buildReportBytes, setFontLoader } from '../export/pdfExport';
 import type { Project, Member } from '../../types';
 
 // Register a Node.js font loader so tests don't need a live HTTP server.
@@ -53,54 +53,12 @@ function makeProject(): Project {
     loads: [{ id: 'lc1', label: '1.2D+1.6L', Mu_pos: 200, Mu_neg: 80, Vu: 60, Tu: 5, Pu: 0 }],
     span: 24,
   };
-  const col: Member = {
-    id: 'C1', label: 'Circ col', memberType: 'column',
-    material: { fc: 5000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1.0 },
-    section: { type: 'circular_column', b: 20, h: 20, diameter: 20, coverClear: 1.5, stirrupDia: 4 },
-    rebar: {
-      topBars: [{ numBars: 4, barSize: 9 }], botBars: [{ numBars: 4, barSize: 9 }],
-      ties: { barSize: 4, spacing: 12, legs: 2 }, tieType: 'spiral',
-    },
-    loads: [{ id: 'lc1', label: 'G+Q', Mu_pos: 0, Mu_neg: 0, Vu: 30, Tu: 0, Pu: 400, Mux: 120, Muy: 60 }],
-    span: 12,
-  };
   return {
     id: 'p1', name: 'Smoke φ Project', code: 'ACI318-19',
     description: '', engineer: 'QA', date: '2026-06-11',
-    members: [beam, col],
+    members: [beam],
   };
 }
-
-describe('exportPDF smoke test', () => {
-  let bytes: Uint8Array | null = null;
-
-  beforeEach(() => {
-    bytes = null;
-    vi.stubGlobal('URL', {
-      ...URL,
-      createObjectURL: (blob: Blob) => {
-        // capture for size assertion
-        void blob.arrayBuffer().then(b => { bytes = new Uint8Array(b); });
-        return 'blob:test';
-      },
-      revokeObjectURL: () => {},
-    });
-    vi.stubGlobal('document', {
-      createElement: () => ({ click: () => {}, set href(_: string) {}, set download(_: string) {} }),
-    });
-  });
-
-  it('resolves without throwing for beam + circular column with φ in labels', async () => {
-    await expect(exportPDF(makeProject())).resolves.toBeUndefined();
-    // allow the captured arrayBuffer microtask to settle
-    await new Promise(r => setTimeout(r, 0));
-    expect(bytes).not.toBeNull();
-    expect((bytes as unknown as Uint8Array).length).toBeGreaterThan(1000);
-    // %PDF header
-    const head = String.fromCharCode(...(bytes as unknown as Uint8Array).slice(0, 4));
-    expect(head).toBe('%PDF');
-  });
-});
 
 describe('buildReportBytes options', () => {
   it('returns a valid PDF for a single-member, governing-only, calc-included report', async () => {

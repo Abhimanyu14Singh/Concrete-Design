@@ -79,11 +79,30 @@ describe('stationLoadCases', () => {
   ];
 
   it('expands to one row per DISTINCT station force state (not one envelope)', () => {
-    const rows = stationLoadCases(forces);
-    // C1 has two identical support states (|V|=40, M=−120) → collapsed to 1; C1 keeps
-    // {support, midspan} = 2, C2 keeps all 3 distinct → 5 rows total.
-    expect(rows.length).toBe(5);
+    const rows = stationLoadCases(forces, undefined, 20);
+    // C1's two support states are numerically identical (|V| = 40, M = −120) but sit
+    // in OPPOSITE end zones (x = 0 → zone 0, x = 20 → zone 2). Since x selects which
+    // tie zone the capacity comes from they are different checks, so both survive:
+    // 3 rows per combo = 6. Collapsing them (the old forces-only key) meant the far
+    // end zone was never checked against the end shear it carries.
+    expect(rows.length).toBe(6);
     expect(new Set(rows.map(r => r.id)).size).toBe(rows.length); // ids unique
+    expect(rows.filter(r => r.x === 20)).toHaveLength(2);
+  });
+
+  it('still collapses duplicate force states WITHIN one zone', () => {
+    // Two adjacent stations in the same end third with the same state: same zone,
+    // same capacity, same check — one row is enough.
+    const rows = stationLoadCases(
+      [{ combo: 'C1', stations: [{ x: 0, V: 40, M: -120 }, { x: 1, V: 40, M: -120 }] }],
+      undefined, 30,
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('never collapses when the span is unknown (zone cannot be established)', () => {
+    const rows = stationLoadCases(forces);
+    expect(rows).toHaveLength(6);
   });
 
   it('sets Mu_pos OR Mu_neg from the signed station moment, keeping each station simultaneous', () => {

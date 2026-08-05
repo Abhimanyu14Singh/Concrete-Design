@@ -8,7 +8,6 @@ interface Props {
   loads: LoadCase[];
   onDone: (loads: LoadCase[]) => void;
   onCancel: () => void;
-  isColumn?: boolean;
 }
 
 let _uid = 1;
@@ -31,16 +30,9 @@ const BEAM_FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] 
   { key: 'Pu',    label: 'Pu',  quantity: 'force'  },
 ];
 
-const COLUMN_FIELDS: { key: keyof LoadCase; label: string; quantity: Quantity }[] = [
-  { key: 'Pu',  label: 'Pu',  quantity: 'force'  },
-  { key: 'Mux', label: 'Mux', quantity: 'moment' },
-  { key: 'Muy', label: 'Muy', quantity: 'moment' },
-  { key: 'Vu',  label: 'Vu',  quantity: 'force'  },
-];
-
-export default function LoadCaseTable({ loads, onDone, onCancel, isColumn = false }: Props) {
+export default function LoadCaseTable({ loads, onDone, onCancel }: Props) {
   const { label: unitLbl, toDisplay, fromDisplay } = useUnits();
-  const FIELDS = isColumn ? COLUMN_FIELDS : BEAM_FIELDS;
+  const FIELDS = BEAM_FIELDS;
   const blankRow = (label: string): LoadCase =>
     ({ id: uid(), label, Mu_pos: 0, Mu_neg: 0, Vu: 0, Tu: 0, Pu: 0, Mux: 0, Muy: 0 });
   const [rows, setRows] = useState<LoadCase[]>(

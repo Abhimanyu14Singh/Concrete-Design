@@ -8,7 +8,7 @@ import {
 } from '../../utils/overrides';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
-import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
+import { coverFor, zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
@@ -16,12 +16,13 @@ import { useUnits } from '../../contexts/UnitsContext';
 import SectionView from '../Detailing/SectionView';
 import ElevationView from '../Detailing/ElevationView';
 import ForceDiagram from '../Detailing/ForceDiagram';
-import InteractionDiagram from '../Detailing/InteractionDiagram';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
 import InfoTooltip from '../common/InfoTooltip';
 import Dropdown from '../common/Dropdown';
-import { ACCENT, BORDER, DCR, INK, LABEL_STYLE, MEMBER_COLOR, MONO_NUM, STATUS, SURFACE, TRACK, TYPE, codeAccent, dcrBg as themeDcrBg, dcrColor as themeDcrColor } from '../../theme';
+import { ACCENT, BORDER, DCR, ICON, INK, LABEL_STYLE, MEMBER_COLOR, MONO_NUM, STATUS, SURFACE, TRACK, TYPE, codeAccent, dcrBg as themeDcrBg, dcrColor as themeDcrColor } from '../../theme';
+import { Icon } from '../common/Icon';
+import type { IconName } from '../common/Icon';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 
 interface Props {
@@ -63,14 +64,18 @@ function KV({ k, v, dcr, tip, formula, overridden }: { k: string; v: string; dcr
   );
 }
 
-function SectionLabel({ title }: { title: string }) {
-  return <div style={{ ...LABEL_STYLE, margin: '10px 0 4px' }}>{title}</div>;
+function SectionLabel({ title, icon }: { title: string; icon?: IconName }) {
+  return (
+    <div style={{ ...LABEL_STYLE, margin: '10px 0 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+      {icon && <Icon name={icon} size={ICON.sm} />}{title}
+    </div>
+  );
 }
 
 /** A collapsible results check. The governing check (highest DCR) opens by
  *  default; the rest collapse to a header + DCR chip so the column isn't a wall
  *  of 15-20 numbers. */
-function CheckSection({ title, dcr, defaultOpen, onJumpToGoverning, children }: { title: string; dcr?: number; defaultOpen: boolean; onJumpToGoverning?: (title: string) => void; children: React.ReactNode }) {
+function CheckSection({ title, icon, dcr, defaultOpen, onJumpToGoverning, children }: { title: string; icon?: IconName; dcr?: number; defaultOpen: boolean; onJumpToGoverning?: (title: string) => void; children: React.ReactNode }) {
   const [override, setOverride] = useState<boolean | null>(null);
   const open = override ?? defaultOpen;
   return (
@@ -83,8 +88,9 @@ function CheckSection({ title, dcr, defaultOpen, onJumpToGoverning, children }: 
         title={onJumpToGoverning ? `Show the load case that governs ${title} (the chip is the worst across all load rows)` : undefined}
         style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 0 4px', margin: 0 }}
       >
-        <span style={LABEL_STYLE}>
-          <span style={{ display: 'inline-block', width: 10, color: INK.muted }}>{open ? '▾' : '▸'}</span>{title}
+        <span style={{ ...LABEL_STYLE, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ display: 'inline-block', width: 10, color: INK.muted }}>{open ? '▾' : '▸'}</span>
+          {icon && <Icon name={icon} size={ICON.sm} />}{title}
         </span>
         {dcr !== undefined && <span style={dcrStyle(dcr)}>{dcr.toFixed(2)}</span>}
       </button>
@@ -156,15 +162,13 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
     status: govPeak > 1 ? 'NG' : (govWarnings.length ? 'Warning' : 'OK'),
   };
 
-  const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
-
   // S-Concrete verification: the persisted .SCRS result for THIS member, next to
   // the app's own governing DCR (worst across all its load cases) so the engineer
   // can see whether the two tools agree.
   const scoSummary = memberScoSummary(sconcreteResults, member.id);
   const appGovDCR = govPeak; // worst DCR across all load rows (reused from above)
   const scoAgree = scoAgreesWithApp(scoSummary?.status ?? null, appGovDCR);
-  const scoEligible = member.memberType === 'beam' || member.section.type === 'rectangular_column';
+  const scoEligible = true; // every member is a beam
 
   // R6: per-section governing DCRs so the results column can collapse to the
   // governing check (the highest-DCR section stays open; the rest fold to a chip).
@@ -176,9 +180,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
       ))
     : 0;
   const anyTorsion = member.loads.some(l => l.Tu > 0);
-  const secDcr: Record<string, number> = isColumn
-    ? { Axial: govResult.DCR_axial ?? 0, 'P-M Interaction': govResult.DCR_PM ?? 0, Shear: govResult.DCR_shear }
-    : {
+  const secDcr: Record<string, number> = {
         Flexure: Math.max(govResult.DCR_flex_pos, govResult.DCR_flex_neg),
         Shear: govResult.DCR_shear,
         // Torsion checks are suppressed entirely when the project neglects torsion.
@@ -216,9 +218,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   const govShear    = allResults.reduce((a, b) => b.r.DCR_shear     > a.r.DCR_shear     ? b : a).id;
   const govTorsion  = allResults.reduce((a, b) => b.r.DCR_torsion   > a.r.DCR_torsion   ? b : a).id;
   const govPM       = allResults.reduce((a, b) => (b.r.DCR_PM ?? 0) > (a.r.DCR_PM ?? 0) ? b : a).id;
-  const govSet      = isColumn
-    ? new Set([govPM, govShear])
-    : new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
+  const govSet      = new Set([govFlexPos, govFlexNeg, govShear, govTorsion]);
 
   // The check chips report the GOVERNING DCR across all load rows, but the applied
   // loads / calc sheet show ONE selected case. Expanding a check jumps the selected
@@ -346,11 +346,11 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
           border: `1px solid ${MEMBER_COLOR[member.memberType] ?? INK.secondary}40`,
           borderRadius: 12, padding: '2px 8px',
         }}>
-          {isColumn ? 'Column' : member.memberType}
+          {member.memberType}
         </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          {onRebarChange && !isColumn && (
+          {onRebarChange && (
             <button
               onClick={handleOptimize}
               style={{ padding: '5px 10px', border: `1px solid ${STATUS.warn}`, borderRadius: 6, background: STATUS.warnBg, fontSize: 11, cursor: 'pointer', color: STATUS.warn, fontWeight: 600 }}
@@ -413,7 +413,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         {/* Left: member properties + applied loads */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
-          <SectionLabel title="Member" />
+          <SectionLabel title="Member" icon="member" />
           <KV k={code === 'EN1992-1-1' ? 'fck (cyl)' : "f'c"} v={fmt(member.material.fc, 'stress')}
             tip={code === 'EN1992-1-1' ? 'Characteristic cylinder compressive strength. Design value fcd = αcc·fck/γc (αcc=0.85, γc=1.5).' : 'Specified 28-day cylinder compressive strength.'} />
           <KV k="fy" v={fmt(member.material.fy / 1000, 'stressKsi')}
@@ -424,20 +424,18 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
           <KV k="h" v={fmt(s.h, 'length')} tip="Overall section depth. Effective depth d = h − cover − stirrup − bar_radius." />
           {s.bw && <KV k="bw" v={fmt(s.bw, 'length')} tip="Web width — governs shear and torsion calculations." />}
           {s.hf && <KV k="hf" v={fmt(s.hf, 'length')} tip="Flange thickness. Compression block confined to flange when a ≤ hf." />}
-          <KV k="Cover" v={fmt(s.coverClear, 'length')} tip="Clear cover to the face of the stirrup. Effective depth = h − cover − stirrupDia − barDia/2." />
+          <KV
+            k="Cover"
+            v={coverFor(s, 'top') === coverFor(s, 'bot') && coverFor(s, 'bot') === coverFor(s, 'side')
+              ? fmt(s.coverClear, 'length')
+              : `${fmt(coverFor(s, 'top'), 'length')} / ${fmt(coverFor(s, 'bot'), 'length')} / ${fmt(coverFor(s, 'side'), 'length')}`}
+            tip="Clear cover to the face of the stirrup (top / bottom / side when they differ). Effective depth = h − cover − stirrupDia − barDia/2."
+          />
           {t && <KV k="Stirrups" v={`${formatBarLabel(t.barSize)}@${fmt(t.spacing, 'length')}`} tip="Transverse reinforcement: bar size @ spacing. Vs = Av·fy·d/s per stirrup legs." />}
           {member.span && <KV k="Span" v={fmt(member.span, 'spanLength')} tip="Clear span used for minimum steel and deflection checks." />}
 
-          <SectionLabel title="Applied Loads" />
-          {isColumn ? (
-            <>
-              <KV k="Pu" v={fmt(load.Pu, 'force')} tip="Factored axial demand (positive = compression). Checked against φPn on the P-M interaction surface." />
-              <KV k="Mux" v={fmt(load.Mux ?? 0, 'moment')} tip="Factored moment about X-axis (strong axis). Combined with Pu on interaction diagram." />
-              <KV k="Muy" v={fmt(load.Muy ?? 0, 'moment')} tip="Factored moment about Y-axis (weak axis). Combined with Pu on interaction diagram." />
-              <KV k="Vu" v={fmt(load.Vu, 'force')} tip="Factored shear demand." />
-            </>
-          ) : (
-            <>
+          <SectionLabel title="Applied Loads" icon="loadCases" />
+          <>
               {load.Mu_pos > 0 && <KV k="Mu+" v={fmt(load.Mu_pos, 'moment')} tip="Factored sagging (positive) moment at the governing section." />}
               {load.Mu_neg > 0 && <KV k="Mu−" v={fmt(load.Mu_neg, 'moment')} tip="Factored hogging (negative) moment at the governing section." />}
               <KV k="Vu" v={fmt(load.Vu, 'force')} tip="Factored shear demand. Checked against φVn = φ(Vc + Vs)." />
@@ -451,7 +449,6 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
                 </div>
               )}
             </>
-          )}
         </div>
 
         {/* Center: Section diagram. minWidth holds the 300px section SVG so the
@@ -495,36 +492,12 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
 
         {/* Right: design results */}
         <div style={{ width: 168, flexShrink: 0, fontSize: 11 }}>
-          {isColumn ? (
-            <>
-              <CheckSection title="Axial" dcr={govResult.DCR_axial ?? 0} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Axial')}>
-                <KV k={code === 'EN1992-1-1' ? 'N_Rd,max' : 'φPn,max'} v={fmt(result.phi_Pn_max ?? 0, 'force')} />
-                <KV k="  DCR" v={(govResult.DCR_axial ?? 0).toFixed(3)} dcr={govResult.DCR_axial ?? 0} overridden={isOverridden(overrides, 'DCR_axial')} />
-              </CheckSection>
-
-              <CheckSection title="P-M Interaction" dcr={govResult.DCR_PM ?? 0} onJumpToGoverning={jumpToGov} defaultOpen={isGov('P-M Interaction')}>
-                <KV k={code === 'EN1992-1-1' ? 'M_Rd,x @NEd' : 'φMnx @Pu'} v={fmt(result.phi_Mnx ?? 0, 'moment')} />
-                <KV k={code === 'EN1992-1-1' ? 'M_Rd,y @NEd' : 'φMny @Pu'} v={fmt(result.phi_Mny ?? 0, 'moment')} />
-                <KV k="  DCR" v={(govResult.DCR_PM ?? 0).toFixed(3)} dcr={govResult.DCR_PM ?? 0} overridden={isOverridden(overrides, 'DCR_PM')} />
-              </CheckSection>
-
-              <CheckSection title="Shear" dcr={govResult.DCR_shear} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear')}>
-                <KV k={cap.Vc} v={fmt(result.Vc, 'force')} />
-                <KV k={cap.Vs} v={fmt(result.Vs, 'force')} />
-                <KV k={cap.Vn} v={fmt(result.phi_Vn, 'force')} />
-                <KV k="  DCR" v={govResult.DCR_shear.toFixed(3)} dcr={govResult.DCR_shear} overridden={isOverridden(overrides, 'DCR_shear')} />
-              </CheckSection>
-
-              <CheckSection title="Steel Limits" defaultOpen={false}>
-                <KV k="As min" v={fmt(result.As_min, 'area')} />
-                <KV k="As max" v={fmt(result.As_max, 'area')} />
-              </CheckSection>
-            </>
-          ) : (
-            <>
-          <CheckSection title="Flexure" dcr={Math.max(govResult.DCR_flex_pos, govResult.DCR_flex_neg)} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Flexure')}>
+          <>
+          <CheckSection title="Flexure" icon="flexure" dcr={Math.max(govResult.DCR_flex_pos, govResult.DCR_flex_neg)} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Flexure')}>
           <KV k={`${cap.Mn}+`} v={fmt(result.phi_Mn_pos, 'moment')}
-            tip="Sagging (positive) flexural capacity after applying φ=0.9 (ACI) or 1/γ (EC2). Must exceed Mu+."
+            tip={result.DCR_PM !== undefined
+              ? 'Sagging capacity AT THE APPLIED AXIAL LOAD, read off the P-M interaction surface — not the pure-bending value. See the Axial + Flexure check below.'
+              : 'Sagging (positive) flexural capacity after applying φ=0.9 (ACI) or 1/γ (EC2). Must exceed Mu+.'}
             formula={code === 'EN1992-1-1' ? 'M_Rd = As·fyd·z·(1 − λ·x/(2d))' : 'φMn = φ·As·fy·(d − a/2)'} />
           <KV k="  DCR" v={govResult.DCR_flex_pos.toFixed(3)} dcr={govResult.DCR_flex_pos} overridden={isOverridden(overrides, 'DCR_flex_pos')}
             tip="Demand-to-Capacity Ratio = Mu+ / φMn+. Must be ≤ 1.0. Values ≥ 0.9 are flagged in amber." />
@@ -546,7 +519,28 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
             tip="Top steel ratio ρ = As,top / (bw · d)." />
           </CheckSection>
 
-          <CheckSection title="Shear" dcr={govResult.DCR_shear} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear')}>
+          {/* Axial + flexure — only for members that actually carry axial load.
+              With Pu = 0 the Flexure section above already tells the whole story. */}
+          {govResult.DCR_PM !== undefined && (
+          <CheckSection title="Axial + Flexure" icon="pmInteraction" dcr={govResult.DCR_PM} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Axial + Flexure')}>
+            <KV k="Pu" v={fmt(result.loadCaseId === govResult.loadCaseId ? (member.loads.find(l => l.id === govResult.loadCaseId)?.Pu ?? 0) : 0, 'force')}
+              tip="Factored axial load on this row. Positive = compression, negative = tension." />
+            <KV k={(govResult.DCR_axial_tens ?? 0) > 0 ? 'φPnt' : 'φPn,max'}
+              v={fmt(Math.abs(govResult.phi_Pn ?? govResult.phi_Pn_max ?? 0), 'force')}
+              tip={(govResult.DCR_axial_tens ?? 0) > 0
+                ? 'Pure axial tension capacity φPnt = 0.9·Ast·fy — the whole longitudinal cage yielding.'
+                : 'ACI §22.4.2.1 axial compression cap φPn,max = 0.80·φ·[0.85f\'c(Ag − Ast) + fy·Ast], φ = 0.65 (tied).'} />
+            <KV k="  DCR axial" v={(govResult.DCR_axial || govResult.DCR_axial_tens || 0).toFixed(3)}
+              dcr={govResult.DCR_axial || govResult.DCR_axial_tens || 0}
+              tip="Axial utilisation alone: |Pu| / φPn in the direction of loading." />
+            <KV k="  DCR N-M" v={govResult.DCR_PM.toFixed(3)} dcr={govResult.DCR_PM}
+              overridden={isOverridden(overrides, 'DCR_PM')}
+              tip="Combined axial + flexure utilisation (ACI §22.4). The load vector (Pu, Mu) is scaled radially onto the φ-interaction surface — this is what S-CONCRETE reports as “N vs M Util”. It GOVERNS over flexure alone: a beam with axial load has less moment capacity than its pure-bending φMn."
+              formula="util = |(Pu, Mu)| / |(φPn, φMn) on the surface|" />
+          </CheckSection>
+          )}
+
+          <CheckSection title="Shear" icon="shear" dcr={govResult.DCR_shear} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear')}>
           <KV k={cap.Vc} v={fmt(result.Vc, 'force')}
             tip={code === 'EN1992-1-1' ? 'Concrete shear resistance without links V_Rd,c (§6.2.2). Depends on ρl and fck.' : 'ACI concrete contribution Vc. Includes axial modification.'}
             formula={code === 'EN1992-1-1' ? 'V_Rd,c = [CRd,c·k·(100ρl·fck)^⅓]·bw·d' : undefined} />
@@ -567,21 +561,43 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
             tip="ACI §9.6.3 minimum transverse reinforcement: 0.75·√f'c/fyt·bw." />}
           </CheckSection>
 
+          {/* The Torsion chip carries the worse of the §22.7.6 capacity check and
+              the §22.7.7.1 cross-section check — a section that crushes must not
+              read 0.10 on the header just because its torsion demand is small. */}
           {!ignoreTorsion && (
-          <CheckSection title="Torsion" dcr={govResult.DCR_torsion} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Torsion')}>
-          <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')}
-            tip="Cracking torsion threshold. Torsion design required when Tu > φTcr." />
+          <CheckSection title="Torsion" icon="torsion" dcr={Math.max(govResult.DCR_torsion, govResult.DCR_crushing ?? 0)} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Torsion')}>
+          {/* ACI prints φTcr and the neglect threshold separately, the way
+              S-CONCRETE does: the check triggers on the THRESHOLD (= φTcr/4),
+              not on φTcr itself, and the old single row said otherwise. */}
+          {code === 'EN1992-1-1' ? (
+            <KV k={cap.Tcr} v={fmt(result.Tcr, 'moment')}
+              tip="Torsional cracking resistance T_Rd,c. Torsion reinforcement is required once T_Ed exceeds it." />
+          ) : (<>
+            <KV k="φTcr" v={fmt(0.75 * result.Tcr, 'moment')}
+              tip="Cracking torsion φTcr (ACI §22.7.5.1), including the axial modifier √(1 + Nu/(4·Ag·λ√f'c)) — compression raises it, tension lowers it." />
+            <KV k="φTth" v={fmt(result.Tu_threshold, 'moment')}
+              tip="Threshold torsion (ACI Table 22.7.4.1(a)) = φTcr/4. Torsion may be NEGLECTED below this; above it the section must be designed for torsion." />
+          </>)}
           <KV k={cap.Tn} v={fmt(result.phi_Tn, 'moment')}
             tip="Design torsional resistance from closed stirrups. Checked against Tu." />
           <KV k="  DCR" v={govResult.DCR_torsion.toFixed(3)} dcr={govResult.DCR_torsion} overridden={isOverridden(overrides, 'DCR_torsion')}
             tip={code === 'EN1992-1-1'
               ? 'Torsion DCR = T_Ed / T_Rd,c when below cracking threshold; T_Ed / T_Rd,i when above.'
               : 'Torsion DCR = Tu / φTn.'} />
+          {/* Cross-section limit for shear + torsion together — the one failure
+              mode extra links cannot fix. */}
+          {code !== 'EN1992-1-1' && govResult.DCR_crushing !== undefined && (<>
+            <KV k="φTn,max" v={fmt(govResult.phi_Tn_max ?? 0, 'moment')}
+              tip="Torsion that would exhaust the §22.7.7.1 cross-section limit alongside the concurrent Vu — the torsional headroom the shear demand leaves." />
+            <KV k="  DCR sect" v={govResult.DCR_crushing.toFixed(3)} dcr={govResult.DCR_crushing}
+              tip="ACI §22.7.7.1 cross-section check: shear and torsion both put diagonal compression into the web, and past this limit the concrete crushes however many stirrups are added. Over 1.0 means ENLARGE THE SECTION."
+              formula="√[(Vu/bw·d)² + (Tu·ph/1.7Aoh²)²] ≤ φ(Vc/bw·d + 8λ√f'c)" />
+          </>)}
           </CheckSection>
           )}
 
           {code === 'EN1992-1-1' && anyTorsion && !ignoreTorsion && (govResult.VT_util ?? 0) > 0 && (
-            <CheckSection title="Shear + Torsion Links" dcr={govResult.VT_util} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear + Torsion Links')}>
+            <CheckSection title="Shear + Torsion Links" icon="shear" dcr={govResult.VT_util} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear + Torsion Links')}>
               <KV k="  DCR" v={(govResult.VT_util ?? 0).toFixed(3)} dcr={govResult.VT_util}
                 tip="Combined shear + torsion transverse-steel utilisation (§6.3.1/§6.3.2). The outer stirrup legs carry the shear demand AND the torsion demand, which add — this is what S-CONCRETE reports as “V & T Util”. Governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening link spacing, adding legs, or using a steeper strut angle cot θ."
                 formula="V&T util = V_Ed/(n·z·f_ywd·cotθ)/(A_sw,leg/s) + T_Ed/(2·A_k·f_ywd·cotθ)/(A_sw,leg/s)" />
@@ -589,7 +605,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
           )}
 
           {code === 'EN1992-1-1' && (
-            <CheckSection title="Crack Width §7.3.4" dcr={crackDcr} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Crack Width §7.3.4')}>
+            <CheckSection title="Crack Width §7.3.4" icon="crackWidth" dcr={crackDcr} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Crack Width §7.3.4')}>
               <KV k="wk bot" v={`${(govResult.wk_bot ?? 0).toFixed(3)} mm`}
                 dcr={(govResult.wk_bot ?? 0) / (member.crackParams?.wLimitBot ?? 0.3)} overridden={isOverridden(overrides, 'DCR_crack')}
                 tip="Characteristic crack width at bottom face under quasi-permanent load combination."
@@ -624,21 +640,8 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
             </CheckSection>
           )}
             </>
-          )}
         </div>
       </div>
-
-      {/* Column interaction diagram */}
-      {isColumn && result.interaction && (
-        <div style={{ marginTop: 14 }}>
-          <InteractionDiagram
-            points={result.interaction}
-            loads={member.loads}
-            code={code}
-            activeLoadId={load.id}
-          />
-        </div>
-      )}
 
       {/* C2: All-load-cases comparison table */}
       {member.loads.length > 1 && (
@@ -655,9 +658,7 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
               <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: SURFACE.subtle }}>
-                    {(isColumn
-                      ? ['Load Case', 'P-M DCR', 'Axial DCR', 'Shear DCR', 'Status']
-                      : ['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status']
+                    {(['Load Case', 'Flex+ DCR', 'Flex− DCR', 'Shear DCR', 'Torsion DCR', 'Status']
                     ).map(h => (
                       <th key={h} style={{ ...LABEL_STYLE, padding: '6px 10px', textAlign: 'left', borderBottom: `1px solid ${BORDER.default}`, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
@@ -674,20 +675,12 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
                         {govSet.has(id) && <span style={{ color: STATUS.warn, marginRight: 4 }}>★</span>}
                         {label}
                       </td>
-                      {isColumn ? (
-                        <>
-                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_PM ?? 0)}>{(r.DCR_PM ?? 0).toFixed(3)}</span></td>
-                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_axial ?? 0)}>{(r.DCR_axial ?? 0).toFixed(3)}</span></td>
-                          <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear)}>{r.DCR_shear.toFixed(3)}</span></td>
-                        </>
-                      ) : (
-                        <>
+                      <>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_pos)}>{r.DCR_flex_pos.toFixed(3)}</span></td>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_flex_neg)}>{r.DCR_flex_neg.toFixed(3)}</span></td>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_shear)}>{r.DCR_shear.toFixed(3)}</span></td>
                           <td style={{ padding: '5px 10px' }}><span style={dcrStyle(r.DCR_torsion)}>{r.DCR_torsion.toFixed(3)}</span></td>
                         </>
-                      )}
                       <td style={{ padding: '5px 10px', fontWeight: 700, color: r.status === 'OK' ? STATUS.ok : r.status === 'NG' ? STATUS.fail : STATUS.warn, fontSize: 10 }}>
                         {r.status}
                       </td>
