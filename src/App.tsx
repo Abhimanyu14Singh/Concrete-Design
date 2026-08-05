@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { Project, Member, ModelMap, DesignGroup, DesignCode } from './types';
+import type { Project, Member, ModelMap, DesignGroup, DesignCode, ProjectSettings } from './types';
 import { defaultProject } from './utils/sampleData';
+import {
+  applyProjectSettings, coversFromSettings, loadStandards, materialFromSettings,
+  saveStandards, settingsFromProject,
+} from './utils/projectSettings';
 import { runDesign } from './engines';
 import { resolveCrack } from './utils/resolveCrack';
 import { effectiveStatus } from './utils/overrides';
@@ -16,15 +20,20 @@ import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
 import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import ProjectSettingsDialog from './components/Settings/ProjectSettingsDialog';
 import Dropdown from './components/common/Dropdown';
+import { Icon } from './components/common/Icon';
+import type { IconName } from './components/common/Icon';
 import { useUnits } from './contexts/UnitsContext';
-import { MEMBER_COLOR, FONT, SURFACE, STATUS, INK, BORDER, ACCENT, LABEL_STYLE } from './theme';
+import { MEMBER_COLOR, FONT, SURFACE, STATUS, INK, BORDER, ACCENT, ICON } from './theme';
 
 type Tab = 'dashboard' | 'map' | 'member' | 'help';
 
 const hdrBtn: React.CSSProperties = {
   padding: '5px 10px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
   background: 'white', fontSize: 12, cursor: 'pointer', color: INK.base, fontWeight: 600,
+  // inline-flex so an <Icon> and its label share one baseline
+  display: 'inline-flex', alignItems: 'center', gap: 6,
 };
 
 /** Governing status for a member (respecting engineer overrides), used for the
@@ -40,9 +49,20 @@ function memberBadge(m: Member, code: DesignCode, slsCombo?: string, cotTheta?: 
   return sawNG ? 'NG' : sawWarn ? 'warn' : 'OK';
 }
 
+/**
+ * The project the app opens with. When standards were confirmed in a previous
+ * session they are re-applied to the sample project, so a returning engineer
+ * lands on their own materials, cover and code rather than the ACI defaults.
+ */
+function initialProject(): Project {
+  const stored = loadStandards();
+  if (!stored) return defaultProject;
+  return applyProjectSettings({ ...defaultProject, code: stored.code }, stored.settings);
+}
+
 export default function App() {
   // ── Core state ────────────────────────────────────────────────────────────
-  const [project, setProjectRaw] = useState<Project>(defaultProject);
+  const [project, setProjectRaw] = useState<Project>(initialProject);
   const [activeMemberId, setActiveMemberId] = useState<string>(project.members[0].id);
   const [tab, setTab] = useState<Tab>('map');
   // The member list is a pull-down overlay (a "Members" button in the header) rather
@@ -53,7 +73,11 @@ export default function App() {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
   });
-  const [showPrefs, setShowPrefs] = useState(false);
+  // Project standards dialog: 'setup' on a first run (no way out — the project
+  // needs standards), 'settings' whenever the header gear is used.
+  const [settingsMode, setSettingsMode] = useState<'setup' | 'settings' | null>(
+    () => (loadStandards() ? null : 'setup'),
+  );
   const [showExport, setShowExport] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [helpTarget, setHelpTarget] = useState<{ tab?: string; section?: string } | null>(null);
@@ -138,19 +162,32 @@ export default function App() {
       setActiveMemberId(loaded.members[0]?.id ?? '');
       setTab('dashboard');
       setIsDirty(false);
+      // A project carries its own standards — adopt its unit system and scale so
+      // the screens read in the units it was designed in.
+      if (loaded.settings) {
+        setUnits(loaded.settings.units);
+        setZoom(loaded.settings.displayScale);
+        localStorage.setItem('sc-zoom', String(loaded.settings.displayScale));
+      }
     } catch (e) {
       alert(`Could not open the project file:\n${(e as Error).message}`);
     }
-  }, []);
+  }, [setUnits]);
 
   function handleNewProject() {
     if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
     // Native confirm() can steal keyboard focus from the window in Electron
     window.focus();
-    setProjectRaw(defaultProject);
-    historyRef.current = [defaultProject];
+    // Carry the office standards forward — a new project should not silently
+    // revert to the stock ACI defaults once the engineer has set their own.
+    const stored = loadStandards();
+    const fresh = stored
+      ? applyProjectSettings({ ...defaultProject, code: stored.code }, stored.settings)
+      : defaultProject;
+    setProjectRaw(fresh);
+    historyRef.current = [fresh];
     historyIndexRef.current = 0;
-    setActiveMemberId(defaultProject.members[0].id);
+    setActiveMemberId(fresh.members[0].id);
     setTab('dashboard');
     setIsDirty(false);
   }
@@ -158,7 +195,30 @@ export default function App() {
   function changeZoom(z: number) {
     setZoom(z);
     localStorage.setItem('sc-zoom', String(z));
-    setShowPrefs(false);
+  }
+
+  // ── Project standards ──────────────────────────────────────────────────────
+  // Projects saved before the setup dialog existed have no `settings`; derive a
+  // set from their first member so the dialog opens on their real values.
+  // Units and scale come from the LIVE state rather than the stored settings —
+  // the ETABS import wizard can switch display units on its own, and the dialog
+  // must open showing what is actually on screen.
+  const activeSettings: ProjectSettings = useMemo(
+    () => ({ ...(project.settings ?? settingsFromProject(project)), units, displayScale: zoom }),
+    [project, units, zoom],
+  );
+
+  /**
+   * Commit the standards: they are written onto every member (so the engines,
+   * screens and exports all see them), mirrored into the live unit system and
+   * display scale, and remembered for the next session.
+   */
+  function handleSettingsSave(next: { name: string; code: DesignCode; settings: ProjectSettings }) {
+    setProject(p => applyProjectSettings({ ...p, name: next.name, code: next.code }, next.settings));
+    setUnits(next.settings.units);
+    changeZoom(next.settings.displayScale);
+    saveStandards(next.code, next.settings);
+    setSettingsMode(null);
   }
 
   // ── B4: Undo/Redo ──────────────────────────────────────────────────────────
@@ -224,17 +284,16 @@ export default function App() {
 
   // ── Click outside to close popovers ───────────────────────────────────────
   useEffect(() => {
-    if (!showPrefs && !showExport && !membersOpen) return;
+    if (!showExport && !membersOpen) return;
     function close(e: MouseEvent) {
       if (!(e.target as Element).closest('[data-popover]')) {
-        setShowPrefs(false);
         setShowExport(false);
         setMembersOpen(false);
       }
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
-  }, [showPrefs, showExport, membersOpen]);
+  }, [showExport, membersOpen]);
 
   // ── A1: Split-pane drag ───────────────────────────────────────────────────
   function onSplitMouseDown(e: React.MouseEvent) {
@@ -265,7 +324,7 @@ export default function App() {
   // event, carries a doc section) and the native Help menu (Electron IPC, carries
   // a sub-tab). HelpView reads `target` to pick the sub-tab / scroll to a section.
   const openHelpTarget = useCallback((t: { tab?: string; section?: string }) => {
-    setShowEtabsImport(false); setShowReport(false); setShowExport(false); setShowPrefs(false);
+    setShowEtabsImport(false); setShowReport(false); setShowExport(false);
     setHelpTarget(t);
     setTab('help');
   }, []);
@@ -301,7 +360,6 @@ export default function App() {
       // Fresh import: the imported members/groups fully REPLACE whatever was in
       // the project (the default sample members and any prior import). This is
       // why importing one group no longer drags in unrelated frames like the
-      // sample C1/C2 columns.
       return {
         ...p,
         members,
@@ -352,13 +410,15 @@ export default function App() {
 
   function addMember() {
     const id = `M${project.members.length + 1}`;
+    // Seeded from the project standards, so a new member starts on the same
+    // materials and cover as everything else in the project.
     const newMember: Member = {
       id,
       label: `New Member ${id}`,
       memberType: 'beam',
       span: 20,
-      material: { fc: 4000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0 },
-      section: { type: 'rectangular_beam', b: 14, h: 22, coverClear: 1.5, stirrupDia: 4 },
+      material: materialFromSettings(activeSettings),
+      section: { type: 'rectangular_beam', b: 14, h: 22, stirrupDia: 4, ...coversFromSettings(activeSettings) },
       rebar: {
         topBars: [{ numBars: 3, barSize: 7 }],
         botBars: [{ numBars: 3, barSize: 7 }],
@@ -461,7 +521,6 @@ export default function App() {
 
   const sectionLabel = (m: Member) => {
     const s = m.section;
-    if (s.type === 'circular_column') return `Ø${fmt(s.diameter ?? s.b, 'length')}`;
     return `${fmt(s.b, 'length')} × ${fmt(s.h, 'length')}`;
   };
 
@@ -512,6 +571,18 @@ export default function App() {
       )}
       {showReport && (
         <ReportModal project={project} onClose={() => setShowReport(false)} />
+      )}
+      {settingsMode && (
+        <ProjectSettingsDialog
+          mode={settingsMode}
+          projectName={project.name}
+          code={project.code}
+          settings={activeSettings}
+          // First-run setup is deliberately un-cancellable: the project has no
+          // standards yet, and every check downstream depends on them.
+          onCancel={settingsMode === 'settings' ? () => setSettingsMode(null) : undefined}
+          onSave={handleSettingsSave}
+        />
       )}
       {/* Members pull-down overlay — opened from the header "Members" button; a
           floating panel (not a docked column) so no view loses canvas width. */}
@@ -602,15 +673,15 @@ export default function App() {
                     <button
                       onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
                       title="Duplicate member"
-                      style={{ fontSize: 12, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
-                    >⧉</button>
+                      style={{ display: 'flex', color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+                    ><Icon name="duplicate" size={ICON.sm} title="Duplicate member" /></button>
                     <button
                       onClick={e => { e.stopPropagation(); deleteMember(m.id); }}
                       title="Delete member"
-                      style={{ fontSize: 12, color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
-                      onMouseEnter={e => { (e.target as HTMLElement).style.color = STATUS.fail; }}
-                      onMouseLeave={e => { (e.target as HTMLElement).style.color = INK.muted; }}
-                    >🗑</button>
+                      style={{ display: 'flex', color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
+                      onMouseEnter={e => { e.currentTarget.style.color = STATUS.fail; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = INK.muted; }}
+                    ><Icon name="delete" size={ICON.sm} title="Delete member" /></button>
                   </div>
                 ))}
               </div>
@@ -620,7 +691,7 @@ export default function App() {
 
         {/* Legend footer */}
         <div style={{ padding: '10px 14px', borderTop: `1px solid ${BORDER.default}` }}>
-          {[['Beam', MEMBER_COLOR.beam], ['Column', MEMBER_COLOR.column]].map(([t, c]) => (
+          {[['Beam', MEMBER_COLOR.beam]].map(([t, c]) => (
             <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
               <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
@@ -648,11 +719,14 @@ export default function App() {
           {/* Members pull-down toggle (replaces the old docked member column) */}
           <div data-popover="" style={{ position: 'relative' }}>
             <button
-              onClick={() => { setMembersOpen(v => !v); setShowExport(false); setShowPrefs(false); }}
-              style={{ ...hdrBtn, background: membersOpen ? ACCENT.softBg : 'white', color: membersOpen ? ACCENT.primary : INK.base }}
+              onClick={() => { setMembersOpen(v => !v); setShowExport(false); }}
+              // Icon-only: the tighter padding matches the undo/redo buttons, and
+              // aria-label carries the name the visible text used to provide.
+              style={{ ...hdrBtn, padding: '5px 8px', background: membersOpen ? ACCENT.softBg : 'white', color: membersOpen ? ACCENT.primary : INK.base }}
               title="Show the member list"
+              aria-label="Members"
             >
-              ☰ Members
+              <Icon name="members" />
             </button>
           </div>
 
@@ -660,16 +734,24 @@ export default function App() {
 
           {/* View tabs */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {([['map', '🗺 Viewer'], ['dashboard', 'Dashboard'], ['member', 'Member'], ['help', 'Help']] as [Tab, string][]).map(([key, label]) => (
+            {([
+              ['map', 'Viewer', 'viewer'],
+              ['dashboard', 'Dashboard', 'dashboard'],
+              ['member', 'Member', 'member'],
+              ['help', 'Help', 'help'],
+            ] as [Tab, string, IconName][]).map(([key, label, icon]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
                 style={{
                   padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
                   background: tab === key ? ACCENT.primary : 'transparent',
+                  // the icon inherits this, so the active tab's glyph turns white too
                   color: tab === key ? 'white' : INK.secondary,
                 }}
               >
+                <Icon name={icon} />
                 {label}
               </button>
             ))}
@@ -694,13 +776,21 @@ export default function App() {
           <div style={{ width: 1, height: 20, background: BORDER.default }} />
 
           {/* B5: Dirty indicator */}
-          <span style={{ fontSize: 11, color: isDirty ? STATUS.fail : INK.muted, fontWeight: 600, minWidth: 70 }}>
-            {isDirty ? '● Unsaved' : '✓ Saved'}
+          <span style={{
+            fontSize: 11, color: isDirty ? STATUS.fail : INK.muted, fontWeight: 600, minWidth: 70,
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+          }}>
+            <Icon name={isDirty ? 'unsaved' : 'saved'} size={ICON.sm} />
+            {isDirty ? 'Unsaved' : 'Saved'}
           </span>
 
           {/* B4: Undo/Redo */}
-          <button onClick={undo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Undo (Ctrl+Z)">↩</button>
-          <button onClick={redo} style={{ ...hdrBtn, fontSize: 14, padding: '3px 8px' }} title="Redo (Ctrl+Y)">↪</button>
+          <button onClick={undo} style={{ ...hdrBtn, padding: '5px 8px' }} title="Undo (Ctrl+Z)">
+            <Icon name="undo" title="Undo" />
+          </button>
+          <button onClick={redo} style={{ ...hdrBtn, padding: '5px 8px' }} title="Redo (Ctrl+Y)">
+            <Icon name="redo" title="Redo" />
+          </button>
 
           <div style={{ width: 1, height: 20, background: BORDER.default }} />
 
@@ -711,16 +801,18 @@ export default function App() {
             style={{ ...hdrBtn, borderColor: ACCENT.primary, color: ACCENT.primary }}
             title="Import beams from an ETABS model (CSI API or tables file)"
           >
-            ⇪ ETABS
+            <Icon name="etabsImport" />
+            ETABS
           </button>
 
           {/* E1: Export dropdown */}
           <div data-popover="" style={{ position: 'relative' }}>
             <button
-              onClick={() => { setShowExport(v => !v); setShowPrefs(false); }}
+              onClick={() => { setShowExport(v => !v); setMembersOpen(false); }}
               style={{ ...hdrBtn, background: showExport ? ACCENT.softBg : 'white', color: showExport ? ACCENT.primary : INK.base }}
             >
-              Export ▾
+              <Icon name="export" />
+              Export
             </button>
             {showExport && (
               <div style={{
@@ -828,135 +920,14 @@ export default function App() {
             )}
           </div>
 
-          {/* Preferences */}
-          <div data-popover="" style={{ position: 'relative' }}>
-            <button
-              onClick={() => { setShowPrefs(v => !v); setShowExport(false); }}
-              style={{ ...hdrBtn, background: showPrefs ? ACCENT.softBg : 'white', color: showPrefs ? ACCENT.primary : INK.base }}
-              title="Preferences"
-            >
-              ⚙
-            </button>
-            {showPrefs && (
-              <div style={{
-                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
-                background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '12px 8px', minWidth: 190,
-              }}>
-                <div style={{ ...LABEL_STYLE, padding: '0 8px', marginBottom: 8 }}>
-                  Design code
-                </div>
-                {(['ACI318-19', 'ACI318-14', 'EN1992-1-1'] as DesignCode[]).map(c => (
-                  <button
-                    key={c}
-                    onClick={() => {
-                      // Follow the code's native unit system: EC2 → SI, ACI → imperial.
-                      if (c === 'EN1992-1-1' && project.code !== 'EN1992-1-1') setUnits('si');
-                      else if (c !== 'EN1992-1-1' && project.code === 'EN1992-1-1') setUnits('imperial');
-                      setProject(p => ({ ...p, code: c }));
-                    }}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
-                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                      background: project.code === c ? ACCENT.softBg : 'none',
-                      color: project.code === c ? ACCENT.primary : INK.base,
-                      fontWeight: project.code === c ? 700 : 400,
-                    }}
-                  >
-                    <span>{c}</span>
-                    {project.code === c && <span style={{ fontSize: 11 }}>✓</span>}
-                  </button>
-                ))}
-                {project.code === 'EN1992-1-1' && (
-                  <>
-                    <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
-                      Shear strut angle (cot θ)
-                    </div>
-                    {([[2.5, '2.5 · θ = 21.8° (EC2 max)'], [2.0, '2.0 · θ = 26.6°'], [1.5, '1.5 · θ = 33.7°'], [1.25, '1.25 · θ = 38.7° (S-CONCRETE)'], [1.0, '1.0 · θ = 45°']] as [number, string][]).map(([v, lbl]) => {
-                      const cur = project.cotTheta ?? 2.5;
-                      return (
-                        <button
-                          key={v}
-                          onClick={() => setProject(p => ({ ...p, cotTheta: v }))}
-                          title="EC2 §6.2.3 variable strut inclination. Lower cot θ = steeper strut = more conservative shear/torsion capacity — use it to match a checker (e.g. S-CONCRETE) that fixes θ."
-                          style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                            width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
-                            cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                            background: cur === v ? ACCENT.softBg : 'none',
-                            color: cur === v ? ACCENT.primary : INK.base,
-                            fontWeight: cur === v ? 700 : 400,
-                          }}
-                        >
-                          <span>{lbl}</span>
-                          {cur === v && <span style={{ fontSize: 11 }}>✓</span>}
-                        </button>
-                      );
-                    })}
-                  </>
-                )}
-                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
-                  Torsion
-                </div>
-                <button
-                  onClick={() => setProject(p => ({ ...p, ignoreTorsion: !p.ignoreTorsion }))}
-                  title="Neglect torsion for all beams: Tu is treated as 0, the in-app torsion / shear+torsion checks (DCR_torsion, V&T links, §6.3.x, §9.2.3) are skipped, and no torsion is written into the S-Concrete .SCO export. Use when torsion is compatibility-only and can be redistributed, or is handled outside this model."
-                  style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
-                    cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                    background: project.ignoreTorsion ? ACCENT.softBg : 'none',
-                    color: project.ignoreTorsion ? ACCENT.primary : INK.base,
-                    fontWeight: project.ignoreTorsion ? 700 : 400,
-                  }}
-                >
-                  <span>Neglect torsion (Tu = 0)</span>
-                  <span style={{ fontSize: 11 }}>{project.ignoreTorsion ? '✓' : ''}</span>
-                </button>
-                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
-                  Display Scale
-                </div>
-                {[0.75, 0.9, 1.0, 1.1, 1.25, 1.5].map(z => (
-                  <button
-                    key={z}
-                    onClick={() => changeZoom(z)}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
-                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                      background: zoom === z ? ACCENT.softBg : 'none',
-                      color: zoom === z ? ACCENT.primary : INK.base,
-                      fontWeight: zoom === z ? 700 : 400,
-                    }}
-                  >
-                    <span>{z === 1.0 ? '100%  (default)' : `${Math.round(z * 100)}%`}</span>
-                    {zoom === z && <span style={{ fontSize: 11 }}>✓</span>}
-                  </button>
-                ))}
-                <div style={{ ...LABEL_STYLE, padding: '0 8px', margin: '12px 0 8px', borderTop: `1px solid ${BORDER.subtle}`, paddingTop: 12 }}>
-                  Units
-                </div>
-                {([['imperial', 'US (in, psi, kips)'], ['si', 'SI (mm, MPa, kN)']] as const).map(([u, label]) => (
-                  <button
-                    key={u}
-                    onClick={() => setUnits(u)}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      width: '100%', padding: '6px 10px', border: 'none', borderRadius: 6,
-                      cursor: 'pointer', fontSize: 13, textAlign: 'left',
-                      background: units === u ? ACCENT.softBg : 'none',
-                      color: units === u ? ACCENT.primary : INK.base,
-                      fontWeight: units === u ? 700 : 400,
-                    }}
-                  >
-                    <span>{label}</span>
-                    {units === u && <span style={{ fontSize: 11 }}>✓</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Project settings — the standards set in the setup dialog */}
+          <button
+            onClick={() => { setSettingsMode('settings'); setShowExport(false); setMembersOpen(false); }}
+            style={{ ...hdrBtn, background: settingsMode ? ACCENT.softBg : 'white', color: settingsMode ? ACCENT.primary : INK.base }}
+            title="Project settings — code, units, materials, cover, moduli, display scale"
+          >
+            <Icon name="settings" title="Project settings" />
+          </button>
 
           {/* Project info */}
           <div style={{ fontSize: 11, color: INK.secondary }}>{project.name}</div>

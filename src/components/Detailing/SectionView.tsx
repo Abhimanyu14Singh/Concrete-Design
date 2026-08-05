@@ -1,7 +1,7 @@
 import { formatBarLabel, barSizeStep, US_BAR_SIZES, METRIC_BAR_SIZES } from '../../utils/rebar';
 import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults, TieZone } from '../../types';
-import { getBarDiam, getBarArea } from '../../utils/concreteDesign';
+import { coverFor, getBarDiam, getBarArea } from '../../utils/concreteDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import { BARS, DCR, FONT } from '../../theme';
 
@@ -69,10 +69,8 @@ export default function SectionView({
   const drawW = width - pL - pR;
   const drawH = height - pT - pB;
 
-  const isCircular = section.type === 'circular_column';
-  const isColumn = section.type.endsWith('_column');
-  const secW = isCircular ? (section.diameter ?? section.b) : section.b;
-  const secH = isCircular ? (section.diameter ?? section.b) : (section.h ?? 12);
+  const secW = section.b;
+  const secH = section.h ?? 12;
 
   const scale = Math.min(drawW / secW, drawH / secH);
   const scaledW = secW * scale;
@@ -85,7 +83,14 @@ export default function SectionView({
   // depth — e.g. a beam imported with the wrong units) still renders a visible
   // stirrup hoop and bars instead of collapsing to an empty rectangle. For normal
   // sections cover ≪ size, so the clamp never bites.
-  const stOff = Math.min((section.coverClear + tieD / 2) * scale, scaledW * 0.4, scaledH * 0.4);
+  // Stirrup-centreline inset per face. Drawn from the project's top/bottom/side
+  // covers so the picture shows the same geometry the checks used; when a
+  // project keeps one cover throughout, all three are equal as before.
+  const coverInset = (cover: number) =>
+    Math.min((cover + tieD / 2) * scale, scaledW * 0.4, scaledH * 0.4);
+  const stOffT = coverInset(coverFor(section, 'top'));
+  const stOffB = coverInset(coverFor(section, 'bot'));
+  const stOffS = coverInset(coverFor(section, 'side'));
   const bw = section.bw ?? secW;
   const hf = section.hf ?? 0;
   const isT = section.type === 'T_beam' || section.type === 'L_beam';
@@ -104,15 +109,15 @@ export default function SectionView({
     const sClear = (rebar.layerClearSpacing ?? 1.0) * scale;
     let inset = 0; // true-scale offset from the stirrup line to the current layer
     return bars.flatMap((grp, gi) => {
-      const usableW0 = scaledW - 2 * stOff;
+      const usableW0 = scaledW - 2 * stOffS;
       const r = fitRadius(grp.barSize, grp.numBars, usableW0);
       const dbScaled = getBarDiam(grp.barSize) * scale;
-      const faceY = row === 'top' ? oy + stOff : oy + scaledH - stOff;
+      const faceY = row === 'top' ? oy + stOffT : oy + scaledH - stOffB;
       const ry = row === 'top' ? faceY + inset + r : faceY - inset - r;
       inset += dbScaled + sClear;
-      const usableW = scaledW - 2 * (stOff + r);
+      const usableW = scaledW - 2 * (stOffS + r);
       const spacing = grp.numBars > 1 ? usableW / (grp.numBars - 1) : 0;
-      const startX = ox + stOff + r;
+      const startX = ox + stOffS + r;
       return Array.from({ length: grp.numBars }, (_, i) => {
         const bx = grp.numBars === 1 ? ox + scaledW / 2 : startX + i * spacing;
         return <circle key={`${row}-${gi}-${i}`} cx={bx} cy={ry} r={r} fill={color} stroke="#fff" strokeWidth="0.5" />;
@@ -234,11 +239,10 @@ export default function SectionView({
   // height the skin bars are distributed over.
   function skinWeb(): number {
     const h = section.h ?? 0;
-    const cover = section.coverClear ?? 1.5;
     const stir = getBarDiam(section.stirrupDia ?? (units === 'si' ? -10 : 4));
     const topDia = getBarDiam(rebar.topBars[0]?.barSize ?? 8);
     const botDia = getBarDiam(rebar.botBars[0]?.barSize ?? 8);
-    return Math.max(1, h - 2 * cover - 2 * stir - topDia - botDia);
+    return Math.max(1, h - coverFor(section, 'top') - coverFor(section, 'bot') - 2 * stir - topDia - botDia);
   }
   // Even c/c of `n` skin bars per face over the clear web, snapped to 25 mm (1 in).
   const skinSpacing = (n: number): number => snapLen(toDisplay(skinWeb() / (n + 1), 'length'));
@@ -442,8 +446,8 @@ export default function SectionView({
 
   const topBarR = Math.max(3, (getBarDiam(rebar.topBars[0]?.barSize ?? 8) / 2) * scale);
   const botBarR = Math.max(3, (getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2) * scale);
-  const topLabelY = oy + stOff + topBarR;
-  const botLabelY = oy + scaledH - stOff - botBarR;
+  const topLabelY = oy + stOffT + topBarR;
+  const botLabelY = oy + scaledH - stOffB - botBarR;
 
   // Innermost longitudinal-layer centers — the bottom-most TOP layer and the
   // top-most BOTTOM layer. Face/skin bars are spaced in the clear web BETWEEN
@@ -455,19 +459,12 @@ export default function SectionView({
     bars.slice(0, -1).reduce((s, g) => s + getBarDiam(g.barSize) * scale + sClearPx, 0);
   const lastTop = rebar.topBars[rebar.topBars.length - 1];
   const lastBot = rebar.botBars[rebar.botBars.length - 1];
-  const yTopInner = oy + stOff + layerDrop(rebar.topBars)
+  const yTopInner = oy + stOffT + layerDrop(rebar.topBars)
     + Math.max(3, (getBarDiam(lastTop?.barSize ?? 8) / 2) * scale);
-  const yBotInner = oy + scaledH - stOff - layerDrop(rebar.botBars)
+  const yBotInner = oy + scaledH - stOffB - layerDrop(rebar.botBars)
     - Math.max(3, (getBarDiam(lastBot?.barSize ?? 8) / 2) * scale);
 
   // Circular columns: pool ALL bar groups onto the ring (matches engine layout)
-  const circGroups = [...rebar.topBars, ...rebar.botBars, ...(rebar.sideBars ?? [])]
-    .filter(g => g.numBars > 0);
-  const circTotal = circGroups.reduce((s, g) => s + g.numBars, 0);
-  const circBarSize = circGroups[0]?.barSize ?? 8;
-
-  const cx = ox + scaledW / 2, cy = oy + scaledH / 2;
-
   return (
     <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 8 }}>
       <defs>
@@ -479,27 +476,7 @@ export default function SectionView({
         </marker>
       </defs>
 
-      {isCircular ? (
-        <>
-          <circle cx={cx} cy={cy} r={scaledW / 2} fill={BARS.concrete} stroke={BARS.concreteEdge} strokeWidth="2" />
-          {/* Tie / spiral hoop at the stirrup centerline */}
-          <circle cx={cx} cy={cy} r={scaledW / 2 - stOff}
-            fill="none" stroke={BARS.tie} strokeWidth="2"
-            strokeDasharray={rebar.tieType === 'spiral' ? '6,3' : undefined} />
-          {/* All longitudinal bars pooled evenly on the ring (engine convention) */}
-          {circTotal > 0 && (() => {
-            const rb = Math.max(3, (getBarDiam(circBarSize) / 2) * scale);
-            const R = scaledW / 2 - stOff - rb - 1;
-            return Array.from({ length: circTotal }, (_, i) => {
-              const ang = (2 * Math.PI * i) / circTotal - Math.PI / 2;
-              return <circle key={`c-${i}`}
-                cx={cx + R * Math.cos(ang)} cy={cy + R * Math.sin(ang)}
-                r={rb} fill={BARS.bot} stroke="#fff" strokeWidth="0.5" />;
-            });
-          })()}
-        </>
-      ) : (
-        <>
+      <>
           {isT && (
             <rect x={ox} y={oy} width={scaledW} height={hf * scale} fill={BARS.concrete} stroke={BARS.concreteEdge} strokeWidth="1.5" />
           )}
@@ -512,18 +489,18 @@ export default function SectionView({
           />
           {/* Tie / stirrup hoop at the centerline */}
           <rect
-            x={isT ? ox + (secW - bw) / 2 * scale + stOff : ox + stOff}
-            y={oy + (isT ? hf * scale : 0) + stOff}
-            width={(isT ? bw : secW) * scale - 2 * stOff}
-            height={(isT ? secH - hf : secH) * scale - 2 * stOff}
+            x={isT ? ox + (secW - bw) / 2 * scale + stOffS : ox + stOffS}
+            y={oy + (isT ? hf * scale : 0) + stOffT}
+            width={(isT ? bw : secW) * scale - 2 * stOffS}
+            height={(isT ? secH - hf : secH) * scale - stOffT - stOffB}
             fill="none" stroke={BARS.tie} strokeWidth="2" rx="4"
           />
           {/* Interior crosstie legs when legs > 2 — evenly spaced verticals with 135° hook ticks */}
           {rebar.ties && rebar.ties.legs > 2 && (() => {
-            const hoopX = isT ? ox + (secW - bw) / 2 * scale + stOff : ox + stOff;
-            const hoopW = (isT ? bw : secW) * scale - 2 * stOff;
-            const hoopY = oy + (isT ? hf * scale : 0) + stOff;
-            const hoopH = (isT ? secH - hf : secH) * scale - 2 * stOff;
+            const hoopX = isT ? ox + (secW - bw) / 2 * scale + stOffS : ox + stOffS;
+            const hoopW = (isT ? bw : secW) * scale - 2 * stOffS;
+            const hoopY = oy + (isT ? hf * scale : 0) + stOffT;
+            const hoopH = (isT ? secH - hf : secH) * scale - stOffT - stOffB;
             const n = rebar.ties.legs - 2;
             const hook = Math.min(8, hoopW * 0.08);
             return Array.from({ length: n }, (_, i) => {
@@ -542,7 +519,7 @@ export default function SectionView({
           {rebar.sideBars?.flatMap((grp, gi) => {
             const r = Math.max(2.5, (getBarDiam(grp.barSize) / 2) * scale);
             // Columns: pairs at evenly spaced heights between face layers (engine convention)
-            const rows = isColumn ? Math.max(1, Math.round(grp.numBars / 2)) : grp.numBars;
+            const rows = grp.numBars;
             return Array.from({ length: rows }, (_, i) => {
               const t = (i + 1) / (rows + 1);
               // Evenly spaced in the clear web between the innermost top layer and
@@ -550,43 +527,16 @@ export default function SectionView({
               // bottom bars (the same interpolation the column path already used).
               const by = yTopInner + t * (yBotInner - yTopInner);
               return [
-                <circle key={`sl-${gi}-${i}`} cx={ox + stOff + r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
-                <circle key={`sr-${gi}-${i}`} cx={ox + scaledW - stOff - r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
+                <circle key={`sl-${gi}-${i}`} cx={ox + stOffS + r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
+                <circle key={`sr-${gi}-${i}`} cx={ox + scaledW - stOffS - r} cy={by} r={r} fill={BARS.side} stroke="#fff" strokeWidth="0.5" />,
               ];
             }).flat();
           })}
         </>
-      )}
 
       {/* Dimensions + labels */}
-      {showDims && isCircular && (
-        <>
-          {/* Diameter dim */}
-          <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
-            stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
-          <text x={cx} y={oy + scaledH + 27} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily={FONT.mono}>
-            Ø = {fmt(secW, 'length', 1)}
-          </text>
-        </>
-      )}
-      {showLabels && isCircular && (
-        <>
-          {/* Bar + tie labels */}
-          <text x={ox + scaledW + 8} y={cy - 8}
-            fontSize="10" fill={BARS.bot} fontFamily={FONT.mono} {...labelEvents('bot')}>
-            {circTotal > 0 ? `${circTotal}-${displayBar(circBarSize)}` : '—'}
-          </text>
-          {rebar.ties && (
-            <text x={ox + scaledW + 8} y={cy + 8}
-              fontSize="10" fill={BARS.tie} fontFamily={FONT.mono} {...labelEvents('stir')}>
-              {rebar.tieType === 'spiral' ? 'Sp ' : ''}{displayBar(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}
-            </text>
-          )}
-        </>
-      )}
 
-      {showDims && !isCircular && (
+      {showDims && (
         <>
           {/* Width dim */}
           <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
@@ -607,7 +557,7 @@ export default function SectionView({
         </>
       )}
 
-      {showLabels && !isCircular && (
+      {showLabels && (
         <>
           {/* Top bars — left-click +1, right-click −1 (count and, when editable, size) */}
           {editBarSize
@@ -649,16 +599,10 @@ export default function SectionView({
             )}
           </text>
           {/* Side bar label (columns) */}
-          {isColumn && rebar.sideBars?.[0] && rebar.sideBars[0].numBars > 0 && (
-            <text x={ox + scaledW + 8} y={(topLabelY + botLabelY) / 2 + 18}
-              fontSize="10" fill={BARS.side} fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-              {`${rebar.sideBars[0].numBars}-${displayBar(rebar.sideBars[0].barSize)} side`}
-            </text>
-          )}
           {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
               or a "＋ skin" affordance when absent. */}
-          {!isColumn && editStirrup && editableSkinLabel(ox - 8, oy + scaledH / 2 - 6, 'end')}
-          {showDims && result && !isColumn && (() => {
+          {editStirrup && editableSkinLabel(ox - 8, oy + scaledH / 2 - 6, 'end')}
+          {showDims && result && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;
             const ok = asBot >= reqBot;

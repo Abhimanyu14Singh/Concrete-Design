@@ -51,4 +51,18 @@ describe('designMemberEC2 — zoned shear evaluates capacity at the demand’s z
     // ties.spacing is 200 → same capacity as the 200 end zone.
     expect(r.phi_Vn).toBeCloseTo(rSupport.phi_Vn, 6);
   });
+
+  // VT_util — not DCR_shear — is what the Group Dashboard chip and the map colour
+  // actually show (both take max(DCR_shear, VT_util)). If the combined check keeps
+  // dividing by the worst-zone spacing it re-imposes the exact mispairing the zone
+  // fix removed, and the fix is invisible everywhere a user can see it.
+  it('the combined V+T check uses the demand’s zone too, so the fix reaches the chip', () => {
+    expect(rSupport.VT_util ?? 0).toBeLessThan(1);
+    expect(Math.max(rSupport.DCR_shear, rSupport.VT_util ?? 0)).toBeLessThan(1);
+  });
+
+  it('raises no combined-links warning on a beam carrying ZERO torsion', () => {
+    const combined = rSupport.warnings.filter(w => /Combined shear\+torsion/.test(w.message));
+    expect(combined).toHaveLength(0);
+  });
 });

@@ -14,7 +14,10 @@ export interface BeamSection {
   h: number;          // Overall depth (in)
   bw?: number;        // Web width for T/L sections (in)
   hf?: number;        // Flange thickness for T/L sections (in)
-  coverClear: number; // Clear cover to stirrups (in)
+  coverClear: number; // Clear cover to stirrups (in) — fallback for every face
+  coverTop?: number;    // Clear cover, top face (in)
+  coverBottom?: number; // Clear cover, bottom face (in)
+  coverSide?: number;   // Clear cover, side faces (in)
   stirrupDia: number; // Stirrup bar size (e.g. 4 for #4)
 }
 
@@ -57,7 +60,9 @@ export interface BeamResults extends BaseDesignResults {
   // Steel limits (ACI §9.6)
   As_req_pos: number;
   As_req_neg: number;
-  As_min: number;
+  As_min: number;       // bottom (positive-moment) face
+  /** Top-face As,min — see DesignResults in types/index.ts. */
+  As_min_top?: number;
   As_max: number;
   Av_req: number;
   Av_min_per_s: number;

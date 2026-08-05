@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Member, SectionType, MemberType, BarGroup } from '../../types';
+import type { Member, SectionType, BarGroup } from '../../types';
 import LoadCaseTable from './LoadCaseTable';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
@@ -7,15 +7,15 @@ import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea } from '../../utils/concreteDesign';
 import CodeBadge from '../common/CodeBadge';
-import { ACCENT, BORDER, FONT, INK, LABEL_STYLE, MONO_NUM, STATUS, codeAccent } from '../../theme';
+import { ACCENT, BORDER, FONT, ICON, INK, LABEL_STYLE, MONO_NUM, codeAccent } from '../../theme';
+import { Icon } from '../common/Icon';
+import type { IconName } from '../common/Icon';
 import Dropdown from '../common/Dropdown';
 
 const SECTION_TYPES: { value: SectionType; label: string }[] = [
   { value: 'rectangular_beam', label: 'Rect. Beam' },
   { value: 'T_beam',           label: 'T-Beam' },
   { value: 'L_beam',           label: 'L-Beam' },
-  { value: 'rectangular_column', label: 'Rect. Column' },
-  { value: 'circular_column',  label: 'Circ. Column' },
 ];
 
 // ── Module-level sub-components — NEVER defined inside a render function ──────
@@ -97,8 +97,13 @@ const cardStyle: React.CSSProperties = {
   background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '14px 16px', marginBottom: 12,
 };
 const headingStyle: React.CSSProperties = {
-  ...LABEL_STYLE, marginBottom: 10,
+  ...LABEL_STYLE, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6,
 };
+
+/** Card heading — icon inherits the label's colour, so nothing extra to style. */
+const Heading = ({ icon, children }: { icon: IconName; children: React.ReactNode }) => (
+  <div style={headingStyle}><Icon name={icon} size={ICON.sm} />{children}</div>
+);
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -135,39 +140,14 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
     if (m.rebar[face].length <= 1) return;
     update({ rebar: { ...m.rebar, [face]: m.rebar[face].filter((_, gi) => gi !== i) } });
   };
-  const topBar = (p: Partial<Member['rebar']['topBars'][0]>) => setFaceLayer('topBars', 0, p);
-  const botBar = (p: Partial<Member['rebar']['botBars'][0]>) => setFaceLayer('botBars', 0, p);
   const ties = (p: Partial<NonNullable<Member['rebar']['ties']>>) =>
     update({ rebar: { ...m.rebar, ties: { ...(m.rebar.ties ?? { barSize: dStir, spacing: 6, legs: 2 }), ...p } } });
   const crackP = m.crackParams ?? DEFAULT_CRACK_PARAMS;
   const crack = (p: Partial<NonNullable<Member['crackParams']>>) =>
     update({ crackParams: { ...crackP, ...p } });
 
-  const isColumn = m.section.type === 'rectangular_column' || m.section.type === 'circular_column';
-  const sideBar = (p: Partial<Member['rebar']['topBars'][0]>) =>
-    update({ rebar: { ...m.rebar, sideBars: [{ ...(m.rebar.sideBars?.[0] ?? { numBars: 0, barSize: dLong }), ...p }] } });
-
-  /** Switching section type to/from a column syncs memberType and seeds sensible defaults. */
   function changeSectionType(v: SectionType) {
-    const toColumn = v.endsWith('_column');
-    const wasColumn = isColumn;
-    const patch: Partial<Member> = { section: { ...m.section, type: v } };
-    if (v === 'circular_column' && !m.section.diameter) {
-      patch.section = { ...patch.section!, diameter: 20, b: 20, h: 20 };
-    }
-    if (toColumn && !wasColumn) {
-      patch.memberType = 'column';
-      patch.rebar = {
-        topBars: [{ numBars: 3, barSize: dLong }],
-        botBars: [{ numBars: 3, barSize: dLong }],
-        sideBars: [{ numBars: 2, barSize: dLong }],
-        ties: { barSize: dStir, spacing: 12, legs: 2 },
-        tieType: 'tied',
-      };
-    } else if (!toColumn && wasColumn) {
-      patch.memberType = 'beam';
-    }
-    update(patch);
+    update({ section: { ...m.section, type: v } });
   }
 
   return (
@@ -175,7 +155,6 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       {showLoads && (
         <LoadCaseTable
           loads={m.loads}
-          isColumn={isColumn}
           onDone={loads => { setShowLoads(false); update({ loads }); }}
           onCancel={() => setShowLoads(false)}
         />
@@ -195,7 +174,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           {units === 'si' ? 'SI — mm / MPa / kN' : 'Imperial — in / psi / kips'}
         </span>
         <span style={{ fontSize: 10, color: INK.muted, marginLeft: 'auto' }}>
-          {isColumn ? 'Column' : 'Beam'} input
+          Beam input
         </span>
       </div>
 
@@ -204,17 +183,14 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
 
       {/* General */}
       <div style={cardStyle}>
-        <div style={headingStyle}>General</div>
+        <Heading icon="settings">General</Heading>
         <InputRow label="Label" value={m.label} type="text" onChange={v => update({ label: v })} />
         <UnitInputRow label="Span" value={m.span ?? 20} quantity="spanLength" onChange={v => update({ span: v })} />
-        <SelectRow label="Member type" value={m.memberType}
-          options={[{ value: 'beam', label: 'Beam' }, { value: 'column', label: 'Column' }]}
-          onChange={v => update({ memberType: v as MemberType })} />
       </div>
 
       {/* Materials */}
       <div style={cardStyle}>
-        <div style={headingStyle}>Materials</div>
+        <Heading icon="materials">Materials</Heading>
         <UnitInputRow label="f'c (cylinder)" value={m.material.fc} quantity="stress" onChange={v => mat({ fc: v })} />
         <UnitInputRow label="fy (longit.)" value={m.material.fy} quantity="stress" onChange={v => mat({ fy: v })} />
         <UnitInputRow label="fyt (trans.)" value={m.material.fyt} quantity="stress" onChange={v => mat({ fyt: v })} />
@@ -223,14 +199,10 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
 
       {/* Section */}
       <div style={cardStyle}>
-        <div style={headingStyle}>Section Dimensions</div>
+        <Heading icon="sectionDims">Section Dimensions</Heading>
         <SelectRow label="Section type" value={m.section.type} options={SECTION_TYPES}
           onChange={v => changeSectionType(v as SectionType)} />
-        {m.section.type === 'circular_column' ? (
-          <UnitInputRow label="Diameter" value={m.section.diameter ?? 20} quantity="length"
-            onChange={v => sec({ diameter: v, b: v, h: v })} />
-        ) : (
-          <>
+        <>
             <UnitInputRow
               label={m.section.type === 'T_beam' || m.section.type === 'L_beam' ? 'Flange width b' : 'Width b'}
               value={m.section.b} quantity="length" onChange={v => sec({ b: v })} />
@@ -241,18 +213,38 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
                 <UnitInputRow label="Flange thk hf" value={m.section.hf ?? 5} quantity="length" onChange={v => sec({ hf: v })} />
               </>
             )}
-          </>
-        )}
-        <UnitInputRow label="Clear cover" value={m.section.coverClear} quantity="length" onChange={v => sec({ coverClear: v })} />
+        </>
+        {/* Per-face clear cover. Seeded from the project standards; editable here
+            for the odd member that differs. coverClear tracks the largest so the
+            .SCO writers stay conservative. */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {([['Cover top', 'coverTop'], ['Cover bottom', 'coverBottom'], ['Cover side', 'coverSide']] as const).map(([lbl, key]) => (
+            <div key={key} style={{ flex: '1 1 120px', minWidth: 120 }}>
+              <UnitInputRow
+                label={lbl} quantity="length"
+                value={m.section[key] ?? m.section.coverClear}
+                onChange={v => {
+                  const next = {
+                    coverTop: m.section.coverTop ?? m.section.coverClear,
+                    coverBottom: m.section.coverBottom ?? m.section.coverClear,
+                    coverSide: m.section.coverSide ?? m.section.coverClear,
+                    [key]: v,
+                  };
+                  sec({ ...next, coverClear: Math.max(next.coverTop, next.coverBottom, next.coverSide) });
+                }}
+              />
+            </div>
+          ))}
+        </div>
         <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
           options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
           onChange={v => sec({ stirrupDia: +v })} />
       </div>
 
-      {/* Beam/Column Reinforcement */}
+      {/* Reinforcement */}
       <div style={cardStyle}>
-        <div style={headingStyle}>Reinforcement</div>
-        {(!isColumn ? (['topBars', 'botBars'] as const) : []).map(face => (
+        <Heading icon="reinforcement">Reinforcement</Heading>
+        {(['topBars', 'botBars'] as const).map(face => (
           <div key={face}>
             <p style={{ fontSize: 11, color: INK.muted, margin: face === 'topBars' ? '0 0 6px' : '8px 0 6px' }}>
               {face === 'topBars' ? 'Top Bars' : 'Bottom Bars'}
@@ -281,61 +273,11 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             </button>
           </div>
         ))}
-        {isColumn && (<>
-        <p style={{ fontSize: 11, color: INK.muted, margin: '0 0 6px' }}>Top Bars</p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <InputRow label="# bars" value={m.rebar.topBars[0]?.numBars ?? 3} min={1}
-              onChange={v => topBar({ numBars: +v })} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <SelectRow label="Size" value={m.rebar.topBars[0]?.barSize ?? dLong}
-              options={barSizeOptions(units, m.rebar.topBars[0]?.barSize ?? dLong).map(s => ({ value: s, label: formatBarLabel(s) }))}
-              onChange={v => topBar({ barSize: +v })} />
-          </div>
-        </div>
-        <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 6px' }}>Bottom Bars</p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <InputRow label="# bars" value={m.rebar.botBars[0]?.numBars ?? 4} min={1}
-              onChange={v => botBar({ numBars: +v })} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <SelectRow label="Size" value={m.rebar.botBars[0]?.barSize ?? dLong}
-              options={barSizeOptions(units, m.rebar.botBars[0]?.barSize ?? dLong).map(s => ({ value: s, label: formatBarLabel(s) }))}
-              onChange={v => botBar({ barSize: +v })} />
-          </div>
-        </div>
-        </>)}
-        {!isColumn && (m.rebar.topBars.length > 1 || m.rebar.botBars.length > 1) && (
+        {(m.rebar.topBars.length > 1 || m.rebar.botBars.length > 1) && (
           <UnitInputRow label="Layer clear spacing" value={m.rebar.layerClearSpacing ?? 1} quantity="length"
             onChange={v => update({ rebar: { ...m.rebar, layerClearSpacing: v } })} />
         )}
-        {isColumn && (
-          <>
-            <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 6px' }}>Side Bars (intermediate layers)</p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <InputRow label="# bars" value={m.rebar.sideBars?.[0]?.numBars ?? 0} min={0}
-                  onChange={v => sideBar({ numBars: +v })} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <SelectRow label="Size" value={m.rebar.sideBars?.[0]?.barSize ?? dLong}
-                  options={barSizeOptions(units, m.rebar.sideBars?.[0]?.barSize ?? dLong).map(s => ({ value: s, label: formatBarLabel(s) }))}
-                  onChange={v => sideBar({ barSize: +v })} />
-              </div>
-            </div>
-          </>
-        )}
         <p style={{ fontSize: 11, color: INK.muted, margin: '8px 0 6px' }}>Stirrups / Ties</p>
-        {isColumn && (
-          <SelectRow label="Transverse type" value={m.rebar.tieType ?? 'tied'}
-            options={[
-              { value: 'tied', label: 'Tied (φc = 0.65, 0.80·P₀)' },
-              { value: 'spiral', label: 'Spiral (φc = 0.75, 0.85·P₀)' },
-            ]}
-            onChange={v => update({ rebar: { ...m.rebar, tieType: v as 'tied' | 'spiral' } })} />
-        )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 140px', minWidth: 140 }}>
             <SelectRow label="Size" value={m.rebar.ties?.barSize ?? dStir}
@@ -358,7 +300,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
             Zoned stirrups active — the three zone spacings below govern the shear check.
           </p>
         )}
-        {!isColumn && (
+        
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: INK.secondary, padding: '6px 0 0', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!m.rebar.tieZones}
               onChange={e => {
@@ -373,7 +315,6 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
               }} />
             Zoned stirrups — 3 spacings over thirds of span
           </label>
-        )}
         {m.rebar.tieZones && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {(['End (0–L/3)', 'Middle', 'End (2L/3–L)'] as const).map((zl, i) => (
@@ -390,27 +331,22 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           </div>
         )}
         {(() => {
-          const isCirc = m.section.type === 'circular_column';
-          const D = m.section.diameter ?? m.section.b;
-          const Ag = isCirc ? Math.PI * D * D / 4 : m.section.b * (m.section.h ?? 12);
+          const Ag = m.section.b * (m.section.h ?? 12);
           const As = [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])]
             .reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
           const rho = Ag > 0 ? As / Ag : 0;
           return (
             <div style={{ fontSize: 10, color: INK.secondary, ...MONO_NUM, marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BORDER.default}`, lineHeight: 1.7 }}>
               Ag = {fmt(Ag, 'area')} &nbsp; As = {fmt(As, 'area')} &nbsp; ρ = {(rho * 100).toFixed(2)}%
-              {isColumn && (rho < 0.01 || rho > 0.08) && (
-                <span style={{ color: STATUS.fail, fontWeight: 700 }}> ⚠ outside 1–8%</span>
-              )}
             </div>
           );
         })()}
       </div>
 
       {/* Crack Control (EC2 beams only) */}
-      {code === 'EN1992-1-1' && !isColumn && (
+      {code === 'EN1992-1-1' && (
       <div style={{ ...cardStyle, borderLeft: `3px solid ${codeAccent('EN1992-1-1')}` }}>
-        <div style={headingStyle}>Crack Control — EN 1992-1-1 §7.3.4</div>
+        <Heading icon="crackWidth">Crack Control — EN 1992-1-1 §7.3.4</Heading>
         <p style={{ fontSize: 11, color: INK.muted, margin: '0 0 6px' }}>
           Limits and crack widths are always in mm regardless of the display unit system.
         </p>
@@ -463,7 +399,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       {/* Load Cases */}
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={headingStyle}>Load Cases</div>
+          <Heading icon="loadCases">Load Cases</Heading>
           <span style={{ fontSize: 11, color: INK.muted, marginBottom: 10 }}>{m.loads.length} case{m.loads.length !== 1 ? 's' : ''}</span>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>

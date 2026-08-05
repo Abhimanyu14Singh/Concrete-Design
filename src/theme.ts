@@ -37,6 +37,16 @@ export const TYPE = {
 export const WEIGHT = { normal: 400, semibold: 600, bold: 700 } as const;
 export const TRACK = { wide: '0.06em' } as const; // uppercase-label letter spacing
 
+/** Icon sizes (px) paired to the type scale, plus the one stroke weight the
+ *  whole set is drawn at. See components/common/Icon.tsx. */
+export const ICON = {
+  sm: 14,       // dense tables/rows, alongside TYPE.label
+  md: 16,       // DEFAULT — tabs and buttons, alongside TYPE.bodyLg
+  lg: 20,       // card/panel headings, alongside TYPE.heading
+  xl: 24,       // page titles, alongside TYPE.title
+  stroke: 1.5,  // every icon; never vary this per-icon
+} as const;
+
 // ── Neutrals (light surfaces) ─────────────────────────────────────────────────
 export const INK = {
   strong: '#111827',    // headings, key values
@@ -164,7 +174,6 @@ export function dcrBg(d: number): string {
 
 export const MEMBER_COLOR: Record<string, string> = {
   beam: '#2563eb',
-  column: '#7c3aed',
 };
 
 export const BARS = {

@@ -99,19 +99,16 @@ export class FileConnection implements EtabsConnection {
       };
     });
 
-    // Columns are OPTIONAL: an explicit "Columns"-named sheet with the same
-    // geometry columns. Only genuinely vertical members are kept.
+    // Columns are OPTIONAL and geometry-only: an explicit "Columns"-named sheet
+    // with the same coordinate headers. They are drawn in the 3D view for context;
+    // nothing designs them. Only genuinely vertical members are kept.
     const colRows = findNamedSheet(wb, 'column', ['story', 'frame', 'section', 'x1', 'y1', 'z1', 'x2', 'y2', 'z2']) ?? [];
     this.columns = colRows
-      .map(r => {
-        const pt1 = { x: num(r.x1), y: num(r.y1), z: num(r.z1) };
-        const pt2 = { x: num(r.x2), y: num(r.y2), z: num(r.z2) };
-        return {
-          name: str(r.frame), story: str(r.story), section: str(r.section), pt1, pt2,
-          groups: str(r.groups).split(';').map(g => g.trim()).filter(Boolean),
-          heightFt: Math.abs(pt2.z - pt1.z) || Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
-        };
-      })
+      .map(r => ({
+        name: str(r.frame), story: str(r.story), section: str(r.section),
+        pt1: { x: num(r.x1), y: num(r.y1), z: num(r.z1) },
+        pt2: { x: num(r.x2), y: num(r.y2), z: num(r.z2) },
+      }))
       .filter(c => Math.abs(c.pt2.z - c.pt1.z) >= Math.hypot(c.pt2.x - c.pt1.x, c.pt2.y - c.pt1.y));
 
     const secRows = findSheet(wb, ['name', 'material', 'depth', 'width']);
@@ -150,12 +147,16 @@ export class FileConnection implements EtabsConnection {
     return { modelName: this.modelName, units: 'kip-ft' };
   }
 
+  async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
+    return this.columns.filter(c => !filter.stories?.length || filter.stories.includes(c.story));
+  }
+
   async getStories(): Promise<string[]> {
     return [...new Set([...this.beams.map(b => b.story), ...this.columns.map(c => c.story)])];
   }
 
   async getGroups(): Promise<string[]> {
-    return [...new Set([...this.beams.flatMap(b => b.groups), ...this.columns.flatMap(c => c.groups)])];
+    return [...new Set(this.beams.flatMap(b => b.groups))];
   }
 
   async getFrameSections(): Promise<EtabsSectionInfo[]> {
@@ -175,10 +176,6 @@ export class FileConnection implements EtabsConnection {
 
   async getBeams(filter: BeamFilter): Promise<EtabsBeamGeom[]> {
     return this.beams.filter(b => matchesFilter(b, filter));
-  }
-
-  async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
-    return this.columns.filter(c => matchesFilter(c, filter));
   }
 
   async getStationForces(frameNames: string[], combos: string[]): Promise<Record<string, ComboForces[]>> {

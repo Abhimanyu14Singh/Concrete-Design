@@ -240,11 +240,10 @@ export default function AutoGroupPanel({
           const rep = memberById.get(mIds[0]);
           const depthMm = (rep?.section.h ?? 24) * 25.4;
           const widthMm = (rep?.section.bw ?? rep?.section.b ?? 12) * 25.4;
-          const isColumn = rep?.memberType === 'column';
           const dKey = depthCodeMm(depthMm);
           seqByDepth[dKey] = (seqByDepth[dKey] ?? 0) + 1;
           label = formatGroupName(tmpl, {
-            isColumn, depthMm, widthMm, seq: seqByDepth[dKey], n: groupCount + 1,
+            isColumn: false, depthMm, widthMm, seq: seqByDepth[dKey], n: groupCount + 1,
             face: sug.face, story: rep?.etabs?.story,
           });
           if (sug.face) face = sug.face;

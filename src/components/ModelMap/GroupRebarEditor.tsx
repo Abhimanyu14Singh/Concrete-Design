@@ -103,9 +103,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       return;
     }
     setRebar(r.rebar);
-    const summary = r.kind === 'column'
-      ? `P-M ${r.worstDCRFlex.toFixed(2)} · Axial ${(r.worstDCRAxial ?? 0).toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)} · ρ ${(r.rhoPct ?? 0).toFixed(2)}%`
-      : `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)}`;
+    const summary = `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)}`;
     setSuggestNote({
       kind: 'ok',
       text: `${summary} at target ${targetDCR.toFixed(2)} — review, then Apply.`,

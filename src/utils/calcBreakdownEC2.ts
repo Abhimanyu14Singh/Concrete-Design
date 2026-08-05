@@ -7,7 +7,7 @@
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase, CrackControlParams } from '../types';
 import { DEFAULT_CRACK_PARAMS } from '../types';
 import type { CalcSection } from './calcBreakdown';
-import { getBarArea, getBarDiam } from './concreteDesign';
+import { coverFor, getBarArea, getBarDiam, tieSpacingAtX, zoneIndexAtX } from './concreteDesign';
 import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, sideFaceCrackWidth, ecm, creepCoefficient, layerCentroidMm } from '../engines/ec2/ec2Beam';
 import { formatBarLabel } from './rebar';
 
@@ -29,7 +29,11 @@ export function generateBreakdownEC2(
   const crack: CrackControlParams = { ...DEFAULT_CRACK_PARAMS, ...crackIn };
   const b = (section.bw ?? section.b) * IN_TO_MM;
   const h = (section.h ?? 12) * IN_TO_MM;
-  const cover = section.coverClear * IN_TO_MM;
+  // Per-face cover, mirroring the engine: bottom-face depths off `cover`, the
+  // hogging depth off `coverTop`. Both collapse to coverClear when the project
+  // uses one cover throughout.
+  const cover = coverFor(section, 'bot') * IN_TO_MM;
+  const coverTop = coverFor(section, 'top') * IN_TO_MM;
   const stirrupD = getBarDiam(section.stirrupDia) * IN_TO_MM;
   const botBarD = getBarDiam(rebar.botBars[0]?.barSize ?? 8) * IN_TO_MM;
   // Effective depth = distance to the CENTROID of all tension-bar layers (matches the
@@ -37,7 +41,7 @@ export function generateBreakdownEC2(
   // detailing; `dTop` (hogging effective depth) governs −M.
   const layerClear = (rebar.layerClearSpacing ?? 1.0) * IN_TO_MM;
   const d = h - layerCentroidMm(rebar.botBars, cover, stirrupD, layerClear);
-  const dTop = h - layerCentroidMm(rebar.topBars, cover, stirrupD, layerClear);
+  const dTop = h - layerCentroidMm(rebar.topBars, coverTop, stirrupD, layerClear);
 
   const fck = material.fc * PSI_TO_MPA;
   const fyk = material.fy * PSI_TO_MPA;
@@ -52,14 +56,25 @@ export function generateBreakdownEC2(
   const VEd = load.Vu * KIP_TO_KN;
   const TEd = load.Tu * KIPFT_TO_KNM;
 
-  // Governing tie spacing — matches the engine: with zoned stirrups the worst
-  // (widest) zone governs the single-value resistances shown on this sheet.
+  // Two tie spacings, exactly as the engine splits them (see designMemberEC2):
+  //   • CAPACITY for this load row → the zone its station sits in.
+  //   • DETAILING limits (s_max, ρw) → the worst (widest) zone, member-wide.
+  // The sheet used to print worst-zone capacities for every row while the engine
+  // reported the row's own zone, so the stamped calculation contradicted the DCR
+  // shown beside it — neither number could be defended in a review.
   const worstSpacing = rebar.tieZones
     ? Math.max(...rebar.tieZones.map(z => z.spacing))
     : (rebar.ties?.spacing ?? 0);
   const worstSpacing_mm = worstSpacing * IN_TO_MM;
+  const zoneSpacing = tieSpacingAtX(rebar, load.x, _span);
+  const zoneSpacing_mm = zoneSpacing * IN_TO_MM;
   const zonedNote = rebar.tieZones
     ? ` (worst of zoned spacings ${rebar.tieZones.map(z => `${z.spacing}"`).join('/')})`
+    : '';
+  const zoneNote = rebar.tieZones
+    ? load.x !== undefined && _span > 0
+      ? ` (zone ${zoneIndexAtX(load.x, _span) + 1} of ${rebar.tieZones.map(z => `${z.spacing}"`).join('/')} at x = ${load.x.toFixed(2)} ft)`
+      : ` (no station on this row → worst of ${rebar.tieZones.map(z => `${z.spacing}"`).join('/')})`
     : '';
 
   const botDesc = rebar.botBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
@@ -83,8 +98,11 @@ export function generateBreakdownEC2(
   const MEd_neg = load.Mu_neg * KIPFT_TO_KNM;
   const topDesc = rebar.topBars.map(g => `${g.numBars}−${formatBarLabel(g.barSize)}`).join(' + ');
   // Opposite-face bars act as compression steel (doubly-reinforced §6.1).
-  const dCompPos = cover + stirrupD + topBarD / 2; // +M: top steel in compression
-  const dCompNeg = cover + stirrupD + botBarD / 2; // −M: bottom steel in compression
+  // Each d' is measured from the face its compression steel sits at, matching the
+  // engine — reading `cover` (bottom) for the top steel made the printed M_Rd⁺
+  // diverge from the results panel as soon as a project set per-face covers.
+  const dCompPos = coverTop + stirrupD + topBarD / 2; // +M: top steel in compression
+  const dCompNeg = cover + stirrupD + botBarD / 2;    // −M: bottom steel in compression
 
   // Credit the compression steel (top bars under +M, bottom bars under −M): the
   // NA is solved from strain compatibility rather than assuming a singly-reinforced
@@ -124,12 +142,12 @@ export function generateBreakdownEC2(
   let VRd_kN = VRdc_v;
   if (rebar.ties) {
     const Asw = rebar.ties.legs * getBarArea(rebar.ties.barSize) * IN2_TO_MM2;
-    const s_mm = worstSpacing_mm;
+    const s_mm = zoneSpacing_mm;   // capacity at THIS row's zone, as the engine does
     const VRds_v = vRds(Asw, s_mm, z, fywd, cotT);
     const VRdmax_v = vRdMax(b, z, fck, fcd, cotT);
     VRd_kN = Math.min(VRds_v, VRdmax_v);
     shearSteps.push(
-      { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = ${thetaDeg}° (cotθ = ${cotT})${zonedNote}` },
+      { ref: '§6.2.3', label: 'Stirrup resistance', equation: 'V_Rd,s = (Asw/s)·z·fywd·cotθ', substitution: `(${f(Asw, 0)}/${f(s_mm, 0)}) × ${f(z, 0)} × ${f(fywd, 0)} × ${cotT}`, result: `V_Rd,s = ${f(VRds_v)} kN`, note: `θ = ${thetaDeg}° (cotθ = ${cotT})${zoneNote}` },
       { ref: '§6.2.3', label: 'Strut crushing limit', equation: 'V_Rd,max = bw·z·ν1·fcd/(cotθ+tanθ)', substitution: `ν1 = 0.6(1 − ${f(fck)}/250) = ${f(0.6 * (1 - fck / 250), 3)}`, result: `V_Rd,max = ${f(VRdmax_v)} kN` },
       { ref: '§6.2', label: 'Governing shear resistance', equation: 'V_Rd = min(V_Rd,s, V_Rd,max)', substitution: `min(${f(VRds_v)}, ${f(VRdmax_v)})`, result: `V_Rd = ${f(VRd_kN)} kN ${VEd <= VRd_kN ? '✓' : '✗'}`, note: `V_Ed = ${f(VEd)} kN → DCR = ${VRd_kN > 0 ? f(VEd / VRd_kN, 3) : '—'}` },
     );
@@ -141,8 +159,13 @@ export function generateBreakdownEC2(
   // ── Torsion ──
   if (load.Tu > 0) {
     const AtLeg = getBarArea(rebar.ties?.barSize ?? 0) * IN2_TO_MM2;
-    const s_mm = rebar.ties ? worstSpacing_mm : IN_TO_MM;
-    const t = tRd(b, h, rebar.ties ? AtLeg : 0, s_mm, fywd, fck, fcd, cotT);
+    // Torsion capacity, like shear, is read at this row's zone (engine parity).
+    const s_mm = rebar.ties ? zoneSpacing_mm : IN_TO_MM;
+    // t_ef's §6.3.2(1) floor is set by the GOVERNING (deepest-cover) face — t_ef is
+    // one section-wide wall thickness, so it cannot be bound to a single face.
+    const coverToCentre = Math.max(cover, coverTop, coverFor(section, 'side') * IN_TO_MM)
+      + stirrupD + botBarD / 2;
+    const t = tRd(b, h, rebar.ties ? AtLeg : 0, s_mm, fywd, fck, fcd, cotT, coverToCentre);
     const TRd = Math.min(t.TRds, t.TRdMax);
     sections.push({
       title: '4. Torsional Resistance (§6.3)',
@@ -197,7 +220,7 @@ export function generateBreakdownEC2(
   // Creep-adjusted modular ratio αe = Es / (Ecm/(1+φ)), φ from Annex B (long-term).
   const h0_mm = 2 * (b * h) / (2 * (b + h));
   const phiCreep = crack.creepPhi ?? creepCoefficient(fck, crack.creepRH ?? 50, crack.creepT0 ?? 28, 25550, h0_mm, crack.cementClass ?? 'N');
-  const Ec_eff = ecm(fck) / (1 + phiCreep);
+  const Ec_eff = (material.Ec ? material.Ec * PSI_TO_MPA : ecm(fck)) / (1 + phiCreep);
   const alpha_e = Es_MPa / Ec_eff;
   // M_qp precedence mirrors the engine (ec2Beam.ts): use the resolved SLS combo
   // moment (kip-ft → kN·m) when present, else the qpFactor × M_Ed ratio fallback.
@@ -213,10 +236,14 @@ export function generateBreakdownEC2(
     faceLabel: string, Mqp: number, As_f: number, barD_f: number,
     b_f: number, d_f: number, AsComp_f: number, dComp_f: number,
     wLimit: number, fromCombo = false,
+    /** Clear cover to THIS face — the §7.3.4 `c`. Defaults to the bottom cover. */
+    cover_f = cover,
   ) {
     if (Mqp <= 0 || As_f <= 0) return;
-    const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover + stirrupD, fck, Es_MPa, crack.kt,
-      { AsComp: AsComp_f, dComp: dComp_f, phi: phiCreep });
+    // Ecm must carry the project's Ec override, or the sheet prints a wk derived
+    // from the code Ecm right below an αe derived from the override.
+    const cw = crackWidth(Mqp, As_f, barD_f, b_f, h, d_f, cover_f + stirrupD, fck, Es_MPa, crack.kt,
+      { AsComp: AsComp_f, dComp: dComp_f, phi: phiCreep, Ecm: material.Ec ? material.Ec * PSI_TO_MPA : undefined });
     // Quasi-permanent moment + cracking check are shown for every face.
     crackSteps.push(
       fromCombo
@@ -230,7 +257,7 @@ export function generateBreakdownEC2(
     }
     const srStep = cw.srEq === '7.14'
       ? { ref: 'eq (7.14) gov', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = min[ eq(7.11), 1.3(h − x) ]', substitution: `upper bound governs; h−x = ${f(h - cw.x, 0)} mm`, result: `sr,max = ${f(cw.sr_max, 0)} mm` }
-      : { ref: 'eq (7.11) gov', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = min[ k3·c + k1·k2·k4·Ø/ρp,eff , 1.3(h−x) ]', substitution: `c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
+      : { ref: 'eq (7.11) gov', label: `${faceLabel}: max crack spacing`, equation: 'sr,max = min[ k3·c + k1·k2·k4·Ø/ρp,eff , 1.3(h−x) ]', substitution: `c = ${f(cover_f + stirrupD, 0)} mm, Ø = ${f(barD_f, 0)} mm, k1 = 0.8, k2 = 0.5, k3 = 3.4, k4 = 0.425`, result: `sr,max = ${f(cw.sr_max, 0)} mm` };
     const dcr = wLimit > 0 ? cw.wk / wLimit : 0;
     crackSteps.push(
       { ref: '§7.3.4', label: `${faceLabel}: cracked NA & steel stress`, equation: 'transformed cracked section incl. compression steel', substitution: `x = ${f(cw.x, 0)} mm, As' = ${f(AsComp_f, 0)} mm² @ d' = ${f(dComp_f, 0)} mm, αe = ${f(alpha_e, 2)}`, result: `σs = ${f(cw.sigma_s, 0)} MPa` },
@@ -241,10 +268,12 @@ export function generateBreakdownEC2(
     );
   }
 
-  const dComp_pos = cover + stirrupD + topBarD / 2; // +M: top steel in compression
+  // Same per-face rule as dCompPos in the flexure section above — this file was
+  // computing the identical quantity two different ways.
+  const dComp_pos = coverTop + stirrupD + topBarD / 2; // +M: top steel in compression
   const dComp_neg = cover + stirrupD + botBarD / 2; // −M: bottom steel in compression
   addFaceSteps('Bottom face (+M)', Mqp_pos, As, botBarD, b, d, As_top, dComp_pos, crack.wLimitBot, posFromCombo);
-  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, dTop, As, dComp_neg, crack.wLimitTop, negFromCombo);
+  addFaceSteps('Top face (−M)', Mqp_neg, As_top, topBarD, b, dTop, As, dComp_neg, crack.wLimitTop, negFromCombo, coverTop);
 
   // Side face (skin reinforcement) — PRECISE layered-section method (EC2 §7.3.4):
   //   one cracked transformed section holding the top, bottom AND skin bars, so
@@ -259,7 +288,11 @@ export function generateBreakdownEC2(
     const totalSideBars = rebar.sideBars.reduce((s, g) => s + g.numBars, 0);
     if (As_per_bar > 0 && totalSideBars > 0) {
       const sf = sideFaceCrackWidth({
-        b, h, cover, stirrupD, fck, Es: Es_MPa, kt: crack.kt, phi: phiCreep,
+        // `cover` places the skin bars vertically; `coverSide` is the §7.3.4 cover
+        // for the side-face terms. Ecm carries the project override (engine parity).
+        b, h, cover, coverSide: coverFor(section, 'side') * IN_TO_MM, stirrupD,
+        Ecm: material.Ec ? material.Ec * PSI_TO_MPA : undefined,
+        fck, Es: Es_MPa, kt: crack.kt, phi: phiCreep,
         As_top, d_top: dTop, As_bot: As, d_bot: d, botBarD,
         sideBarD, As_perBar: As_per_bar, nPerFace: totalSideBars,
         s_v: firstSideG.spacing != null && firstSideG.spacing > 0 ? firstSideG.spacing * IN_TO_MM : undefined,
@@ -276,7 +309,7 @@ export function generateBreakdownEC2(
         crackSteps.push(
           { ref: '§7.3.4', label: 'Side face: stress at critical skin bar', equation: 'σs,skin = αe·M·(y − x) / Icr  (direct off the section)', substitution: `y = ${f(sf.y_crit, 0)} mm from comp. face, x = ${f(sf.x, 0)} mm`, result: `σs,skin = ${f(sf.sigma_skin, 0)} MPa` },
           { ref: '§7.3.2(3)', label: 'Side face: effective reinforcement ratio', equation: 'ρp,eff = As_bar / (sv × hc,eff)', substitution: `As_bar = ${f(As_per_bar, 0)} mm², sv = ${f(sf.s_v, 0)} mm, hc,eff = ${f(sf.hc_side, 0)} mm`, result: `ρp,eff = ${f(sf.rho_side * 100, 3)}%` },
-          { ref: 'eq (7.11)', label: 'Side face: max crack spacing (k2 = 0.5, bending)', equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `k2 = 0.50, c = ${f(cover + stirrupD, 0)} mm, Ø = ${f(sideBarD, 0)} mm`, result: `sr,max = ${f(sf.sr_side, 0)} mm` },
+          { ref: 'eq (7.11)', label: 'Side face: max crack spacing (k2 = 0.5, bending)', equation: 'sr,max = k3·c + k1·k2·k4·Ø/ρp,eff', substitution: `k2 = 0.50, c = ${f(coverFor(section, 'side') * IN_TO_MM + stirrupD, 0)} mm, Ø = ${f(sideBarD, 0)} mm`, result: `sr,max = ${f(sf.sr_side, 0)} mm` },
           { ref: 'eq (7.8)', label: 'Side face: crack width', equation: 'wk = sr,max·(εsm − εcm)', substitution: `kt = ${f(crack.kt, 1)}, (εsm − εcm) = ${f(sf.eps * 1000, 3)}‰`, result: `wk = ${f(sf.wk, 3)} mm vs limit ${f(crack.wLimitFace, 2)} mm` },
           { ref: '§7.3.1', label: 'Side face: crack DCR', equation: 'DCR = wk / w_max', substitution: `${f(sf.wk, 3)} / ${f(crack.wLimitFace, 2)}`, result: `DCR = ${f(dcr_side, 3)} ${dcr_side <= 1 ? '✓ OK' : '✗ NG'}` },
         );

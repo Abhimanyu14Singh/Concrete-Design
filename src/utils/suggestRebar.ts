@@ -26,9 +26,8 @@
  */
 import type { Member, RebarLayout, Project, DesignResults, LoadCase } from '../types';
 import { runDesign } from '../engines';
-import { getBarArea, getBarDiam } from './concreteDesign';
+import { getBarArea, getBarDiam, zoneIndexAtX } from './concreteDesign';
 import { memberSteelWeightLb } from './autoGroup';
-import { suggestColumnRebar, isColumnMember } from './suggestColumnRebar';
 import { minSkinReinforcement } from '../adapters/etabs/rebarSeed';
 
 const LONG_BAR_SIZES_US  = [5, 6, 7, 8, 9, 10, 11];
@@ -163,11 +162,7 @@ export function suggestGroupRebar(
   // Column groups use the dedicated column auto-design path (symmetric cage +
   // tie sizing against the P-M / axial / shear checks). Only fall through to the
   // beam path when the group has no loaded columns.
-  const hasColumns = members.some(m => isColumnMember(m) && m.loads.length > 0);
-  const beams = members.filter(m => m.memberType === 'beam' && m.loads.length > 0);
-  if (hasColumns && !beams.length) {
-    return suggestColumnRebar(members, code, targetDCR);
-  }
+  const beams = members.filter(m => m.loads.length > 0);
   if (!beams.length) return { error: 'No designed beam members with loads in this group.' };
 
   const isEC2 = code === 'EN1992-1-1';
@@ -197,10 +192,22 @@ export function suggestGroupRebar(
   let topGov = { m: beams[0], lc: beams[0].loads[0] };
   let botGov = topGov, shearGov = topGov;
   let topGovM = -Infinity, botGovM = -Infinity, shearGovV = -Infinity;
+  // Worst shear demand sitting in the MIDDLE third specifically. The global shear
+  // governor is always an end station, so probing a relaxed middle zone against it
+  // measures nothing — capacity is now read at the demand's own zone, so the
+  // relaxation always "passed" and was then rejected by the group verification
+  // loop with a misleading mixed-sections error.
+  let midGov: { m: Member; lc: LoadCase } | null = null;
+  let midGovV = -Infinity;
   for (const m of beams) {
     const negLC = m.loads.reduce((a, b) => (b.Mu_neg ?? 0) > (a.Mu_neg ?? 0) ? b : a);
     const posLC = m.loads.reduce((a, b) => (b.Mu_pos ?? 0) > (a.Mu_pos ?? 0) ? b : a);
     const vLC   = m.loads.reduce((a, b) => Math.abs(b.Vu ?? 0) > Math.abs(a.Vu ?? 0) ? b : a);
+    for (const lc of m.loads) {
+      if (lc.x === undefined || !m.span || !(m.span > 0)) continue;
+      if (zoneIndexAtX(lc.x, m.span) !== 1) continue;
+      if (Math.abs(lc.Vu ?? 0) > midGovV) { midGovV = Math.abs(lc.Vu ?? 0); midGov = { m, lc }; }
+    }
     if ((negLC.Mu_neg ?? 0) > topGovM)     { topGovM = negLC.Mu_neg ?? 0; topGov = { m, lc: negLC }; }
     if ((posLC.Mu_pos ?? 0) > botGovM)     { botGovM = posLC.Mu_pos ?? 0; botGov = { m, lc: posLC }; }
     if (Math.abs(vLC.Vu ?? 0) > shearGovV) { shearGovV = Math.abs(vLC.Vu ?? 0); shearGov = { m, lc: vLC }; }
@@ -276,15 +283,24 @@ export function suggestGroupRebar(
         tieRungs.push({ size, legs, spacing, rate: legs * getBarArea(size) / spacing });
   tieRungs.sort((a, b) => a.rate - b.rate || a.legs - b.legs || b.spacing - a.spacing || Math.abs(a.size) - Math.abs(b.size));
 
-  const shearDCR = (tie: Tie, zones: { spacing: number }[]): number => {
+  const shearDCRAt = (at: { m: Member; lc: LoadCase }, tie: Tie, zones: { spacing: number }[]): number => {
     try {
-      return runDesign(shearGov.m.section, shearGov.m.material, {
+      const r = runDesign(at.m.section, at.m.material, {
         topBars: chosenTop.layers, botBars: chosenBot.layers,
         ties: { barSize: tie.size, spacing: tie.spacing, legs: tie.legs },
         tieZones: zones as RebarLayout['tieZones'],
-      }, shearGov.lc, shearGov.m.span, code, shearGov.m.crackParams).DCR_shear;
+      }, at.lc, at.m.span, code, at.m.crackParams);
+      // DCR_shear only, deliberately. Folding VT_util in here would ALSO tighten
+      // the primary tie ladder below (`firstPassing`), and since Asw/s per leg
+      // does not rise with leg count a torsion-governed group would exhaust the
+      // ladder and get no cage at all. It would also judge torsion on projects
+      // that set "Neglect torsion", which this function cannot see — it has no
+      // access to project.ignoreTorsion / cotTheta. The step-4 verification loop
+      // reads DCR_shear too, so selection and acceptance stay on one metric.
+      return r.DCR_shear;
     } catch { return Infinity; }
   };
+  const shearDCR = (tie: Tie, zones: { spacing: number }[]): number => shearDCRAt(shearGov, tie, zones);
   const uniform = (t: Tie) => [{ spacing: t.spacing }, { spacing: t.spacing }, { spacing: t.spacing }];
   const si = firstPassing(tieRungs.length, i => shearDCR(tieRungs[i], uniform(tieRungs[i])) <= targetDCR + EPS);
   if (si < 0) {
@@ -299,7 +315,13 @@ export function suggestGroupRebar(
   const spIdx = STIRRUP_SPACINGS.findIndex(s => Math.abs(s - chosenTie.spacing) < 1e-9);
   if (spIdx >= 0 && spIdx < STIRRUP_SPACINGS.length - 1) {
     const relaxed = [{ spacing: chosenTie.spacing }, { spacing: STIRRUP_SPACINGS[spIdx + 1] }, { spacing: chosenTie.spacing }];
-    if (shearDCR(chosenTie, relaxed) <= targetDCR + EPS) zones = relaxed;
+    // Judge the relaxed middle zone against a demand that actually acts there.
+    // With no located mid-span row we cannot prove the relaxation is safe, so
+    // keep the uniform cage rather than accept it blind.
+    const relaxOK = midGov
+      ? shearDCRAt(midGov, chosenTie, relaxed) <= targetDCR + EPS
+      : false;
+    if (relaxOK && shearDCR(chosenTie, relaxed) <= targetDCR + EPS) zones = relaxed;
   }
 
   // 4. Assemble + verify the full cage on EVERY member × EVERY load case (catches

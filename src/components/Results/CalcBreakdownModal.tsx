@@ -2,8 +2,6 @@ import { useState } from 'react';
 import type { Member, DesignCode } from '../../types';
 import { generateBreakdown } from '../../utils/calcBreakdown';
 import { generateBreakdownEC2 } from '../../utils/calcBreakdownEC2';
-import { generateColumnBreakdown } from '../../utils/calcBreakdownColumn';
-import { generateColumnBreakdownEC2 } from '../../utils/calcBreakdownColumnEC2';
 import { zoneShearDemands } from '../../adapters/etabs';
 import { resolveCrack } from '../../utils/resolveCrack';
 import type { CalcSection } from '../../utils/calcBreakdown';
@@ -24,16 +22,11 @@ interface Props {
 export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19', slsCombo, cotTheta, onClose }: Props) {
   const { fmt } = useUnits();
   const load = member.loads.find(l => l.id === loadId) ?? member.loads[0];
-  const isColumn = member.section.type === 'rectangular_column' || member.section.type === 'circular_column';
   const isEC2 = code === 'EN1992-1-1';
   // Resolve crack params so the §7.3.4 sheet uses the selected SLS combo's
   // moments (Mqp_pos/Mqp_neg) — same resolution the on-screen design path uses.
   const crackParams = isEC2 ? resolveCrack(member, code, slsCombo) : member.crackParams;
-  const sections: CalcSection[] = isColumn
-    ? (isEC2
-        ? generateColumnBreakdownEC2(member.section, member.material, member.rebar, load)
-        : generateColumnBreakdown(member.section, member.material, member.rebar, load))
-    : (isEC2
+  const sections: CalcSection[] = (isEC2
         ? generateBreakdownEC2(member.section, member.material, member.rebar, load, member.span, crackParams, slsCombo, cotTheta ?? 2.5)
         : generateBreakdown(
             member.section, member.material, member.rebar, load, member.span,
@@ -120,22 +113,13 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
             borderRadius: 10, padding: '12px 16px', marginBottom: 16,
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8,
           }}>
-            {isColumn ? (
-              <>
-                <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />
-                <LoadItem label="Mux" value={fmt(load.Mux ?? 0, 'moment')} />
-                <LoadItem label="Muy" value={fmt(load.Muy ?? 0, 'moment')} />
-                <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
-              </>
-            ) : (
-              <>
+            <>
                 <LoadItem label="Mu⁺" value={fmt(load.Mu_pos, 'moment')} />
                 <LoadItem label="Mu⁻" value={fmt(load.Mu_neg, 'moment')} />
                 <LoadItem label="Vu" value={fmt(load.Vu, 'force')} />
                 <LoadItem label="Tu" value={fmt(load.Tu, 'moment')} />
                 {load.Pu !== 0 && <LoadItem label="Pu" value={fmt(load.Pu, 'force')} />}
               </>
-            )}
           </div>
 
           {sections.map(section => (

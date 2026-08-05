@@ -3,11 +3,13 @@
  * as a structured array of steps with equation, substitution, and result.
  */
 import { formatBarLabel } from './rebar';
+import { beamAxialFlexure } from './axialFlexure';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
 import {
-  getBarArea, getBarDiam,
+  getBarArea, getBarDiam, coverFor,
   effectiveDepthMulti, layerCentroidOffset,
-  computeFlexure, computeShear, computeTorsion, zonedShearCheck,
+  computeFlexure, computeShear, computeTorsion, torsionCrushing, zonedShearCheck,
+  tieSpacingAtX, type CoverFace,
 } from './concreteDesign';
 
 export interface CalcStep {
@@ -60,11 +62,21 @@ export function generateBreakdown(
   const { fc, fy, fyt, lambdaConcrete } = material;
   const h = section.h ?? 12;
   const b = section.b;
+  // Mirror designMember exactly, or this sheet prints capacities the results
+  // panel disagrees with: capacity is read at THIS row's tie zone (ties.spacing is
+  // the tightest zone, not a member-wide value) and d is measured to the flexural
+  // tension face for the row's moment sense.
+  const zoneSpacing = tieSpacingAtX(rebar, load.x, span);
+  const shearFace: CoverFace = load.Mu_neg > load.Mu_pos ? 'top' : 'bot';
   const bw = section.bw ?? b;
   const sClear = rebar.layerClearSpacing ?? 1.0;
-  const d = effectiveDepthMulti(section, rebar.botBars, sClear);       // to bottom steel centroid
-  const d_neg = effectiveDepthMulti(section, rebar.topBars, sClear);   // to top steel centroid
-  const yBot = layerCentroidOffset(section, rebar.botBars, sClear);
+  // Per-face cover, mirroring the engine (all equal unless the project splits them).
+  const ccBot = coverFor(section, 'bot');
+  const ccTop = coverFor(section, 'top');
+  const ccSide = coverFor(section, 'side');
+  const d = effectiveDepthMulti(section, rebar.botBars, sClear, 'bot');       // to bottom steel centroid
+  const d_neg = effectiveDepthMulti(section, rebar.topBars, sClear, 'top');   // to top steel centroid
+  const yBot = layerCentroidOffset(section, rebar.botBars, sClear, 'bot');
   const botLayers = rebar.botBars.filter(g => g.numBars > 0).length;
   const b1 = beta1(fc);
   const beff = effectiveFlange(section, span);
@@ -82,8 +94,12 @@ export function generateBreakdown(
       ref: 'ACI 318-19 §20.6.1',
       label: 'Clear cover',
       equation: 'cc = given',
-      substitution: `cc = ${section.coverClear}"`,
-      result: `${section.coverClear} in`,
+      substitution: ccTop === ccBot && ccBot === ccSide
+        ? `cc = ${fmt(ccBot)}"`
+        : `cc: top ${fmt(ccTop)}", bottom ${fmt(ccBot)}", side ${fmt(ccSide)}"`,
+      result: ccTop === ccBot && ccBot === ccSide
+        ? `${fmt(ccBot)} in`
+        : `${fmt(ccTop)} / ${fmt(ccBot)} / ${fmt(ccSide)} in`,
     },
     {
       ref: 'ACI 318-19 §22.2.2',
@@ -91,7 +107,7 @@ export function generateBreakdown(
       equation: botLayers > 1 ? 'd = h − ȳs (area-weighted steel centroid)' : 'd = h − cc − d_stirrup − d_bar/2',
       substitution: botLayers > 1
         ? `ȳs = ${fmt(yBot)}" over ${botLayers} layers (clear layer spacing ${sClear}");  d = ${h} − ${fmt(yBot)}`
-        : `d = ${h} − ${section.coverClear} − ${fmt(getBarDiam(section.stirrupDia))} − ${fmt(getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2)}`,
+        : `d = ${h} − ${fmt(ccBot)} − ${fmt(getBarDiam(section.stirrupDia))} − ${fmt(getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2)}`,
       result: `${fmt(d)} in`,
       note: botLayers > 1
         ? 'Multi-layer tension steel — d measured to the area-weighted centroid (same as results engine)'
@@ -196,7 +212,7 @@ export function generateBreakdown(
 
   // ACI §25.2.1: min clear horizontal spacing within each layer
   {
-    const Cc = section.coverClear + getBarDiam(section.stirrupDia);
+    const Cc = ccSide + getBarDiam(section.stirrupDia);
     for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
       for (const g of bars) {
         if (g.numBars <= 1) continue;
@@ -343,13 +359,20 @@ export function generateBreakdown(
   ];
 
   // ── Shear — engine call (identical numbers to the results screen) ────
-  const shear = computeShear(section, material, rebar, load.Pu);
+  const shear = computeShear(section, material, rebar, load.Pu, zoneSpacing, shearFace);
   const d_shear = shear.d_shear;
   const rho_w = As_bot / (bw * d_shear);
   const Av_min_s = shear.Av_min_per_s;
   const hasMinStirrups = sv > 0 && Av / sv >= Av_min_s;
   const lambda_s = hasMinStirrups ? 1.0 : Math.min(1.0, Math.sqrt(2 / (1 + 0.004 * d_shear)));
   const Vc = shear.Vc;
+  // Same expression the engine uses (concreteDesign.computeShear): Nu in POUNDS so
+  // the term lands in psi beside √f'c, capped at 0.05f'c per the Table 22.5.5.1
+  // footnote. Re-deriving it by hand here is exactly how this sheet drifted from
+  // the engine — keep the two in step.
+  const nuTermRaw = load.Pu * 1000 / (6 * bw * h);
+  const nuTerm = Math.min(nuTermRaw, 0.05 * fc);
+  const nuCapped = nuTermRaw > 0.05 * fc;
   const Vs = shear.Vs;
   const phi_v = 0.75;
   const phi_Vn = shear.phi_Vn;
@@ -388,13 +411,15 @@ export function generateBreakdown(
         : 'Vc = (8λλsρw^(1/3)√f\'c + Nu/6Ag) × bw × d',
       substitution: hasMinStirrups
         ? (() => {
-            const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + load.Pu / (6 * bw * h)) * bw * d_shear / 1000;
-            const Vc_b2 = (8 * lambdaConcrete * Math.pow(Math.max(rho_w, 1e-6), 1/3) * Math.sqrt(fc) + load.Pu / (6 * bw * h)) * bw * d_shear / 1000;
+            const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + nuTerm) * bw * d_shear / 1000;
+            const Vc_b2 = (8 * lambdaConcrete * Math.pow(Math.max(rho_w, 1e-6), 1/3) * Math.sqrt(fc) + nuTerm) * bw * d_shear / 1000;
             return `case (a) = ${fmt(Vc_a)} kips; case (b) = ${fmt(Vc_b2)} kips → governs: ${Vc_a >= Vc_b2 ? '(a)' : '(b)'}`;
           })()
-        : `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(load.Pu / (6 * bw * h), 4)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
+        : `Vc = (8 × ${lambdaConcrete} × ${fmt(lambda_s, 3)} × ${fmt(rho_w, 5)}^(1/3) × √${fc} + ${fmt(nuTerm, 1)}) × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
       result: `Vc = ${fmt(Vc)} kips`,
-      note: load.Pu !== 0 ? `Includes axial term Nu/6Ag with Pu = ${load.Pu} kips` : undefined,
+      note: load.Pu !== 0
+        ? `Axial term Nu/6Ag = ${fmt(nuTerm, 1)} psi (Pu = ${load.Pu} kips${nuCapped ? `, capped at 0.05f'c = ${fmt(0.05 * fc, 0)} psi` : ''})`
+        : undefined,
     },
     {
       ref: 'ACI 318-19 §22.5.8.5',
@@ -452,7 +477,8 @@ export function generateBreakdown(
   }
 
   // ── Torsion — engine call (identical numbers to the results screen) ──
-  const torsion = computeTorsion(section, material, rebar);
+  const torsion = computeTorsion(section, material, rebar, zoneSpacing, load.Pu);
+  const crush = torsionCrushing(section, material, load.Vu, shear.Vc, load.Tu, shear.d_shear);
   const Acp = b * h;
   const Pcp = 2 * (b + h);
   const Tcr = torsion.Tcr;
@@ -461,8 +487,10 @@ export function generateBreakdown(
   const DCR_torsion = phi_Tn > 0 ? load.Tu / phi_Tn : 0;
 
   // Closed-stirrup centerline geometry (matches engine)
-  const cc_tor = section.coverClear + getBarDiam(section.stirrupDia) / 2;
-  const x0_tor = b - 2 * cc_tor, y0_tor = h - 2 * cc_tor;
+  const dStir_2 = getBarDiam(section.stirrupDia) / 2;
+  const cc_tor = ccSide + dStir_2;
+  const x0_tor = b - 2 * cc_tor;
+  const y0_tor = h - (ccTop + dStir_2) - (ccBot + dStir_2);
   const Aoh_tor = x0_tor * y0_tor;
   const Ao_tor  = 0.85 * Aoh_tor;
 
@@ -488,18 +516,30 @@ export function generateBreakdown(
       substitution: `cc* = ${fmt(cc_tor)}", x₀ = ${fmt(x0_tor)}", y₀ = ${fmt(y0_tor)}"`,
       result: `Aoh = ${fmt(Aoh_tor)} in², Ao = 0.85·Aoh = ${fmt(Ao_tor)} in²`,
     },
+    // The §22.7.5.1 axial modifier only earns a line when there is axial load to
+    // report; at Pu = 0 it is 1.000 and would just be noise on the sheet.
+    ...(load.Pu !== 0 ? [{
+      ref: 'ACI 318-19 §22.7.5.1',
+      label: 'Axial modifier on torsional cracking',
+      equation: "√(1 + Nu / (4·Ag·λ√f'c))   (Nu +ve compression)",
+      substitution: `√(1 + ${fmt(load.Pu * 1000, 0)} / (4 × ${Acp} × ${lambdaConcrete}×√${fc}))`,
+      result: `factor = ${fmt(torsion.axialFactor, 4)}`,
+      note: load.Pu > 0
+        ? 'Compression delays torsional cracking — Tcr and the neglect threshold both rise.'
+        : 'Tension brings cracking forward — Tcr and the neglect threshold both fall.',
+    }] : []),
     {
-      ref: 'ACI 318-19 §22.7.4.1',
+      ref: 'ACI 318-19 §22.7.5.1',
       label: 'Cracking torsion',
-      equation: 'Tcr = 4λ√f\'c × Acp² / Pcp / 12000',
-      substitution: `Tcr = 4×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
+      equation: 'Tcr = 4λ√f\'c × Acp² / Pcp × √(1 + Nu/(4Ag·λ√f\'c)) / 12000',
+      substitution: `Tcr = 4×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} × ${fmt(torsion.axialFactor, 4)} / 12000`,
       result: `Tcr = ${fmt(Tcr)} kip-ft`,
     },
     {
-      ref: 'ACI 318-19 §22.7.4.1(a)',
+      ref: 'ACI 318-19 Table 22.7.4.1(a)',
       label: 'Threshold torsion (may neglect below this)',
-      equation: 'Tu,thresh = phi*lambda*sqrt(fc)*Acp^2/Pcp / 12000  (phi=0.75)',
-      substitution: `Tu,thresh = 0.75×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} / 12000`,
+      equation: "Tu,thresh = phi*lambda*sqrt(fc)*Acp^2/Pcp * sqrt(1 + Nu/(4Ag*lambda*sqrt(fc))) / 12000  (phi=0.75)",
+      substitution: `Tu,thresh = 0.75×${lambdaConcrete}×√${fc} × ${Acp}² / ${Pcp} × ${fmt(torsion.axialFactor, 4)} / 12000`,
       result: `Tu,thresh = ${fmt(Tu_thresh)} kip-ft`,
       note: load.Tu <= Tu_thresh
         ? `✓ Tu = ${load.Tu} k-ft ≤ Tu,thresh — torsion may be neglected`
@@ -521,6 +561,16 @@ export function generateBreakdown(
       substitution: `DCR = ${load.Tu} / ${fmt(phi_Tn)}`,
       result: `DCR = ${fmt(DCR_torsion, 3)}  ${DCR_torsion <= 1 ? '✓ OK' : '✗ NG'}`,
     },
+    {
+      ref: 'ACI 318-19 §22.7.7.1',
+      label: 'Cross-section limit — shear + torsion together',
+      equation: "√[(Vu/bw·d)² + (Tu·ph/1.7Aoh²)²] ≤ φ(Vc/bw·d + 8λ√f'c)",
+      substitution: `√(${fmt(crush.vu, 0)}² + ${fmt(crush.tu, 0)}²) = ${fmt(Math.hypot(crush.vu, crush.tu), 0)} psi  vs  ${fmt(crush.limit, 0)} psi`,
+      result: `DCR = ${fmt(crush.util, 3)}  ${crush.util <= 1 ? '✓ OK' : '✗ NG — ENLARGE THE SECTION'}`,
+      note: crush.util <= 1
+        ? `Torsion headroom alongside Vu = ${fmt(load.Vu)} kips: Tu may reach ${fmt(crush.Tn_max)} kip-ft`
+        : 'Diagonal compression crushes the web — extra stirrups cannot fix this, only a bigger section.',
+    },
   ];
 
   const out: CalcSection[] = [
@@ -533,10 +583,53 @@ export function generateBreakdown(
     { title: '7. Torsion', steps: torsionSteps },
   ];
 
+  // ── Axial + flexure (§22.4) — only when the row actually carries axial ──
+  // Shows the pure-bending capacity next to the capacity at Pu, so a reviewer
+  // can see how much the axial load cost and where the governing number came from.
+  if (load.Pu !== 0) {
+    const pm = beamAxialFlexure(section, material, rebar, span, 'pos', flex.phi_Mn_pos, load.Pu, load.Mu_pos);
+    const compression = load.Pu > 0;
+    const cap = compression ? pm.phiPnMax : Math.abs(pm.phiPnTens);
+    out.push({
+      title: '8. Axial + Flexure Interaction (P-M)',
+      steps: [
+        {
+          ref: compression ? 'ACI 318-19 §22.4.2.1' : 'ACI 318-19 §22.4.3.1',
+          label: compression ? 'Axial compression capacity' : 'Axial tension capacity',
+          equation: compression
+            ? "φPn,max = 0.80·φ·[0.85f'c(Ag − Ast) + fy·Ast],  φ = 0.65 (tied)"
+            : 'φPnt = φ·Ast·fy,  φ = 0.90',
+          substitution: compression
+            ? `0.80 × 0.65 × [0.85×${fc}×(Ag − Ast) + ${fy}×Ast]`
+            : `0.90 × Ast × ${fy}`,
+          result: `φPn = ${fmt(cap)} kips  vs  Pu = ${fmt(Math.abs(load.Pu))} kips ${compression ? '(comp.)' : '(tens.)'}  →  ${fmt(pm.axialUtil, 3)}`,
+        },
+        {
+          ref: 'ACI 318-19 §22.4',
+          label: 'Moment capacity at this axial load',
+          equation: compression
+            ? 'φMn read off the strain-compatibility P-M surface at Pu'
+            : 'φMn = φMn0·(1 − |Pu|/φPnt)   — straight line to pure tension',
+          substitution: `pure bending φMn0 = ${fmt(pm.phiMn0)} kip-ft;  Pu = ${fmt(load.Pu)} kips`,
+          result: `φMn = ${fmt(pm.phiMnAtPu)} kip-ft  (${fmt(100 * pm.phiMnAtPu / (pm.phiMn0 || 1), 0)}% of pure bending)`,
+          note: 'Moments are taken about the geometric centroid of the gross section.',
+        },
+        {
+          ref: 'ACI 318-19 §22.4',
+          label: 'Combined N-vs-M utilisation (governing)',
+          equation: '(Pu, Mu) scaled radially onto the φ-interaction surface',
+          substitution: `surface point: φPn = ${fmt(pm.phiPnAtRay)} kips, φMn = ${fmt(pm.phiMnAtRay)} kip-ft`,
+          result: `util = ${fmt(pm.nmUtil, 3)}  ${pm.nmUtil <= 1 ? '✓ OK' : '✗ NG'}`,
+          note: `Pure bending alone would read ${fmt(flex.phi_Mn_pos > 0 ? load.Mu_pos / flex.phi_Mn_pos : 0, 3)} — the axial load is what makes the difference.`,
+        },
+      ],
+    });
+  }
+
   // ── Zoned stirrups (thirds of span) — same engine call as the screen ──
   if (rebar.tieZones && rebar.ties) {
     const demands: [number, number, number] = zoneVu ?? [load.Vu, load.Vu, load.Vu];
-    const zones = zonedShearCheck(section, material, rebar, demands, load.Pu);
+    const zones = zonedShearCheck(section, material, rebar, demands, load.Pu, shearFace);
     const zoneLabel = ['End zone (0–L/3)', 'Middle zone (L/3–2L/3)', 'End zone (2L/3–L)'];
     out.push({
       title: '8. Shear by Stirrup Zone (thirds of span)',

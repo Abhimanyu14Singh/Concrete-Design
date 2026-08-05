@@ -530,7 +530,9 @@ export function computeSavings(
     const AsProvBot = rebarAs(m.rebar.botBars);
 
     // Minimum area we still need at targetDCR (can't go below As_min)
-    const AsReqTop = Math.max(res.As_req_neg / targetDCR, res.As_min);
+    // Top cage sizes against the TOP-face floor; using the bottom one picked a
+    // cage designMember then rejected under §9.6.1.2.
+    const AsReqTop = Math.max(res.As_req_neg / targetDCR, res.As_min_top ?? res.As_min);
     const AsReqBot = Math.max(res.As_req_pos / targetDCR, res.As_min);
 
     const flexSlackTop = Math.max(0, AsProvTop - AsReqTop);

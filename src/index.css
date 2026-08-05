@@ -30,6 +30,66 @@ body {
 ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
+/*
+ * Slim range slider (map toolbar "line weight"). The native control renders a
+ * chunky ~4px track and a 16px+ thumb that dwarfs the 28px toolbar buttons beside
+ * it, so the track is reduced to a 3px hairline and the thumb to a 10px dot.
+ * -webkit- and -moz- selectors must stay in SEPARATE rules: both engines drop the
+ * whole declaration block if it contains a pseudo-element they do not recognise.
+ */
+.slim-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;              /* hit target — the visible track is the 3px child */
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+.slim-range:focus { outline: none; }
+.slim-range:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; border-radius: 2px; }
+
+.slim-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+.slim-range::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+/* Filled portion — Firefox only; WebKit has no equivalent pseudo-element. */
+.slim-range::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: #2563eb;
+}
+
+.slim-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2563eb;
+  border: none;
+  /* centre the 10px thumb on the 3px track: (3 - 10) / 2 */
+  margin-top: -3.5px;
+  transition: transform 120ms ease;
+}
+.slim-range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2563eb;
+  border: none;
+  transition: transform 120ms ease;
+}
+.slim-range:hover::-webkit-slider-thumb,
+.slim-range:active::-webkit-slider-thumb { transform: scale(1.25); }
+.slim-range:hover::-moz-range-thumb,
+.slim-range:active::-moz-range-thumb { transform: scale(1.25); }
+
 /* Slide-out reinforcement editor column (Map view) — see ModelMapView.tsx */
 @keyframes slideInCol {
   from { transform: translateX(12px); opacity: 0; }

@@ -12,6 +12,8 @@ export interface MaterialProps {
   fyt: number;            // Transverse steel yield strength (psi)
   Es: number;             // Steel modulus of elasticity (psi)
   lambdaConcrete: number; // Lightweight concrete factor (1.0 = normal, 0.75 = lightweight)
+  Ec?: number;            // Concrete modulus (psi) — derived from f'c unless overridden
+  Gc?: number;            // Concrete shear modulus (psi) — derived as Ec/2.4 unless overridden
 }
 
 export interface BarGroup {

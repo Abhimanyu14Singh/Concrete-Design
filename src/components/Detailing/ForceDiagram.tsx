@@ -9,7 +9,7 @@ import {
   ReferenceLine, ResponsiveContainer,
 } from 'recharts';
 import type { Member, DesignResults, DesignCode, BarGroup } from '../../types';
-import { zonedShearCheck, zoneShearDemands } from '../../utils/concreteDesign';
+import { zonedShearCheck, zoneShearDemands, zoneIndexAtX } from '../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../engines/ec2/ec2Beam';
 import { steppedMomentCapacity } from '../../utils/curtailment';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -88,7 +88,11 @@ export default function ForceDiagram({ member, result, code, height = 150, cotTh
       ? zonedShearCheckEC2(member.section, member.material, member.rebar, demands, cotTheta ?? 2.5)
       : zonedShearCheck(member.section, member.material, member.rebar, demands);
     for (const pt of raw) {
-      const zi = Math.min(2, Math.floor((pt.x / spanRaw) * 3));
+      // Same binning rule as zoneShearDemands five lines above — a local
+      // Math.floor put a third-point station in a different zone than the table,
+      // so the plot drew the end-zone capacity step exactly where the tabulated
+      // middle-zone DCR exceeded 1.
+      const zi = zoneIndexAtX(pt.x, spanRaw);
       pt.phiVn = zones[zi]?.phi_Vn ?? result.phi_Vn;
       pt.phiVnNeg = -(zones[zi]?.phi_Vn ?? result.phi_Vn);
     }

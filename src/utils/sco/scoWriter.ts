@@ -86,6 +86,10 @@ export interface ColumnScoParams {
   memberName: string;
   bIn: number; hIn: number;
   fcKsi: number; fyKsi: number;
+  /** Elastic constants (ksi). Omitted ⇒ derived from f'c (Ec = 33·wc^1.5·√f'c,
+   *  Gc = Ec/2.4, Es = 29000). Supplied when the project overrides them in
+   *  settings, so the .SCO checks the same section the app just checked. */
+  ecKsi?: number; gcKsi?: number; esKsi?: number;
   nzBars: number; nyBars: number;
   longBar: string; tieBar: string; tieSpacingIn: number;
   coverIn?: number;          // default 1.5
@@ -241,8 +245,9 @@ export function buildColumnScoText(p: ColumnScoParams): string {
   const fcPsi = Math.trunc(fcKsi * 1000);
   const DVal = bIn;
   const hUse = hIn;
-  const Ec = ecKsi(fcPsi);
-  const Gc = Ec / 2.4;
+  const Ec = p.ecKsi ?? ecKsi(fcPsi);
+  const Gc = p.gcKsi ?? Ec / 2.4;
+  const Es = p.esKsi ?? 29000;
   const stie2 = Math.max(4.0, Math.floor(tieSpacingIn * 0.6 / 2.0) * 2.0);
 
   const nzSco = nzBars; // n_layers < 2
@@ -346,7 +351,7 @@ export function buildColumnScoText(p: ColumnScoParams): string {
     `ScaleBarWidth\t True\t` +
     `fy\t ${fyKsi}\tfy2\t ${pyFloat(fyTiesKsi)}\tfy3\t 65.0\t` +
     `Wc\t 150\tWs\t 500\tPoisson\t .2\thagg\t .75\t` +
-    `Gc\t ${f3(Gc)}\tEc\t ${f3(Ec)}\tEs\t 29000\t` +
+    `Gc\t ${f3(Gc)}\tEc\t ${f3(Ec)}\tEs\t ${f0(Es)}\t` +
     `kIe\t .5\tkAe\t .5\tkAse\t .5\tkJe\t .5\t` +
     `MaxIter\t 25\t` +
     `fyDesMin\t 15\tfyDesMax\t 150\tfy2DesMin\t 15\tfy2DesMax\t 150\t` +
@@ -456,6 +461,8 @@ export interface BeamScoParams {
   hIn: number;             // overall depth (in)
   fcKsi: number;
   fyKsi: number;
+  /** Elastic constants (ksi) — see ColumnScoParams. */
+  ecKsi?: number; gcKsi?: number; esKsi?: number;
   coverIn?: number;        // default 1.5
   stirrupBar: string;      // e.g. '#4'
   stirrupSpacingIn: number;
@@ -485,6 +492,7 @@ export function buildBeamScoText(p: BeamScoParams): string {
     hIn: p.hIn,
     fcKsi: p.fcKsi,
     fyKsi: p.fyKsi,
+    ecKsi: p.ecKsi, gcKsi: p.gcKsi, esKsi: p.esKsi,
     nzBars: 2,
     nyBars: 2,
     longBar: p.topBar ?? '#8',

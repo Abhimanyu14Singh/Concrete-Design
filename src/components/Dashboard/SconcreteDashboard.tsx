@@ -13,7 +13,8 @@ import type { DashboardPayload } from '../../utils/dashboardPayload';
 import SconcreteCard from './SconcreteCard';
 import { useSconcreteBatch, matchResultsToGroup, friendlyStep } from '../../utils/sco/useSconcreteBatch';
 import { governingDcr, statusView, dcrTone, type StatusTone } from '../../utils/sco/resultStatus';
-import { ACCENT, BORDER, CODE_ACCENT, INK, MONO_NUM, STATUS, SURFACE, TYPE, WEIGHT } from '../../theme';
+import { ACCENT, BORDER, CODE_ACCENT, INK, MONO_NUM, STATUS, SURFACE, TYPE, WEIGHT , ICON } from '../../theme';
+import { Icon } from '../common/Icon';
 
 const TONE: Record<StatusTone, string> = { ok: STATUS.ok, warn: STATUS.warn, ng: STATUS.fail, none: STATUS.none };
 const dcrColor = (dcr: number | null): string => TONE[dcrTone(dcr)];
@@ -57,7 +58,9 @@ export default function SconcreteDashboard({
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, flex: 1, width: '100%', background: SURFACE.app }}>
       {/* Header — title + status roll-up + close */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>🔬 S-Concrete Verify</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="verify" size={ICON.sm} />S-Concrete Verify
+        </span>
         <span style={{ fontSize: 11, color: INK.muted }}>{groups.length} group{groups.length === 1 ? '' : 's'}</span>
         {batch.resultSummary && (
           <span style={{ display: 'flex', gap: 8, fontSize: 10, fontWeight: 700 }} title="Governing status across all groups">

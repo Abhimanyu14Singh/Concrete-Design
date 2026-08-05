@@ -8,7 +8,10 @@ import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
-import { zoomViewBox } from '../../utils/mapViewport';
+import {
+  fitTransform, zoomViewBox, project3, fitProjected, clampPitch,
+  DEFAULT_CAMERA, type Camera,
+} from '../../utils/mapViewport';
 import { ACCENT, BORDER, DEFAULT_DCR_THRESHOLDS, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK, type DcrBand } from '../../theme';
 
 export type { ColorMode };
@@ -100,12 +103,19 @@ interface Props {
   onDcrThresholdsChange?: (t: [number, number, number]) => void;
   /** Optional imported geometry layers (walls / grids / openings), drawn behind
    *  the frames. Each is opt-in via the matching show* flag. */
-  walls?: { id: string; story: string; points: { x: number; y: number }[]; kind?: 'wall' | 'slab'; memberId?: string }[];
-  grids?: { id: string; label: string; p1: { x: number; y: number }; p2: { x: number; y: number }; story?: string }[];
-  openings?: { id: string; story: string; points: { x: number; y: number }[]; memberId?: string }[];
+  walls?: { id: string; story: string; points: { x: number; y: number; z?: number }[]; kind?: 'wall' | 'slab'; memberId?: string }[];
+  grids?: { id: string; label: string; p1: { x: number; y: number; z?: number }; p2: { x: number; y: number; z?: number }; story?: string }[];
+  openings?: { id: string; story: string; points: { x: number; y: number; z?: number }[]; memberId?: string }[];
+  /** Vertical frames (columns / braces) drawn as CONTEXT only — never selectable,
+   *  never designed. In plan they collapse to a point, so they only draw in 3D. */
+  columns?: { id: string; story: string; sectionName?: string; pt1: { x: number; y: number; z: number }; pt2: { x: number; y: number; z: number } }[];
   showWalls?: boolean;
   showGrids?: boolean;
   showOpenings?: boolean;
+  showColumns?: boolean;
+  /** Draw the model axonometrically instead of in plan. Everything else — picking,
+   *  lasso, diagrams, colouring, inspect — works exactly as it does in 2D. */
+  view3d?: boolean;
 }
 
 export default function MapCanvas({
@@ -120,13 +130,19 @@ export default function MapCanvas({
   showErrors = false, errorMemberIds = new Set(),
   focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
   dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange,
-  walls = [], grids = [], openings = [], showWalls = false, showGrids = false, showOpenings = false,
+  walls = [], grids = [], openings = [], columns = [],
+  showWalls = false, showGrids = false, showOpenings = false, showColumns = false,
+  view3d = false,
 }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   // Pinned member — the last single-clicked frame. Its summary card stays up
   // (survives hover-out) until another beam is clicked or the plan is cleared.
   const [pinned, setPinned] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
+  // 3D camera. Orbiting is a drag on empty canvas (see onMouseDown), which is why
+  // it lives here rather than in the parent — the parent only owns the on/off flag.
+  const [cam, setCam] = useState<Camera>(DEFAULT_CAMERA);
+  const orbitStart = useRef<{ mx: number; my: number; yaw: number; pitch: number } | null>(null);
   const [lasso, setLasso] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ mx: number; my: number; vx: number; vy: number } | null>(null);
@@ -147,6 +163,8 @@ export default function MapCanvas({
     (story === 'All' || o.story === story) && !hiddenStories.has(o.story) &&
     !(o.memberId && hiddenMemberIds.has(o.memberId)));
   const visibleGrids = grids;
+  const visibleColumns = columns.filter(c =>
+    (story === 'All' || c.story === story) && !hiddenStories.has(c.story));
 
   // Compute bounds — include visible layer geometry so they register to the same
   // plan and drive fit-to-view (frame-only bounds would clip walls/grids).
@@ -155,6 +173,7 @@ export default function MapCanvas({
     ...(showWalls ? visibleWalls.flatMap(w => w.points) : []),
     ...(showOpenings ? visibleOpenings.flatMap(o => o.points) : []),
     ...(showGrids ? visibleGrids.flatMap(g => [g.p1, g.p2]) : []),
+    ...(showColumns ? visibleColumns.flatMap(c => [c.pt1, c.pt2]) : []),
   ];
   const xs = pts.map(p => p.x);
   const ys = pts.map(p => p.y);
@@ -163,10 +182,35 @@ export default function MapCanvas({
   const minY = ys.length ? Math.min(...ys) : 0;
   const maxY = ys.length ? Math.max(...ys) : 1;
 
-  const pad = 40;
-  const scaleX = (width - 2 * pad) / Math.max(maxX - minX, 1);
-  const scaleY = (height - 2 * pad) / Math.max(maxY - minY, 1);
-  const scale = Math.min(scaleX, scaleY);
+  // Fit the plan into the canvas, centered on both axes (see fitTransform).
+  const { tx, ty } = fitTransform({ minX, maxX, minY, maxY }, width, height);
+
+  // ── One projection for both views ───────────────────────────────────────────
+  // Everything downstream (frames, layers, diagrams, tags, lasso hit-testing)
+  // goes through P(), so switching to 3D changes only where a point lands — not
+  // how anything behaves. In plan, z is ignored and P is exactly the old tx/ty.
+  const zOf = (p: { z?: number }): number => p.z ?? 0;
+  const proj3 = view3d
+    ? fitProjected(
+        [
+          ...visibleFrames.flatMap(f => [project3(f.pt1, cam), project3(f.pt2, cam)]),
+          ...(showWalls ? visibleWalls.flatMap(w => w.points.map(q => project3({ x: q.x, y: q.y, z: zOf(q) }, cam))) : []),
+          ...(showOpenings ? visibleOpenings.flatMap(o => o.points.map(q => project3({ x: q.x, y: q.y, z: zOf(q) }, cam))) : []),
+          ...(showColumns ? visibleColumns.flatMap(c => [project3(c.pt1, cam), project3(c.pt2, cam)]) : []),
+          ...(showGrids ? visibleGrids.flatMap(g => [
+            project3({ x: g.p1.x, y: g.p1.y, z: zOf(g.p1) }, cam),
+            project3({ x: g.p2.x, y: g.p2.y, z: zOf(g.p2) }, cam),
+          ]) : []),
+        ],
+        width, height,
+      )
+    : null;
+  /** Model point → SVG coordinates, for whichever view is active. */
+  const P = (p: { x: number; y: number; z?: number }): [number, number] => {
+    if (!proj3) return [tx(p.x), ty(p.y)];
+    const { sx, sy } = proj3(project3({ x: p.x, y: p.y, z: zOf(p) }, cam));
+    return [sx, sy];
+  };
 
   // Bounds of the structure alone (frames), used to park grid-line labels a clear
   // distance OUTSIDE the members so the bubbles don't clutter the plan itself.
@@ -179,9 +223,6 @@ export default function MapCanvas({
   useEffect(() => {
     setViewBox({ x: 0, y: 0, w: width, h: height });
   }, [frames, width, height]);
-
-  const tx = (x: number) => pad + (x - minX) * scale;
-  const ty = (y: number) => height - pad - (y - minY) * scale;
 
   // Shared coloring: group / auto-group lookups + the per-frame color for the mode.
   const groupColorMap = buildGroupColorMap(designGroups);
@@ -262,7 +303,16 @@ export default function MapCanvas({
       const pt = mouseToSvg(e.clientX, e.clientY);
       if (!pt) return;
       const tag = (e.target as Element).tagName.toLowerCase();
-      lassoBgOnly.current = tag === 'svg' || tag === 'rect' || tag === 'pattern';
+      const onBackground = tag === 'svg' || tag === 'rect' || tag === 'pattern';
+      // In 3D a bare background drag orbits the camera — the gesture people expect
+      // from a 3D view. Shift keeps the 2D behaviour (lasso-select), so nothing is
+      // lost; dragging a member still selects it, because that isn't background.
+      if (view3d && onBackground && !e.shiftKey) {
+        orbitStart.current = { mx: e.clientX, my: e.clientY, yaw: cam.yaw, pitch: cam.pitch };
+        e.preventDefault();
+        return;
+      }
+      lassoBgOnly.current = onBackground;
       setLasso({ sx: pt.x, sy: pt.y, ex: pt.x, ey: pt.y });
     }
   }
@@ -272,6 +322,15 @@ export default function MapCanvas({
     // asynchronously, and the native window mouseup listener can null
     // panStart.current before it flushes — dereferencing the ref inside the
     // updater then throws "Cannot read properties of null (reading 'vx')".
+    const os = orbitStart.current;
+    if (os) {
+      // ~0.9° of yaw per px across, and pitch clamped so the model can't invert.
+      setCam({
+        yaw: os.yaw + (e.clientX - os.mx) * 0.008,
+        pitch: clampPitch(os.pitch + (e.clientY - os.my) * 0.006),
+      });
+      return;
+    }
     const ps = panStart.current;
     if (isPanning && ps) {
       const rect = svgRef.current?.getBoundingClientRect();
@@ -289,6 +348,7 @@ export default function MapCanvas({
   }
 
   function onMouseUp(e: React.MouseEvent) {
+    if (orbitStart.current) { orbitStart.current = null; return; }
     if (isPanning) {
       setIsPanning(false);
       panStart.current = null;
@@ -302,8 +362,8 @@ export default function MapCanvas({
       if (drag) {
         const hit = new Set<string>();
         for (const f of visibleFrames) {
-          const x1 = tx(f.pt1.x), y1 = ty(f.pt1.y);
-          const x2 = tx(f.pt2.x), y2 = ty(f.pt2.y);
+          const [x1, y1] = P(f.pt1);
+          const [x2, y2] = P(f.pt2);
           if (Math.min(x1, x2) >= lx1 && Math.max(x1, x2) <= lx2 &&
               Math.min(y1, y2) >= ly1 && Math.max(y1, y2) <= ly2) {
             hit.add(f.frameName);
@@ -322,6 +382,9 @@ export default function MapCanvas({
   useEffect(() => {
     const onWinMouseUp = () => {
       if (isPanning) { setIsPanning(false); panStart.current = null; }
+      // Releasing outside the canvas must end an orbit too, or the camera keeps
+      // tracking the mouse after the button is up.
+      orbitStart.current = null;
       setLasso(l => (l ? null : l));
     };
     const onWinKeyDown = (e: KeyboardEvent) => {
@@ -376,8 +439,8 @@ export default function MapCanvas({
       const data = diagramDataById[f.memberId];
       if (!data || data.length < 2) return null;
 
-      const x1s = tx(f.pt1.x), y1s = ty(f.pt1.y);
-      const x2s = tx(f.pt2.x), y2s = ty(f.pt2.y);
+      const [x1s, y1s] = P(f.pt1);
+      const [x2s, y2s] = P(f.pt2);
       const dx = x2s - x1s, dy = y2s - y1s;
       const len = Math.hypot(dx, dy);
       if (len < 1) return null;
@@ -414,15 +477,38 @@ export default function MapCanvas({
     });
   })();
 
-  // Imported geometry layers (walls / grids / openings), built with tx()/ty() so
+  // Imported geometry layers (walls / grids / openings), built with P() so
   // they register to the same plan. pointerEvents:'none' + no data-framename keeps
   // lasso / click / context-menu behaviour untouched.
-  const wallLayer = visibleWalls.map(w => (
-    <polygon key={w.id}
-      points={w.points.map(p => `${tx(p.x)},${ty(p.y)}`).join(' ')}
-      fill={w.kind === 'slab' ? 'url(#wallhatch)' : 'rgba(148,163,184,0.28)'}
-      stroke="#94a3b8" strokeWidth={1} style={{ pointerEvents: 'none' }} />
-  ));
+  // Walls and floor slabs share this layer but must NOT look alike. Drafting
+  // convention: hatch = cut material, so the WALL is poché'd and the slab is a
+  // light wash you read across. (These were the wrong way round — a floor drawn
+  // in wall hatch reads as a wall, which is exactly how it was reported.)
+  const wallLayer = visibleWalls.map(w => {
+    const isSlab = w.kind === 'slab';
+    return (
+      <polygon key={w.id}
+        points={w.points.map(p => { const [a, b] = P(p); return `${a},${b}`; }).join(' ')}
+        fill={isSlab ? 'rgba(148,163,184,0.16)' : 'url(#wallhatch)'}
+        stroke="#94a3b8" strokeWidth={isSlab ? 0.8 : 1.4}
+        strokeOpacity={isSlab ? 0.7 : 1}
+        style={{ pointerEvents: 'none' }} />
+    );
+  });
+  // Vertical frames. In plan a column projects to a single point, so it is only
+  // worth drawing in 3D — showing a field of dots over the beams would just be
+  // noise. pointerEvents:'none' and no data-framename keep it out of picking,
+  // lasso and grouping entirely: this is scenery, not a designable member.
+  const columnLayer = view3d ? visibleColumns.map(c => {
+    const [x1, y1] = P(c.pt1);
+    const [x2, y2] = P(c.pt2);
+    return (
+      <line key={`col-${c.id}`} x1={x1} y1={y1} x2={x2} y2={y2}
+        stroke="#94a3b8" strokeWidth={2.5} strokeLinecap="round"
+        opacity={0.65} style={{ pointerEvents: 'none' }} />
+    );
+  }) : [];
+
   // Grid bubbles are parked well clear of the structure so their text never
   // overlaps the members: vertical grid lines (constant X, spanning Y) get their
   // label above the plan; horizontal grid lines (constant Y, spanning X) get it to
@@ -433,7 +519,17 @@ export default function MapCanvas({
     const vertical = dx <= dy;
     let bubble: { x: number; y: number };
     let line: { x1: number; y1: number; x2: number; y2: number };
-    if (vertical) {
+    if (view3d) {
+      // Axonometric: "above" and "left of" the plan mean nothing once the model is
+      // tipped, so run the line between its own projected ends and push the bubble
+      // out along that same direction.
+      const [ax, ay] = P(g.p1);
+      const [bx, by] = P(g.p2);
+      const len = Math.hypot(bx - ax, by - ay) || 1;
+      const ux = (bx - ax) / len, uy = (by - ay) / len;
+      bubble = { x: bx + ux * GRID_LABEL_GAP, y: by + uy * GRID_LABEL_GAP };
+      line = { x1: ax, y1: ay, x2: bubble.x, y2: bubble.y };
+    } else if (vertical) {
       const cx = tx((g.p1.x + g.p2.x) / 2);
       const topY = ty(fMaxY) - GRID_LABEL_GAP;      // above the top of the structure
       bubble = { x: cx, y: topY };
@@ -455,12 +551,15 @@ export default function MapCanvas({
   });
   const openingLayer = visibleOpenings.map(o => (
     <polygon key={o.id}
-      points={o.points.map(p => `${tx(p.x)},${ty(p.y)}`).join(' ')}
+      points={o.points.map(p => { const [a, b] = P(p); return `${a},${b}`; }).join(' ')}
       fill="none" stroke="#64748b" strokeWidth={1.5} strokeDasharray="6 4" style={{ pointerEvents: 'none' }} />
   ));
 
   return (
-    <div style={{ position: 'relative', userSelect: 'none' }}>
+    // flexShrink: 0 — the parent centers us with flexbox, and a shrunk SVG would
+    // no longer match its own width/height attributes, breaking the viewBox↔client
+    // -rect mapping that mouseToSvg (hit-testing, lasso, pan, zoom anchor) relies on.
+    <div style={{ position: 'relative', userSelect: 'none', flexShrink: 0 }}>
       <svg
         ref={svgRef}
         width={width} height={height}
@@ -483,13 +582,16 @@ export default function MapCanvas({
           <pattern id="mmgrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#eef2f7" strokeWidth="1" />
           </pattern>
+          {/* Wall poché — the hatch belongs to walls (cut material), not slabs. */}
           <pattern id="wallhatch" width="6" height="6" patternUnits="userSpaceOnUse">
-            <path d="M0,6 l6,-6" stroke="#94a3b8" strokeWidth="1" />
+            <rect width="6" height="6" fill="rgba(148,163,184,0.20)" />
+            <path d="M0,6 l6,-6" stroke="#64748b" strokeWidth="1" />
           </pattern>
         </defs>
         <rect width={width} height={height} fill="url(#mmgrid)" rx="10" />
 
         {/* Imported geometry layers — behind every frame (walls → grids → openings) */}
+        {showColumns && view3d && <g style={{ pointerEvents: 'none' }}>{columnLayer}</g>}
         {showWalls && <g style={{ pointerEvents: 'none' }}>{wallLayer}</g>}
         {showGrids && <g style={{ pointerEvents: 'none' }}>{gridLayer}</g>}
         {showOpenings && <g style={{ pointerEvents: 'none' }}>{openingLayer}</g>}
@@ -500,8 +602,8 @@ export default function MapCanvas({
         {visibleFrames.map(f => {
           const isSel = selected.has(f.frameName);
           const isHov = hover === f.frameName;
-          const x1 = tx(f.pt1.x), y1 = ty(f.pt1.y);
-          const x2 = tx(f.pt2.x), y2 = ty(f.pt2.y);
+          const [x1, y1] = P(f.pt1);
+          const [x2, y2] = P(f.pt2);
           const color = frameColor(f);
           const linked = !!f.memberId;
           const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);

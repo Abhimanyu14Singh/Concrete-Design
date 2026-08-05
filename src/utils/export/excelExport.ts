@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import type { Project, Member } from '../../types';
 import { runDesign } from '../../engines';
 import { getBarArea } from '../concreteDesign';
-import { grossArea } from '../../engines/column/sectionModel';
+import { settingsFromProject } from '../projectSettings';
 
 function worstOf(r: ReturnType<typeof runDesign>): number {
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
@@ -46,13 +46,12 @@ function totalLongAst(m: Member): number {
  */
 function buildMemberSheet(m: Member, code: string): XLSX.WorkSheet {
   const ws: XLSX.WorkSheet = {};
-  const isCircular = m.section.type === 'circular_column';
-  const isColumn = isCircular || m.section.type === 'rectangular_column';
+  const isCircular = false; // beams only
   const spiral = m.rebar.tieType === 'spiral';
   const b = m.section.b;
   const h = m.section.h ?? m.section.b;
   const D = m.section.diameter ?? m.section.b;
-  const Ag = grossArea(isCircular, b, h, D);
+  const Ag = b * h;
   const Ast = totalLongAst(m);
   const rho = Ag > 0 ? Ast / Ag : 0;
   const phi = spiral ? 0.75 : 0.65;
@@ -90,24 +89,7 @@ function buildMemberSheet(m: Member, code: string): XLSX.WorkSheet {
   setFormula(ws, 3, r, `${astA}/${agA}`, rho);
   setStr(ws, 4, r, 'φPn,max (k)');
   setFormula(ws, 5, r, `${phiA}*${alphaA}*(0.85*${fcA}*(${agA}-${astA})+${fyA}*${astA})/1000`, phiPnMax);
-  const phiPnA = addr(5, rDer);
   r += 2;
-
-  // ── AXIAL CHECK (live): DCR = Pu / φPn,max ──
-  if (isColumn) {
-    setStr(ws, 0, r, 'AXIAL CHECK (live) — DCR_axial = Pu / φPn,max'); r += 1;
-    setStr(ws, 0, r, 'Load Case'); setStr(ws, 1, r, 'Pu (k)');
-    setStr(ws, 2, r, 'φPn,max (k)'); setStr(ws, 3, r, 'DCR axial'); r += 1;
-    for (const lc of m.loads) {
-      const row = r;
-      setStr(ws, 0, row, lc.label);
-      setNum(ws, 1, row, lc.Pu);
-      setFormula(ws, 2, row, `${phiPnA}`, phiPnMax);
-      setFormula(ws, 3, row, `${addr(1, row)}/${addr(2, row)}`, phiPnMax > 0 ? lc.Pu / phiPnMax : 0);
-      r += 1;
-    }
-    r += 1;
-  }
 
   // ── Engine-computed capacities (values) ──
   setStr(ws, 0, r, 'ENGINE-COMPUTED CAPACITIES (strain compatibility — values)'); r += 1;
@@ -142,10 +124,25 @@ export function buildProjectWorkbook(project: Project): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
 
   // ── Summary sheet ────────────────────────────────────────────────────────
+  // The project standards head the sheet so a reader knows the basis of every
+  // row below without opening the app.
+  const std = project.settings ?? settingsFromProject(project);
   const summaryData: (string | number)[][] = [
     ['S-Concrete Design — Project Summary'],
-    ['Project', project.name, '', 'Engineer', project.engineer],
+    ['Project', project.name],
     ['Code', project.code, '', 'Date', project.date],
+    [],
+    ['Design standards'],
+    ["f'c (psi)", std.fc, '', 'fy / fyt (psi)', std.fy, std.fyt],
+    ['Es (psi)', std.Es, '', 'Ec / Gc (psi)', Math.round(std.Ec), Math.round(std.Gc),
+      std.autoModuli ? 'code formula' : 'custom'],
+    ['Cover top / bottom / side (in)', +std.coverTop.toFixed(3), +std.coverBottom.toFixed(3), +std.coverSide.toFixed(3),
+      'lambda', std.lambdaConcrete],
+    ...(project.code === 'EN1992-1-1'
+      ? [['Crack limit w_max (mm)', std.crackWidthLimit, '', 'cot theta', std.cotTheta] as (string | number)[]]
+      : []),
+    ...(std.ignoreTorsion ? [['Torsion', 'Neglected (Tu = 0)'] as (string | number)[]] : []),
+    ['Display units', std.units === 'si' ? 'SI (mm, MPa, kN)' : 'US customary (in, psi, kips)'],
     [],
     ['ID', 'Label', 'Type', 'Section', "f'c (psi)", 'fy (ksi)',
       'DCR Flex+', 'DCR Flex-', 'DCR Shear', 'DCR Torsion', 'DCR P-M', 'Status'],
@@ -153,9 +150,7 @@ export function buildProjectWorkbook(project: Project): XLSX.WorkBook {
   for (const m of project.members) {
     const r = worstResult(m, project.code);
     if (!r) continue;
-    const sec = m.section.type === 'circular_column'
-      ? `Ø${m.section.diameter ?? m.section.b}"`
-      : `${m.section.b}"×${m.section.h}"`;
+    const sec = `${m.section.b}"×${m.section.h}"`;
     summaryData.push([
       m.id, m.label, m.memberType, sec,
       m.material.fc, m.material.fy / 1000,
@@ -166,7 +161,9 @@ export function buildProjectWorkbook(project: Project): XLSX.WorkBook {
     ]);
   }
   const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-  wsSummary['!cols'] = [8, 20, 10, 12, 10, 8, 10, 10, 10, 10, 8].map(w => ({ wch: w }));
+  // Column A also carries the standards labels, so it needs room for the widest
+  // of them ("Cover top / bottom / side (in)").
+  wsSummary['!cols'] = [30, 20, 10, 14, 12, 10, 12, 10, 10, 10, 8].map(w => ({ wch: w }));
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
   // ── Per-member sheets (axial/geometry chain as live formulas) ────────────
@@ -212,9 +209,7 @@ export function buildDcrListWorkbook(project: Project): XLSX.WorkBook {
   for (const m of project.members) {
     const r = worstResult(m, project.code);
     if (!r) continue;
-    const sec = m.section.type === 'circular_column'
-      ? `Ø${m.section.diameter ?? m.section.b}"`
-      : `${m.section.b}"×${m.section.h}"`;
+    const sec = `${m.section.b}"×${m.section.h}"`;
     data.push([
       m.id, m.label, m.memberType, groupOf.get(m.id) ?? '—', sec,
       +govDcrOf(r).toFixed(2),

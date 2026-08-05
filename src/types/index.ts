@@ -1,6 +1,11 @@
-export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam' | 'rectangular_column' | 'circular_column';
+// Type-only import — erased at compile time, so no runtime dependency on utils/.
+import type { UnitSystem } from '../utils/units';
+
+export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam';
 export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1';
-export type MemberType = 'beam' | 'column';
+/** This is a beam-design app; the type is kept as a single-member discriminant
+ *  so persisted files and the engine registry keep a stable shape. */
+export type MemberType = 'beam';
 export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
 
 export interface DesignWarning {
@@ -15,6 +20,15 @@ export interface MaterialProps {
   fyt: number;      // Transverse steel yield strength (psi)
   Es: number;       // Steel modulus (psi)
   lambdaConcrete: number; // Lightweight factor (1.0 normal, 0.75 lightweight)
+  /**
+   * Concrete elastic modulus (psi). Normally DERIVED from f'c by the active code
+   * (ACI §19.2.2.1 Ec = 57000√f'c; EC2 §3.1.3 Ecm = 22000·((fck+8)/10)^0.3), so
+   * it is absent on most members. Set only when the engineer overrides it in
+   * project settings — then every consumer uses this value instead of the formula.
+   */
+  Ec?: number;
+  /** Concrete shear modulus (psi) — derived as Ec/(2(1+ν)) with ν = 0.2 unless overridden. */
+  Gc?: number;
 }
 
 export interface SectionDimensions {
@@ -24,7 +38,18 @@ export interface SectionDimensions {
   bw?: number;      // Web width for T/L beam (in)
   hf?: number;      // Flange thickness (in)
   diameter?: number; // Circular section diameter (in)
-  coverClear: number; // Clear cover to stirrups (in)
+  /**
+   * Clear cover to stirrups (in). The single legacy value, kept as the fallback
+   * for every face and as the governing (smallest) cover. Per-face covers below
+   * override it where the distinction matters.
+   */
+  coverClear: number;
+  /** Clear cover to the stirrup at the TOP face (in). Falls back to coverClear. */
+  coverTop?: number;
+  /** Clear cover to the stirrup at the BOTTOM face (in). Falls back to coverClear. */
+  coverBottom?: number;
+  /** Clear cover to the stirrup at the SIDE faces (in). Falls back to coverClear. */
+  coverSide?: number;
   stirrupDia: number; // Stirrup bar diameter (in)
 }
 
@@ -176,6 +201,17 @@ export interface MapOpening {
 }
 
 /** Persistent connectivity snapshot of the ETABS model, saved in .scdb. */
+/** A vertical frame (column or brace) carried for VISUALISATION only. This is a
+ *  beam-design app: columns are never members, never designed and never exported —
+ *  they exist so the 3D view shows the frame the beams actually sit in. */
+export interface MapColumn {
+  id: string;             // ETABS frame name
+  story: string;
+  sectionName?: string;
+  pt1: Point3D;           // base
+  pt2: Point3D;           // top
+}
+
 export interface ModelMap {
   source: 'com' | 'file' | 'mock' | 'bridge';
   modelName: string;
@@ -183,6 +219,7 @@ export interface ModelMap {
   stories: string[];
   frames: MapFrame[];
   walls?: MapWall[];        // optional — area/wall elements
+  columns?: MapColumn[];    // optional — vertical frames, drawn as context only
   grids?: MapGrid[];        // optional — grid lines
   openings?: MapOpening[];  // optional — wall/slab openings
 }
@@ -285,11 +322,22 @@ export interface DesignResults {
   Sreq_y?: number;             // required tie spacing from y-shear (in)
   Sreq?: number;               // governing required tie spacing (in)
   phi_Tcr?: number;            // torsion cracking threshold φTcr (kip-ft)
+  /**
+   * ACI §22.7.7.1 cross-section check for combined shear + torsion: the
+   * root-sum-square of the two web stresses over φ(Vc/bw·d + 8λ√f'c). Failing it
+   * means the SECTION is too small — adding links does not help.
+   */
+  DCR_crushing?: number;
+  /** Torsion that would exhaust the §22.7.7.1 limit alongside the concurrent Vu (kip-ft). */
+  phi_Tn_max?: number;
   governingLoadCaseId?: string;
   // Additional
   As_req_pos: number;   // Required steel (in²)
   As_req_neg: number;
-  As_min: number;
+  As_min: number;       // bottom (positive-moment) face
+  /** Top-face As,min — differs from `As_min` once a project sets per-face covers.
+   *  Sizing the TOP cage against `As_min` picks a cage the engine then fails. */
+  As_min_top?: number;
   As_max: number;
   Av_req: number;       // Required stirrup area (in²/in)
   Av_min_per_s: number; // Min Av/s per ACI §9.6.3.3 (in²/in)
@@ -313,6 +361,47 @@ export interface AutoGroupBin {
   label: string;
 }
 
+/**
+ * Project-wide standards captured once in the setup dialog and editable later
+ * from the header gear. This is the SINGLE SOURCE OF TRUTH for the values that
+ * every member starts from: whatever is set here is written onto every member
+ * (material, covers, crack limits) by applyProjectSettings(), so the design
+ * engines, the UI and every export read one consistent set of standards.
+ *
+ * Everything is stored in the app's internal imperial base units (in, psi) no
+ * matter which unit system the engineer types in — `units` only controls
+ * display and input conversion. The one exception is `crackWidthLimit`, which
+ * is mm because EN 1992-1-1 §7.3.1 states its limits in mm regardless.
+ */
+export interface ProjectSettings {
+  /** Display/input unit system. Storage stays imperial either way. */
+  units: UnitSystem;
+  // ── Materials ──────────────────────────────────────────────────────────────
+  fc: number;              // concrete cylinder strength f'c / fck (psi)
+  fy: number;              // longitudinal steel yield (psi)
+  fyt: number;             // transverse (stirrup/tie) steel yield (psi)
+  lambdaConcrete: number;  // lightweight concrete factor (1.0 normal)
+  // ── Elastic constants ──────────────────────────────────────────────────────
+  /** When true, Es/Ec/Gc track the code formulas as f'c changes. Clearing it
+   *  freezes the three values below at whatever the engineer typed. */
+  autoModuli: boolean;
+  Es: number;              // steel modulus (psi)
+  Ec: number;              // concrete modulus (psi)
+  Gc: number;              // concrete shear modulus (psi)
+  // ── Cover ──────────────────────────────────────────────────────────────────
+  coverTop: number;        // clear cover to stirrup, top face (in)
+  coverBottom: number;     // clear cover to stirrup, bottom face (in)
+  coverSide: number;       // clear cover to stirrup, side faces (in)
+  // ── Code-specific ──────────────────────────────────────────────────────────
+  /** EC2 only — allowable crack width w_max (mm), applied to top/bottom/side. */
+  crackWidthLimit: number;
+  /** EC2 only — §6.2.3 variable strut inclination as cot θ (1.0–2.5). */
+  cotTheta: number;
+  // ── Preferences ────────────────────────────────────────────────────────────
+  displayScale: number;    // UI zoom factor (0.75–1.5)
+  ignoreTorsion: boolean;  // treat Tu = 0 for every beam check
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -320,6 +409,12 @@ export interface Project {
   description: string;
   engineer: string;
   date: string;
+  /**
+   * Project-wide standards from the setup dialog. Absent on files written
+   * before the dialog existed — migrateProject() backfills it from the first
+   * member so those projects keep their materials and cover.
+   */
+  settings?: ProjectSettings;
   members: Member[];
   designGroups?: DesignGroup[]; // beam design groups (ETABS import)
   modelMap?: ModelMap;          // persistent connectivity snapshot

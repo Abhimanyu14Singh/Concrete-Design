@@ -10,11 +10,13 @@ import type { RebarLayout } from '../../types';
 import { membersForGroup, type DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
 import { DCRChip, DcrHistogram } from './dashboardShared';
-import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg } from '../../theme';
+import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg , ICON } from '../../theme';
+import { Icon } from '../common/Icon';
 
 const hdrBtn: CSSProperties = {
   padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6,
   background: 'white', fontSize: 11, cursor: 'pointer', color: INK.base, fontWeight: 600,
+  display: 'inline-flex', alignItems: 'center', gap: 5,
 };
 const GRID = 'minmax(0, 1fr) 42px 42px 42px 52px 56px 34px';
 
@@ -120,7 +122,9 @@ export default function GroupDashboard({
       onMouseLeave={() => onHoverMember?.(null)}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>Group Dashboard</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="groupDashboard" size={ICON.sm} />Group Dashboard
+        </span>
         <span style={{ fontSize: 11, color: INK.muted }}>{groups.length} group{groups.length === 1 ? '' : 's'}</span>
         <div style={{ flex: 1 }} />
         {onSuggestAll && (
@@ -128,7 +132,7 @@ export default function GroupDashboard({
             onClick={onSuggestAll}
             title="Auto-size every group's cage to satisfy the DCRs and clear errors"
             style={{ ...hdrBtn, color: ACCENT.primary, borderColor: ACCENT.primary }}
-          >✨ Suggest</button>
+          ><Icon name="suggest" size={ICON.sm} />Suggest</button>
         )}
         {canPopOut && onPopOut && (
           <button onClick={onPopOut} title="Open the dashboard in a separate window" style={hdrBtn}>⤢ Pop out</button>

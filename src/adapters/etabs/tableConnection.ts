@@ -9,7 +9,6 @@
  * Tables consumed (model display units; converted here to ft/kip/psi):
  *   "Program Control"                                    → CurrUnits
  *   "Beam Object Connectivity"                           → beams + stories
- *   "Column Object Connectivity"                         → columns (optional)
  *   "Point Object Connectivity"                          → joint coordinates
  *   "Frame Assignments - Section Properties"             → frame → section
  *   "Group Assignments"                                  → ETABS groups
@@ -22,7 +21,7 @@
 import type { ComboForces, StationForce } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
-  EtabsBeamGeom, EtabsColumnGeom, ColumnComboForce, BeamFilter, UnitInfo,
+  EtabsBeamGeom, EtabsColumnGeom, BeamFilter, UnitInfo,
   EtabsAreaGeom, EtabsGridGeom, EtabsOpeningGeom,
 } from './connection';
 import { matchesFilter } from './connection';
@@ -213,10 +212,10 @@ export abstract class TableConnection implements EtabsConnection {
   /** The force table actually used on the last getStationForces (for display). */
   private lastForceTable = '';
   private beamsCache: EtabsBeamGeom[] | null = null;
-  private columnsCache: EtabsColumnGeom[] | null = null;
   private areasCache: EtabsAreaGeom[] | null = null;
   private openingsCache: EtabsOpeningGeom[] | null = null;
   private gridsCache: EtabsGridGeom[] | null = null;
+  private columnsCache: EtabsColumnGeom[] | null = null;
   private sectionNamesUsed = new Set<string>();
   private storiesCache: string[] = [];
   private groupNames: string[] = [];
@@ -323,8 +322,8 @@ export abstract class TableConnection implements EtabsConnection {
   /** Drop every cache that bakes in the current unit factors so the next read
    *  re-converts. Called on unit override. */
   private invalidateModelCaches(): void {
-    this.beamsCache = null;
     this.columnsCache = null;
+    this.beamsCache = null;
     this.areasCache = null;
     this.openingsCache = null;
     this.gridsCache = null;
@@ -441,13 +440,12 @@ export abstract class TableConnection implements EtabsConnection {
     return this.beamsCache!.filter(b => matchesFilter(b, filter));
   }
 
-  /**
-   * Load column frames from "Column Object Connectivity" — the sibling of the
-   * beam table. Columns are (near-)vertical frames (pt1 = base, pt2 = top) and
-   * share the model-wide joint / section / group context. No forces are read:
-   * imported columns start at zero and get their design forces in the app. A
-   * model with no columns (or no such table) yields an empty list rather than
-   * throwing — the beam path owns the "is a model open?" check.
+    /**
+   * Load vertical frames from "Column Object Connectivity" for the 3D view.
+   *
+   * Geometry ONLY — no sections forces, no members, nothing designable. The app
+   * designs beams; columns are drawn so the frame reads as a building. A model
+   * with no such table yields an empty list rather than throwing.
    */
   private async loadColumns(): Promise<void> {
     if (this.columnsCache) return;
@@ -455,30 +453,22 @@ export abstract class TableConnection implements EtabsConnection {
       this.fetchTable('Column Object Connectivity').catch(() => [] as TableRow[]),
       this.loadFrameContext(),
     ]);
-    const lf = this.units.lengthToFt;
     this.columnsCache = connectivity.map(row => {
       const un = str(row, 'UniqueName');
-      const section = ctx.sectionByFrame.get(un) ?? '';
-      if (section) this.sectionNamesUsed.add(section);
-      const pt1 = ctx.coords.get(str(row, 'UniquePtI', 'PtI')) ?? { x: 0, y: 0, z: 0 };
-      const pt2 = ctx.coords.get(str(row, 'UniquePtJ', 'PtJ')) ?? { x: 0, y: 0, z: 0 };
-      const lengthRaw = num(row, 'Length');
       return {
         name: un,
         story: str(row, 'Story'),
-        section,
-        pt1, pt2,
-        groups: ctx.groupsFor(un, 'frame'),
-        heightFt: lengthRaw > 0
-          ? lengthRaw * lf
-          : Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y, pt2.z - pt1.z),
+        section: ctx.sectionByFrame.get(un) ?? '',
+        pt1: ctx.coords.get(str(row, 'UniquePtI', 'PtI')) ?? { x: 0, y: 0, z: 0 },
+        pt2: ctx.coords.get(str(row, 'UniquePtJ', 'PtJ')) ?? { x: 0, y: 0, z: 0 },
       };
     });
   }
 
   async getColumns(filter: BeamFilter): Promise<EtabsColumnGeom[]> {
     await this.loadColumns();
-    return this.columnsCache!.filter(c => matchesFilter(c, filter));
+    return (this.columnsCache ?? []).filter(c =>
+      !filter.stories?.length || filter.stories.includes(c.story));
   }
 
   /**
@@ -746,54 +736,4 @@ export abstract class TableConnection implements EtabsConnection {
     return out;
   }
 
-  /**
-   * Column design forces per frame for the selected combos, enveloped over the
-   * member's stations (most-compressive P; max |V2|,|V3|,|M2|,|M3|,|T|). Reads the
-   * "… Forces - Columns" table — a pure read, no SetLoad*SelectedForDisplay — so it
-   * never unlocks the model (mirrors the beam force convention). Values in kip /
-   * kip-ft with ETABS's compression-negative axial sign.
-   */
-  async getColumnForces(
-    frameNames: string[], combos: string[], sourceGroup?: string,
-  ): Promise<Record<string, ColumnComboForce[]>> {
-    const primary = this.forceSourcePref === 'element' ? 'Element Forces - Columns' : 'Design Forces - Columns';
-    const secondary = this.forceSourcePref === 'element' ? 'Design Forces - Columns' : 'Element Forces - Columns';
-    let rows = await this.fetchTable(primary, sourceGroup);
-    if (!rows.length) rows = await this.fetchTable(secondary, sourceGroup);
-
-    const wanted = new Set(frameNames);
-    const comboSet = new Set(combos);
-    const ff = this.units.forceToKip;
-    const mf = ff * this.units.lengthToFt; // moment → kip-ft
-
-    const byFrame = new Map<string, Map<string, ColumnComboForce>>();
-    for (const r of rows) {
-      const frame = str(r, 'UniqueName');
-      if (!wanted.has(frame)) continue;
-      const rawCombo = str(r, 'Combo', 'OutputCase', 'Case');
-      const baseCombo = rawCombo.replace(/-\d+$/, ''); // strip "Env-1"/"Env-2" step suffixes
-      if (!comboSet.has(rawCombo) && !comboSet.has(baseCombo)) continue;
-
-      const P = num(r, 'P') * ff;
-      const V2 = Math.abs(num(r, 'V2') * ff), V3 = Math.abs(num(r, 'V3') * ff);
-      const M2 = Math.abs(num(r, 'M2') * mf), M3 = Math.abs(num(r, 'M3') * mf);
-      const T = Math.abs(num(r, 'T') * mf);
-
-      let fm = byFrame.get(frame);
-      if (!fm) { fm = new Map(); byFrame.set(frame, fm); }
-      const cur = fm.get(baseCombo);
-      if (!cur) fm.set(baseCombo, { combo: baseCombo, P, V2, V3, M2, M3, T });
-      else {
-        if (P < cur.P) cur.P = P;             // most compressive (ETABS: compression negative)
-        cur.V2 = Math.max(cur.V2, V2); cur.V3 = Math.max(cur.V3, V3);
-        cur.M2 = Math.max(cur.M2, M2); cur.M3 = Math.max(cur.M3, M3);
-        cur.T = Math.max(cur.T, T);
-      }
-    }
-
-    const out: Record<string, ColumnComboForce[]> = {};
-    for (const [frame, fm] of byFrame) out[frame] = [...fm.values()];
-    for (const f of frameNames) if (!out[f]) out[f] = [];
-    return out;
   }
-}

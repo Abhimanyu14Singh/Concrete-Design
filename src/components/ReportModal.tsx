@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Project } from '../types';
-import { buildReportBytes, type ReportOptions, DEFAULT_REPORT_OPTIONS } from '../utils/export/pdfExport';
+import { buildReportBytes, type ReportOptions } from '../utils/export/pdfExport';
 import { ACCENT, BORDER, INK, LABEL_STYLE, STATUS, SURFACE } from '../theme';
 
 interface Props {
@@ -31,17 +31,22 @@ const inp: React.CSSProperties = {
 export default function ReportModal({ project, onClose }: Props) {
   const groups = project.designGroups ?? [];
 
-  // Scope controls
-  const [scope, setScope] = useState<ScopeKind>('all');
+  // Scope controls. Opens on "By design group" so the first preview covers the
+  // grouped members rather than every frame in the model.
+  const [scope, setScope] = useState<ScopeKind>(groups.length ? 'group' : 'all');
   const [groupIds, setGroupIds] = useState<Set<string>>(new Set(groups.map(g => g.id)));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(project.members.map(m => m.id)));
 
-  // Content toggles
-  const [governingOnly, setGoverningOnly] = useState(DEFAULT_REPORT_OPTIONS.governingOnly);
-  const [includeDiagrams, setIncludeDiagrams] = useState(DEFAULT_REPORT_OPTIONS.includeDiagrams);
-  const [includeCalcs, setIncludeCalcs] = useState(DEFAULT_REPORT_OPTIONS.includeCalcs);
-  const [includeCrack, setIncludeCrack] = useState(DEFAULT_REPORT_OPTIONS.includeCrack);
-  const [includeOverrides, setIncludeOverrides] = useState(DEFAULT_REPORT_OPTIONS.includeOverrides);
+  // Content toggles. The builder opens with ONLY the governing load case: the
+  // diagrams and the step-by-step calc sheets are what make the first preview
+  // slow, and they re-render on every keystroke in this panel. Tick them back on
+  // once the scope is settled. (DEFAULT_REPORT_OPTIONS stays "everything on" —
+  // it is the merge base for programmatic callers, not this panel's opening state.)
+  const [governingOnly, setGoverningOnly] = useState(true);
+  const [includeDiagrams, setIncludeDiagrams] = useState(false);
+  const [includeCalcs, setIncludeCalcs] = useState(false);
+  const [includeCrack, setIncludeCrack] = useState(false);
+  const [includeOverrides, setIncludeOverrides] = useState(false);
 
   // Title block
   const [jobNumber, setJobNumber] = useState('');
@@ -49,7 +54,6 @@ export default function ReportModal({ project, onClose }: Props) {
 
   // Editable project details (pre-filled from project, not mutating project state)
   const [reportName, setReportName] = useState(project.name);
-  const [reportEngineer, setReportEngineer] = useState(project.engineer ?? '');
   const [reportDate, setReportDate] = useState(project.date ?? '');
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -77,10 +81,9 @@ export default function ReportModal({ project, onClose }: Props) {
     jobNumber: jobNumber.trim() || undefined,
     revision: revision.trim() || undefined,
     reportName: reportName.trim() || undefined,
-    reportEngineer: reportEngineer.trim() || undefined,
     reportDate: reportDate.trim() || undefined,
   }), [resolveMemberIds, governingOnly, includeDiagrams, includeCalcs, includeCrack, includeOverrides,
-      jobNumber, revision, reportName, reportEngineer, reportDate]);
+      jobNumber, revision, reportName, reportDate]);
 
   const generate = useCallback(async () => {
     setBusy(true);
@@ -112,7 +115,7 @@ export default function ReportModal({ project, onClose }: Props) {
     return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, groupIds, selectedIds, governingOnly, includeDiagrams, includeCalcs, includeCrack, includeOverrides,
-      jobNumber, revision, reportName, reportEngineer, reportDate]);
+      jobNumber, revision, reportName, reportDate]);
 
   // Clean up blob URL on unmount
   useEffect(() => {
@@ -152,15 +155,9 @@ export default function ReportModal({ project, onClose }: Props) {
                 <label style={{ fontSize: 10, color: INK.muted }}>Project name</label>
                 <input style={inp} value={reportName} onChange={e => setReportName(e.target.value)} placeholder="Project name" />
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: 10, color: INK.muted }}>Engineer</label>
-                  <input style={inp} value={reportEngineer} onChange={e => setReportEngineer(e.target.value)} placeholder="Engineer name" />
-                </div>
-                <div style={{ width: 100 }}>
-                  <label style={{ fontSize: 10, color: INK.muted }}>Date</label>
-                  <input style={inp} value={reportDate} onChange={e => setReportDate(e.target.value)} placeholder="YYYY-MM-DD" />
-                </div>
+              <div>
+                <label style={{ fontSize: 10, color: INK.muted }}>Date</label>
+                <input style={inp} value={reportDate} onChange={e => setReportDate(e.target.value)} placeholder="YYYY-MM-DD" />
               </div>
             </div>
 

@@ -11,7 +11,7 @@
  * S-Concrete); on web the derived `desktop`/`hasEtabs` flags let the UI explain why.
  */
 import { useState, useEffect } from 'react';
-import type { Member, Project, SconcreteResult, RebarLayout } from '../../types';
+import type { Project, SconcreteResult, RebarLayout } from '../../types';
 import { formatBarLabel } from '../rebar';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from './scoBatch';
 import type { ScrsResult } from './scrsParser';
@@ -213,18 +213,13 @@ export function useSconcreteBatch(
     });
   }
 
-  // S-Concrete sections: beams (Member Type 1), rectangular columns (Type 3), and
-  // — for ACI — circular columns (Member Type 4, Version 2026.0). EC2 circular
-  // columns have no sample yet, so they stay ineligible under EN 1992-1-1.
-  const isScoEligible = (m: Member) =>
-    m.memberType === 'beam'
-    || m.section.type === 'rectangular_column'
-    || (m.section.type === 'circular_column' && code !== 'EN1992-1-1');
-  const scoMembers = members.filter(isScoEligible);
+  // Every member is a beam (S-Concrete Member Type 1), so all of them are eligible.
+  const isScoEligible = () => true;
+  const scoMembers = members.slice();
   // When the user has defined design groups, the batch is scoped to the union of
   // their members (deduped); otherwise it falls back to all eligible members.
   const groupedMemberIds = new Set(groups.flatMap((g) => g.memberIds));
-  const eligibleInGroups = members.filter((m) => groupedMemberIds.has(m.id) && isScoEligible(m));
+  const eligibleInGroups = members.filter((m) => groupedMemberIds.has(m.id) && isScoEligible());
   const runCount = groups.length ? eligibleInGroups.length : scoMembers.length;
   const desktop = hasSconcrete();
   const hasEtabs = !!(window as Window & { electronAPI?: { etabs?: unknown } }).electronAPI?.etabs;
@@ -295,7 +290,7 @@ export function useSconcreteBatch(
         linkByStem = new Map(env.map((f) => {
           const grp = groups.find((g) => g.id === f.groupId);
           const memberIds = grp?.memberIds ?? [];
-          const repMember = members.find((m) => memberIds.includes(m.id) && isScoEligible(m));
+          const repMember = members.find((m) => memberIds.includes(m.id) && isScoEligible());
           return [
             f.fileName.replace(/\.SCO$/i, ''),
             { kind: f.kind, groupLabel: f.groupLabel, memberIds, cage: cageLabel(grp?.rebar ?? repMember?.rebar) },
