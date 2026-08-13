@@ -14,7 +14,7 @@ import { ComConnection } from '../../adapters/etabs/comClient';
 import { buildMembers, autoGroup, stationLoadCases } from '../../adapters/etabs';
 import type { SeedOptions } from '../../adapters/etabs/rebarSeed';
 import { runDesign } from '../../engines';
-import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { barSizeOptions, defaultBarSizes, formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import PlanMap from './PlanMap';
 import { dcrToColor } from './dcrColors';
@@ -65,7 +65,7 @@ function worstDCR(m: Member, code: DesignCode): number {
 }
 
 export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
-  const { units } = useUnits();
+  const { units, barFamily } = useUnits();
   const IN_TO_MM = 25.4;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -110,8 +110,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   // spacings are stored in inches and converted for display when SI)
   const [seed, setSeed] = useState<SeedOptions>(() => ({
     rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4],
-    stirrupBarSize: units === 'si' ? -10 : 4, stirrupLegs: 2,
-    imposeSkinReinf: true, skinBarSize: units === 'si' ? -12 : 5,
+    stirrupBarSize: defaultBarSizes(barFamily).stirrup, stirrupLegs: 2,
+    imposeSkinReinf: true, skinBarSize: defaultBarSizes(barFamily).skin,
   }));
 
   // 1 MPa = 145.0377 psi — the single stress conversion used across the wizard.
@@ -134,8 +134,8 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
     setWizardUnits(u);
     setSeed(s => ({
       ...s,
-      stirrupBarSize: u === 'si' ? -10 : 4,
-      skinBarSize: u === 'si' ? -12 : 5,
+      stirrupBarSize: defaultBarSizes(barFamily).stirrup,
+      skinBarSize: defaultBarSizes(barFamily).skin,
     }));
   }
 
@@ -190,6 +190,21 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
   }, [members, wizardCode, dcrVersion]);
 
   const beamCount = members.length;
+  // Beams whose section named a concrete material we could not find in the
+  // model's material tables: they silently inherit the 4000 psi default, which
+  // is what makes an imported grade look inconsistent member-to-member. Surface
+  // it at import instead of letting it slip through unnoticed.
+  const unmatchedGrade = useMemo(() => {
+    const known = new Set(materials.filter(m => (m.fc ?? 0) > 0).map(m => m.name.trim().toLowerCase()));
+    if (!known.size) return [];
+    const secByName = new Map(sections.map(sc => [sc.name, sc]));
+    const bad = new Set<string>();
+    for (const m of members) {
+      const named = secByName.get(m.etabs?.sectionName ?? '')?.material?.trim().toLowerCase();
+      if (named && !known.has(named)) bad.add(named);
+    }
+    return [...bad];
+  }, [members, sections, materials]);
 
   const filter = useMemo(() => ({
     stories: selStories.size ? [...selStories] : undefined,
@@ -863,9 +878,9 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   ))}
                   <label style={{ fontSize: 12, color: INK.secondary, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     Stirrup size
-                    <Dropdown style={inp} value={seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)}
-                      options={barSizeOptions(wizardUnits, seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4))
-                        .filter(b => b === (seed.stirrupBarSize ?? (wizardUnits === 'si' ? -10 : 4)) || (b > 0 ? b <= 8 : -b <= 20))
+                    <Dropdown style={inp} value={seed.stirrupBarSize ?? defaultBarSizes(barFamily).stirrup}
+                      options={barSizeOptions(barFamily, seed.stirrupBarSize ?? defaultBarSizes(barFamily).stirrup)
+                        .filter(b => b === (seed.stirrupBarSize ?? defaultBarSizes(barFamily).stirrup) || (b > 0 ? b <= 8 : -b <= 20))
                         .map(b => ({ value: b, label: formatBarLabel(b) }))}
                       onChange={v => setSeed(s => ({ ...s, stirrupBarSize: +v }))}
                     />
@@ -885,10 +900,10 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   </label>
                   <label style={{ fontSize: 12, color: INK.secondary, display: 'flex', flexDirection: 'column', gap: 3, opacity: seed.imposeSkinReinf ? 1 : 0.4 }}>
                     Skin bar size
-                    <Dropdown style={inp} value={seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)}
+                    <Dropdown style={inp} value={seed.skinBarSize ?? defaultBarSizes(barFamily).skin}
                       disabled={!seed.imposeSkinReinf}
-                      options={barSizeOptions(wizardUnits, seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5))
-                        .filter(b => b === (seed.skinBarSize ?? (wizardUnits === 'si' ? -12 : 5)) || (b > 0 ? b <= 8 : -b <= 20))
+                      options={barSizeOptions(barFamily, seed.skinBarSize ?? defaultBarSizes(barFamily).skin)
+                        .filter(b => b === (seed.skinBarSize ?? defaultBarSizes(barFamily).skin) || (b > 0 ? b <= 8 : -b <= 20))
                         .map(b => ({ value: b, label: formatBarLabel(b) }))}
                       onChange={v => setSeed(s => ({ ...s, skinBarSize: +v }))}
                     />
@@ -1045,6 +1060,13 @@ export default function EtabsImportWizard({ code, onClose, onImport }: Props) {
                   <div style={{ background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#1e40af', lineHeight: 1.5 }}>
                     <b>Next:</b> group members → design rebar → run S-Concrete to verify.
                   </div>
+                  {unmatchedGrade.length > 0 && (
+                    <div style={{ background: STATUS.warnBg, border: `1px solid ${STATUS.warnBorder}`, borderRadius: 8, padding: '8px 10px', fontSize: 11, color: STATUS.warn, lineHeight: 1.5 }}>
+                      <b>Concrete grade not matched</b> for {unmatchedGrade.length === 1 ? 'material' : 'materials'}{' '}
+                      {unmatchedGrade.map(n => `"${n}"`).join(', ')} — those beams import at the default
+                      f′c and will read as a different grade from the rest. Set f′c below, or in project settings after import.
+                    </div>
+                  )}
                   <button style={btn()} onClick={() => setStep(2)}>← Back to rebar</button>
                   <button style={btn(true)} onClick={() => commit()}>
                     Import {members.length} member{members.length === 1 ? '' : 's'} into project

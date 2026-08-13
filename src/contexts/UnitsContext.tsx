@@ -1,11 +1,18 @@
 import { createContext, useContext, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import type { UnitSystem, Quantity } from '../utils/units';
+import type { BarFamily } from '../types';
 import { loadUnits, saveUnits, fmt, fmtVal, unitLabel, toDisplay, fromDisplay } from '../utils/units';
+import { loadStandards } from '../utils/projectSettings';
 
 interface UnitsCtx {
   units: UnitSystem;
   setUnits: (u: UnitSystem) => void;
+  /** Bar catalogue for every rebar picker. Deliberately independent of `units`
+   *  — a millimetre job can still be detailed in US #-bars. Owned by project
+   *  settings and pushed down here so the pickers need no extra prop. */
+  barFamily: BarFamily;
+  setBarFamily: (f: BarFamily) => void;
   fmt: (v: number, q: Quantity, digits?: number) => string;
   fmtVal: (v: number, q: Quantity, digits?: number) => string;
   label: (q: Quantity) => string;
@@ -17,6 +24,9 @@ const UnitsContext = createContext<UnitsCtx | null>(null);
 
 export function UnitsProvider({ children }: { children: ReactNode }) {
   const [units, setUnitsState] = useState<UnitSystem>(loadUnits);
+  // Seeded from the remembered standards so the very first render already offers
+  // the right catalogue; App pushes the active project's choice over it on load.
+  const [barFamily, setBarFamily] = useState<BarFamily>(() => loadStandards()?.settings.barFamily ?? 'us');
 
   const setUnits = useCallback((u: UnitSystem) => {
     setUnitsState(u);
@@ -26,6 +36,8 @@ export function UnitsProvider({ children }: { children: ReactNode }) {
   const value: UnitsCtx = {
     units,
     setUnits,
+    barFamily,
+    setBarFamily,
     fmt: (v, q, d) => fmt(v, q, units, d),
     fmtVal: (v, q, d) => fmtVal(v, q, units, d),
     label: q => unitLabel(q, units),
@@ -57,6 +69,8 @@ export function useUnits(): UnitsCtx {
     return {
       units: u,
       setUnits: () => {},
+      barFamily: u === 'si' ? 'euro' : 'us',
+      setBarFamily: () => {},
       fmt: (v, q, d) => fmt(v, q, u, d),
       fmtVal: (v, q, d) => fmtVal(v, q, u, d),
       label: q => unitLabel(q, u),

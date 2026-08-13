@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import type { DesignGroup, RebarLayout, BarGroup, Member, Project, TieZone } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import type { BarFamily } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -20,11 +21,16 @@ interface Props {
   onApply: (groupId: string, rebar: RebarLayout, memberIds: string[]) => void;
   code: Project['code'];
   targetDCR: number;
+  /** Project design settings the suggester must size against. Without them it would
+   *  design links for a torsion the project neglects, or search at a different strut
+   *  angle than the member panel checks with. */
+  cotTheta?: number;
+  ignoreTorsion?: boolean;
 }
 
-function defaultRebar(units: 'imperial' | 'si'): RebarLayout {
+function defaultRebar(family: BarFamily): RebarLayout {
   // spacing stored internally in INCHES (engine convention). 150 mm ≈ 5.91 in.
-  return units === 'si'
+  return family === 'euro'
     ? { topBars: [{ numBars: 2, barSize: -16 }], botBars: [{ numBars: 2, barSize: -16 }], ties: { barSize: -8, spacing: 150 / 25.4, legs: 2 } }
     : { topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }], ties: { barSize: 3, spacing: 6, legs: 2 } };
 }
@@ -53,9 +59,10 @@ function NumberField({ value, min, max, onChange, style }: {
   );
 }
 
-function BarGroupRow({ bg, onChange, label, units }: {
-  bg: BarGroup; onChange: (b: BarGroup) => void; label: string; units: 'imperial' | 'si';
+function BarGroupRow({ bg, onChange, label }: {
+  bg: BarGroup; onChange: (b: BarGroup) => void; label: string;
 }) {
+  const { barFamily } = useUnits();
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
       <span style={{ fontSize: 11, color: INK.secondary, width: 60, flexShrink: 0 }}>{label}</span>
@@ -65,7 +72,7 @@ function BarGroupRow({ bg, onChange, label, units }: {
       <span style={{ fontSize: 11, color: INK.muted }}>×</span>
       <Dropdown
         value={bg.barSize}
-        options={barSizeOptions(units, bg.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+        options={barSizeOptions(barFamily, bg.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
         onChange={v => onChange({ ...bg, barSize: parseInt(v) })}
         style={{ padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12 }}
       />
@@ -73,11 +80,11 @@ function BarGroupRow({ bg, onChange, label, units }: {
   );
 }
 
-export default function GroupRebarEditor({ group, members, onApply, code, targetDCR }: Props) {
-  const { units, toDisplay, fromDisplay } = useUnits();
+export default function GroupRebarEditor({ group, members, onApply, code, targetDCR, cotTheta, ignoreTorsion }: Props) {
+  const { units, barFamily, toDisplay, fromDisplay } = useUnits();
   // Spacing is stored in inches; the editor shows it in the active unit system.
   const spacingMax = units === 'si' ? 600 : 24;  // 600 mm ≈ 24 in
-  const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(units));
+  const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(barFamily));
   const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
 
@@ -85,19 +92,19 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   // would clobber an in-progress edit every time the parent re-renders (which
   // is why bar-size changes appeared to "not stick").
   useEffect(() => {
-    const r = group.rebar ?? defaultRebar(units);
+    const r = group.rebar ?? defaultRebar(barFamily);
     // If the stored rebar was created in the other unit system (e.g. imperial #5
     // bars showing in an SI project), reset to the correct-system default.
     const hasMismatch = units === 'si'
       ? r.topBars.some(b => b.barSize > 0) || r.botBars.some(b => b.barSize > 0) || !!(r.ties && r.ties.barSize > 0)
       : r.topBars.some(b => b.barSize < 0) || r.botBars.some(b => b.barSize < 0) || !!(r.ties && r.ties.barSize < 0);
-    setRebar(hasMismatch ? defaultRebar(units) : r);
+    setRebar(hasMismatch ? defaultRebar(barFamily) : r);
     setSuggestNote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group.id]);
 
   function runSuggest(floors?: SuggestFloors) {
-    const r = suggestGroupRebar(members, code, targetDCR, floors);
+    const r = suggestGroupRebar(members, code, targetDCR, floors, barFamily, cotTheta, ignoreTorsion);
     if (isSuggestError(r)) {
       setSuggestNote({ kind: 'err', text: r.error });
       return;
@@ -182,7 +189,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         </div>
         {rebar.topBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} units={units} />
+            <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} />
             {rebar.topBars.length > 1 && (
               <button onClick={() => removeLayer('top', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
             )}
@@ -199,7 +206,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         </div>
         {rebar.botBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} units={units} />
+            <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} />
             {rebar.botBars.length > 1 && (
               <button onClick={() => removeLayer('bot', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
             )}
@@ -232,7 +239,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
           <div>
             {rebar.sideBars.map((bg, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <BarGroupRow bg={bg} onChange={bg => setRebar(r => ({ ...r, sideBars: r.sideBars!.map((b, j) => j === i ? bg : b) }))} label={`Row ${i + 1}`} units={units} />
+                <BarGroupRow bg={bg} onChange={bg => setRebar(r => ({ ...r, sideBars: r.sideBars!.map((b, j) => j === i ? bg : b) }))} label={`Row ${i + 1}`} />
                 {rebar.sideBars!.length > 1 && (
                   <button onClick={() => setRebar(r => ({ ...r, sideBars: r.sideBars!.filter((_, j) => j !== i) }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
                 )}
@@ -254,7 +261,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Dropdown
             value={ties.barSize}
-            options={barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 8 : -s <= 20)).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            options={barSizeOptions(barFamily, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 8 : -s <= 20)).map(s => ({ value: s, label: formatBarLabel(s) }))}
             onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(v) } }))}
             style={{ padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12 }}
           />

@@ -10,6 +10,7 @@
  */
 import { useState, useEffect } from 'react';
 import type { Project } from '../../types';
+import { useUnits } from '../../contexts/UnitsContext';
 import { suggestSizeCandidates, type SuggestFloors } from '../../utils/suggestRebar';
 import { formatBarLabel } from '../../utils/rebar';
 import Dropdown from './Dropdown';
@@ -40,7 +41,10 @@ export default function SuggestSizeDialog({ code, title, onCancel, onConfirm }: 
   onCancel: () => void;
   onConfirm: (floors: SuggestFloors) => void;
 }) {
-  const { long, stirrup } = suggestSizeCandidates(code);
+  // The floors offered must be the same catalogue Suggest will search, so this
+  // reads the project's bar family rather than inferring one from the code.
+  const { barFamily } = useUnits();
+  const { long, stirrup } = suggestSizeCandidates(code, barFamily);
   const [minTop, setMinTop] = useState(long[0]);
   const [minBot, setMinBot] = useState(long[0]);
   const [minStir, setMinStir] = useState(stirrup[0]);

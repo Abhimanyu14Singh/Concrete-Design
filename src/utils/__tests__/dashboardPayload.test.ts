@@ -26,7 +26,7 @@ const group = (id: string, memberIds: string[]): DashboardGroup => ({
 });
 const member = (id: string, groupId: string): DashboardMember => ({
   id, label: id, groupId, b: 20, h: 48,
-  modeDCRs: { flexPos: 1, flexNeg: 0.5, shear: 0.4 },
+  modeDCRs: { flexPos: 1, flexNeg: 0.5, shear: 0.4, torsion: 0 },
   maxDCR: 1, status: 'OK', warnings: [],
 });
 

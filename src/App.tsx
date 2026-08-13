@@ -18,6 +18,13 @@ import HelpView from './components/Help/HelpView';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
+// The panel workspace IS the shell now: Plan, Groups, Section, Calc, Loads, Force,
+// Elevation, Editor, Group Dashboard and S-Concrete, each dockable, floatable and
+// detachable into its own window. App keeps what only App can do — the project object,
+// disk, the ETABS wizard — and hands the workspace the project plus those actions.
+import WorkspaceView from './workspace/WorkspaceView.jsx';
+import './workspace/ui.css';
+import './workspace/shell.css';
 import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import ProjectSettingsDialog from './components/Settings/ProjectSettingsDialog';
@@ -81,7 +88,7 @@ export default function App() {
   const [showExport, setShowExport] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [helpTarget, setHelpTarget] = useState<{ tab?: string; section?: string } | null>(null);
-  const { units, setUnits, fmt } = useUnits();
+  const { units, setUnits, setBarFamily, fmt } = useUnits();
 
   // B5: dirty indicator
   const [isDirty, setIsDirty] = useState(false);
@@ -166,13 +173,14 @@ export default function App() {
       // the screens read in the units it was designed in.
       if (loaded.settings) {
         setUnits(loaded.settings.units);
+        setBarFamily(loaded.settings.barFamily);
         setZoom(loaded.settings.displayScale);
         localStorage.setItem('sc-zoom', String(loaded.settings.displayScale));
       }
     } catch (e) {
       alert(`Could not open the project file:\n${(e as Error).message}`);
     }
-  }, [setUnits]);
+  }, [setUnits, setBarFamily]);
 
   function handleNewProject() {
     if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
@@ -216,6 +224,7 @@ export default function App() {
   function handleSettingsSave(next: { name: string; code: DesignCode; settings: ProjectSettings }) {
     setProject(p => applyProjectSettings({ ...p, name: next.name, code: next.code }, next.settings));
     setUnits(next.settings.units);
+    setBarFamily(next.settings.barFamily);
     changeZoom(next.settings.displayScale);
     saveStandards(next.code, next.settings);
     setSettingsMode(null);
@@ -561,7 +570,20 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" style={{ display: 'flex', height: '100vh', background: SURFACE.app, fontFamily: FONT.ui, overflow: 'hidden' }}>
+    <div id="app-root" style={{ height: '100vh', overflow: 'hidden', fontFamily: FONT.ui }}>
+      <WorkspaceView
+        project={project}
+        setProject={setProject}
+        onSettingsSave={handleSettingsSave}
+        onSaveProject={handleSave}
+        onOpenProject={handleOpen}
+        onNewProject={handleNewProject}
+        onImportEtabs={() => setShowEtabsImport(true)}
+      />
+
+      {/* App-owned modals. They outlive any one panel, and two of them (the ETABS
+          wizard and the first-run setup) can rewrite the whole project — so they stay
+          here rather than inside a workspace that is only ever a view of it. */}
       {showEtabsImport && (
         <EtabsImportWizard
           code={project.code}
@@ -569,464 +591,17 @@ export default function App() {
           onImport={handleEtabsImport}
         />
       )}
-      {showReport && (
-        <ReportModal project={project} onClose={() => setShowReport(false)} />
-      )}
-      {settingsMode && (
+      {showReport && <ReportModal project={project} onClose={() => setShowReport(false)} />}
+      {settingsMode === 'setup' && (
         <ProjectSettingsDialog
-          mode={settingsMode}
+          mode="setup"
           projectName={project.name}
           code={project.code}
           settings={activeSettings}
-          // First-run setup is deliberately un-cancellable: the project has no
-          // standards yet, and every check downstream depends on them.
-          onCancel={settingsMode === 'settings' ? () => setSettingsMode(null) : undefined}
+          imported={!!project.modelMap}
           onSave={handleSettingsSave}
         />
       )}
-      {/* Members pull-down overlay — opened from the header "Members" button; a
-          floating panel (not a docked column) so no view loses canvas width. */}
-      {membersOpen && (
-        <aside id="app-sidebar" data-popover="" style={{ position: 'fixed', top: 52, left: 12, bottom: 12, width: 288, zIndex: 300, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, boxShadow: '0 16px 40px rgba(15,23,42,0.20)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Heading */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: `1px solid ${BORDER.default}` }}>
-          <span style={{ fontWeight: 700, fontSize: 13, color: INK.strong }}>Members</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
-            <button onClick={() => setMembersOpen(false)} style={{ color: INK.muted, fontSize: 15, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Close">✕</button>
-          </div>
-        </div>
-
-        {/* Members list — grouped sections */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {buildSidebarSections().map(section => {
-            const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
-            const ngCount = section.members.filter(m => badgeById[m.id] === 'NG').length;
-            const warnCount = section.members.filter(m => badgeById[m.id] === 'warn').length;
-            return (
-              <div key={section.groupId ?? '__ungrouped'}>
-                {/* Section header */}
-                <div
-                  onClick={() => section.groupId && toggleGroupCollapse(section.groupId)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 10px',
-                    background: SURFACE.subtle, borderTop: '1px solid #f3f4f6',
-                    cursor: section.groupId ? 'pointer' : 'default',
-                  }}
-                >
-                  {section.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: section.color, flexShrink: 0 }} />}
-                  {section.groupId && editingGroupId === section.groupId ? (
-                    <input
-                      autoFocus value={editGroupLabel}
-                      onChange={e => setEditGroupLabel(e.target.value)}
-                      onBlur={renameGroupCommit}
-                      onKeyDown={e => { if (e.key === 'Enter') renameGroupCommit(); if (e.key === 'Escape') setEditingGroupId(null); }}
-                      onClick={e => e.stopPropagation()}
-                      style={{ flex: 1, fontSize: 11, fontWeight: 700, border: `1px solid ${ACCENT.primary}`, borderRadius: 3, padding: '1px 4px', minWidth: 0 }}
-                    />
-                  ) : (
-                    <span
-                      onDoubleClick={e => { e.stopPropagation(); const g = (project.designGroups ?? []).find(g => g.id === section.groupId); if (g) renameGroupStart(g); }}
-                      style={{ flex: 1, fontSize: 11, fontWeight: 700, color: INK.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      title={section.groupId ? 'Double-click to rename' : undefined}
-                    >
-                      {section.label}
-                    </span>
-                  )}
-                  {ngCount > 0 && <span title={`${ngCount} inadequate`} style={{ fontSize: 10, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{ngCount} NG</span>}
-                  {warnCount > 0 && <span title={`${warnCount} near capacity`} style={{ fontSize: 10, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{warnCount}⚠</span>}
-                  <span style={{ fontSize: 10, color: INK.muted, flexShrink: 0 }}>{section.members.length}</span>
-                  {section.groupId && <span style={{ fontSize: 10, color: INK.muted }}>{collapsed ? '▸' : '▾'}</span>}
-                </div>
-                {/* Member rows */}
-                {!collapsed && section.members.map(m => (
-                  <div
-                    key={m.id}
-                    draggable
-                    onDragStart={() => onDragStart(m.id)}
-                    onDragOver={e => onDragOver(e, m.id)}
-                    onDrop={() => onDrop(m.id)}
-                    onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
-                    style={{
-                      display: 'flex', alignItems: 'center',
-                      borderTop: dragOverId === m.id && dragSrcId !== m.id ? `2px solid ${ACCENT.primary}` : '2px solid transparent',
-                      opacity: dragSrcId === m.id ? 0.5 : 1,
-                      paddingLeft: section.groupId ? 8 : 0,
-                    }}
-                  >
-                    <span style={{ fontSize: 14, color: BORDER.strong, cursor: 'grab', padding: '0 4px 0 4px', flexShrink: 0 }}>⠿</span>
-                    <button
-                      onClick={() => handleSelectMember(m.id)}
-                      style={{
-                        flex: 1, textAlign: 'left', padding: '6px 6px', display: 'flex', alignItems: 'center', gap: 5,
-                        background: activeMemberId === m.id ? ACCENT.softBg : 'none',
-                        borderRight: `3px solid ${activeMemberId === m.id ? ACCENT.primary : 'transparent'}`,
-                        border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
-                        cursor: 'pointer', minWidth: 0,
-                      }}
-                    >
-                      <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>{m.id}</span>
-                      <span style={{ fontSize: 11, color: INK.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {m.label}
-                      </span>
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
-                      title="Duplicate member"
-                      style={{ display: 'flex', color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
-                    ><Icon name="duplicate" size={ICON.sm} title="Duplicate member" /></button>
-                    <button
-                      onClick={e => { e.stopPropagation(); deleteMember(m.id); }}
-                      title="Delete member"
-                      style={{ display: 'flex', color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
-                      onMouseEnter={e => { e.currentTarget.style.color = STATUS.fail; }}
-                      onMouseLeave={e => { e.currentTarget.style.color = INK.muted; }}
-                    ><Icon name="delete" size={ICON.sm} title="Delete member" /></button>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Legend footer */}
-        <div style={{ padding: '10px 14px', borderTop: `1px solid ${BORDER.default}` }}>
-          {[['Beam', MEMBER_COLOR.beam]].map(([t, c]) => (
-            <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
-              <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
-            </div>
-          ))}
-        </div>
-        </aside>
-      )}
-
-      {/* Main area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Top bar */}
-        <header id="app-header" style={{ background: 'white', borderBottom: `1px solid ${BORDER.default}`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-          {/* Brand */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 2 }}>
-            <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
-              SD
-            </div>
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong, lineHeight: 1.15 }}>S-Dashboard</div>
-              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
-            </div>
-          </div>
-
-          {/* Members pull-down toggle (replaces the old docked member column) */}
-          <div data-popover="" style={{ position: 'relative' }}>
-            <button
-              onClick={() => { setMembersOpen(v => !v); setShowExport(false); }}
-              // Icon-only: the tighter padding matches the undo/redo buttons, and
-              // aria-label carries the name the visible text used to provide.
-              style={{ ...hdrBtn, padding: '5px 8px', background: membersOpen ? ACCENT.softBg : 'white', color: membersOpen ? ACCENT.primary : INK.base }}
-              title="Show the member list"
-              aria-label="Members"
-            >
-              <Icon name="members" />
-            </button>
-          </div>
-
-          <div style={{ width: 1, height: 20, background: BORDER.default }} />
-
-          {/* View tabs */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {([
-              ['map', 'Viewer', 'viewer'],
-              ['dashboard', 'Dashboard', 'dashboard'],
-              ['member', 'Member', 'member'],
-              ['help', 'Help', 'help'],
-            ] as [Tab, string, IconName][]).map(([key, label, icon]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                style={{
-                  padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  background: tab === key ? ACCENT.primary : 'transparent',
-                  // the icon inherits this, so the active tab's glyph turns white too
-                  color: tab === key ? 'white' : INK.secondary,
-                }}
-              >
-                <Icon name={icon} />
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ flex: 1 }} />
-
-          {/* Member selector */}
-          {tab === 'member' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: INK.secondary }}>Member:</span>
-              <Dropdown
-                value={activeMemberId}
-                options={project.members.map(m => ({ value: m.id, label: `${m.id} — ${m.label}` }))}
-                onChange={setActiveMemberId}
-                style={{ background: 'white', border: `1px solid ${BORDER.strong}`, borderRadius: 6, padding: '4px 8px', fontSize: 12, color: INK.strong }}
-              />
-            </div>
-          )}
-
-          {/* Separator */}
-          <div style={{ width: 1, height: 20, background: BORDER.default }} />
-
-          {/* B5: Dirty indicator */}
-          <span style={{
-            fontSize: 11, color: isDirty ? STATUS.fail : INK.muted, fontWeight: 600, minWidth: 70,
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-          }}>
-            <Icon name={isDirty ? 'unsaved' : 'saved'} size={ICON.sm} />
-            {isDirty ? 'Unsaved' : 'Saved'}
-          </span>
-
-          {/* B4: Undo/Redo */}
-          <button onClick={undo} style={{ ...hdrBtn, padding: '5px 8px' }} title="Undo (Ctrl+Z)">
-            <Icon name="undo" title="Undo" />
-          </button>
-          <button onClick={redo} style={{ ...hdrBtn, padding: '5px 8px' }} title="Redo (Ctrl+Y)">
-            <Icon name="redo" title="Redo" />
-          </button>
-
-          <div style={{ width: 1, height: 20, background: BORDER.default }} />
-
-          {/* File actions (New / Open / Save) live in the native File menu and the
-              Ctrl+N/O/S shortcuts — no header buttons. */}
-          <button
-            onClick={() => setShowEtabsImport(true)}
-            style={{ ...hdrBtn, borderColor: ACCENT.primary, color: ACCENT.primary }}
-            title="Import beams from an ETABS model (CSI API or tables file)"
-          >
-            <Icon name="etabsImport" />
-            ETABS
-          </button>
-
-          {/* E1: Export dropdown */}
-          <div data-popover="" style={{ position: 'relative' }}>
-            <button
-              onClick={() => { setShowExport(v => !v); setMembersOpen(false); }}
-              style={{ ...hdrBtn, background: showExport ? ACCENT.softBg : 'white', color: showExport ? ACCENT.primary : INK.base }}
-            >
-              <Icon name="export" />
-              Export
-            </button>
-            {showExport && (
-              <div style={{
-                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
-                background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '6px', minWidth: 160,
-              }}>
-                <button
-                  onClick={() => { setShowReport(true); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  PDF Report…
-                </button>
-                <button
-                  onClick={() => { exportExcel(project); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Excel Summary
-                </button>
-                <button
-                  onClick={() => { exportDcrList(project); setShowExport(false); }}
-                  title="One row per member: governing DCR + per-mode DCRs (flexure / shear / torsion / crack / P-M) and status"
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(Spreadsheet)</span>
-                </button>
-                <button
-                  onClick={async () => {
-                    setShowExport(false);
-                    const bytes = await buildDcrListPDF(project);
-                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${(project.name ?? 'dcr').replace(/\s+/g, '_')}_DCR_schedule.pdf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  title="A few-page PDF: one row per member with per-mode + governing DCR and status (reviewed members show 'Reviewed', not NG)"
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(PDF)</span>
-                </button>
-                <button
-                  onClick={async () => {
-                    setShowExport(false);
-                    const bytes = await buildSchedulePDF(project, { mode: 'group' });
-                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_group_schedule.pdf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Group Schedule PDF
-                </button>
-                <button
-                  onClick={() => { exportGroupScheduleExcel(project); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Group Schedule (Spreadsheet)
-                </button>
-                <button
-                  onClick={async () => {
-                    setShowExport(false);
-                    const bytes = await buildSchedulePDF(project, { mode: 'beam' });
-                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_beam_schedule.pdf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Beam Schedule PDF <span style={{ fontSize: 10, color: INK.muted }}>(full)</span>
-                </button>
-                <button
-                  onClick={() => { window.print(); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Print Preview
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Project settings — the standards set in the setup dialog */}
-          <button
-            onClick={() => { setSettingsMode('settings'); setShowExport(false); setMembersOpen(false); }}
-            style={{ ...hdrBtn, background: settingsMode ? ACCENT.softBg : 'white', color: settingsMode ? ACCENT.primary : INK.base }}
-            title="Project settings — code, units, materials, cover, moduli, display scale"
-          >
-            <Icon name="settings" title="Project settings" />
-          </button>
-
-          {/* Project info */}
-          <div style={{ fontSize: 11, color: INK.secondary }}>{project.name}</div>
-        </header>
-
-        {/* Content */}
-        <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>
-          <div style={{
-            transform: `scale(${zoom})`,
-            transformOrigin: 'top left',
-            width: `${100 / zoom}%`,
-            minHeight: `${100 / zoom}%`,
-            // map tab needs a definite height so the canvas can fill it
-            height: tab === 'map' ? `${100 / zoom}%` : undefined,
-            padding: tab === 'map' ? 0 : 16,
-          }}>
-            {tab === 'dashboard' && (
-              <Dashboard
-                project={project}
-                onSelectMember={handleSelectMember}
-                onProjectUpdate={setProject}
-                collapsedGroups={collapsedGroups}
-                setCollapsedGroups={setCollapsedGroups}
-              />
-            )}
-            {tab === 'map' && (
-              <div style={{ height: '100%', display: 'flex' }}>
-                <ErrorBoundary area="the model map">
-                  <ModelMapView
-                    project={project}
-                    onProjectChange={setProject}
-                    onOpenEtabsImport={() => setShowEtabsImport(true)}
-                    onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
-                    onDeleteMember={id => deleteMember(id)}
-                    onDeleteMembers={ids => deleteMembers(ids)}
-                  />
-                </ErrorBoundary>
-              </div>
-            )}
-            {tab === 'member' && (
-              <div id="app-split" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
-                {/* Left: Input editor */}
-                <div style={{ width: splitPos, flexShrink: 0, minWidth: 0, paddingRight: 8 }}>
-                  <div style={{ marginBottom: 10 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: INK.strong }}>Input</h2>
-                    <p style={{ fontSize: 11, color: INK.secondary, margin: '2px 0 0' }}>Edit geometry, materials, reinforcement, loads</p>
-                  </div>
-                  <MemberEditor
-                    key={activeMember.id}
-                    member={activeMember}
-                    onUpdate={handleUpdateMember}
-                    code={project.code}
-                  />
-                </div>
-
-                {/* A1: Drag divider */}
-                <div
-                  onMouseDown={onSplitMouseDown}
-                  style={{
-                    width: 8, flexShrink: 0, cursor: 'col-resize',
-                    background: 'transparent', position: 'relative',
-                    alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >
-                  <div style={{ width: 3, borderRadius: 2, height: '40px', background: BORDER.strong }} />
-                </div>
-
-                {/* Right: Results */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ marginBottom: 10 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: INK.strong }}>{activeMember.label}</h2>
-                    <p style={{ fontSize: 11, color: INK.secondary, margin: '2px 0 0' }}>
-                      {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
-                      f'c = {fmt(activeMember.material.fc, 'stress')} &bull; fy = {fmt(activeMember.material.fy / 1000, 'stressKsi')}
-                    </p>
-                  </div>
-                  <ErrorBoundary key={activeMember.id} area="the results view">
-                    <MemberResults
-                      member={activeMember}
-                      code={project.code}
-                      slsCombo={project.slsCombo}
-                      cotTheta={project.cotTheta}
-                      ignoreTorsion={project.ignoreTorsion}
-                      engineer={project.engineer}
-                      sconcreteResults={project.sconcreteResults}
-                      sconcreteRanAt={project.sconcreteRanAt}
-                      onRebarChange={handleUpdateMember}
-                      midThirdTopBars={activeGroup?.midThirdTopBars}
-                      oppositeTopBars={activeGroup?.oppositeTopBars}
-                      endThirdBotBars={activeGroup?.endThirdBotBars}
-                    />
-                  </ErrorBoundary>
-                </div>
-              </div>
-            )}
-            {tab === 'help' && <HelpView target={helpTarget} />}
-          </div>
-        </main>
-      </div>
     </div>
   );
 }

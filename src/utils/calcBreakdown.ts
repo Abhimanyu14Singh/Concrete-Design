@@ -4,6 +4,7 @@
  */
 import { formatBarLabel } from './rebar';
 import { beamAxialFlexure } from './axialFlexure';
+import { biaxialCheck, DEFAULT_BIAXIAL_ALPHA } from './biaxial';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
 import {
   getBarArea, getBarDiam, coverFor,
@@ -24,6 +25,12 @@ export interface CalcStep {
 export interface CalcSection {
   title: string;
   steps: CalcStep[];
+  /**
+   * A chart this section can open, shown as an icon in its header. The sheet
+   * stays plain text — the icon is the only addition — so a section that has a
+   * picture worth seeing can offer it without the printed sheet growing one.
+   */
+  chart?: { kind: 'pm' | 'biaxial'; label: string };
 }
 
 function fmt(n: number, dec = 2): string {
@@ -58,6 +65,9 @@ export function generateBreakdown(
   load: LoadCase,
   span = 20,
   zoneVu?: [number, number, number],  // max |V| per span third (station forces)
+  /** Bresler contour exponent — must be the same value designMember was given,
+   *  or the sheet prints a utilisation the results panel disagrees with. */
+  biaxialAlpha: number = DEFAULT_BIAXIAL_ALPHA,
 ): CalcSection[] {
   const { fc, fy, fyt, lambdaConcrete } = material;
   const h = section.h ?? 12;
@@ -592,6 +602,7 @@ export function generateBreakdown(
     const cap = compression ? pm.phiPnMax : Math.abs(pm.phiPnTens);
     out.push({
       title: '8. Axial + Flexure Interaction (P-M)',
+      chart: { kind: 'pm', label: 'Show the P-M interaction curve' },
       steps: [
         {
           ref: compression ? 'ACI 318-19 §22.4.2.1' : 'ACI 318-19 §22.4.3.1',
@@ -621,6 +632,44 @@ export function generateBreakdown(
           substitution: `surface point: φPn = ${fmt(pm.phiPnAtRay)} kips, φMn = ${fmt(pm.phiMnAtRay)} kip-ft`,
           result: `util = ${fmt(pm.nmUtil, 3)}  ${pm.nmUtil <= 1 ? '✓ OK' : '✗ NG'}`,
           note: `Pure bending alone would read ${fmt(flex.phi_Mn_pos > 0 ? load.Mu_pos / flex.phi_Mn_pos : 0, 3)} — the axial load is what makes the difference.`,
+        },
+      ],
+    });
+  }
+
+  // ── Biaxial bending (Bresler load contour) — only with a minor-axis moment ──
+  // Deliberately silent on an ordinary beam: a member bent about one axis has no
+  // biaxial check to show, and a section reading "Muy = 0, util = 0" on every
+  // sheet would be noise that trains people to skip it.
+  const biax = biaxialCheck(section, material, rebar, load, span, biaxialAlpha);
+  if (biax) {
+    const a = biax.alpha;
+    out.push({
+      title: '9. Biaxial Bending (Bresler load contour)',
+      chart: { kind: 'biaxial', label: 'Show the P-M-M interaction contour' },
+      steps: [
+        {
+          ref: 'Resultant',
+          label: 'Applied moments about both axes',
+          equation: 'Mres = √(Mux² + Muy²),  θ = atan2(Muy, Mux)',
+          substitution: `√(${fmt(biax.Mux)}² + ${fmt(biax.Muy)}²)`,
+          result: `Mres = ${fmt(biax.Mres)} kip-ft at θ = ${fmt(biax.theta, 1)}° from the major axis`,
+        },
+        {
+          ref: 'ACI 318-19 §22.4',
+          label: 'Uniaxial capacity about each axis (at this Pu)',
+          equation: 'φMnx from the major-axis check; φMny from the section on its side',
+          substitution: `minor axis: b×h swapped to ${fmt(section.h ?? 12)}×${fmt(section.b)} in, As ${fmt(biax.AsTotal)} in² split ${fmt(biax.AsPerSide)} in² per side face`,
+          result: `φMnx = ${fmt(biax.phiMnx)} kip-ft,  φMny = ${fmt(biax.phiMny)} kip-ft`,
+          note: 'The minor-axis steel is taken as half the total longitudinal area on each side face — the BarGroup model does not record where each bar sits across the width, so the exact side-face area is not recoverable. This is the approximation the contour is paired with.',
+        },
+        {
+          ref: 'ACI 318-19 R22.4.2.1',
+          label: 'Interaction contour (governing)',
+          equation: '(|Mux|/φMnx)^α + (|Muy|/φMny)^α ≤ 1.0',
+          substitution: `(${fmt(Math.abs(biax.Mux))}/${fmt(biax.phiMnx)})^${a} + (${fmt(Math.abs(biax.Muy))}/${fmt(biax.phiMny)})^${a}`,
+          result: `util = ${fmt(biax.util, 3)}  ${biax.util <= 1 ? '✓ OK' : '✗ NG'}`,
+          note: `α = ${a}. At α = 1.0 the contour is a straight line between the two axes, which is always conservative; the PCA range for rectangular sections with symmetric steel is 1.15–1.5. This is a contour interpolated between two uniaxial capacities, not an inclined-neutral-axis section analysis — expect a few percent against tools that re-integrate the section at θ.`,
         },
       ],
     });

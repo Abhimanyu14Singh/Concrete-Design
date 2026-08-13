@@ -7,6 +7,7 @@ import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase,
   DesignResults, DesignWarning, ComboForces, BarGroup,
 } from '../types';
+import { biaxialCheck, DEFAULT_BIAXIAL_ALPHA } from './biaxial';
 import { beamAxialFlexure } from './axialFlexure';
 
 // ── Stirrup zones (thirds of the span) ───────────────────────────────────────
@@ -672,6 +673,9 @@ export function designMember(
   rebar: RebarLayout,
   load: LoadCase,
   span = 20,
+  /** Bresler contour exponent for the biaxial check. Project setting; 1.0 = linear
+   *  and conservative. Ignored unless the load carries a minor-axis moment. */
+  biaxialAlpha: number = DEFAULT_BIAXIAL_ALPHA,
 ): DesignResults {
   const warnings: DesignWarning[] = [];
   const { fc, fy, fyt, lambdaConcrete } = material;
@@ -773,6 +777,14 @@ export function designMember(
   const DCR_PM = pm ? Math.max(pm.pos.nmUtil, pm.neg.nmUtil) : undefined;
   const axialUtil = pm ? pm.pos.axialUtil : undefined;
 
+  // ── Biaxial bending (Bresler load contour) ─────────────────────────────────
+  // Only runs when a minor-axis moment is actually present: a uniaxially-loaded
+  // beam — which is nearly every beam in a normal model — must not acquire a
+  // second utilisation out of nowhere. See utils/biaxial.ts for the method and
+  // its assumptions.
+  const biax = biaxialCheck(section, material, rebar, load, span, biaxialAlpha);
+  const NM_util = biax?.util;
+
   // ── Warnings ────────────────────────────────────────────────────────────────
 
   // Steel limits ACI §9.3.3 / §9.6.1.2
@@ -837,6 +849,21 @@ export function designMember(
         severity: heavy ? 'error' : 'warning',
       });
   }
+
+  // Biaxial bending — the Bresler contour. Only present when a minor-axis moment
+  // was supplied, so this never fires on an ordinary uniaxially-loaded beam.
+  if (biax && biax.util > 1)
+    warnings.push({
+      code: 'ACI R22.4.2.1',
+      message: `Biaxial bending: (Mux/φMnx)^α + (Muy/φMny)^α = ${biax.util.toFixed(2)} > 1.0 — Mux ${biax.Mux.toFixed(0)}/${biax.phiMnx.toFixed(0)}, Muy ${biax.Muy.toFixed(0)}/${biax.phiMny.toFixed(0)} kip-ft (α = ${biax.alpha}, Bresler load contour)`,
+      severity: 'error',
+    });
+  else if (biax && biax.util > NEAR_CRUSHING)
+    warnings.push({
+      code: 'ACI R22.4.2.1',
+      message: `Biaxial bending at ${(100 * biax.util).toFixed(0)}% of the interaction contour (α = ${biax.alpha}) — resultant M ${biax.Mres.toFixed(0)} kip-ft at ${biax.theta.toFixed(0)}° from the major axis`,
+      severity: 'warning',
+    });
 
   // Cross-section limit for combined shear + torsion ACI §22.7.7.1. Distinct
   // from the §22.7.6 capacity check: this one cannot be fixed with more links.
@@ -942,7 +969,7 @@ export function designMember(
   if (h > 36 && (!rebar.sideBars || rebar.sideBars.length === 0))
     warnings.push({ code: 'ACI §9.7.2.3', message: `h = ${h}" > 36" — skin reinforcement required on each face (ACI §9.7.2.3)`, severity: 'warning' });
 
-  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_PM ?? 0, crushing.util);
+  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_PM ?? 0, NM_util ?? 0, crushing.util);
   // Status reflects ACTUAL issues, not raw utilization: NG when capacity is
   // exceeded (DCR > 1); Warning only when a real code message exists (error- or
   // warning-severity); otherwise OK — even at high (but passing) utilization.
@@ -966,6 +993,7 @@ export function designMember(
       phi_Mnx: phi_Mn_pos,
       interaction: pm.pos.points,
     } : {}),
+    ...(biax ? { NM_util, biaxial: biax } : {}),
     Vc: shear.Vc, Vs: shear.Vs, phi_Vn: shear.phi_Vn, DCR_shear,
     Tcr: torsion.Tcr, Tu_threshold: torsion.Tu_threshold, phi_Tn: torsion.phi_Tn, DCR_torsion,
     DCR_crushing: crushing.util, phi_Tn_max: crushing.Tn_max,

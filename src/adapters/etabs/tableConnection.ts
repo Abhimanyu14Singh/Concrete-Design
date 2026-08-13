@@ -589,7 +589,7 @@ export abstract class TableConnection implements EtabsConnection {
         if (!name) continue;
         out.set(name, {
           name,
-          material: str(r, 'Material'),
+          material: str(r, 'Material', 'MatProp', 'MaterialProperty', 'MatProperty'),
           shape: 'Rectangular',
           depth: num(r, 't3', 'Depth') * lenToIn,
           width: num(r, 't2', 'Width') * lenToIn,
@@ -611,7 +611,7 @@ export abstract class TableConnection implements EtabsConnection {
           const b = area / h;
           out.set(name, {
             name,
-            material: str(r, 'Material'),
+            material: str(r, 'Material', 'MatProp', 'MaterialProperty', 'MatProperty'),
             shape: 'Rectangular',
             depth: h * lenToIn,
             width: b * lenToIn,

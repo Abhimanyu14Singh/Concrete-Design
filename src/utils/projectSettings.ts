@@ -13,7 +13,8 @@
  * dialog converts at the input boundary, exactly like MemberEditor does.
  */
 
-import type { DesignCode, Member, Project, ProjectSettings } from '../types';
+import type { BarFamily, DesignCode, Member, Project, ProjectSettings, RebarLayout } from '../types';
+import { toBarFamily } from './rebar';
 import { DEFAULT_CRACK_PARAMS } from '../types';
 
 /** psi ↔ MPa, the one conversion the code formulas need. */
@@ -69,13 +70,16 @@ export function defaultSettings(code: DesignCode = 'ACI318-19'): ProjectSettings
   const cov = ec2 ? 30 / 25.4 : 1.5;
   return {
     units: ec2 ? 'si' : 'imperial',
+    barFamily: ec2 ? 'euro' : 'us',
     fc, fy, fyt: fy,
     lambdaConcrete: 1.0,
+    overrideImportedMaterials: false,
     autoModuli: true,
     ...derivedModuli(fc, code),
     coverTop: cov, coverBottom: cov, coverSide: cov,
     crackWidthLimit: DEFAULT_CRACK_PARAMS.wLimitBot,   // 0.3 mm
     cotTheta: 2.5,
+    biaxialAlpha: 1.0,
     displayScale: 1.0,
     ignoreTorsion: false,
   };
@@ -115,6 +119,11 @@ export function settingsFromProject(p: Project): ProjectSettings {
     ...(crack ? { crackWidthLimit: crack.wLimitBot } : {}),
     cotTheta: p.cotTheta ?? base.cotTheta,
     ignoreTorsion: p.ignoreTorsion ?? base.ignoreTorsion,
+    // Files written before these existed: fall back to the code's convention for
+    // bars, and to "don't touch imported grades" — the safe direction, since it
+    // preserves whatever the project already holds.
+    barFamily: p.settings?.barFamily ?? base.barFamily,
+    overrideImportedMaterials: p.settings?.overrideImportedMaterials ?? false,
   };
   // An explicit member Ec/Gc means the engineer had already overridden them.
   if (m?.material.Ec) {
@@ -157,16 +166,44 @@ export function coversFromSettings(s: ProjectSettings) {
  * member's own geometry, rebar, loads and any other crack parameters they have
  * tuned are left untouched.
  */
+/** Re-designate every bar in a cage into `family`, matched on nominal diameter.
+ *  A substitution, not a relabel — see toBarFamily. */
+function rebarInFamily(r: RebarLayout, family: BarFamily): RebarLayout {
+  const conv = (g: { numBars: number; barSize: number }) => ({ ...g, barSize: toBarFamily(g.barSize, family) });
+  return {
+    ...r,
+    topBars: r.topBars.map(conv),
+    botBars: r.botBars.map(conv),
+    ...(r.sideBars ? { sideBars: r.sideBars.map(conv) } : {}),
+    ...(r.ties ? { ties: { ...r.ties, barSize: toBarFamily(r.ties.barSize, family) } } : {}),
+  };
+}
+
 export function applyProjectSettings(project: Project, settings: ProjectSettings): Project {
   const s = withDerivedModuli(settings, project.code);
   const material = materialFromSettings(s);
   const covers = coversFromSettings(s);
   const w = s.crackWidthLimit;
 
+  // An imported model carries a real grade per member, read from that section's
+  // ETABS material. Writing the project-wide value over the top would silently
+  // flatten a mixed-grade frame to one number, so it only happens when the
+  // engineer explicitly ticks the override.
+  const keepImported = !!project.modelMap && !s.overrideImportedMaterials;
+
+  // Switching bar catalogue re-designates the whole job so every screen, drawing
+  // and schedule reads in one system — which is the point of the setting. Bars
+  // are matched on diameter, so areas shift slightly and the checks below re-run.
+  const famChanged = project.settings?.barFamily !== undefined && project.settings.barFamily !== s.barFamily;
+
   const members = project.members.map(m => ({
     ...m,
-    material: { ...m.material, ...material },
-    section: { ...m.section, ...covers },
+    material: keepImported ? m.material : { ...m.material, ...material },
+    ...(famChanged ? { rebar: rebarInFamily(m.rebar, s.barFamily) } : {}),
+    section: {
+      ...m.section, ...covers,
+      ...(famChanged ? { stirrupDia: toBarFamily(m.section.stirrupDia, s.barFamily) } : {}),
+    },
     crackParams: {
       ...(m.crackParams ?? DEFAULT_CRACK_PARAMS),
       wLimitTop: w, wLimitBot: w, wLimitFace: w,

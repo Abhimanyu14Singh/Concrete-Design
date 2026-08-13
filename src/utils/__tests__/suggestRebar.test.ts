@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { suggestGroupRebar, isSuggestError } from '../suggestRebar';
+import { isSkinWarning } from '../skinReinforcement';
 import { runDesign } from '../../engines';
 import { getBarArea } from '../concreteDesign';
+import { DEFAULT_CRACK_PARAMS } from '../../types';
 import type { Member } from '../../types';
 
 function makeBeam(opts: {
@@ -57,10 +59,180 @@ describe('suggestGroupRebar', () => {
     expect(r.rebar.sideBars![0].numBars).toBeGreaterThanOrEqual(1); // per face
   });
 
+  // Links are picked off a steel-RATE ladder (legs·Ab/s), and a wide spacing with a
+  // fat bar carries the same rate as a close spacing with a thin one — so the lightest
+  // passing rung was routinely illegal on spacing while passing DCR_shear. Every case
+  // below came back flagged before the spacing cap was added.
+  describe('stirrup spacing obeys the detailing limits, not just DCR_shear', () => {
+    /** Every ACI §9.7.6.x spacing complaint the cage draws, across all its rows. */
+    const spacingWarnings = (m: Member, rebar: Member['rebar']) =>
+      m.loads.flatMap(lc => runDesign(m.section, m.material, rebar, lc, m.span, 'ACI318-19').warnings)
+        .filter(w => w.code.startsWith('ACI §9.7.6'));
+
+    it('§9.7.6.2.2 s ≤ d/2 on an ordinary beam (was #4@12 on a d/2 of 10.75 in)', () => {
+      const m = makeBeam({ id: 'typ' });              // 14×24, d ≈ 21.5 ⇒ s_max = 10.75
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(r.rebar.ties!.spacing).toBeLessThanOrEqual(10.75);
+      expect(spacingWarnings(m, r.rebar)).toEqual([]);
+    });
+
+    it('§9.7.6.2.2 heavy-shear s ≤ d/4, which is an ERROR not a warning (was #6@8)', () => {
+      const m = makeBeam({ id: 'heavy', MuPos: 200, MuNeg: 170, Vu: 120 });
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(r.rebar.ties!.spacing).toBeLessThanOrEqual(21.5 / 4);
+      expect(spacingWarnings(m, r.rebar)).toEqual([]);
+    });
+
+    it('§9.7.6.3.3 torsion s ≤ Ph/8 on a spandrel (was #4@10)', () => {
+      const m = makeBeam({ id: 'spandrel', MuPos: 150, MuNeg: 130,
+        loads: [{ id: 'lc1', label: 'Env', Mu_pos: 150, Mu_neg: 130, Vu: 60, Tu: 40, Pu: 0 }] });
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(spacingWarnings(m, r.rebar)).toEqual([]);
+    });
+
+    it('holds the relaxed MIDDLE third to s_max too — that zone is what the code judges', () => {
+      // Station rows, so the middle-third relaxation is actually reachable (it needs a
+      // demand located in that zone to prove itself against).
+      const m = makeBeam({ id: 'zoned', loads: [
+        { id: 'r0', label: 'end',  Mu_pos: 0,   Mu_neg: 150, Vu: 55, Tu: 0, Pu: 0, x: 0 },
+        { id: 'r1', label: 'mid',  Mu_pos: 130, Mu_neg: 0,   Vu: 12, Tu: 0, Pu: 0, x: 10 },
+        { id: 'r2', label: 'end2', Mu_pos: 0,   Mu_neg: 150, Vu: 55, Tu: 0, Pu: 0, x: 20 },
+      ] });
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      const loosest = Math.max(...(r.rebar.tieZones ?? []).map(z => z.spacing), r.rebar.ties!.spacing);
+      expect(loosest).toBeLessThanOrEqual(10.75);
+      expect(spacingWarnings(m, r.rebar)).toEqual([]);
+    });
+
+    it('shallow section: the cap follows d, not a fixed number (12×16, was #4@8)', () => {
+      const m = makeBeam({ id: 'shallow', b: 12, h: 16, MuPos: 60, MuNeg: 50, Vu: 40 });
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(spacingWarnings(m, r.rebar)).toEqual([]);
+    });
+  });
+
+  // φVs ∝ legs·A_b/s but φT_n = φ·2A_o·(A_b/s)·f_yt — flat in leg count. The
+  // rate-ordered shear search buys capacity with legs, which leaves torsion exactly
+  // where it was, so a spandrel came back with every other check on target and
+  // DCR_T > 1. Torsion needs its own ladder: the per-leg rate.
+  describe('torsion is designed for, on the lever that actually moves it', () => {
+    const spandrel = (o: { b: number; h: number; Vu: number; Tu: number }): Member => ({
+      ...makeBeam({ id: `sp-${o.b}x${o.h}`, b: o.b, h: o.h, MuPos: 120, MuNeg: 200 }),
+      loads: [{ id: 'lc', label: 'Env', Mu_pos: 120, Mu_neg: 200, Vu: o.Vu, Tu: o.Tu, Pu: 0 }],
+      span: 26,
+    });
+    const torsionDCR = (m: Member, rebar: Member['rebar']) =>
+      Math.max(...m.loads.map(lc => runDesign(m.section, m.material, rebar, lc, m.span, 'ACI318-19').DCR_torsion));
+
+    it('brings DCR_torsion under target on a section that can carry it (was 1.37)', () => {
+      const m = spandrel({ b: 18, h: 32, Vu: 60, Tu: 60 });
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(torsionDCR(m, r.rebar)).toBeLessThanOrEqual(0.9 + 1e-6);
+    });
+
+    it('spends on A_t/s (bar size ÷ spacing), not on extra legs', () => {
+      const m = spandrel({ b: 18, h: 32, Vu: 60, Tu: 60 });
+      const withT = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      // Same search with the project's "neglect torsion" setting on: the shear-only
+      // answer, which is what the whole ladder used to return.
+      const withoutT = suggestGroupRebar([m], 'ACI318-19', 0.9, undefined, undefined, undefined, true);
+      if (isSuggestError(withT) || isSuggestError(withoutT)) throw new Error('expected both to resolve');
+      const perLeg = (r: typeof withT) =>
+        isSuggestError(r) ? 0 : getBarArea(r.rebar.ties!.barSize) / r.rebar.ties!.spacing;
+      expect(perLeg(withT)).toBeGreaterThan(perLeg(withoutT));
+      // The shear-only cage is genuinely NG on torsion — this is the bug, pinned.
+      expect(torsionDCR(m, withoutT.rebar)).toBeGreaterThan(1);
+    });
+
+    it('honours "neglect torsion" — no links are bought for a torsion the project drops', () => {
+      const m = spandrel({ b: 18, h: 32, Vu: 60, Tu: 60 });
+      const ignored = suggestGroupRebar([m], 'ACI318-19', 0.9, undefined, undefined, undefined, true);
+      const zeroTu = suggestGroupRebar([spandrel({ b: 18, h: 32, Vu: 60, Tu: 0 })], 'ACI318-19', 0.9);
+      if (isSuggestError(ignored) || isSuggestError(zeroTu)) throw new Error('expected both to resolve');
+      expect(ignored.rebar.ties).toEqual(zeroTu.rebar.ties);
+    });
+
+    it('names the section (and the member) when links cannot fix it — §22.7.7.1', () => {
+      // 12×26 carrying V 47 / T 47: √(v_u²+v_t²) is past φ(V_c/b_w d + 8λ√f'c), so no
+      // cage is a design. Refusing beats handing back one that opens NG.
+      const m = { ...spandrel({ b: 12, h: 26, Vu: 47, Tu: 47 }), label: 'L2-B7' };
+      const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+      expect(isSuggestError(r)).toBe(true);
+      if (!isSuggestError(r)) return;
+      expect(r.error).toMatch(/L2-B7/);
+      expect(r.error).toMatch(/Cross-section inadequate/);
+      expect(r.error).toMatch(/ENLARGE THE SECTION/);
+    });
+  });
+
   it('adds no skin bars to a shallow beam (h ≤ 36 in)', () => {
     const r = suggestGroupRebar([makeBeam({ id: 'shallow', h: 24 })], 'ACI318-19', 0.9);
     if (isSuggestError(r)) return;
     expect(r.rebar.sideBars).toBeUndefined();
+  });
+
+  // The point of suggesting skin at all: a deep beam must come back with a face
+  // reinforcement the engineer can PROCEED with — i.e. one the engine accepts.
+  it('leaves no skin warning standing on the cage it suggests (ACI, h = 42 in)', () => {
+    const m = makeBeam({ id: 'deep42', h: 42, MuPos: 300, MuNeg: 250, Vu: 60 });
+    const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    const check = runDesign(m.section, m.material, r.rebar, m.loads[0], m.span, 'ACI318-19');
+    expect(check.warnings.filter(isSkinWarning)).toEqual([]);
+  });
+
+  // DEPTH triggers the rule, demand doesn't — so sizing the skin on the moment-
+  // governing member (as this used to) misses the deep one entirely.
+  it('sizes skin on the DEEPEST member of a mixed group, not the governing one', () => {
+    const shallowHeavy = makeBeam({ id: 'gov', h: 30, MuPos: 400, MuNeg: 340, Vu: 80 });
+    const deepLight    = makeBeam({ id: 'deep', h: 44, MuPos: 90,  MuNeg: 70,  Vu: 25 });
+    const r = suggestGroupRebar([shallowHeavy, deepLight], 'ACI318-19', 0.9);
+    expect(isSuggestError(r)).toBe(false);
+    if (isSuggestError(r)) return;
+    expect(r.governingMemberId).toBe('gov');          // still the moment governor
+    expect(r.rebar.sideBars).toBeDefined();           // but the deep member is served
+    const check = runDesign(deepLight.section, deepLight.material, r.rebar,
+      deepLight.loads[0], deepLight.span, 'ACI318-19');
+    expect(check.warnings.filter(isSkinWarning)).toEqual([]);
+  });
+
+  // EC2 As,min is inversely proportional to σs, and Table 7.2N gives a Ø12 bar
+  // σs = 280 MPa at wk = 0.3 but 240 at 0.2 — so a tighter project needs ~17 %
+  // more face steel. Assuming 0.3 (as the old seed did) left the warning up.
+  it('follows the project face crack limit for EC2 skin area (0.2 mm needs more than 0.3)', () => {
+    const deepEC2 = (wLimitFace: number): Member => ({
+      // 700×1500: big enough that the ~17 % area difference is a whole extra Ø12
+      // per face (A_s,min 1316 → 1535 mm², i.e. 6 → 7) rather than one the ceiling
+      // absorbs — at 500 wide both round to 5 and the test would prove nothing.
+      ...makeBeam({ id: `ec2-${wLimitFace}`, b: 700 / 25.4, h: 1500 / 25.4, MuPos: 300, MuNeg: 260, Vu: 70 }),
+      material: { fc: 40 / 0.00689476, fy: 500 / 0.00689476, fyt: 500 / 0.00689476, Es: 29000000, lambdaConcrete: 1 },
+      crackParams: { ...DEFAULT_CRACK_PARAMS, wLimitFace },
+    });
+    const loose = suggestGroupRebar([deepEC2(0.3)], 'EN1992-1-1', 0.9);
+    const tight = suggestGroupRebar([deepEC2(0.2)], 'EN1992-1-1', 0.9);
+    if (isSuggestError(loose) || isSuggestError(tight)) throw new Error('expected both to resolve');
+    const asPerFace = (r: typeof loose) =>
+      isSuggestError(r) ? 0 : totalAs(r.rebar.sideBars ?? []);
+    expect(asPerFace(tight)).toBeGreaterThan(asPerFace(loose));
+    // …and both are actually accepted by the engine that raised the warning.
+    for (const [r, m] of [[loose, deepEC2(0.3)], [tight, deepEC2(0.2)]] as const) {
+      if (isSuggestError(r)) continue;
+      const check = runDesign(m.section, m.material, r.rebar, m.loads[0], m.span, 'EN1992-1-1', m.crackParams);
+      expect(check.warnings.filter(isSkinWarning)).toEqual([]);
+    }
   });
 
   it('stacks extra bar layers for very high demand instead of erroring', () => {

@@ -29,7 +29,7 @@ import SconcreteDashboard from '../Dashboard/SconcreteDashboard';
 import { buildDashboardPayload } from '../../utils/dashboardPayload';
 import { useUnits } from '../../contexts/UnitsContext';
 import Dropdown from '../common/Dropdown';
-import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE, ICON, dcrBandsFrom, DEFAULT_DCR_THRESHOLDS } from '../../theme';
+import { ACCENT, BORDER, CATEGORICAL, INK, MONO_NUM, STATUS, SURFACE, ICON, dcrBandsFrom, DEFAULT_DCR_THRESHOLDS, MAP_DCR_COLORS } from '../../theme';
 import { Icon } from '../common/Icon';
 import type { IconName } from '../common/Icon';
 import MapFilterMenu, { type FilterSection } from './MapFilterMenu';
@@ -71,16 +71,42 @@ function stirrupStr(
   return `${bar} @ ${fmtLen(t.spacing)} ${lenLabel}`;
 }
 
-/** Per-station envelope: max |M| or |V| across all combos. */
+/**
+ * Per-station envelope of M or V across all combos — **signed**.
+ *
+ * At each station the combos span [lo, hi]; this returns whichever end has the larger
+ * magnitude, WITH ITS SIGN. So the value is still "the worst demand here", but it also
+ * says which way it acts, and the overlay can put it on the correct side of the member.
+ *
+ * It used to return max|·|, and that drew two diagrams that do not exist:
+ *
+ *   MOMENT — hogging over the supports and sagging at midspan landed on the SAME side of
+ *   the beam, so a continuous span read as three humps in a row. The sign change IS the
+ *   shape an engineer reads off a moment diagram: which face is in tension, and where the
+ *   inflection points fall. Rectified, those became two dips that look like low moment.
+ *
+ *   SHEAR — |V| on a normal span is high at both ends and passes through zero near
+ *   midspan, so every beam in the model came out as the same symmetric "V", and the one
+ *   thing the diagram is for — which way the section is being sheared, and where it
+ *   reverses — was thrown away before it was ever drawn.
+ *
+ * The Force Diagram panel already envelopes signed for exactly this reason; this is the
+ * same fix on the plan overlay.
+ */
 function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V'): { x: number; v: number }[] {
-  const byX = new Map<number, number>();
+  const byX = new Map<number, { lo: number; hi: number }>();
   for (const cf of stationForces) {
     for (const s of cf.stations) {
-      const val = Math.abs(type === 'M' ? s.M : s.V);
-      byX.set(s.x, Math.max(byX.get(s.x) ?? 0, val));
+      const val = type === 'M' ? s.M : s.V;
+      const rec = byX.get(s.x) ?? { lo: 0, hi: 0 };
+      rec.lo = Math.min(rec.lo, val);
+      rec.hi = Math.max(rec.hi, val);
+      byX.set(s.x, rec);
     }
   }
-  return [...byX.entries()].sort((a, b) => a[0] - b[0]).map(([x, v]) => ({ x, v }));
+  return [...byX.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([x, r]) => ({ x, v: -r.lo > r.hi ? r.lo : r.hi }));
 }
 
 // stationEnvelope is used inside BeamInspectCard too, exported there locally.
@@ -101,7 +127,7 @@ const mapViewCache: {
 } = {};
 
 export default function ModelMapView({ project, onProjectChange, onOpenEtabsImport, onPickMember, onDeleteMember, onDeleteMembers }: Props) {
-  const { fmtVal, label, units, toDisplay } = useUnits();
+  const { fmtVal, label, units, barFamily, toDisplay } = useUnits();
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set());
   const [activeGroupId, setActiveGroupId] = useState<string | null>(mapViewCache.activeGroupId ?? null);
   const [colorMode, setColorMode] = useState<ColorMode>(mapViewCache.colorMode ?? 'dcr');
@@ -159,7 +185,20 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
     return [...DEFAULT_DCR_THRESHOLDS] as [number, number, number];
   });
   useEffect(() => { localStorage.setItem('mapDcrThresholds', JSON.stringify(dcrThresholds)); }, [dcrThresholds]);
-  const dcrBands = useMemo(() => dcrBandsFrom(dcrThresholds), [dcrThresholds]);
+  // The four band COLOURS, persisted the same way and for the same reason: a scale you
+  // re-tune on every reload is a scale nobody tunes. Validated on read — this is
+  // localStorage, so it is untrusted input, and a bad entry falls back rather than
+  // painting the plan with `undefined`.
+  const [dcrColors, setDcrColors] = useState<string[]>(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('mapDcrColors') ?? '');
+      if (Array.isArray(s) && s.length === 4 && s.every((c: unknown) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)))
+        return s as string[];
+    } catch { /* fall through to default */ }
+    return [...MAP_DCR_COLORS];
+  });
+  useEffect(() => { localStorage.setItem('mapDcrColors', JSON.stringify(dcrColors)); }, [dcrColors]);
+  const dcrBands = useMemo(() => dcrBandsFrom(dcrThresholds, dcrColors), [dcrThresholds, dcrColors]);
   // Plan filter facets (member type, design group, section). Floors reuse the
   // project's hiddenStories. These hide members from the canvas without deleting.
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
@@ -355,7 +394,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // dashboard chips, so a mode that peaks on a different station than the overall-
   // governing row is not shown in green.
   const modeDcrById = useMemo(() => {
-    const out: Record<string, { flexPos: number; flexNeg: number; shear: number; wk: number }> = {};
+    const out: Record<string, { flexPos: number; flexNeg: number; shear: number; torsion?: number; wk: number }> = {};
     for (const [id, info] of Object.entries(infoById)) if (info.modeDcr) out[id] = info.modeDcr;
     return out;
   }, [infoById]);
@@ -715,7 +754,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
       const designed = membersInGroup.filter(m => m.memberType === 'beam' && m.loads.length > 0);
       if (!designed.length) continue; // skip empty / no designed beams
-      const r = suggestGroupRebar(membersInGroup, project.code, target, floors);
+      const r = suggestGroupRebar(membersInGroup, project.code, target, floors, barFamily, project.cotTheta, project.ignoreTorsion);
       if (isSuggestError(r)) {
         fail++;
         if (!firstError) firstError = r.error;
@@ -1249,6 +1288,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             gradeColorMap={gradeColorMap}
             dcrBands={dcrBands}
             dcrThresholds={dcrThresholds}
+            dcrColors={dcrColors}
+            onDcrColorsChange={setDcrColors}
             onDcrThresholdsChange={setDcrThresholds}
             walls={mapWalls}
             grids={mapGrids}
@@ -1407,6 +1448,8 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               onApply={handleApplyRebar}
               code={project.code}
               targetDCR={project.targetDCR ?? 0.9}
+              cotTheta={project.cotTheta}
+              ignoreTorsion={project.ignoreTorsion}
             />
           </div>
         </div>

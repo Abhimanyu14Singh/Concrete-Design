@@ -248,9 +248,18 @@ export function beamAxialFlexure(
   const axialUtil = axialCap > 0 ? Math.abs(Pu) / axialCap : 0;
   if (Mu <= 0) { nmUtil = axialUtil; phiPnAtRay = Math.sign(Pu) * axialCap; phiMnAtRay = 0; }
 
-  // Sampled curve for the calc sheet: compression branch plus the tension leg.
+  // Sampled curve for the calc sheet and the N-vs-M window: compression branch plus the
+  // tension leg. DISPLAY ONLY — every check above walks `raw` at full density, so this
+  // stride cannot move a DCR.
+  //
+  // Every 10th, not every 30th. The chart interpolates between these samples to answer
+  // "φMn at this axial load" under the crosshair, and a chord across a convex curve
+  // always cuts the corner: at a 30-sample stride that read came out ~1% BELOW the φMn
+  // the engine reported for the same load — small, but it is the picture and the number
+  // beside it disagreeing, which is the one thing this array exists to prevent. The
+  // error falls with the square of the stride, so 3× the samples is ~9× closer (~0.1%).
   const points: InteractionPoint[] = raw
-    .filter((_, i) => i % 30 === 0)
+    .filter((_, i) => i % 10 === 0)
     .map(p => ({
       c: p.c, Pn: p.P, Mn: p.M, phi: p.phi,
       phiPn: p.phiP, phiMn: p.phiM, eps_t: p.et,

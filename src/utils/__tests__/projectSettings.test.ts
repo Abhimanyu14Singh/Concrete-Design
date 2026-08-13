@@ -5,6 +5,7 @@ import {
   defaultSettings, derivedModuli, settingsFromProject, withDerivedModuli,
 } from '../projectSettings';
 import { serializeProject, deserializeProject } from '../saveLoad';
+import { toBarFamily } from '../rebar';
 import { buildProjectWorkbook } from '../export/excelExport';
 import * as XLSX from 'xlsx';
 
@@ -261,5 +262,106 @@ describe('save/load migration', () => {
     expect(back.members[0].section.coverTop).toBe(2.5);
     expect(back.members[0].section.coverBottom).toBe(1.5);
     expect(back.members[0].section.coverSide).toBe(2);
+  });
+});
+
+describe('imported materials are the model\'s, not the project\'s', () => {
+  const MAP = {
+    source: 'com' as const, modelName: 'M', importedAt: '2026-01-01',
+    stories: ['L2'], frames: [],
+  };
+  // Two beams that came in from ETABS carrying DIFFERENT real grades.
+  const imported = () => project({
+    modelMap: MAP,
+    members: [
+      beam({ id: 'A', material: { fc: 5000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1 } }),
+      beam({ id: 'B', material: { fc: 6000, fy: 60000, fyt: 60000, Es: 29_000_000, lambdaConcrete: 1 } }),
+    ],
+  });
+
+  it('keeps each member\'s own f\'c when the override is off', () => {
+    const s: ProjectSettings = { ...defaultSettings('ACI318-19'), fc: 4000, overrideImportedMaterials: false };
+    const out = applyProjectSettings(imported(), s);
+    expect(out.members.map(m => m.material.fc)).toEqual([5000, 6000]); // NOT flattened to 4000
+  });
+
+  it('overwrites every member once the override is ticked', () => {
+    const s: ProjectSettings = { ...defaultSettings('ACI318-19'), fc: 4500, overrideImportedMaterials: true };
+    const out = applyProjectSettings(imported(), s);
+    expect(out.members.map(m => m.material.fc)).toEqual([4500, 4500]);
+  });
+
+  it('still applies materials to a hand-built project (no imported model)', () => {
+    const s: ProjectSettings = { ...defaultSettings('ACI318-19'), fc: 4500, overrideImportedMaterials: false };
+    const out = applyProjectSettings(project(), s);
+    expect(out.members[0].material.fc).toBe(4500);
+  });
+
+  it('applies cover to imported members even while their materials are held', () => {
+    // The lock is materials-only; everything else the project owns still lands.
+    const s: ProjectSettings = { ...defaultSettings('ACI318-19'), coverTop: 2, coverBottom: 2, coverSide: 2 };
+    const out = applyProjectSettings(imported(), s);
+    expect(out.members[0].section.coverTop).toBe(2);
+    expect(out.members[0].material.fc).toBe(5000); // untouched
+  });
+});
+
+describe('bar family', () => {
+  it('defaults to US bars under ACI and European under EC2', () => {
+    expect(defaultSettings('ACI318-19').barFamily).toBe('us');
+    expect(defaultSettings('EN1992-1-1').barFamily).toBe('euro');
+  });
+
+  it('survives a save/open round-trip', () => {
+    const p = applyProjectSettings(project(), { ...defaultSettings('ACI318-19'), barFamily: 'euro' });
+    expect(deserializeProject(serializeProject(p)).settings?.barFamily).toBe('euro');
+  });
+
+  it('older files without the field fall back to the code convention', () => {
+    const legacy = project();
+    delete (legacy as { settings?: unknown }).settings;
+    expect(settingsFromProject(legacy).barFamily).toBe('us');
+  });
+});
+
+describe('switching bar family re-designates the whole project', () => {
+  const withFamily = (f: 'us' | 'euro') => ({ ...defaultSettings('ACI318-19'), barFamily: f });
+  // A project already saved as US bars: #8 mains, #4 stirrups.
+  const usProject = () => applyProjectSettings(project(), withFamily('us'));
+
+  it('converts every bar to the nearest European diameter', () => {
+    const out = applyProjectSettings(usProject(), withFamily('euro'));
+    const r = out.members[0].rebar;
+    expect(r.topBars[0].barSize).toBe(-25);          // #8 = 25.4 mm → Ø25
+    expect(r.botBars[0].barSize).toBe(-25);
+    expect(r.ties!.barSize).toBe(-12);               // #4 = 12.7 mm → Ø12
+    expect(out.members[0].section.stirrupDia).toBe(-12);
+  });
+
+  it('round-trips back to US bars', () => {
+    const euro = applyProjectSettings(usProject(), withFamily('euro'));
+    const back = applyProjectSettings(euro, withFamily('us'));
+    expect(back.members[0].rebar.topBars[0].barSize).toBe(8);   // Ø25 = 25 mm → #8
+    expect(back.members[0].rebar.ties!.barSize).toBe(4);
+  });
+
+  it('leaves bars alone when the family did not change', () => {
+    const out = applyProjectSettings(usProject(), withFamily('us'));
+    expect(out.members[0].rebar.topBars[0].barSize).toBe(8);
+    expect(out.members[0].rebar.botBars[0].barSize).toBe(8);
+  });
+});
+
+describe('toBarFamily', () => {
+  it('matches on nominal diameter in both directions', () => {
+    expect(toBarFamily(8, 'euro')).toBe(-25);   // #8 → Ø25
+    expect(toBarFamily(4, 'euro')).toBe(-12);   // #4 → Ø12
+    expect(toBarFamily(-16, 'us')).toBe(5);     // Ø16 = 15.9 mm → #5
+    expect(toBarFamily(-32, 'us')).toBe(10);    // Ø32 = 31.8 mm → #10
+  });
+
+  it('returns a size already in the target family untouched', () => {
+    expect(toBarFamily(8, 'us')).toBe(8);
+    expect(toBarFamily(-16, 'euro')).toBe(-16);
   });
 });

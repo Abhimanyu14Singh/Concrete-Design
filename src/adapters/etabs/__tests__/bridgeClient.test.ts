@@ -301,3 +301,40 @@ describe('ComConnection: units come from the present-units enum (authoritative f
     expect(info.units).toBe('kn-m');
   });
 });
+
+describe('concrete grade resolution (section → material join)', () => {
+  // ETABS names the material column "MatProp" in the Summary table and
+  // "Material" in the Concrete Rectangular table. A section that resolves via
+  // the Summary fallback must still find its concrete grade — otherwise it
+  // silently inherits the 4000 psi default and the grade reads inconsistently
+  // across a model where only some sections take that path.
+  it('reads the material name from the Summary table\'s MatProp column', async () => {
+    mockHttp({
+      ...TABLES,
+      'Frame Section Property Definitions - Concrete Rectangular': [],
+      'Frame Section Property Definitions - Summary': [
+        { Name: 'B300X600', MatProp: 'C30', Area: 0.18, I33: 0.0054 },
+      ],
+    });
+    const conn = new BridgeConnection();
+    await conn.connect();
+    await conn.getBeams({});
+    const s = (await conn.getFrameSections()).find(x => x.name === 'B300X600')!;
+    expect(s.material).toBe('C30');
+  });
+
+  it('still reads a plain "Material" column when a build emits that instead', async () => {
+    mockHttp({
+      ...TABLES,
+      'Frame Section Property Definitions - Concrete Rectangular': [],
+      'Frame Section Property Definitions - Summary': [
+        { Name: 'B300X600', Material: 'C30', Area: 0.18, I33: 0.0054 },
+      ],
+    });
+    const conn = new BridgeConnection();
+    await conn.connect();
+    await conn.getBeams({});
+    const s = (await conn.getFrameSections()).find(x => x.name === 'B300X600')!;
+    expect(s.material).toBe('C30');
+  });
+});

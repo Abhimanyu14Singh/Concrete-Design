@@ -109,15 +109,22 @@ export interface DcrBand { max: number; color: string; label: string }
  *  via dcrColor(). */
 export const MAP_DCR_COLORS = [STATUS.ok, '#84cc16', STATUS.warn, STATUS.fail] as const;
 
-/** Build the four DCR bands from three ascending cut-points [t1, t2, t3]. The
- *  Map legend is user-editable, so the fills and legend both derive from this. */
-export function dcrBandsFrom(t: readonly [number, number, number]): DcrBand[] {
+/** Build the four DCR bands from three ascending cut-points [t1, t2, t3], and
+ *  optionally from four overriding colours. The Map legend is user-editable in BOTH
+ *  dimensions — where the cut-points sit and what colour each band is — so the fills
+ *  and the legend both derive from this one function and can never disagree.
+ *  `colors` falls back per-index, so a partial array still yields four bands. */
+export function dcrBandsFrom(
+  t: readonly [number, number, number],
+  colors?: readonly string[],
+): DcrBand[] {
   const f = (v: number) => v.toFixed(2);
+  const c = (i: number) => colors?.[i] || MAP_DCR_COLORS[i];
   return [
-    { max: t[0], color: MAP_DCR_COLORS[0], label: `< ${f(t[0])}` },
-    { max: t[1], color: MAP_DCR_COLORS[1], label: `${f(t[0])}–${f(t[1])}` },
-    { max: t[2], color: MAP_DCR_COLORS[2], label: `${f(t[1])}–${f(t[2])}` },
-    { max: Infinity, color: MAP_DCR_COLORS[3], label: `≥ ${f(t[2])}` },
+    { max: t[0], color: c(0), label: `< ${f(t[0])}` },
+    { max: t[1], color: c(1), label: `${f(t[0])}–${f(t[1])}` },
+    { max: t[2], color: c(2), label: `${f(t[1])}–${f(t[2])}` },
+    { max: Infinity, color: c(3), label: `≥ ${f(t[2])}` },
   ];
 }
 

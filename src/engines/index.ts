@@ -34,6 +34,7 @@ export function runDesign(
   crack?: CrackControlParams,
   cotTheta?: number,   // EC2 §6.2.3 strut angle (default 2.5); ignored for ACI
   ignoreTorsion?: boolean, // project "neglect torsion" setting — Tu is dropped to 0
+  biaxialAlpha?: number,   // Bresler contour exponent; 1.0 = linear/conservative
 ): DesignResults {
   // "Neglect torsion": zero Tu before the beam engines see it, so every torsion /
   // shear+torsion check (DCR_torsion, VT_util combined links, §6.3.1/§6.3.2(3)
@@ -43,5 +44,5 @@ export function runDesign(
   if (code === 'EN1992-1-1') {
     return designMemberEC2(section, material, rebar, beamLoad, span, crack, cotTheta ?? 2.5);
   }
-  return designMember(section, material, rebar, beamLoad, span);
+  return designMember(section, material, rebar, beamLoad, span, biaxialAlpha);
 }

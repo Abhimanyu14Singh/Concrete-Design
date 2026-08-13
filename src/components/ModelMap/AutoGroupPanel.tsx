@@ -303,7 +303,11 @@ export default function AutoGroupPanel({
             {m === 'governing' ? 'Governing' : m === 'Mu_pos' ? 'M⁺' : m === 'Mu_neg' ? 'M⁻' : 'Shear'}
           </button>
         ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+        {/* `auto` pushes Pool to the far right, which reads well in the app's narrow
+            tab (the two clusters land on separate lines anyway). Given real width they
+            end up at opposite edges with a gulf between them, so a host can set
+            --ag-pool-align to 0 and let the two clusters sit together. */}
+        <div style={{ marginLeft: 'var(--ag-pool-align, auto)', display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ fontSize: 10, color: INK.secondary }}>Pool:</span>
           <button
             onClick={() => { setGroupAllBeams(false); setSelectedFamily(''); setTweakedBreaks({}); }}
@@ -438,8 +442,8 @@ export default function AutoGroupPanel({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{ ...lbl, marginBottom: 0 }}>Groups for this family</div>
             {familyIsCustom
-              ? <span style={{ fontSize: 9, color: ACCENT.primary, fontWeight: 700 }}>✎ custom ({familyGroupCount})</span>
-              : <span style={{ fontSize: 9, color: INK.muted }}>auto ({familyGroupCount})</span>}
+              ? <span style={{ fontSize: 10, color: ACCENT.primary, fontWeight: 700 }}>✎ custom ({familyGroupCount})</span>
+              : <span style={{ fontSize: 10, color: INK.muted }}>auto ({familyGroupCount})</span>}
           </div>
           <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
             <button onClick={() => setFamilyK('auto')}
@@ -453,7 +457,7 @@ export default function AutoGroupPanel({
               </button>
             ))}
           </div>
-          <div style={{ fontSize: 9, color: INK.muted, marginTop: 3 }}>
+          <div style={{ fontSize: 10, color: INK.muted, marginTop: 3 }}>
             Overrides “Groups / family” for {displayFamilyLabel(activeSuggestion.familyLabel, units)} only — the dropdown marks ✎ custom families.
           </div>
         </div>
@@ -526,17 +530,17 @@ export default function AutoGroupPanel({
           spellCheck={false}
           style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 5, border: `1px solid ${nameTemplate.trim() ? ACCENT.primary : BORDER.strong}`, boxSizing: 'border-box', ...MONO_NUM }}
         />
-        <div style={{ fontSize: 9, color: INK.muted, marginTop: 3, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 10, color: INK.muted, marginTop: 3, lineHeight: 1.6 }}>
           {GROUP_NAME_TOKENS.map(t => `${t.token} ${t.desc}`).join('  ·  ')}
         </div>
         {plannedGroups.length > 0 && (
-          <div style={{ fontSize: 10.5, color: INK.secondary, marginTop: 5 }}>
+          <div style={{ fontSize: 10, color: INK.secondary, marginTop: 5 }}>
             Names:{' '}
             <span style={{ color: ACCENT.primary, fontWeight: 600, ...MONO_NUM }}>
               {plannedGroups.slice(0, 4).map(g => g.label).join(',  ')}{plannedGroups.length > 4 ? ' …' : ''}
             </span>
             {plannedGroups.some(g => g.face) && (
-              <div style={{ fontSize: 9.5, color: INK.muted, marginTop: 2 }}>
+              <div style={{ fontSize: 10, color: INK.muted, marginTop: 2 }}>
                 Split by face → the legend shows the name; the dashboard adds{' '}
                 <span style={{ color: '#7c3aed', fontWeight: 700 }}>(T)</span>/<span style={{ color: '#7c3aed', fontWeight: 700 }}>(B)</span>.
               </div>

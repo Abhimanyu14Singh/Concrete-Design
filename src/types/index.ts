@@ -312,6 +312,12 @@ export interface DesignResults {
   // design_engine.compute_all_outputs(). Optional so beam/wall paths are unaffected.
   theta_deg?: number;          // governing resultant-moment vector angle (deg)
   NM_util?: number;            // governing combined axial + biaxial-moment utilization
+  /** Full biaxial (Bresler load-contour) detail, when a minor-axis moment was supplied. */
+  biaxial?: {
+    Mux: number; Muy: number; phiMnx: number; phiMny: number;
+    alpha: number; util: number; Mres: number; theta: number;
+    AsTotal: number; AsPerSide: number;
+  };
   DCR_axial_tens?: number;     // axial tension utilization = Pu / φ(As·fy)
   phi_Vnz?: number;            // shear capacity, z-direction / strong face (kips)
   phi_Vny?: number;            // shear capacity, y-direction / weak face (kips)
@@ -373,14 +379,24 @@ export interface AutoGroupBin {
  * display and input conversion. The one exception is `crackWidthLimit`, which
  * is mm because EN 1992-1-1 §7.3.1 states its limits in mm regardless.
  */
+/** Which reinforcement catalogue the pickers offer. Independent of `units`: a
+ *  metric-units job may still be detailed in US bars, and vice versa. */
+export type BarFamily = 'us' | 'euro';
+
 export interface ProjectSettings {
   /** Display/input unit system. Storage stays imperial either way. */
   units: UnitSystem;
+  /** Bar catalogue offered everywhere rebar is chosen. */
+  barFamily: BarFamily;
   // ── Materials ──────────────────────────────────────────────────────────────
   fc: number;              // concrete cylinder strength f'c / fck (psi)
   fy: number;              // longitudinal steel yield (psi)
   fyt: number;             // transverse (stirrup/tie) steel yield (psi)
   lambdaConcrete: number;  // lightweight concrete factor (1.0 normal)
+  /** When the project came from ETABS, each member carries the grade its own
+   *  section's material defines. Leave this false to KEEP those per-member
+   *  values; set it true to overwrite every member with the fc/fy/fyt above. */
+  overrideImportedMaterials: boolean;
   // ── Elastic constants ──────────────────────────────────────────────────────
   /** When true, Es/Ec/Gc track the code formulas as f'c changes. Clearing it
    *  freezes the three values below at whatever the engineer typed. */
@@ -397,6 +413,11 @@ export interface ProjectSettings {
   crackWidthLimit: number;
   /** EC2 only — §6.2.3 variable strut inclination as cot θ (1.0–2.5). */
   cotTheta: number;
+  /** Bresler load-contour exponent α for the biaxial bending check.
+   *  1.0 = a straight line between the two uniaxial capacities, always
+   *  conservative; 1.15–1.5 is the PCA range for rectangular sections with
+   *  symmetric steel. Only reaches a member that carries a minor-axis moment. */
+  biaxialAlpha: number;
   // ── Preferences ────────────────────────────────────────────────────────────
   displayScale: number;    // UI zoom factor (0.75–1.5)
   ignoreTorsion: boolean;  // treat Tu = 0 for every beam check

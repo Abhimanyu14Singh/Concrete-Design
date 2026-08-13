@@ -102,13 +102,22 @@ const DEFAULT_MATERIAL: MaterialProps = {
   fc: 4000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0,
 };
 
+/** ETABS material names round-trip through several tables and can differ by case
+ *  or stray whitespace ("C30 " vs "c30"). An exact-equality join drops those to
+ *  the 4000 psi default silently, which reads as an inconsistent grade across a
+ *  model — so normalise both sides before matching. */
+const normName = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
+
 function materialFor(
   sectionName: string,
   sections: EtabsSectionInfo[],
   materials: EtabsMaterialInfo[],
 ): MaterialProps {
   const sec = sections.find(s => s.name === sectionName);
-  const conc = sec ? materials.find(m => m.name === sec.material) : undefined;
+  const key = normName(sec?.material);
+  // Only a material that actually carries a strength counts as a match; a name
+  // hit with fc = 0 must fall through to the default rather than import zero.
+  const conc = key ? materials.find(m => normName(m.name) === key && (m.fc ?? 0) > 0) : undefined;
   const rebarMat = materials.find(m => m.fy && !m.fc);
   return {
     ...DEFAULT_MATERIAL,

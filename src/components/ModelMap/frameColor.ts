@@ -11,7 +11,8 @@ import { MAP_GRAY, STATUS, type DcrBand } from '../../theme';
 
 export type ColorMode =
   | 'dcr' | 'group' | 'groupTags' | 'section' | 'flexSteel' | 'stirrups' | 'weight'
-  | 'height' | 'width' | 'concGrade' | 'steelGrade' | 'autoGroup' | 'sconcrete';
+  | 'height' | 'width' | 'concGrade' | 'steelGrade' | 'autoGroup' | 'sconcrete'
+  | 'sconcreteDcr';
 
 /** Metric ramp modes — a continuous value colored on the shared blue→red ramp. */
 export const METRIC_MODES: ColorMode[] = ['flexSteel', 'stirrups', 'weight', 'height', 'width'];
@@ -65,13 +66,27 @@ export interface FrameColorContext {
   gradeColorMap?: Map<string, string>;
   /** Persisted S-Concrete pass/fail per member (for the 'sconcrete' mode). */
   scoStatusById?: Record<string, 'OK' | 'NG'>;
+  /** Worst S-Concrete utilisation per member — max(N-M, V&T) — for 'sconcreteDcr'.
+   *  A member absent from this map has no result and is drawn "not run", which is a
+   *  different statement from "passing" and must not be shown as green. */
+  scoDcrById?: Record<string, number>;
   /** The Map's (possibly user-edited) DCR bands. Defaults to MAP_DCR_BANDS. */
   dcrBands?: readonly DcrBand[];
 }
 
 /** Color a frame for the current mode. Mirrors the original MapCanvas logic 1:1. */
 export function frameColorFor(f: Pick<MapFrame, 'memberId' | 'sectionName'>, ctx: FrameColorContext): string {
-  const { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, dcrBands } = ctx;
+  const { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, scoDcrById, dcrBands } = ctx;
+  // S-Concrete's own utilisation, on the SAME bands as the app's DCR — the two maps are
+  // meant to be flipped between, and a different scale would make that comparison a
+  // reading exercise instead of a glance.
+  if (colorMode === 'sconcreteDcr') {
+    if (f.memberId) {
+      const v = scoDcrById?.[f.memberId];
+      if (v !== undefined) return dcrToColor(v, dcrBands);
+    }
+    return SCO_NONE;
+  }
   if (colorMode === 'sconcrete') {
     if (f.memberId) {
       const s = scoStatusById?.[f.memberId];

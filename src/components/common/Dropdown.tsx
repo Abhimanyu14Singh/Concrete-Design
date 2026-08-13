@@ -158,7 +158,7 @@ export default function Dropdown({
         style={TRIGGER}
       >
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-        <span style={{ fontSize: 8, color: INK.muted, flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
+        <span style={{ fontSize: 10, color: INK.muted, flexShrink: 0, marginLeft: 2 }}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && listPos && createPortal(
