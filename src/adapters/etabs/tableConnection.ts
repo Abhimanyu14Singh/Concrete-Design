@@ -23,9 +23,12 @@ import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
   EtabsBeamGeom, EtabsColumnGeom, BeamFilter, UnitInfo,
   EtabsAreaGeom, EtabsGridGeom, EtabsOpeningGeom,
+  TableProbe,
 } from './connection';
 import { matchesFilter } from './connection';
 
+/** One ETABS table row, keyed by column header. Values arrive as strings from the OAPI
+ *  and are coerced at the point of use — never assume a numeric column is a number. */
 export type TableRow = Record<string, unknown>;
 
 /**
@@ -43,6 +46,8 @@ export type TableRow = Record<string, unknown>;
  * recognise are still excluded, which is the behaviour the user asked for.
  */
 type ObjCategory = 'frame' | 'area' | 'point';
+/** Classify an ObjectType string. Anything unrecognised is a frame — see the note above
+ *  for why this errs that way. */
 export function objCategory(type: string): ObjCategory {
   const s = type.trim().toLowerCase();
   if (/point|joint|node/.test(s)) return 'point';
@@ -73,6 +78,7 @@ export const FORCE_UNITS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'n', label: 'N' }, { key: 'kn', label: 'kN' },
   { key: 'kgf', label: 'kgf' }, { key: 'tonf', label: 'tonf' },
 ];
+/** Length-unit options for the wizard's override selector. */
 export const LENGTH_UNITS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'in', label: 'in' }, { key: 'ft', label: 'ft' },
   { key: 'mm', label: 'mm' }, { key: 'cm', label: 'cm' }, { key: 'm', label: 'm' },
@@ -185,6 +191,27 @@ export abstract class TableConnection implements EtabsConnection {
    * rows client-side.
    */
   protected abstract fetchTable(key: string, group?: string): Promise<TableRow[]>;
+
+  /**
+   * What each table read actually returned.
+   *
+   * Recorded by the TRANSPORT, because that is the only layer that sees ETABS's return
+   * code — by the time a row array reaches the parsers above, "key refused" and "model
+   * has none" are the same empty array. Every optional layer here catches its own
+   * failure so a missing table never breaks an import, which is right for the import and
+   * useless for the person asking why their walls are absent; this is the record that
+   * answers them.
+   */
+  private probes: TableProbe[] = [];
+
+  /** Transports call this once per read, whatever the outcome. */
+  protected noteProbe(probe: TableProbe): void {
+    this.probes.push(probe);
+  }
+
+  tableProbes(): TableProbe[] {
+    return [...this.probes];
+  }
   /**
    * Optional transport hook: restrict which combos/cases appear in
    * subsequently fetched display tables (ETABS-side filter). Best-effort —
@@ -478,15 +505,42 @@ export abstract class TableConnection implements EtabsConnection {
    * into their own list; wall-vs-slab comes from the Design Orientation column,
    * falling back to the polygon's plane normal. A missing table yields empty lists.
    *
-   * The table/column spellings vary across ETABS builds (live-model-verify items);
-   * every fetch degrades to [] so import never breaks.
+   * WHICH TABLE. ETABS does not publish one "Area Object Connectivity": it splits areas
+   * the same way it splits frames, into per-type tables — the pattern its own catalogue
+   * already shows with "Beam Object Connectivity" and "Column Object Connectivity". A
+   * real model reported `Area Object Connectivity — ret -96` (key refused) while
+   * `Area Assignments - Section Properties` returned 3857 rows, i.e. the areas were
+   * there all along and only the geometry key was wrong. That is why this asks for
+   * several keys rather than one: whichever the build accepts is the one used, and a
+   * build that DOES have a generic area table still works.
+   *
+   * Splitting by table is also better evidence than the old wall-vs-slab guess: a row
+   * from the floor table IS a slab, where Design Orientation may be blank and a plane
+   * normal only infers it. The generic table keeps the old derivation.
+   *
+   * Column spellings still vary, so `str()` takes alternatives throughout and each read
+   * is recorded (see `tableProbes`) — a table that arrives but does not parse shows up as
+   * rows > 0 with zero areas, and its field names are in the probe.
    */
   private async loadAreas(): Promise<void> {
     if (this.areasCache && this.openingsCache) return;
-    const [connectivity, ctx] = await Promise.all([
-      this.fetchTable('Area Object Connectivity').catch(() => [] as TableRow[]),
+    /** Per-type first (what a real ETABS offers), generic last (older / other sources). */
+    const AREA_SOURCES: { key: string; kind: 'wall' | 'slab' | null }[] = [
+      { key: 'Floor Object Connectivity', kind: 'slab' },
+      { key: 'Wall Object Connectivity', kind: 'wall' },
+      { key: 'Area Object Connectivity', kind: null },
+    ];
+    const [tagged, ctx] = await Promise.all([
+      Promise.all(AREA_SOURCES.map(async src => ({
+        src,
+        // Refused key or missing table -> no rows from this source, never a failed import.
+        rows: await this.fetchTable(src.key).catch(() => [] as TableRow[]),
+      }))),
       this.loadFrameContext(),
     ]);
+    // Rows keep the source they came from, so `kind` can be read off the table.
+    const connectivity: { row: TableRow; kind: 'wall' | 'slab' | null }[] =
+      tagged.flatMap(t => t.rows.map(row => ({ row, kind: t.src.kind })));
     const sectionByArea = new Map<string, string>();
     try {
       for (const a of await this.fetchTable('Area Assignments - Section Properties')) {
@@ -496,30 +550,69 @@ export abstract class TableConnection implements EtabsConnection {
       }
     } catch { /* no area-section table */ }
 
-    const areas: EtabsAreaGeom[] = [];
-    const openings: EtabsOpeningGeom[] = [];
-    for (const row of connectivity) {
+    /**
+     * Accumulate corners per area, tolerating BOTH row shapes.
+     *
+     * A frame has exactly two ends, so its table is one row wide (UniquePtI/UniquePtJ).
+     * An area has a variable corner count, and ETABS may publish that either as one wide
+     * row (UniquePt1..N) or as one row PER CORNER sharing a UniqueName. Guessing wrong
+     * silently yields zero areas — every row drops for having fewer than three corners —
+     * so this reads whichever is present instead of assuming.
+     */
+    const acc = new Map<string, {
+      story: string; points: { x: number; y: number; z: number }[];
+      kind: 'wall' | 'slab' | null; orient: string; opening: boolean;
+    }>();
+
+    for (const { row, kind: fromTable } of connectivity) {
       const un = str(row, 'UniqueName');
       if (!un) continue;
       const declared = num(row, 'NumberPoints', 'NumPoints', 'NumPts');
       const maxN = declared > 0 ? declared : 16;
-      const points: { x: number; y: number; z: number }[] = [];
+
+      const named: string[] = [];
       for (let i = 1; i <= maxN; i++) {
         const pn = str(row, `UniquePt${i}`, `Point${i}`, `Pt${i}`, `UniquePoint${i}`);
-        if (!pn) continue;
-        const c = ctx.coords.get(pn);
-        if (c) points.push(c);
+        if (pn) named.push(pn);
       }
-      if (points.length < 3) continue;
-      const story = str(row, 'Story');
-      if (isTruthy(str(row, 'Opening', 'IsOpening', 'Openings'))) { openings.push({ name: un, story, points }); continue; }
-      const orient = str(row, 'DesignOrientation', 'Design Orientation', 'Orientation').toLowerCase();
-      const kind: 'wall' | 'slab' = orient.includes('wall') ? 'wall'
-        : (orient.includes('floor') || orient.includes('slab')) ? 'slab'
-        : (isVerticalArea(points) ? 'wall' : 'slab');
+      // Nothing wide on this row — read it as a single corner of a multi-row area.
+      if (!named.length) {
+        const one = str(row, 'UniquePtName', 'UniquePt', 'PointName', 'Point', 'Joint', 'JointName');
+        if (one) named.push(one);
+      }
+      if (!named.length) continue;
+
+      let entry = acc.get(un);
+      if (!entry) {
+        entry = {
+          story: str(row, 'Story'),
+          points: [],
+          kind: fromTable,
+          orient: str(row, 'DesignOrientation', 'Design Orientation', 'Orientation').toLowerCase(),
+          opening: isTruthy(str(row, 'Opening', 'IsOpening', 'Openings')),
+        };
+        acc.set(un, entry);
+      }
+      for (const pn of named) {
+        const c = ctx.coords.get(pn);
+        if (c) entry.points.push(c);
+      }
+    }
+
+    const areas: EtabsAreaGeom[] = [];
+    const openings: EtabsOpeningGeom[] = [];
+    for (const [un, e] of acc) {
+      if (e.points.length < 3) continue;
+      if (e.opening) { openings.push({ name: un, story: e.story, points: e.points }); continue; }
+      // The table it came from is the strongest signal; fall back to the orientation
+      // column, then to the polygon's own plane.
+      const kind: 'wall' | 'slab' = e.kind
+        ?? (e.orient.includes('wall') ? 'wall'
+          : (e.orient.includes('floor') || e.orient.includes('slab')) ? 'slab'
+            : (isVerticalArea(e.points) ? 'wall' : 'slab'));
       const section = sectionByArea.get(un) ?? '';
       if (section) this.sectionNamesUsed.add(section);
-      areas.push({ name: un, story, points, kind, section, groups: ctx.groupsFor(un, 'area') });
+      areas.push({ name: un, story: e.story, points: e.points, kind, section, groups: ctx.groupsFor(un, 'area') });
     }
     this.areasCache = areas;
     this.openingsCache = openings;
@@ -719,7 +812,19 @@ export abstract class TableConnection implements EtabsConnection {
         x: num(r, 'Station', 'Location', 'Dist') * lf,
         V: num(r, 'V2') * ff,
         M: num(r, 'M3') * mf,
-        P: num(r, 'P') * ff,
+        // AXIAL IS NEGATED ON THE WAY IN. ETABS reports frame axial force
+        // COMPRESSION-NEGATIVE; `LoadCase.Pu` is COMPRESSION-POSITIVE throughout this
+        // app (`computeTorsion`'s Nu is documented that way, and `designMember` splits
+        // DCR_axial from DCR_axial_tens on `Pu >= 0`). Passing ETABS's number straight
+        // through inverted every axially-loaded member: a beam in compression was
+        // designed as if in tension, which removes the Nu/(6·Ag) credit from V_c
+        // (Table 22.5.5.1), removes the √(1 + Nu/(4·Acp·λ√f′c)) credit from T_cr
+        // (§22.7.5.1), and puts the P-M check on the wrong branch entirely.
+        //
+        // The .SCO writers negate again on the way out, because S-Concrete is ALSO
+        // compression-negative — so ETABS and S-Concrete see the same sign, which is
+        // what makes the round trip verifiable. See `sco/__tests__/axialSign.test.ts`.
+        P: -num(r, 'P') * ff,
         T: num(r, 'T') * mf,
       });
     }

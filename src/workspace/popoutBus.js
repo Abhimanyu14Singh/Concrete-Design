@@ -34,7 +34,7 @@ export const PANELS = {
     // detached window and the affordance silently does nothing, which is worse than not
     // offering it.
     fns: [
-      'onClose', 'onRebarChange', 'onSectionChange', 'onSelectRow', 'onApplyRebar', 'onApplySection',
+      'onClose', 'onRebarChange', 'onSectionChange', 'onApplyRebar', 'onApplySection',
       'onToggleCurtailmentNote', 'onSetOppositeTop', 'onSetMidThirdTop',
       'onSetEndThirdBot', 'onSetReviewed',
     ],
@@ -42,14 +42,23 @@ export const PANELS = {
   },
   calc:    { title: 'Calc Sheet',    fns: ['onClose', 'onSelectRow'],                  reqs: ['menuItemsFor'] },
   loads:   { title: 'Loads',         fns: ['onClose', 'onSelectRow'],                  reqs: ['menuItemsFor'] },
-  force:   { title: 'Force Diagram', fns: ['onClose', 'onSelectRow'],                  reqs: ['menuItemsFor'] },
+  force:   { title: 'Force Diagram', fns: ['onClose'],                                 reqs: ['menuItemsFor'] },
   elevation: { title: 'Elevation',   fns: ['onClose'],                                 reqs: ['menuItemsFor'] },
   // The editor hands back a WHOLE Member — the heaviest thing that crosses the bus, and
   // the reason `cloneable()` has to walk all the way down rather than skim the top level.
   editor:  { title: 'Editor',        fns: ['onClose', 'onUpdate'],                     reqs: ['menuItemsFor'] },
   plan: {
-    title: 'Plan',
-    fns: ['onClose', 'onStory', 'onColorMode', 'onSelectFrames', 'onOpenMember', 'onView3d', 'onDiagramMode', 'onDcrThresholds', 'onDcrColors', 'onFlexFace'],
+    // The kind key stays `plan` — it is persisted in saved layouts and in the
+    // `?popout=` URL, so renaming it would strand every existing arrangement.
+    // Only the human-facing title changed.
+    title: 'Model',
+    // `onHiddenStories` + `onElements` are the Filter popover's two outputs. They
+    // replaced a single `onStory` when the storey dropdown became a multi-select, and
+    // this list was not updated with it — so a detached Plan had a Filter whose every
+    // checkbox called undefined and THREW, which reads as a dead popover rather than
+    // the crash it was. `panelBusContract.test.ts` now pins this list to the props the
+    // component actually destructures.
+    fns: ['onClose', 'onHiddenStories', 'onElements', 'onColorMode', 'onSelectFrames', 'onOpenMember', 'onView3d', 'onDiagramMode', 'onPlanCombo', 'onDcrThresholds', 'onDcrColors', 'onFlexFace', 'onLineWeight'],
     // `beamMenuFor` is a REQ for the same reason the header menu is: the items are built
     // in the main window over its state, so only their labels can cross and the chosen
     // index has to come back. It takes the member and frame name as arguments — the bus
@@ -92,9 +101,41 @@ export const isPopoutWindow = () => {
   try { return !!new URLSearchParams(window.location.search).get('popout') } catch { return false }
 }
 
-export const popoutKind = () => {
+/**
+ * The WINDOW id in `?popout=<winId>` (`w1`, `w2`, …), or null in the main window.
+ *
+ * This used to be a panel KIND, because a detached window could only ever hold one
+ * panel. Now a window is a container with its own layout, so the URL names the window
+ * and the window asks the bus which panels it is holding — which is what lets a second
+ * panel be docked into an existing one.
+ */
+export const popoutWinId = () => {
   try { return new URLSearchParams(window.location.search).get('popout') } catch { return null }
 }
+
+/** @deprecated The URL parameter is a window id now — use `popoutWinId`. Kept because a
+ *  window left open across a reload of the main page may still carry an old URL. */
+export const popoutKind = popoutWinId
+
+// ── Bus message shapes ───────────────────────────────────────────────────────────
+//
+// Everything is addressed by `win`, because a message now has to reach ONE window that
+// may hold several panels — and, for the per-panel traffic, one panel inside it.
+//
+//   main → window   contents  which panels this window holds, and their layout
+//                   props     one panel's props
+//                   res       reply to a `req` (menu labels)
+//                   bounds    reply to a `bounds?` (where every window is on screen)
+//                   close     the main window is reclaiming this window
+//
+//   window → main   hello     just opened / reloaded — send me everything
+//                   call      run a panel callback over there
+//                   req       run one that has to answer
+//                   invoke    the menu item at this index was chosen
+//                   wdock     I rearranged my internal layout; persist it
+//                   bounds?   a drag is starting — where is everyone?
+//                   move      put panel `kind` into window `to` at `target`
+//                   closed    the OS closed me; re-home my panels
 
 /** The Electron shell, which can give a panel a frameless-titled OS window. */
 export const isDesktop = () =>
@@ -103,6 +144,39 @@ export const isDesktop = () =>
 /** Either host can detach; only the window furniture differs. */
 export const canDetach = () =>
   isDesktop() || (typeof window !== 'undefined' && typeof window.open === 'function')
+
+/**
+ * Where every dockable window is on SCREEN — the list a cross-window drag hit-tests
+ * against. `[{id, x, y, w, h}]`, main window included as `dock`.
+ *
+ * Only the main window can answer this, which is why it is asked over the bus rather
+ * than computed in the window doing the dragging: Electron keeps the real geometry in
+ * the main process, and a browser popout has no reference to its siblings at all — only
+ * the opener does, in the map it passes here.
+ *
+ * Screen coordinates, not client: the pointer is outside the dragging window's own
+ * document by the time this matters, so its `clientX/clientY` mean nothing to any other
+ * window. `screenX/screenY` are the only frame all the windows share.
+ */
+export async function shellWindowBounds(browserWins) {
+  if (isDesktop() && window.desktop.popoutBounds) {
+    try { return await window.desktop.popoutBounds() } catch { return [] }
+  }
+  // Browser host. `outerWidth/outerHeight` include the OS chrome, which is what the
+  // Electron bounds report too — so a drop near a window's title bar behaves the same
+  // in both hosts rather than falling through a gap the size of the frame.
+  const out = []
+  try {
+    out.push({ id: 'dock', x: window.screenX, y: window.screenY, w: window.outerWidth, h: window.outerHeight })
+  } catch { /* no geometry — the list is still usable without the main window */ }
+  for (const [id, w] of (browserWins || new Map())) {
+    try {
+      if (!w || w.closed) continue
+      out.push({ id, x: w.screenX, y: w.screenY, w: w.outerWidth, h: w.outerHeight })
+    } catch { /* a window mid-close can throw on access */ }
+  }
+  return out
+}
 
 // Strip anything structured-clone would choke on, so one unserialisable prop cannot
 // silently kill the whole message.

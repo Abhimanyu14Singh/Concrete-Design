@@ -1,0 +1,20 @@
+{
+  "_version": "2.0",
+  "id": "p-v20",
+  "name": "Breaking Schema",
+  "code": "ACI318-19",
+  "description": "Synthetic: a MAJOR ahead of this build. Must be refused, not guessed at.",
+  "engineer": "A. Singh",
+  "date": "2028-02-02",
+  "members": [
+    {
+      "id": "m-v20-1",
+      "label": "B1",
+      "memberType": "beam",
+      "material": { "fc": 5000, "fy": 60000, "fyt": 60000, "Es": 29000000, "lambdaConcrete": 1 },
+      "section": { "type": "rectangular_beam", "b": 14, "h": 28, "coverClear": 1.5, "stirrupDia": 4 },
+      "rebar": { "topBars": [], "botBars": [] },
+      "loads": []
+    }
+  ]
+}

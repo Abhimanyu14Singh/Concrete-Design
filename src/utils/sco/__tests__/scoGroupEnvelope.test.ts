@@ -72,20 +72,30 @@ describe('buildGroupEnvelopeScoFiles — one .SCO per group', () => {
     expect(file.loadCaseCount).toBe(3);          // 2 + 1 combos
     const rows = rowsOf(file.text);
     expect(rows).toHaveLength(3);
-    // Both members' governing moments present, in member order.
+    // Both members' moments present, in member order. Shear pairs with Mfy, so it
+    // lands in Vfz — Vfy is the minor-axis column and stays empty for a beam.
     expect(rows.map(r => r.Mfy)).toEqual([120, 200, 90]);
-    expect(rows.map(r => r.Vfy)).toEqual([30, 55, 70]);
+    expect(rows.map(r => r.Vfz)).toEqual([30, 55, 70]);
+    expect(rows.map(r => r.Vfy)).toEqual([0, 0, 0]);
   });
 
-  it('is an ACTIVE transfer — every pooled force lands in its field', () => {
+  it('is an ACTIVE transfer — every pooled force lands in its field, both faces', () => {
     const members = [
       beam('b1', 'B1', [lc({ Mu_pos: 180, Mu_neg: -90, Vu: 45, Tu: 8, Pu: 25 })]),
       beam('b2', 'B2', [lc({ Mu_pos: 50, Mu_neg: -300, Vu: 70, Tu: 0, Pu: -15 })]),
     ];
     const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1', 'b2'])], members, 'ACI318-19');
     const rows = rowsOf(file.text);
-    expect(rows[0]).toMatchObject({ Nf: 25, Tf: 8, Mfy: 180, Vfy: 45 });   // B1 sagging governs
-    expect(rows[1]).toMatchObject({ Nf: -15, Tf: 0, Mfy: 300, Vfy: 70 });  // B2 hogging governs, tension preserved
+    // Each combo contributes a sagging row and a signed hogging row, so the top
+    // and bottom cages are both actually checked.
+    expect(rows).toHaveLength(4);
+    // Nf is the NEGATIVE of Pu — S-Concrete is compression-negative, the app is
+    // compression-positive. B1's +25 kip compression leaves as −25; B2's −15 kip
+    // tension leaves as +15.
+    expect(rows[0]).toMatchObject({ Nf: -25, Tf: 8, Mfy: 180, Vfz: 45 });   // B1 sagging
+    expect(rows[1]).toMatchObject({ Nf: -25, Tf: 8, Mfy: -90, Vfz: 45 });   // B1 hogging
+    expect(rows[2]).toMatchObject({ Nf: 15, Tf: 0, Mfy: 50, Vfz: 70 });     // B2 sagging
+    expect(rows[3]).toMatchObject({ Nf: 15, Tf: 0, Mfy: -300, Vfz: 70 });   // B2 hogging, tension preserved
   });
 
   it('tags each pooled row with its source member (governing case is traceable)', () => {
@@ -101,7 +111,7 @@ describe('buildGroupEnvelopeScoFiles — one .SCO per group', () => {
     const [file] = buildGroupEnvelopeScoFiles([group('g', 'Perimeter', ['b1'])], [beam('b1', 'B1', [lc({ Mu_pos: 100 })])], 'ACI318-19');
     expect(file.fileName).toBe('Perimeter.SCO');
     expect(file.groupLabel).toBe('Perimeter');
-    expect(file.text).toContain('Member Name\tPerimeter');
+    expect(file.text).toContain('Member Name\t Perimeter');
   });
 
   it('uses the GROUP rebar template when one is set (not the member rebar)', () => {
@@ -111,7 +121,7 @@ describe('buildGroupEnvelopeScoFiles — one .SCO per group', () => {
     };
     const m = beam('b1', 'B1', [lc({ Mu_pos: 100 })]);   // member stirrups @ 6
     const [file] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'], groupRebar)], [m], 'ACI318-19');
-    expect(file.text).toContain('Bm Sstir\t 4.0');       // group's 4-in spacing, not the member's 6
+    expect(file.text).toContain('Bm Sstir\t 4');         // group's 4-in spacing, not the member's 6
   });
 });
 
@@ -265,5 +275,81 @@ describe('buildGroupEnvelopeScoFiles — metric bar size reaches the EC2 .SCO (E
       { topBars: [], botBars: [], ties: { barSize: -8, spacing: 6, legs: 2 } });
     const [f] = buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [m], 'EN1992-1-1', proj);
     expect(dt(f.text)).toBe('6');
+  });
+});
+
+// ── Zoned stirrups in the group envelope ──────────────────────────────────────
+// S-Concrete's `Bm Sstir` is ONE spacing per file, but a beam carries three zones
+// and the app checks each demand at the spacing of the zone its station sits in.
+// Feeding a single spacing (rebarSeed picks the TIGHTEST) had S-Concrete checking
+// mid-span demands at end-zone links, so its V&T util came back low on every
+// zoned beam. The envelope therefore splits into one file per distinct spacing.
+describe('buildGroupEnvelopeScoFiles — zoned stirrups', () => {
+  const proj: Project = { id: 'p', name: 'P', code: 'EN1992-1-1', description: '', engineer: 'E', date: 'd', members: [] };
+  const ZONED: RebarLayout = {
+    topBars: [{ numBars: 2, barSize: 8 }], botBars: [{ numBars: 3, barSize: 9 }],
+    ties: { barSize: 4, spacing: 4, legs: 2 },
+    tieZones: [{ spacing: 4 }, { spacing: 8 }, { spacing: 4 }],
+  };
+  // Two members, three stations each: ends in the 4" zones, mid in the 8" zone.
+  const zonedBeam = (id: string, label: string, v: number): Member => ({
+    ...beam(id, label, [
+      lc({ id: `${id}a`, label: 'C1@0', Mu_neg: -200, Vu: v, x: 0 }),
+      lc({ id: `${id}b`, label: 'C1@10', Mu_pos: 150, Vu: v / 10, x: 10 }),
+      lc({ id: `${id}c`, label: 'C1@20', Mu_neg: -190, Vu: v, x: 20 }),
+    ]),
+    rebar: ZONED,
+  });
+
+  it('emits one file per distinct spacing, tagged with it', () => {
+    const files = buildGroupEnvelopeScoFiles(
+      [group('g', 'Perimeter', ['b1', 'b2'])],
+      [zonedBeam('b1', 'B1', 60), zonedBeam('b2', 'B2', 80)], 'ACI318-19');
+    expect(files.map(f => f.fileName).sort()).toEqual(['Perimeter_ends.SCO', 'Perimeter_mid.SCO']);
+    expect(files.map(f => f.zoneSpacing).sort((a, b) => a! - b!)).toEqual([4, 8]);
+    expect(new Set(files.map(f => f.memberId)).size).toBe(2);   // distinct keys
+    for (const f of files) expect(f.memberCount).toBe(2);       // both members in each
+  });
+
+  it('gives each file its own spacing and ONLY that zone\'s pooled rows', () => {
+    const files = buildGroupEnvelopeScoFiles(
+      [group('g', 'P', ['b1', 'b2'])],
+      [zonedBeam('b1', 'B1', 60), zonedBeam('b2', 'B2', 80)], 'ACI318-19');
+    const byName = Object.fromEntries(files.map(f => [f.fileName, f]));
+    expect(byName['P_ends.SCO'].text).toContain('Bm Sstir\t 4');
+    expect(byName['P_mid.SCO'].text).toContain('Bm Sstir\t 8');
+    // End zones: both members' x=0 and x=20 rows (hogging → 2 rows each) = 8.
+    expect(rowsOf(byName['P_ends.SCO'].text).map(r => r.Vfz)).toEqual([60, 60, 60, 60, 80, 80, 80, 80]);
+    // Mid zone: one sagging row per member.
+    expect(rowsOf(byName['P_mid.SCO'].text).map(r => r.Vfz)).toEqual([6, 8]);
+    // Rows stay traceable to their source member.
+    expect(rowsOf(byName['P_mid.SCO'].text)[0].comment).toContain('B1');
+    expect(rowsOf(byName['P_mid.SCO'].text)[1].comment).toContain('B2');
+  });
+
+  it('splits the EC2 ULS set per zone but keeps ONE crack file', () => {
+    // Crack width is a flexural SLS check — it does not see the links, so splitting
+    // it by stirrup zone would just duplicate the same answer.
+    const cp = { wLimitTop: 0.3, wLimitBot: 0.3, wLimitFace: 0.3, qpFactor: 0.6, kt: 0.4 };
+    const m1: Member = { ...zonedBeam('b1', 'B1', 60), crackParams: cp,
+      stationForces: [{ combo: 'QP', stations: [{ x: 0, V: 15, M: 120 }] }] };
+    const files = buildGroupEnvelopeScoFiles(
+      [group('g', 'EC2', ['b1'])], [m1], 'EN1992-1-1', { ...proj, slsCombo: 'QP' });
+    expect(files.map(f => f.fileName).sort()).toEqual(['EC2_crack.SCO', 'EC2_ends.SCO', 'EC2_mid.SCO']);
+    expect(files.filter(f => f.kind === 'uls')).toHaveLength(2);
+    expect(files.filter(f => f.kind === 'crack')).toHaveLength(1);
+    expect(files.find(f => f.kind === 'crack')!.zoneSpacing).toBeUndefined();
+  });
+
+  it('does NOT split an unzoned group, or one whose rows carry no station', () => {
+    const plain = beam('b1', 'B1', [lc({ Mu_pos: 100, Vu: 30, x: 0 })]);
+    expect(buildGroupEnvelopeScoFiles([group('g', 'G', ['b1'])], [plain], 'ACI318-19')
+      .map(f => f.fileName)).toEqual(['G.SCO']);
+
+    const noStation = { ...zonedBeam('b2', 'B2', 60) };
+    noStation.loads = noStation.loads.map(l => ({ ...l, x: undefined }));
+    const [only] = buildGroupEnvelopeScoFiles([group('g2', 'H', ['b2'])], [noStation], 'ACI318-19');
+    expect(only.fileName).toBe('H.SCO');
+    expect(only.zoneSpacing).toBeUndefined();
   });
 });

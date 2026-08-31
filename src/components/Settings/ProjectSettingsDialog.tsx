@@ -23,7 +23,6 @@ import type { IconName } from '../common/Icon';
 
 const CODES: { value: DesignCode; label: string; sub: string }[] = [
   { value: 'ACI318-19', label: 'ACI 318-19', sub: 'US · current' },
-  { value: 'ACI318-14', label: 'ACI 318-14', sub: 'US · legacy' },
   { value: 'EN1992-1-1', label: 'Eurocode 2', sub: 'EN 1992-1-1' },
 ];
 

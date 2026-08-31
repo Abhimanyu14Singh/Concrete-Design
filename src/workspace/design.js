@@ -4,6 +4,7 @@ import { generateBreakdownEC2 } from '../utils/calcBreakdownEC2.ts'
 import { zoneShearDemands } from '../utils/concreteDesign.ts'
 import { capacityLabels } from '../utils/units.ts'
 import { continuousCage } from '../utils/curtailment.ts'
+import { resolveCrack } from '../utils/resolveCrack.ts'
 import { suggestGroupRebar, isSuggestError } from '../utils/suggestRebar.ts'
 import { beamAxialFlexure } from '../utils/axialFlexure.ts'
 import { biaxialCheck } from '../utils/biaxial.ts'
@@ -15,11 +16,15 @@ import { computeFlexure, getBarArea } from '../utils/concreteDesign.ts'
 
 /** The checks a beam has, in the order the chips read. Torsion and crack width are
  *  per-code: EC2 adds an SLS crack check that ACI has no equivalent for. */
-export function checksFor(code) {
+export function checksFor(code, ignoreTorsion) {
   const base = [
     { key: 'flex', label: 'Flexure', of: r => Math.max(r.DCR_flex_pos, r.DCR_flex_neg) },
     { key: 'shear', label: 'Shear', of: r => r.DCR_shear },
-    { key: 'torsion', label: 'Torsion', of: r => r.DCR_torsion },
+    // With "neglect torsion" on, the check is OMITTED rather than shown reading 0.00.
+    // Tu has been dropped to zero so the check is not being made, and a chip that always
+    // reads zero is a control that teaches people to ignore the row it sits in. Same
+    // rule the member panel follows.
+    ...(ignoreTorsion ? [] : [{ key: 'torsion', label: 'Torsion', of: r => r.DCR_torsion }]),
   ]
   return code === 'EN1992-1-1'
     ? [...base, { key: 'crack', label: 'Crack', of: r => r.DCR_crack ?? 0 }]
@@ -35,17 +40,34 @@ export function checksFor(code) {
  * single "representative" row. That mistake has caused three separate bugs in the app,
  * and a demo that repeats it would be showing the wrong beam.
  */
-export function designMemberAllRows(member, code) {
+export function designMemberAllRows(member, code, prefs = {}) {
   const span = member.span ?? 20
-  const rows = member.loads.map(load => ({ load, result: runDesign(member.section, member.material, member.rebar, load, span, code) }))
+  // PROJECT DESIGN PREFERENCES, not optional decoration. `runDesign` takes these
+  // POSITIONALLY (…, crack, cotTheta, ignoreTorsion, biaxialAlpha), so a call that stops
+  // short of them designs under different rules than the project asked for — silently,
+  // with no type error. That is exactly how "neglect torsion" came to be honoured in the
+  // member panel, the dashboard and the .SCO writers but NOT in this shell, which is the
+  // UI most of the work actually happens in.
+  // Crack params come from the app's own resolver, not raw off the member: under EC2 it
+  // substitutes the quasi-permanent moments from the project's SLS combo, and without it
+  // the panel falls back to `qpFactor × Mu` — a different crack demand from the one the
+  // member screen and the .SCO writers use for the same beam.
+  const crack = prefs.crack ?? resolveCrack(member, code, prefs.slsCombo)
+  const rows = member.loads.map(load => ({
+    load,
+    result: runDesign(
+      member.section, member.material, member.rebar, load, span, code,
+      crack, prefs.cotTheta, prefs.ignoreTorsion, prefs.biaxialAlpha,
+    ),
+  }))
 
   // The biaxial check joins the list only for a member that actually has a minor-axis
   // moment. Appending it unconditionally would put a chip reading 0.00 on 174 of 175
   // members — a dead control that teaches people to ignore the row it sits in.
   const hasBiaxial = rows.some(r => r.result.NM_util !== undefined)
   const checkDefs = hasBiaxial
-    ? [...checksFor(code), { key: 'biaxial', label: 'Biaxial', of: r => r.NM_util ?? 0 }]
-    : checksFor(code)
+    ? [...checksFor(code, prefs.ignoreTorsion), { key: 'biaxial', label: 'Biaxial', of: r => r.NM_util ?? 0 }]
+    : checksFor(code, prefs.ignoreTorsion)
 
   const checks = checkDefs.map(c => {
     let best = rows[0], dcr = -Infinity
@@ -62,16 +84,40 @@ export function designMemberAllRows(member, code) {
 
   // Warnings are per-row too; collapse to one of each so the panel is readable, but
   // keep the count, because "12 rows say this" is different from "one row does".
+  //
+  // COLLAPSE ON THE CLAUSE AND THE SHAPE OF THE SENTENCE, NOT ON THE SENTENCE.
+  // Nearly every message embeds the row's own numbers -- "Shear NG: DCR = 1.23",
+  // "Vu 45.2 kips", "at fs = 31 ksi" -- so keying on the literal text deduplicates
+  // nothing: an ETABS member carries one row per station per combo, and a single
+  // failing clause came back as 50 separate warnings. Blanking the numbers out of the
+  // key merges those back into one entry while still keeping genuinely different
+  // messages apart ("Top steel ..." stays distinct from "Bottom steel ...").
+  const shape = msg => msg.replace(/-?\d[\d,.]*/g, '#')
+  const rowDcrOf = r => Math.max(
+    r.DCR_flex_pos || 0, r.DCR_flex_neg || 0, r.DCR_shear || 0,
+    r.DCR_torsion || 0, r.DCR_crack || 0, r.VT_util || 0,
+  )
   const seen = new Map()
   for (const { load, result } of rows) {
+    const rowDcr = rowDcrOf(result)
     for (const w of result.warnings || []) {
-      const rec = seen.get(w.code + w.message)
-      if (rec) rec.count++
-      else seen.set(w.code + w.message, { ...w, count: 1, first: load })
+      const key = w.code + '|' + shape(w.message)
+      const rec = seen.get(key)
+      if (!rec) { seen.set(key, { ...w, count: 1, first: load, worstDcr: rowDcr }); continue }
+      rec.count++
+      // An error anywhere outranks a warning everywhere -- the collapsed entry must
+      // not present the mildest version of a clause that failed hard on some row.
+      if (w.severity === 'error') rec.severity = 'error'
+      // Show the WORST row's wording. Keeping the first row's would print "DCR = 1.02"
+      // on a member whose worst station reads 1.45.
+      if (rowDcr > rec.worstDcr) { rec.message = w.message; rec.worstDcr = rowDcr; rec.first = load }
     }
   }
 
-  return { member, code, span, rows, checks, governing, dcr: governing ? governing.dcr : 0, warnings: [...seen.values()] }
+  // `prefs` travels ON the design, so anything derived from it later (the Calc Sheet,
+  // the charts) is built under the SAME rules as the DCRs — rather than each consumer
+  // having to remember to thread the project settings through a second time.
+  return { member, code, span, rows, checks, governing, dcr: governing ? governing.dcr : 0, warnings: [...seen.values()], prefs }
 }
 
 /**
@@ -133,14 +179,23 @@ export function chartsFor(design, load) {
 
 /** The Calc Sheet for one row, from the app's own breakdown generator. */
 export function breakdownFor(design, load) {
-  const { member, span, code } = design
+  const { member, span, code, prefs = {} } = design
   const zoneVu = member.stationForces ? zoneShearDemands(member.stationForces, span) : undefined
+  // The sheet is a DERIVATION of what the engine computed, so it has to see the same
+  // load the engine saw. `runDesign` zeroes Tu itself when the project neglects torsion;
+  // the breakdown generators are called directly and do not, so the row is zeroed here
+  // instead — otherwise the Calc Sheet prints a torsion section, with a demand and a
+  // utilisation, for a project whose panels show no torsion check at all.
+  const row = prefs.ignoreTorsion && load.Tu ? { ...load, Tu: 0 } : load
   // The two generators do not take the same tail: only the ACI one reads per-third
   // shear demands, and the EC2 one wants the SLS combo name and cotθ instead.
   return code === 'EN1992-1-1'
-    ? generateBreakdownEC2(member.section, member.material, member.rebar, load, span, member.crackParams, load.id, 2.5)
-    : generateBreakdown(member.section, member.material, member.rebar, load, span, zoneVu)
+    ? generateBreakdownEC2(member.section, member.material, member.rebar, row, span,
+        resolveCrack(member, code, prefs.slsCombo) ?? member.crackParams,
+        prefs.slsCombo ?? row.id, prefs.cotTheta ?? 2.5)
+    : generateBreakdown(member.section, member.material, member.rebar, row, span, zoneVu)
 }
+
 
 /**
  * Everything the Force Diagram needs, as plain numbers — it has to cross a
@@ -272,9 +327,28 @@ export function forceSeries(design) {
  * out as the same symmetric "V" and which way the section is sheared was gone before it
  * was drawn. The Force Diagram panel already envelopes signed for this reason.
  */
-export function stationEnvelope(stationForces, type) {
+export function stationEnvelope(stationForces, type, combo) {
+  const src = stationForces || []
+  // ONE COMBO: its own stations, in order, untouched. This is a real bending moment
+  // diagram — the shape that combination actually produces, hogging over the supports
+  // and sagging at midspan, with the inflection points where they really are.
+  //
+  // The envelope below cannot be that and never could. At a station where one combo
+  // gives +M and another −M it keeps whichever is bigger in magnitude, so the curve it
+  // draws hops between combos from station to station: every point on it is real, and
+  // the line joining them is a load case that does not exist. That is the right picture
+  // for "how much does this member have to take anywhere" and the wrong one for reading
+  // a diagram, which is why the combo is now selectable.
+  if (combo) {
+    const cf = src.find(c => c.combo === combo)
+    if (!cf) return []
+    return [...cf.stations]
+      .sort((a, b) => a.x - b.x)
+      .map(st => ({ x: st.x, v: type === 'M' ? st.M : st.V }))
+  }
+
   const byX = new Map()
-  for (const cf of stationForces || []) {
+  for (const cf of src) {
     for (const s of cf.stations) {
       const val = type === 'M' ? s.M : s.V
       const rec = byX.get(s.x) || { lo: 0, hi: 0 }
@@ -286,6 +360,24 @@ export function stationEnvelope(stationForces, type) {
   return [...byX.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([x, r]) => ({ x, v: -r.lo > r.hi ? r.lo : r.hi }))
+}
+
+/**
+ * Every combo name in the model, in the order ETABS gave them.
+ *
+ * A union across members rather than a read of the first one: members imported from
+ * different load patterns do not all carry the same combos, and a list taken off
+ * `members[0]` would silently hide the combos that only exist elsewhere in the model.
+ */
+export function comboNames(members) {
+  const seen = new Set()
+  const out = []
+  for (const m of members || []) {
+    for (const cf of m.stationForces || []) {
+      if (cf.combo && !seen.has(cf.combo)) { seen.add(cf.combo); out.push(cf.combo) }
+    }
+  }
+  return out
 }
 
 
@@ -300,7 +392,17 @@ export function summaryMaps(designs) {
   const resultById = {}, dcrById = {}, modeById = {}
   for (const d of designs) {
     const id = d.member.id
-    resultById[id] = d.governing.row.result
+    // The governing row supplies the CAPACITIES and the status; the warnings come from
+    // `d.warnings`, the deduplicated union across EVERY row.
+    //
+    // A member has many load rows and several checks only run on some of them — §24.3.2
+    // crack spacing is gated on a sagging row, §22.7.x on Tu clearing its threshold. So
+    // reading the warning list off one row hides whatever the other rows raised, and the
+    // dashboard's chips then disagree with a Calc Sheet opened on a different row: the
+    // chips would be missing a clause the sheet is showing. `designMemberAllRows` has
+    // always computed the union (with a per-warning `count`); it was simply thrown away
+    // here in favour of one row's list.
+    resultById[id] = { ...d.governing.row.result, warnings: d.warnings }
     dcrById[id] = d.dcr
     // Worst per MODE across ALL rows — not the governing row's — or a chip reads green
     // while a different station pushes that mode over.
@@ -384,7 +486,15 @@ export function regionsFor(design, group) {
  *
  * @returns { rebarByGroup: Map, note: string } — the note is the app's own wording.
  */
-export function suggestAllGroups(groups, members, code, barFamily, floors, targetDCR = NEAR_CAPACITY) {
+/**
+ * The sweep's state machine, shared by the synchronous {@link suggestAllGroups} and the
+ * chunked {@link suggestAllGroupsChunked}.
+ *
+ * Extracted so there is exactly ONE copy of the per-group logic and of the note the
+ * caller prints. Two copies of this drifted the moment the torsion counter was added to
+ * one of them, which is the whole argument against writing a second driver instead.
+ */
+function createSweep(members, code, barFamily, floors, targetDCR, prefs) {
   const byId = new Map(members.map(m => [m.id, m]))
   const rebarByGroup = new Map()
   // Per-GROUP, not one `firstError` for the sweep. A single message named whichever
@@ -393,70 +503,255 @@ export function suggestAllGroups(groups, members, code, barFamily, floors, targe
   // their own group had even been attempted. Keyed by id so the caller can put each
   // reason on the group it belongs to.
   const errorByGroup = new Map()
+  /** Clause -> how many suggested cages still carry it. */
+  const residualCodes = new Map()
   let ok = 0, torsionGoverned = 0
+  // Resolved, but only by going past ρmax. Counted apart from `ok` because a sweep that
+  // applies these and reports "12/12 suggested" has told the engineer nothing about the
+  // one thing that makes them different — see `overReinforced` in utils/suggestRebar.ts.
+  let overRein = 0
+  // Returned the section's CEILING and it is still short of the target — a different
+  // statement from over-reinforced, and the one that means "no cage will do it".
+  let below = 0
+  // Over a CROSS-SECTION limit — the concrete, not the cage. Named apart because it is
+  // the only outcome no amount of reinforcement can change.
+  let sectionOver = 0
   // The worst torsion the accepted cages leave behind. Suggest sizes links for torsion
   // (φT_n climbs on A_b/s per leg, which is a different ladder from shear's legs·A_b/s),
   // and this is the number that says so — without it "Suggested 7/11" is silent about
   // the check the user asked the question about.
   let worstTorsAfter = 0
 
-  for (const g of groups) {
-    const inGroup = g.memberIds.map(id => byId.get(id)).filter(Boolean)
-    // Skip empty groups silently — they are not a failure, there is just nothing to size.
-    if (!inGroup.some(m => m.memberType === 'beam' && m.loads.length > 0)) continue
-    const r = suggestGroupRebar(inGroup, code, targetDCR, floors, barFamily)
-    if (isSuggestError(r)) {
-      errorByGroup.set(g.id, { label: g.label, kind: r.kind, at: r.at, error: r.error })
-      continue
-    }
-    ok++
-    rebarByGroup.set(g.id, r.rebar)
+  return {
+    /** Size ONE group. Returns true when a cage was applied, false when it was skipped
+     *  or failed — the caller uses it only for progress wording. */
+    step(g) {
+      const inGroup = g.memberIds.map(id => byId.get(id)).filter(Boolean)
+      // Skip empty groups silently — they are not a failure, there is just nothing to size.
+      if (!inGroup.some(m => m.memberType === 'beam' && m.loads.length > 0)) return false
+      // PREFS ALL THE WAY DOWN. `suggestGroupRebar` hands cotTheta and ignoreTorsion
+      // straight to `runDesign`, so a call that stops at `barFamily` sizes the cage
+      // against DIFFERENT checks from the ones the member panel will run — silently,
+      // because both arguments are optional and JS does not complain.
+      //
+      // Under EC2 that is not a rounding difference. V_Rd,s = (A_sw/s)·z·f_ywd·cot θ is
+      // LINEAR in cot θ, and the engine's default is 2.5 (the code maximum). A project
+      // set to the S-CONCRETE angle of 1.25 therefore got links sized for exactly twice
+      // the shear capacity it actually has: Suggest reported 0.84 and the panel opened
+      // at 1.69. At cot θ = 1.0 it reached 2.11. ACI hid it — V_s = A_v·f_yt·d/s has no
+      // strut-angle term, so the omission cost nothing there and nothing caught it.
+      const r = suggestGroupRebar(inGroup, code, targetDCR, floors, barFamily,
+        prefs.cotTheta, prefs.ignoreTorsion, prefs.slsCombo)
+      if (isSuggestError(r)) {
+        errorByGroup.set(g.id, { label: g.label, kind: r.kind, at: r.at, error: r.error })
+        return false
+      }
+      ok++
+      if (r.overReinforced) overRein++
+      // One counter for "the cage came back but does not meet the target", whatever the
+      // check. Which check it was is on the group's own DCR chips a click away; what the
+      // sweep line has to say is that these are not clean passes.
+      // Mutually exclusive on purpose: a section-limited group is short too, and
+      // counting it twice makes one problem read as two in the summary line. The
+      // section limit is the stronger statement — no cage answers it — so it wins.
+      if (r.sectionLimit) sectionOver++
+      else if (r.belowTarget || r.shearBelowTarget) below++
+      // What the engine STILL says about the cage being applied. The search resolves the
+      // things a cage can resolve -- strength, link spacing and legs, bar fit across the
+      // web, the gap between layers, skin steel -- so anything here is something no cage
+      // fixes, and it should reach the reader now rather than on the member panel after
+      // the cage has been applied.
+      for (const w of r.residualWarnings || []) {
+        residualCodes.set(w.code, (residualCodes.get(w.code) || 0) + 1)
+      }
+      rebarByGroup.set(g.id, r.rebar)
 
-    // Suggest now sizes the links on torsion as well as shear — they climb different
-    // ladders out of the same catalogue (φV_s ∝ legs·A_b/s, φT_n ∝ A_b/s alone), so the
-    // cheapest shear answer used to buy capacity with legs and leave torsion untouched.
-    // A group it cannot satisfy comes back as an ERROR now rather than a quietly
-    // torsion-governed cage, so this counter should stay at zero; it is kept as a
-    // tripwire: a suggested cage silently worse than the one it replaced is the one
-    // outcome worth naming, so count those and say so.
-    const after = inGroup.map(m => designMemberAllRows({ ...m, rebar: r.rebar }, code))
-    const worst = after.reduce((a, d) => (d.dcr > a.dcr ? d : a), after[0])
-    for (const d of after) {
-      worstTorsAfter = Math.max(worstTorsAfter, d.checks.find(c => c.key === 'torsion').dcr)
-    }
-    if (worst && worst.governing && worst.governing.key === 'torsion' && worst.dcr > targetDCR + 1e-9) {
-      torsionGoverned++
-    }
-  }
+      // Suggest now sizes the links on torsion as well as shear — they climb different
+      // ladders out of the same catalogue (φV_s ∝ legs·A_b/s, φT_n ∝ A_b/s alone), so the
+      // cheapest shear answer used to buy capacity with legs and leave torsion untouched.
+      // A group it cannot satisfy comes back as an ERROR now rather than a quietly
+      // torsion-governed cage, so this counter should stay at zero; it is kept as a
+      // tripwire: a suggested cage silently worse than the one it replaced is the one
+      // outcome worth naming, so count those and say so.
+      const after = inGroup.map(m => designMemberAllRows({ ...m, rebar: r.rebar }, code, prefs))
+      const worst = after.reduce((a, d) => (d.dcr > a.dcr ? d : a), after[0])
+      for (const d of after) {
+        // The torsion check is absent entirely when the project neglects torsion.
+        const t = d.checks.find(c => c.key === 'torsion')
+        if (t) worstTorsAfter = Math.max(worstTorsAfter, t.dcr)
+      }
+      if (worst && worst.governing && worst.governing.key === 'torsion' && worst.dcr > targetDCR + 1e-9) {
+        torsionGoverned++
+      }
+      return true
+    },
+    finish() {
+    const fail = errorByGroup.size
+    const total = ok + fail
+    // Two kinds of failure, and they call for different things from the reader. A SECTION
+    // limit (ACI §22.7.7.1 / EC2 §6.3.2) caps the diagonal compression in the concrete: no
+    // cage satisfies it, so the answer is a bigger beam and saying "unresolved" invites
+    // someone to go looking for reinforcement that does not exist. Anything else is a cage
+    // the search could not find, which IS worth another look.
+    const sectionLimited = [...errorByGroup.values()].filter(e => e.kind === 'section-limit')
+    const other = [...errorByGroup.values()].filter(e => e.kind !== 'section-limit')
+    const names = list => list.map(e => e.label).join(', ')
 
-  const fail = errorByGroup.size
-  const total = ok + fail
-  // Two kinds of failure, and they call for different things from the reader. A SECTION
-  // limit (ACI §22.7.7.1 / EC2 §6.3.2) caps the diagonal compression in the concrete: no
-  // cage satisfies it, so the answer is a bigger beam and saying "unresolved" invites
-  // someone to go looking for reinforcement that does not exist. Anything else is a cage
-  // the search could not find, which IS worth another look.
-  const sectionLimited = [...errorByGroup.values()].filter(e => e.kind === 'section-limit')
-  const other = [...errorByGroup.values()].filter(e => e.kind !== 'section-limit')
-  const names = list => list.map(e => e.label).join(', ')
-
-  let note
-  if (total === 0) {
-    note = 'No groups with designed beams to suggest.'
-  } else {
-    note = `Suggested ${ok}/${total} groups`
-    // Say what happened to TORSION, because that is the check the links were sized
-    // against and the one a reader cannot infer from "7/11".
-    if (ok > 0) note += ` · torsion ≤ ${worstTorsAfter.toFixed(2)} on every cage applied`
-    if (sectionLimited.length) {
-      note += ` · ${sectionLimited.length} need a BIGGER SECTION (${names(sectionLimited)})`
-        + ' — combined shear + torsion is over the cross-section limit there, so no'
-        + ' arrangement of links or bars will do it'
+    let note
+    if (total === 0) {
+      note = 'No groups with designed beams to suggest.'
+    } else {
+      note = `Suggested ${ok}/${total} groups`
+      // Say what happened to TORSION, because that is the check the links were sized
+      // against and the one a reader cannot infer from "7/11".
+      if (ok > 0) note += ` · torsion ≤ ${worstTorsAfter.toFixed(2)} on every cage applied`
+      if (sectionLimited.length) {
+        note += ` · ${sectionLimited.length} need a BIGGER SECTION (${names(sectionLimited)})`
+          + ' — combined shear + torsion is over the cross-section limit there, so no'
+          + ' arrangement of links or bars will do it'
+      }
+      if (other.length) note += ` · ${other.length} unresolved (${names(other)}) — ${other[0].error}`
     }
-    if (other.length) note += ` · ${other.length} unresolved (${names(other)}) — ${other[0].error}`
+    if (torsionGoverned > 0) {
+      note += ` · ${torsionGoverned} still governed by torsion`
+    }
+    // Loudest item in the sentence, because it is the only one that says a cage which
+    // LOOKS resolved is not code-compliant.
+    if (below > 0) {
+      note += ` · ⚠ ${below} STILL SHORT at the section's largest cage — no arrangement`
+        + ' of bars will do it, the section has to grow'
+    }
+    if (sectionOver > 0) {
+      note += ` · ⚠ ${sectionOver} over the CROSS-SECTION limit (shear+torsion crushing)`
+        + ' — the concrete governs, not the cage'
+    }
+    if (overRein > 0) {
+      note += ` · ⚠ ${overRein} EXCEED ρmax (over-reinforced — carries the moment but`
+        + ' fails ductility; enlarge the section)'
+    }
+    // Everything else the applied cages still carry, named by clause. Sorted by how many
+    // cages carry each, and capped at three so the sentence stays a sentence.
+    const residualTop = [...residualCodes.entries()].sort((a, b) => b[1] - a[1])
+    if (residualTop.length) {
+      note += ` · detailing left: ${residualTop.slice(0, 3).map(([c, n]) => `${c}×${n}`).join(', ')}`
+        + (residualTop.length > 3 ? ` +${residualTop.length - 3} more` : '')
+    }
+
+    /**
+     * The same outcome as `note`, counted instead of written.
+     *
+     * `note` is a sentence for the status bar and it names the groups that failed, which
+     * makes it useless for two things at once: it truncates (a sweep with ten failures
+     * spends its whole length listing them, and the REASON falls off the end), and the
+     * names are the user's own labels, which must not leave the machine. Counting by
+     * `kind` fixes both — "7 flexure-ladder, 3 crack-limit" is both shorter and more
+     * actionable than ten labels, and it carries nothing private.
+     *
+     * `reasons` is keyed by SuggestError.kind (see utils/suggestRebar.ts).
+     */
+    const reasons = {}
+    for (const e of errorByGroup.values()) {
+      const k = e.kind || 'unclassified'
+      reasons[k] = (reasons[k] || 0) + 1
+    }
+    const stats = {
+      attempted: total,
+      resolved: ok,
+      overReinforced: overRein,
+      belowTarget: below,
+      sectionLimited: sectionOver,
+      failed: fail,
+      reasons,
+      // Rounded: the log wants the magnitude, not 14 decimal places of it.
+      worstTorsionAfter: Math.round(worstTorsAfter * 100) / 100,
+      torsionGoverned,
+      /** Clause -> number of applied cages that still carry it. Empty on a clean sweep. */
+      residual: Object.fromEntries(residualCodes),
+    }
+      return { rebarByGroup, errorByGroup, note, stats }
+    },
   }
-  if (torsionGoverned > 0) {
-    note += ` · ${torsionGoverned} still governed by torsion`
+}
+
+/**
+ * Auto-size every group's cage — the app's ✨ Suggest, run over the whole model.
+ *
+ * A straight port of ModelMapView.runSuggestAllGroups: for each group with designed
+ * beams, invert the capacity checks for a cage that lands at or under the target DCR,
+ * then apply that ONE cage to the group template and to every member in it — which is
+ * the point of a group, and why this is not the same as auto-sizing each beam.
+ *
+ * Resolves everything before applying anything. A partial failure then leaves the model
+ * untouched for the groups that failed instead of half-applying a sweep, and the caller
+ * gets one state update rather than one per group.
+ *
+ * `floors` are the "use this bar size or larger" minimums the size dialog collects; they
+ * narrow the ladder Suggest searches. Undefined means no floor, which is the
+ * unconstrained search and the app's default.
+ *
+ * @returns { rebarByGroup: Map, note: string } — the note is the app's own wording.
+ */
+export function suggestAllGroups(groups, members, code, barFamily, floors, targetDCR = NEAR_CAPACITY, prefs = {}) {
+  const sweep = createSweep(members, code, barFamily, floors, targetDCR, prefs)
+  for (const g of groups) sweep.step(g)
+  return sweep.finish()
+}
+
+/**
+ * The same sweep, one group per turn of the event loop.
+ *
+ * Identical arithmetic to {@link suggestAllGroups} — same `createSweep`, same order —
+ * but it hands the thread back between groups, which buys two things the synchronous
+ * version cannot have: the status bar repaints as it goes, and the sweep can be PAUSED
+ * at a group boundary. Pausing between groups rather than inside one is what makes it
+ * safe: nothing is applied to the model until `finish()`, so a sweep held at group 7 of
+ * 24 has changed nothing at all.
+ *
+ * `hooks.gate` is awaited between groups (see utils/activity.ts) and `hooks.onProgress`
+ * is called with (doneCount, total, groupLabel) before each one.
+ */
+export async function suggestAllGroupsChunked(
+  groups, members, code, barFamily, floors, targetDCR = NEAR_CAPACITY, prefs = {}, hooks = {},
+) {
+  const sweep = createSweep(members, code, barFamily, floors, targetDCR, prefs)
+  const total = groups.length
+  for (let i = 0; i < total; i++) {
+    const g = groups[i]
+    hooks.onProgress?.(i, total, g.label)
+    if (hooks.gate) await hooks.gate()
+    sweep.step(g)
   }
-  return { rebarByGroup, errorByGroup, note }
+  hooks.onProgress?.(total, total, null)
+  return sweep.finish()
+}
+
+/**
+ * A cheap structural fingerprint of a model — what tells one revision from the next.
+ *
+ * Used to decide whether the working model has actually diverged from the newest pushed
+ * one. Straight after a push it has not: the push freezes what you have, so listing both
+ * would show the same model twice under different names.
+ *
+ * Reads the three things a revision changes — the SECTIONS, the CAGES and the DEMAND —
+ * and deliberately not everything else. It only decides whether to show a row in a
+ * picker; a false "changed" costs a redundant entry, never a wrong number.
+ *
+ * The demand is summed rather than counted. A re-import after a re-analysis keeps the
+ * number of load rows exactly the same and changes every value in them, so a count would
+ * call the redesigned model unchanged — which is the one case this exists to catch.
+ */
+export function modelSignatureOf(members) {
+  const bars = g => (g ?? []).map(b => `${b.numBars}x${b.barSize}`).join('.')
+  return (members ?? []).map(m => {
+    const sec = m.section ?? {}
+    const t = m.rebar?.ties
+    return [
+      m.id, sec.b, sec.h, sec.bw ?? '',
+      bars(m.rebar?.topBars), bars(m.rebar?.botBars),
+      t ? `${t.barSize}/${t.spacing}/${t.legs}` : '',
+      m.loads?.length ?? 0,
+      (m.loads ?? []).reduce((a, l) =>
+        a + Math.abs(l.Mu_pos ?? 0) + Math.abs(l.Mu_neg ?? 0) + Math.abs(l.Vu ?? 0), 0).toFixed(1),
+    ].join('|')
+  }).join(';')
 }

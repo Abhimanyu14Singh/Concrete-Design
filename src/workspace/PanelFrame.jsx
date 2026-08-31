@@ -24,6 +24,11 @@ const DRAG_SLOP = 5   // px before a click on the header becomes a drag
 export default function PanelFrame({
   host, title, subtitle, onHost, onClose, onMenu, children, bodyClass = '',
   geom, onGeom, onDrag, maximized, onMaximize, actions, titleAfter,
+  // A panel docked INSIDE a detached window is host='dock' like any other, but that
+  // window is not the workspace: there is nothing to float over, and "put this back"
+  // means the main workspace rather than this container. Both are opt-in so the main
+  // workspace keeps exactly the chrome it had.
+  canFloat = true, onSendHome,
 }) {
   const resize = useRef(null)
   const bodyRef = useRef(null)
@@ -44,6 +49,11 @@ export default function PanelFrame({
   // delivering pointermove as soon as the cursor leaves the window, so a drag toward the
   // second monitor would just stop reporting. With it, clientX/clientY keep going and go
   // out of range, which is the signal the controller reads.
+  //
+  // SCREEN coordinates go along for the ride because client coordinates stop meaning
+  // anything the moment the pointer leaves this document — and dropping a panel INTO
+  // another window is a question only screen space can answer. They are read off the
+  // same event, so the two can never describe different points.
   const onHeadDown = e => {
     if (!inPage || e.button !== 0 || !onDrag) return
     if (e.target.closest('button')) return          // the header's own controls
@@ -55,20 +65,20 @@ export default function PanelFrame({
 
     const move = ev => {
       if (!started && Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_SLOP) return
-      if (!started) { started = true; onDrag.begin(ev.clientX, ev.clientY) }
+      if (!started) { started = true; onDrag.begin(ev.clientX, ev.clientY, ev.screenX, ev.screenY) }
       // A floating panel keeps following the cursor as it always did; the drop logic
       // rides along on top rather than replacing it.
       if (floating && onGeom) {
         onGeom({ ...g, x: Math.max(0, from.x + (ev.clientX - startX)), y: Math.max(0, from.y + (ev.clientY - startY)) })
       }
-      onDrag.move(ev.clientX, ev.clientY)
+      onDrag.move(ev.clientX, ev.clientY, ev.screenX, ev.screenY)
     }
     const up = ev => {
       try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
       el.removeEventListener('lostpointercapture', up)
-      if (started) onDrag.end(ev.clientX, ev.clientY)
+      if (started) onDrag.end(ev.clientX, ev.clientY, ev.screenX, ev.screenY)
     }
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
@@ -120,11 +130,22 @@ export default function PanelFrame({
                 {maximized ? <IconMin size={14} /> : <IconMax size={14} />}
               </button>
             )}
-            <button className="demo-winbtn" title={floating ? 'Dock into the workspace' : 'Float over the workspace'}
-                    onPointerDown={e => e.stopPropagation()}
-                    onClick={() => onHost(floating ? 'dock' : 'float')}>
-              {floating ? <IconDock size={14} /> : <IconFloat size={14} />}
-            </button>
+            {/* Inside a detached window: send this panel back to the main workspace. The
+                OS ✕ only helps when the panel is the last one there, so a window holding
+                three panels needs a per-panel route home. */}
+            {onSendHome && (
+              <button className="demo-winbtn" title="Move back to the main workspace"
+                      onPointerDown={e => e.stopPropagation()} onClick={onSendHome}>
+                <IconAttach size={14} />
+              </button>
+            )}
+            {canFloat && (
+              <button className="demo-winbtn" title={floating ? 'Dock into the workspace' : 'Float over the workspace'}
+                      onPointerDown={e => e.stopPropagation()}
+                      onClick={() => onHost(floating ? 'dock' : 'float')}>
+                {floating ? <IconDock size={14} /> : <IconFloat size={14} />}
+              </button>
+            )}
             <button className="demo-winbtn" title="Detach into its own window"
                     onPointerDown={e => e.stopPropagation()}
                     onClick={() => onHost('window')}>

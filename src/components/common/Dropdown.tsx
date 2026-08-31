@@ -16,7 +16,7 @@
  */
 import { useState, useEffect, useRef, useId, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ACCENT, BORDER, INK, SURFACE } from '../../theme';
+import { ACCENT, BORDER, INK, SURFACE, Z } from '../../theme';
 
 export interface DropdownOption {
   value: string | number;
@@ -139,7 +139,11 @@ export default function Dropdown({
     border: `1px solid ${BORDER.strong}`,
     borderRadius: 6,
     boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-    zIndex: 9999,
+    // POPOVER, not an arbitrary "high" number — this list is portalled to <body> and so
+    // competes directly with every other portal, including the modal it may have been
+    // opened from inside. It must outrank one: a dropdown in a dialog is a child of that
+    // dialog everywhere except the DOM.
+    zIndex: Z.popover,
   } : {};
 
   return (

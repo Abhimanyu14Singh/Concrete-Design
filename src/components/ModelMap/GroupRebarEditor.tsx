@@ -26,6 +26,10 @@ interface Props {
    *  angle than the member panel checks with. */
   cotTheta?: number;
   ignoreTorsion?: boolean;
+  /** The project's SLS quasi-permanent combo. Without it the suggester sizes the EC2
+   *  crack check against `qpFactor × Mu` while the member panel uses the real Mqp from
+   *  this combo — two different demands for the same cage. */
+  slsCombo?: string;
 }
 
 function defaultRebar(family: BarFamily): RebarLayout {
@@ -80,12 +84,12 @@ function BarGroupRow({ bg, onChange, label }: {
   );
 }
 
-export default function GroupRebarEditor({ group, members, onApply, code, targetDCR, cotTheta, ignoreTorsion }: Props) {
+export default function GroupRebarEditor({ group, members, onApply, code, targetDCR, cotTheta, ignoreTorsion, slsCombo }: Props) {
   const { units, barFamily, toDisplay, fromDisplay } = useUnits();
   // Spacing is stored in inches; the editor shows it in the active unit system.
   const spacingMax = units === 'si' ? 600 : 24;  // 600 mm ≈ 24 in
   const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(barFamily));
-  const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
 
   // Re-seed only when the SELECTED group changes — keying on group.rebar too
@@ -104,17 +108,28 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
   }, [group.id]);
 
   function runSuggest(floors?: SuggestFloors) {
-    const r = suggestGroupRebar(members, code, targetDCR, floors, barFamily, cotTheta, ignoreTorsion);
+    const r = suggestGroupRebar(members, code, targetDCR, floors, barFamily, cotTheta, ignoreTorsion, slsCombo);
     if (isSuggestError(r)) {
       setSuggestNote({ kind: 'err', text: r.error });
       return;
     }
     setRebar(r.rebar);
     const summary = `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)}`;
-    setSuggestNote({
-      kind: 'ok',
-      text: `${summary} at target ${targetDCR.toFixed(2)} — review, then Apply.`,
-    });
+    // An over-reinforced cage is shown on purpose — it is the only one that carries the
+    // moment — but the DCR beside it is a STRENGTH ratio and says nothing about
+    // ductility, so on its own it reads like a pass. The warning is what stops that.
+    const caveats: string[] = [];
+    if (r.belowTarget) {
+      caveats.push(`this is the RICHEST cage the section can hold and it still does not `
+        + `reach the target — no arrangement of bars fixes it, the section has to grow`);
+    }
+    if (r.overReinforced) {
+      caveats.push(`it EXCEEDS ρmax (over-reinforced) — it carries the moment by crushing `
+        + `the concrete before the steel yields, which is not code-compliant`);
+    }
+    setSuggestNote(caveats.length
+      ? { kind: 'warn', text: `${summary} — ${caveats.join('; and ')}. Shown so the shortfall can be measured.` }
+      : { kind: 'ok', text: `${summary} at target ${targetDCR.toFixed(2)} — review, then Apply.` });
   }
 
   function updateTop(i: number, bg: BarGroup) {
@@ -173,9 +188,12 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       {suggestNote && (
         <div style={{
           fontSize: 10, marginBottom: 8, padding: '4px 8px', borderRadius: 5,
-          background: suggestNote.kind === 'ok' ? '#f5f3ff' : STATUS.failBg,
-          color: suggestNote.kind === 'ok' ? '#6d28d9' : STATUS.fail,
-          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe' : STATUS.failBorder}`,
+          background: suggestNote.kind === 'ok' ? '#f5f3ff'
+            : suggestNote.kind === 'warn' ? STATUS.warnBg : STATUS.failBg,
+          color: suggestNote.kind === 'ok' ? '#6d28d9'
+            : suggestNote.kind === 'warn' ? STATUS.warn : STATUS.fail,
+          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe'
+            : suggestNote.kind === 'warn' ? STATUS.warnBorder : STATUS.failBorder}`,
         }}>
           {suggestNote.text}
         </div>

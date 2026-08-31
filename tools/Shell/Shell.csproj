@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- net8.0-windows: WebView2's WPF control needs the Windows Desktop framework, and
+         8.0 is the SDK this repo's other sidecars are built with. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SDashShell</AssemblyName>
+    <RootNamespace>SDashShell</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Per-monitor DPI. Without it Windows bitmap-stretches the window when it crosses
+         to a monitor at a different scale, which is exactly the gesture this shell
+         exists to make good — a panel dragged onto a second screen would arrive blurry. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+</Project>

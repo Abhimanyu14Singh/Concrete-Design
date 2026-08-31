@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import GroupDashboard from '../../components/Dashboard/GroupDashboard.tsx'
+import SuggestSizeDialog from '../../components/common/SuggestSizeDialog.tsx'
 import PanelFrame from '../PanelFrame'
 import { dcrTone, fmtDcr } from '../design'
 
@@ -26,8 +28,34 @@ import { dcrTone, fmtDcr } from '../design'
  *  than a media query, because a panel's width has nothing to do with the viewport's. */
 const SPLIT_AT = 640
 
+/** The group list's width. Dragged, and persisted so the split survives a re-open and
+ *  reads the same docked or in its own window — the same rule, and the same storage
+ *  shape, as the beam-list divider inside GroupDashboard.
+ *
+ *  Deliberately NOT routed through the main window's layout state. It could be: the bus
+ *  carries every other dashboard callback. But a width is a per-screen preference, and
+ *  the panel's whole point is that it may be sitting on a second monitor of a different
+ *  size — pinning both windows to one number would make the detached copy wrong on the
+ *  screen it was detached ONTO. Keeping it local also means popoutBus.js needs no new
+ *  entry, and an `fns` list that misses one is a call to undefined mid-drag (see the
+ *  Plan Filter note there), which reads as a frozen panel rather than the crash it is. */
+const LIST_W_KEY = 'dashGroupW'
+const LIST_W_DEFAULT = 236
+/** Narrower than this and the row is just a truncated label again. */
+const MIN_LIST = 150
+/** The beam table's own floor: below this its columns start colliding, so the list can
+ *  extend into the right side but never swallow it. */
+const MIN_DETAIL = 260
+/** The grip's own width. It sits BETWEEN the two, so the beam list's floor is only
+ *  honoured if the list's ceiling leaves room for it as well — without this the table
+ *  bottoms out 6px under MIN_DETAIL, which the packaged-app clamp test caught at 254. */
+const DIVIDER_W = 6
+
 export default function DashboardPanel({
   payload, selectedGroupId, suggestNote, suggestBusy,
+  // The design code and bar catalogue the sweep will search — the size-floor dialog's
+  // two inputs, carried as data so this panel can raise it wherever it is.
+  code, barFamily,
   // The model this dashboard is reading, and the ones it could read instead. A version is
   // a frozen push: same groups, same beams, the geometry and design they had at the
   // moment it was made.
@@ -37,8 +65,27 @@ export default function DashboardPanel({
   ...frame
 }) {
   const group = payload.groups.find(g => g.id === selectedGroupId)
+  // ✨ Suggest asks for three bar-size floors before it sweeps, and the dialog that
+  // collects them belongs HERE, in the window whose button was pressed.
+  //
+  // It used to live in the main window, opened over the bus. Detached, that meant
+  // pressing Suggest on a second monitor popped a dialog on the FIRST one — which is
+  // indistinguishable from a dead button, and was reported as exactly that. The dialog
+  // needs no main-window state to do its job: it turns a code and a bar family into
+  // three numbers. So it is raised locally and only the numbers cross the bus, which is
+  // the same shape as every other panel callback.
+  const [askFloors, setAskFloors] = useState(false)
+
+  // Restored once, on mount. A bad or hand-edited value falls back rather than laying the
+  // panel out at NaN, which collapses the list to zero with no way to drag it back.
+  const [listW, setListW] = useState(() => {
+    const v = Number(typeof localStorage !== 'undefined' ? localStorage.getItem(LIST_W_KEY) : NaN)
+    return Number.isFinite(v) && v > 0 ? v : LIST_W_DEFAULT
+  })
+  const rememberW = w => { try { localStorage.setItem(LIST_W_KEY, String(Math.round(w))) } catch { /* non-fatal */ } }
 
   return (
+    <>
     <PanelFrame {...frame}
       title="Group Dashboard"
       subtitle={`${payload.groups.length} group${payload.groups.length === 1 ? '' : 's'}${group ? ` · ${group.label}` : ''}`}
@@ -58,7 +105,7 @@ export default function DashboardPanel({
               ⇪ Push{resizedCount ? ` (${resizedCount})` : ''}
             </button>
           )}
-          <button className="demo-suggest" onClick={onSuggestAll}
+          <button className="demo-suggest" onClick={() => setAskFloors(true)}
                   disabled={!onSuggestAll || suggestBusy}
                   title="Auto-size every group's cage to satisfy the DCRs and clear errors">
             ✨ {suggestBusy ? 'Sizing…' : 'Suggest'}
@@ -67,9 +114,48 @@ export default function DashboardPanel({
       )}>
       {box => {
         const stacked = box.w < SPLIT_AT
+        // Clamped on every render, not only while dragging: shrinking the panel (or
+        // re-opening it on a smaller screen) must not leave a stored width that crushes
+        // the beam list, and the stored number is deliberately left alone so the original
+        // width comes back when there is room for it again.
+        // Before the first measure `box.w` is 0, which would clamp the list to its floor for
+        // a frame and flash it narrow; leave it unbounded until there is a width to bound it
+        // by (the same guard GroupDashboard's row divider uses for `containerH`).
+        const maxList = box.w > 0 ? Math.max(MIN_LIST, box.w - MIN_DETAIL - DIVIDER_W) : Number.MAX_SAFE_INTEGER
+        const listWNow = Math.min(Math.max(listW, MIN_LIST), maxList)
+
+        // Mouse events on window, not on the divider: the pointer routinely outruns a
+        // 6px strip, and a handler bound to the element stops receiving moves the moment
+        // it does. `latest` is committed on mouseup rather than reading state back —
+        // setListW is async, so the closure would persist the value from before the last
+        // move and the split would jump on re-open.
+        const startListDrag = e => {
+          e.preventDefault()
+          const startX = e.clientX
+          const startW = listWNow
+          let latest = startW
+          const move = ev => {
+            latest = Math.min(Math.max(startW + (ev.clientX - startX), MIN_LIST), maxList)
+            setListW(latest)
+          }
+          const up = () => {
+            window.removeEventListener('mousemove', move)
+            window.removeEventListener('mouseup', up)
+            document.body.style.cursor = ''; document.body.style.userSelect = ''
+            rememberW(latest)
+          }
+          // Set on the BODY so the cursor holds over the beam table the drag passes
+          // across, and text stops selecting under it.
+          document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
+          window.addEventListener('mousemove', move)
+          window.addEventListener('mouseup', up)
+        }
+
         return (
           <div className={'demo-dashsplit' + (stacked ? ' stacked' : '')}>
-            <div className="demo-grouplist">
+            {/* Stacked, the list is a horizontal chip strip whose width is the panel's —
+                so the inline width is omitted rather than fighting the CSS for it. */}
+            <div className="demo-grouplist" style={stacked ? undefined : { width: listWNow }}>
               {payload.groups.map(g => (
                 <GroupRow key={g.id} g={g} on={g.id === selectedGroupId}
                           // Self-toggling: clicking the group that is already selected
@@ -83,6 +169,16 @@ export default function DashboardPanel({
                           onClick={() => onSelectGroup(g.id === selectedGroupId ? null : g.id)} />
               ))}
             </div>
+            {!stacked && (
+              <div
+                className="demo-dashdiv"
+                role="separator"
+                aria-orientation="vertical"
+                title="Drag to resize · double-click to reset"
+                onMouseDown={startListDrag}
+                onDoubleClick={() => { setListW(LIST_W_DEFAULT); rememberW(LIST_W_DEFAULT) }}
+              />
+            )}
             <div className="demo-dashdetail">
               {group ? (
                 <GroupDashboard
@@ -104,6 +200,22 @@ export default function DashboardPanel({
         )
       }}
     </PanelFrame>
+
+    {/* OUTSIDE the PanelFrame, deliberately. `actions` renders into the panel HEADER,
+        and that header carries `onPointerDown={onHeadDown}` — the panel-drag gesture.
+        A React portal bubbles its events up the REACT tree, not the DOM one, so a dialog
+        mounted from inside `actions` would start dragging the panel every time you
+        pressed a bar-size dropdown, however far from the header it painted. */}
+    {askFloors && (
+      <SuggestSizeDialog
+        code={code}
+        barFamily={barFamily}
+        title="Suggest all groups"
+        onCancel={() => setAskFloors(false)}
+        onConfirm={floors => { setAskFloors(false); onSuggestAll(floors) }}
+      />
+    )}
+    </>
   )
 }
 

@@ -7,7 +7,7 @@
  * the bridge is mocked and we assert the wiring around it.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { hasSconcrete, generateScoFiles, runScoBatch, rerunScoBatch } from '../sconcreteClient';
+import { hasSconcrete, generateScoFiles, runScoBatch, cleanScoFolder } from '../sconcreteClient';
 import { collectGroupScoFiles, parseBatchResults } from '../scoBatch';
 import type { Member, DesignGroup } from '../../../types';
 
@@ -96,29 +96,43 @@ describe('runScoBatch — the group .SCO files reach the batch run', () => {
   });
 });
 
-describe('rerunScoBatch — re-run an existing folder (edits preserved)', () => {
-  it('calls the "rerun" method with the config and NO files payload', async () => {
-    installBridge(() => ({ exitCode: 0, scoCount: 3, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: '', stderr: '' }));
-    await rerunScoBatch({ outDir: '/scos', title: 'T', engineer: 'EOR' });
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0].method).toBe('rerun');
-    const args = calls[0].args as { files?: unknown; outDir: string };
-    expect(args.files).toBeUndefined();   // nothing is re-written — the folder is used as-is
-    expect(args.outDir).toBe('/scos');
+describe('runScoBatch — the clean flag', () => {
+  it('defaults to an ADDITIVE run (clean false), leaving the folder alone', async () => {
+    installBridge(() => ({ exitCode: 0, scoCount: 1, scrsPath: '/s/SConcreteResults.SCRS', scrsText: '', stderr: '' }));
+    const files = collectGroupScoFiles([group('g', 'G', ['b1'])], [beam('b1', 'B1')], 'ACI318-19');
+    await runScoBatch(files, { outDir: '/scos' });
+    expect((calls[0].args as { clean: boolean }).clean).toBe(false);
   });
 
-  it('returns the bridge result and the fresh .SCRS parses back', async () => {
-    const scrs = ['File: Perimeter.SCO', '  OK', '  N vs M Util ...... 0.71'].join('\n');
-    installBridge(() => ({ exitCode: 0, scoCount: 1, scrsPath: '/scos/SConcreteResults.SCRS', scrsText: scrs, stderr: '' }));
-    const out = await rerunScoBatch({ outDir: '/scos' });
-    expect(out.scoCount).toBe(1);
-    expect(parseBatchResults(out.scrsText!).Perimeter.status).toBe('OK');
+  it('asks the bridge to WIPE the folder first when clean is set', async () => {
+    installBridge(() => ({ exitCode: 0, scoCount: 2, scrsPath: '/s/SConcreteResults.SCRS', scrsText: '', stderr: '', cleanedCount: 5 }));
+    const files = collectGroupScoFiles([group('g', 'G', ['b1'])], [beam('b1', 'B1')], 'ACI318-19');
+    const out = await runScoBatch(files, { outDir: '/scos', title: 'T', engineer: 'EOR' }, { clean: true });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('run');
+    const args = calls[0].args as { clean: boolean; files: unknown[]; outDir: string };
+    expect(args.clean).toBe(true);
+    // A clean re-run still REGENERATES — the folder is wiped and rewritten, not
+    // just wiped, so the batch has something to report on.
+    expect(args.files).toHaveLength(1);
+    expect(args.outDir).toBe('/scos');
+    expect(out.cleanedCount).toBe(5);
+  });
+});
+
+describe('cleanScoFolder', () => {
+  it('calls the "clean" method with just the folder', async () => {
+    installBridge(() => ({ removed: ['B1.SCO', 'SConcreteResults.SCRS'], failed: [], kept: 2 }));
+    const out = await cleanScoFolder('/scos');
+    expect(calls[0].method).toBe('clean');
+    expect((calls[0].args as { outDir: string }).outDir).toBe('/scos');
+    expect(out.removed).toHaveLength(2);
+    expect(out.kept).toBe(2);          // files it does NOT own were left in place
   });
 
   it('throws when the desktop bridge is absent', async () => {
     (globalThis as { window?: unknown }).window = {};
-    await expect(rerunScoBatch({ outDir: '' }))
-      .rejects.toThrow(/Windows desktop app/);
+    await expect(cleanScoFolder('/scos')).rejects.toThrow(/Windows desktop app/);
   });
 });

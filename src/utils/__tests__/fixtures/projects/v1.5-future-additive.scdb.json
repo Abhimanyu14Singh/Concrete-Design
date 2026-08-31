@@ -1,0 +1,81 @@
+{
+  "_version": "1.5",
+  "id": "p-v15",
+  "name": "From A Newer Build",
+  "code": "ACI318-19",
+  "description": "Synthetic: a MINOR ahead of this build, with fields it has never seen.",
+  "engineer": "A. Singh",
+  "date": "2027-06-01",
+  "futureProjectField": {
+    "seismicCategory": "D",
+    "notes": [
+      "keep me"
+    ]
+  },
+  "targetDCR": 0.88,
+  "settings": {
+    "fc": 5000,
+    "fy": 60000,
+    "fyt": 60000,
+    "coverTop": 1.5,
+    "coverBottom": 1.5,
+    "coverSide": 1.5
+  },
+  "members": [
+    {
+      "id": "m-v14-1",
+      "label": "B1",
+      "memberType": "beam",
+      "futureMemberField": "shear-friction-check",
+      "material": {
+        "fc": 5000,
+        "fy": 60000,
+        "fyt": 60000,
+        "Es": 29000000,
+        "lambdaConcrete": 1
+      },
+      "section": {
+        "type": "rectangular_beam",
+        "b": 14,
+        "h": 28,
+        "coverClear": 1.5,
+        "stirrupDia": 4,
+        "futureSectionField": 2.5
+      },
+      "rebar": {
+        "topBars": [
+          {
+            "numBars": 3,
+            "barSize": 9
+          }
+        ],
+        "botBars": [
+          {
+            "numBars": 4,
+            "barSize": 9
+          }
+        ],
+        "ties": {
+          "barSize": 4,
+          "spacing": 8,
+          "legs": 2
+        },
+        "futureRebarField": {
+          "headedBars": true
+        }
+      },
+      "loads": [
+        {
+          "id": "lc1",
+          "label": "1.2D+1.6L",
+          "Mu_pos": 300,
+          "Mu_neg": 180,
+          "Vu": 70,
+          "Tu": 0,
+          "Pu": 0,
+          "futureLoadField": 9
+        }
+      ]
+    }
+  ]
+}

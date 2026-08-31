@@ -34,6 +34,7 @@ Windows installer: `.\scripts\build-installer.ps1` (mirrors the CI workflow).
 | `src/adapters/etabs/` | ETABS import, station forces → load cases. |
 | `src/utils/sco/` | S-Concrete `.SCO` writers and `.SCRS` parsing. |
 | `electron/` | Main process, preload, ETABS + S-Concrete bridges. |
+| `electron/usageLog.cjs` + `src/utils/usage.ts` | The local usage log. See [`docs/usage-log.md`](docs/usage-log.md). |
 | `tools/` | .NET sidecars (`EtabsHelper`, `SConcreteHelper`). |
 
 ## Conventions
@@ -65,6 +66,44 @@ Windows installer: `.\scripts\build-installer.ps1` (mirrors the CI workflow).
   zoom transform, which makes it the containing block for fixed descendants. Any
   popover/menu/dropdown **must portal to `document.body`** (see `Dropdown.tsx`) or
   it will render in the wrong place at non-100% Display Scale.
+- **`.scdb` compatibility is a contract, not a hope.** `FILE_VERSION` is
+  `MAJOR.MINOR`. MINOR = purely additive, and both directions must keep working:
+  every spread in `saveLoad.ts` is open, so a newer file's unknown fields survive
+  load → save in an older build. Adding an optional field → bump MINOR and note it
+  in the history block. Changing what an existing field MEANS, or adding a design
+  code an older build can't run → bump MAJOR, which older builds refuse. Migration
+  branches on FIELD PRESENCE, never on the version. Freeze a fixture per version in
+  `src/utils/__tests__/fixtures/projects/` and never edit an old one.
 - **Calc Sheet drift.** `calcBreakdownEC2.ts` re-derives values for display. When
   you change an engine formula, update the Calc Sheet too, or the panel and the
-  calc will disagree.
+  calc will disagree. The ACI sheet has a second flavour of this: `a` has **three**
+  derivations (singly / doubly / flange-split) and the sheet must print the one that
+  ran — `computeFlexure` returns `mode_pos` / `mode_neg` so it can.
+- **A flange only counts when it's in compression.** T/L beams are flanged in
+  SAGGING only; hogging puts the flange in tension and the section is a plain
+  rectangle of width `bw`. `computeFlexure` takes an explicit `flangeInComp` flag —
+  running the flange split for hogging inflated `a` by a whole `hf`.
+- **There are TWO Suggest sweeps.** `WorkspaceView.runSuggestAll` drives the shared
+  `createSweep` in `workspace/design.js`; `ModelMapView.runSuggestAllGroups`
+  re-implements the same loop for the map's group list. They already differ — the map's
+  keeps only the FIRST error and says nothing about torsion. Change one and you have
+  changed half the app; both must emit `suggest.sweep` (they carry `from: 'workspace' |
+  'map'` so the log can tell them apart).
+- **Every `SuggestError` return needs a `kind`.** It is what lets a sweep be counted by
+  reason instead of by prose (`suggest.sweep.reasons`). A return added without one lands
+  in the `unclassified` bucket, and `suggestSweepStats.test.ts` fails when that bucket is
+  non-empty.
+- **The usage log must never carry model data.** `track()` takes counts, durations,
+  enums and booleans — never a project, member, group or file name, and never a review
+  note. IPC arguments are dropped unless a channel opts in via `DESCRIBERS` in
+  `usageLog.cjs`. Paths leak client names, so `scrub()` reduces them to `<path.edb>`;
+  its patterns allow SPACES inside segments on purpose (`C:\Jobs\Acme Tower\…`) — a
+  `\S`-based pattern stops at the first space and publishes the rest. Anything added to
+  the log needs a case in `usageLog.test.ts`.
+- **`instrumentIpc` must run before the first `ipcMain.handle`.** It wraps the registrar,
+  so a handler registered ahead of it is never instrumented. It is the second statement
+  in `main.cjs` for that reason.
+- **εt is measured at `dt`, not `d`.** §21.2.2 reads the strain in the *extreme*
+  tension layer; `d` is the group centroid. And the φ transition band is
+  `εty → εty + 0.003` (`phiFlexure`), which moves with the grade — Grade 60's
+  0.002/0.005 is not a constant.

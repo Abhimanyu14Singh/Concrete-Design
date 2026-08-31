@@ -7,6 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
+import { DEFAULT_ELEMENT_STYLES, withAlpha, type ElementStyles } from './elementStyle';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
 import {
   fitTransform, zoomViewBox, clampPitch, boundingSphere, stableProjection,
@@ -104,6 +105,17 @@ interface Props {
   lineWeightScale?: number;
   /** memberId → section width (in), for proportional line weight. */
   widthById?: Record<string, number>;
+  /**
+   * Members to draw HEAVY — a transient "these ones" pointer from somewhere else in the
+   * panel (today: the bar the pointer is on in the distribution histogram).
+   *
+   * Weight rather than colour, and rather than `focusFrames`' halftone. Colour is already
+   * spoken for — it is the answer to the question the map is being asked — and dimming
+   * everything else re-reads the whole floor on every pixel of pointer movement. A
+   * thicker line adds emphasis without taking any away, so the model stays legible while
+   * you sweep across a histogram looking for where a cluster of beams actually is.
+   */
+  emphasisMembers?: Set<string>;
   /** memberId → categorical color for the 'concGrade' / 'steelGrade' modes. */
   gradeColorMap?: Map<string, string>;
   /** The (user-edited) DCR colour bands driving fills + legend. Defaults to MAP_DCR_BANDS. */
@@ -121,6 +133,8 @@ interface Props {
   walls?: { id: string; story: string; points: { x: number; y: number; z?: number }[]; kind?: 'wall' | 'slab'; memberId?: string }[];
   grids?: { id: string; label: string; p1: { x: number; y: number; z?: number }; p2: { x: number; y: number; z?: number }; story?: string }[];
   openings?: { id: string; story: string; points: { x: number; y: number; z?: number }[]; memberId?: string }[];
+  /** Colour / opacity / fill per element kind, from Preferences. */
+  elementStyles?: ElementStyles;
   /** Vertical frames (columns / braces) drawn as CONTEXT only — never selectable,
    *  never designed. In plan they collapse to a point, so they only draw in 3D. */
   columns?: { id: string; story: string; sectionName?: string; pt1: { x: number; y: number; z: number }; pt2: { x: number; y: number; z: number } }[];
@@ -143,9 +157,12 @@ export default function MapCanvas({
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
   showErrors = false, errorMemberIds = new Set(),
-  focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
+  focusFrames, lineWeightScale = 0, widthById = {}, emphasisMembers, gradeColorMap,
   dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange, dcrColors, onDcrColorsChange,
   walls = [], grids = [], openings = [], columns = [],
+  // How each element KIND is drawn — the user's Preferences. Defaulted here rather than
+  // required, so every existing caller keeps the map's original appearance.
+  elementStyles = DEFAULT_ELEMENT_STYLES,
   showWalls = false, showGrids = false, showOpenings = false, showColumns = false,
   view3d = false,
 }: Props) {
@@ -281,24 +298,39 @@ export default function MapCanvas({
   const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
   const groupIndexMap = buildGroupIndexMap(designGroups);
   const frameColor = (f: MapFrame): string =>
-    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, scoDcrById, dcrBands });
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, scoDcrById, dcrBands, beamColor: elementStyles.beam.color });
 
-  // Proportional line weight (feature ④): scale a beam's stroke by its width. At
-  // lineWeightScale 0 this collapses to the constant 3px (today's look); higher
-  // values spread strokes across ~2–10px in proportion to width, so wider beams
-  // read as heavier lines. Halos add a fixed offset so they track the line.
+  // Everything drawn inside the SVG is in user space, which the zoom viewBox
+  // magnifies — a 3-unit stroke is 3px at fit and 30px at 10×. Line weight is a
+  // SCREEN property, so convert px → user units by the current zoom factor and the
+  // pen stays the same width however far you scroll in. (viewBox.w === width at fit.)
+  const pxToUser = width ? viewBox.w / width : 1;
+  const uu = (px: number) => px * pxToUser;
+
+  // Line weight (feature ④): the slider IS the pen width, from a hairline to a
+  // heavy line. Beam width only modulates it — the widest beam draws 1.25× the
+  // narrowest — so the slider always dominates and the low end is genuinely thin.
+  // Halos add a fixed screen offset so they track the line at every zoom.
+  const LW_MIN_PX = 0.75;   // slider 0 — hairline
+  const LW_MAX_PX = 5;      // slider 1 — heavy
   const wVals = Object.values(widthById);
   const minW = wVals.length ? Math.min(...wVals) : 0;
   const maxW = wVals.length ? Math.max(...wVals) : 1;
+  // Emphasis MULTIPLIES the pen rather than adding a fixed number of pixels: at the
+  // hairline end of the slider a +3px bump would be a four-fold jump and at the heavy end
+  // barely visible, so a constant would mean something different at every setting.
+  // Floored as well, because 2.4 × a 0.75px hairline is still a hairline.
+  const EMPH_MUL = 2.4, EMPH_MIN_PX = 3.5;
   const strokeFor = (memberId: string | undefined, hov: boolean): number => {
-    const base = 3;
+    const pen = LW_MIN_PX + lineWeightScale * (LW_MAX_PX - LW_MIN_PX);
     const w = memberId ? widthById[memberId] : undefined;
-    let px = base;
-    if (lineWeightScale > 0 && w !== undefined && maxW > minW) {
-      const t = (w - minW) / (maxW - minW);              // 0..1 across the width range
-      px = base + lineWeightScale * (2 + t * 6 - base);  // blend base → 2..8px band
+    let px = pen;
+    if (w !== undefined && maxW > minW) {
+      const t = (w - minW) / (maxW - minW);   // 0..1 across the width range
+      px = pen * (0.75 + 0.5 * t);            // 0.75× narrowest → 1.25× widest
     }
-    return px + (hov ? 2 : 0);
+    if (memberId && emphasisMembers?.has(memberId)) px = Math.max(EMPH_MIN_PX, px * EMPH_MUL);
+    return uu(px + (hov ? 1.5 : 0));
   };
 
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
@@ -451,7 +483,12 @@ export default function MapCanvas({
           const d = panPending.current;
           const s = panStart.current;
           if (!d || !s) return;
-          setViewBox(vb => ({ ...vb, x: s.vx - d.dx, y: s.vy - d.dy }));
+          // THE VIEW FOLLOWS THE DRAG. Dragging left moves the viewport left, so the
+          // model appears to move right — the opposite of the "grab the paper" panning
+          // most maps use, and deliberate. Written as `+` for that reason: the obvious
+          // `-` is the grab-the-paper convention and reads as the correction, so anyone
+          // tidying this later needs to know the sign is the requirement, not a slip.
+          setViewBox(vb => ({ ...vb, x: s.vx + d.dx, y: s.vy + d.dy }));
         });
       }
       return;
@@ -551,10 +588,10 @@ export default function MapCanvas({
   const cardPinned = !hovered && !!pinnedFrame; // showing the pinned card (not a hover)
 
   // Group-tag labels are drawn in SVG user space, which magnifies with the zoom
-  // viewBox. Counter-scale them by the zoom factor so each number stays a roughly
-  // constant screen size: as you zoom in, members spread apart but the numbers do
-  // not grow, so the dense clusters stop overlapping. (viewBox.w === width at fit.)
-  const tagScale = viewBox.w / width;
+  // viewBox — the same problem the line weight has, so they share one factor. Each
+  // number stays a roughly constant screen size: as you zoom in, members spread
+  // apart but the numbers do not grow, so the dense clusters stop overlapping.
+  const tagScale = pxToUser;
 
   // ── V/M diagram overlay ────────────────────────────────────────────────────
   // For each visible linked frame with diagram data, render a filled polygon
@@ -629,11 +666,21 @@ export default function MapCanvas({
   // in wall hatch reads as a wall, which is exactly how it was reported.)
   const wallLayer = visibleWalls.map(w => {
     const isSlab = w.kind === 'slab';
+    const st = isSlab ? elementStyles.floor : elementStyles.wall;
+    // `outline` is a real choice, not "invisible": the edge still draws, which is what
+    // someone wants when the wash is fighting the framing on a dense plan.
+    const fill = st.fill === 'outline' ? 'none'
+      : st.fill === 'hatch' ? (isSlab ? 'url(#floorhatch)' : 'url(#wallhatch)')
+        : withAlpha(st.color, st.opacity);
     return (
       <polygon key={w.id}
         points={w.points.map(p => { const [a, b] = P(p); return `${a},${b}`; }).join(' ')}
-        fill={isSlab ? 'rgba(148,163,184,0.16)' : 'url(#wallhatch)'}
-        stroke="#94a3b8" strokeWidth={isSlab ? 0.8 : 1.4}
+        fill={fill}
+        // The hatch pattern carries its own alpha, so the whole polygon is faded
+        // instead — otherwise a hatched floor at 16% would be twice as pale as a solid
+        // one at the same setting.
+        opacity={st.fill === 'hatch' ? st.opacity : 1}
+        stroke={st.color} strokeWidth={isSlab ? 0.8 : 1.4}
         strokeOpacity={isSlab ? 0.7 : 1}
         style={{ pointerEvents: 'none' }} />
     );
@@ -647,8 +694,8 @@ export default function MapCanvas({
     const [x2, y2] = P(c.pt2);
     return (
       <line key={`col-${c.id}`} x1={x1} y1={y1} x2={x2} y2={y2}
-        stroke="#94a3b8" strokeWidth={2.5} strokeLinecap="round"
-        opacity={0.65} style={{ pointerEvents: 'none' }} />
+        stroke={elementStyles.column.color} strokeWidth={2.5} strokeLinecap="round"
+        opacity={elementStyles.column.opacity} style={{ pointerEvents: 'none' }} />
     );
   }) : [];
 
@@ -744,10 +791,16 @@ export default function MapCanvas({
           <pattern id="mmgrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#eef2f7" strokeWidth="1" />
           </pattern>
-          {/* Wall poché — the hatch belongs to walls (cut material), not slabs. */}
+          {/* Poché. One pattern per area kind, because each carries its OWN colour from
+              Preferences — a single shared pattern would paint a re-coloured wall in the
+              floor's hue the moment the two differed. */}
           <pattern id="wallhatch" width="6" height="6" patternUnits="userSpaceOnUse">
-            <rect width="6" height="6" fill="rgba(148,163,184,0.20)" />
-            <path d="M0,6 l6,-6" stroke="#64748b" strokeWidth="1" />
+            <rect width="6" height="6" fill={withAlpha(elementStyles.wall.color, 0.20)} />
+            <path d="M0,6 l6,-6" stroke={elementStyles.wall.color} strokeWidth="1" />
+          </pattern>
+          <pattern id="floorhatch" width="6" height="6" patternUnits="userSpaceOnUse">
+            <rect width="6" height="6" fill={withAlpha(elementStyles.floor.color, 0.20)} />
+            <path d="M0,6 l6,-6" stroke={elementStyles.floor.color} strokeWidth="1" />
           </pattern>
         </defs>
         <rect width={width} height={height} fill="url(#mmgrid)" rx="10" />
@@ -771,7 +824,9 @@ export default function MapCanvas({
           const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);
           // Feature ①: when a group is active, halftone every frame not in it.
           const dimmed = !!focusFrames && focusFrames.size > 0 && !focusFrames.has(f.frameName);
-          const baseOpacity = dimmed ? 0.12 : (linked ? 1 : 0.6);
+          // The preference multiplies the map's own emphasis rather than replacing it:
+          // an unlinked frame and a halftoned one still read as such at any setting.
+          const baseOpacity = (dimmed ? 0.12 : (linked ? 1 : 0.6)) * elementStyles.beam.opacity;
           // A (near-)vertical member — a column — projects to a single point in
           // plan; draw it as a square marker instead of a zero-length line.
           const isColumn = Math.hypot(f.pt2.x - f.pt1.x, f.pt2.y - f.pt1.y) < 0.5;
@@ -814,9 +869,9 @@ export default function MapCanvas({
                 </>
               ) : (
                 <>
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(12, strokeFor(f.memberId, isHov) + 8)} />
-                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={strokeFor(f.memberId, isHov) + 4} opacity={0.45} strokeLinecap="round" />}
-                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={strokeFor(f.memberId, isHov) + 6} opacity={0.35} strokeLinecap="round" />}
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(uu(12), strokeFor(f.memberId, isHov) + uu(8))} />
+                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={strokeFor(f.memberId, isHov) + uu(4)} opacity={0.45} strokeLinecap="round" />}
+                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={strokeFor(f.memberId, isHov) + uu(6)} opacity={0.35} strokeLinecap="round" />}
                   <line x1={x1} y1={y1} x2={x2} y2={y2}
                     stroke={color}
                     strokeWidth={strokeFor(f.memberId, isHov)}

@@ -159,15 +159,15 @@ There are two cases. Pick the one that matches.
 1. **Add the code string** to the `DesignCode` union in **two** files:
    `src/types/index.ts` and `src/types/common.ts`
    ```ts
-   export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1' | 'ACI318-22';
+   export type DesignCode = 'ACI318-19' | 'EN1992-1-1' | 'ACI318-22';
    ```
-2. **List it as supported** in the engine wrappers
-   (`src/engines/beam/index.ts` and `src/engines/column/index.ts`):
+2. **List it as supported** in the engine wrapper (`src/engines/beam/index.ts`):
    ```ts
-   readonly supportedCodes = ['ACI318-19', 'ACI318-14', 'ACI318-22', 'EN1992-1-1'];
+   readonly supportedCodes = ['ACI318-19', 'ACI318-22', 'EN1992-1-1'];
    ```
-3. **Show it in the picker** — add it to the options array in `src/App.tsx`
-   (search for `'ACI318-19', 'ACI318-14'`).
+3. **Show it in the pickers** — `DESIGN_CODES` in
+   `src/components/Dashboard/Dashboard.tsx` and `CODES` in
+   `src/components/Settings/ProjectSettingsDialog.tsx`.
 4. **Give it a colour** (optional) in `src/theme.ts` → `codeAccent()` / `codeBg()`.
 5. Sanity-check (§3). Because `runDesign` defaults non-EC2 codes to the ACI path,
    the new edition already computes — no engine code needed.

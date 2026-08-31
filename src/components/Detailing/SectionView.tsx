@@ -6,6 +6,21 @@ import { coverFor, getBarDiam, getBarArea } from '../../utils/concreteDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import { BARS, DCR, FONT } from '../../theme';
 
+/**
+ * Smallest radius a bar may be drawn at, in px.
+ *
+ * A floor exists so a bar never vanishes on a thumbnail. 3px was too generous: it stops
+ * being a floor and becomes a DISTORTION as soon as the section is large enough that a
+ * bar's true radius falls under it. A #8 in a 16x24 draws at ~4.7px at panel size — well
+ * clear — but the same bar in a 40x60 is ~1.9px, and pinning it to 3 drew the cage about
+ * 60% oversized against its own concrete. That is why a beam looked like it grew thicker
+ * rebar when all that changed was its depth.
+ *
+ * 1.5px is still visible and only engages when the true size is genuinely sub-pixel, so
+ * the drawing stays to scale everywhere it can.
+ */
+const MIN_BAR_R = 1.5;
+
 interface Props {
   section: SectionDimensions;
   rebar: RebarLayout;
@@ -104,12 +119,15 @@ export default function SectionView({
   const isT = section.type === 'T_beam' || section.type === 'L_beam';
   const interactive = !!onRebarChange;
 
-  /** Bar radius, shrunk when bars would overlap in the row. */
+  /** A bar's drawn radius at true scale, floored only so it stays visible. */
+  const barR = (barSize: number) => Math.max(MIN_BAR_R, (getBarDiam(barSize) / 2) * scale);
+
+  /** Bar radius, shrunk further when bars would overlap in the row. */
   function fitRadius(barSize: number, numBars: number, rowWidth: number): number {
-    const r = Math.max(3, (getBarDiam(barSize) / 2) * scale);
+    const r = barR(barSize);
     if (numBars <= 1) return r;
     const maxR = (rowWidth / (numBars - 1) - 2) / 2;
-    return Math.max(2.5, Math.min(r, maxR));
+    return Math.max(MIN_BAR_R, Math.min(r, maxR));
   }
 
   function barDots(bars: { numBars: number; barSize: number }[], row: 'top' | 'bot'): ReactElement[] {
@@ -595,8 +613,8 @@ export default function SectionView({
     );
   }
 
-  const topBarR = Math.max(3, (getBarDiam(rebar.topBars[0]?.barSize ?? 8) / 2) * scale);
-  const botBarR = Math.max(3, (getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2) * scale);
+  const topBarR = barR(rebar.topBars[0]?.barSize ?? 8);
+  const botBarR = barR(rebar.botBars[0]?.barSize ?? 8);
   const topLabelY = oy + stOffT + topBarR;
   const botLabelY = oy + scaledH - stOffB - botBarR;
 
@@ -611,9 +629,9 @@ export default function SectionView({
   const lastTop = rebar.topBars[rebar.topBars.length - 1];
   const lastBot = rebar.botBars[rebar.botBars.length - 1];
   const yTopInner = oy + stOffT + layerDrop(rebar.topBars)
-    + Math.max(3, (getBarDiam(lastTop?.barSize ?? 8) / 2) * scale);
+    + barR(lastTop?.barSize ?? 8);
   const yBotInner = oy + scaledH - stOffB - layerDrop(rebar.botBars)
-    - Math.max(3, (getBarDiam(lastBot?.barSize ?? 8) / 2) * scale);
+    - barR(lastBot?.barSize ?? 8);
 
   // Circular columns: pool ALL bar groups onto the ring (matches engine layout)
   //
@@ -681,7 +699,7 @@ export default function SectionView({
           {barDots(rebar.topBars, 'top')}
           {barDots(rebar.botBars, 'bot')}
           {rebar.sideBars?.flatMap((grp, gi) => {
-            const r = Math.max(2.5, (getBarDiam(grp.barSize) / 2) * scale);
+            const r = barR(grp.barSize);
             // Columns: pairs at evenly spaced heights between face layers (engine convention)
             const rows = grp.numBars;
             return Array.from({ length: rows }, (_, i) => {

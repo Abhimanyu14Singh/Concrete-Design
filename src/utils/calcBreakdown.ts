@@ -1,6 +1,35 @@
 /**
- * Generates a step-by-step ACI 318-19 calculation breakdown
- * as a structured array of steps with equation, substitution, and result.
+ * The ACI 318-19 Calc Sheet — a step-by-step derivation of everything the beam engine
+ * computed, as structured data (clause ref, symbolic equation, substitution, result).
+ *
+ * THIS FILE MUST AGREE WITH `concreteDesign.ts`. It is not a second engine and it is not
+ * a formatter over engine output: it re-derives the intermediate quantities so it can
+ * show the working. That makes drift the standing risk here — change a formula in the
+ * engine without changing it here and the panel and the sheet quietly print different
+ * numbers for the same member, which is worse than either being wrong on its own.
+ *
+ * The places that have actually drifted before, and the rules that keep them honest:
+ *
+ *  • SHEAR ZONE. Capacity is read at the tie spacing of the zone the demand sits in
+ *    (`tieSpacingAtX`), not at `ties.spacing` — which is the TIGHTEST zone, not a
+ *    member-wide value. A sheet that used `ties.spacing` would overstate φVn mid-span.
+ *
+ *  • EFFECTIVE DEPTH. `d` is measured to the flexural tension face for THIS row's
+ *    moment sense, so a negative-moment row uses the top-face d. With per-face covers
+ *    set, using the bottom-face d for both senses is a silent error.
+ *
+ *  • SHARED CONSTANTS. Anything the engine exports is imported, never re-derived —
+ *    `computeFlexure`, `computeShear`, `computeTorsion`, `zonedShearCheck` and the
+ *    geometry helpers are all called directly. The two exceptions are `beta1` and
+ *    `effectiveFlange` below, which are local copies of the identical functions in
+ *    `concreteDesign.ts`. If you change either there, change it here too.
+ *
+ *  • ARGUMENTS MUST MATCH. `biaxialAlpha` (and any future tuning parameter) has to be
+ *    the same value `designMember` was given. The caller passes both; they cannot be
+ *    defaulted independently.
+ *
+ * Output is consumed by the on-screen Calc Sheet and by the PDF report, so it stays
+ * plain text with no markup — see `CalcSection.chart` for the one exception.
  */
 import { formatBarLabel } from './rebar';
 import { beamAxialFlexure } from './axialFlexure';
@@ -8,11 +37,13 @@ import { biaxialCheck, DEFAULT_BIAXIAL_ALPHA } from './biaxial';
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase } from '../types';
 import {
   getBarArea, getBarDiam, coverFor,
-  effectiveDepthMulti, layerCentroidOffset,
+  effectiveDepthMulti, layerCentroidOffset, layerDepths,
   computeFlexure, computeShear, computeTorsion, torsionCrushing, zonedShearCheck,
-  tieSpacingAtX, type CoverFace,
+  tieSpacingAtX, minSteelCheck, steelLimits, type CoverFace,
 } from './concreteDesign';
 
+/** One line of the derivation. Every step carries its clause reference — a Calc Sheet
+ *  whose steps can't be traced back to the code is not a check, it's arithmetic. */
 export interface CalcStep {
   ref: string;       // ACI 318-19 section reference
   label: string;     // Short description
@@ -22,6 +53,7 @@ export interface CalcStep {
   note?: string;     // Optional footnote
 }
 
+/** A titled group of steps — one check (flexure, shear, torsion …) per section. */
 export interface CalcSection {
   title: string;
   steps: CalcStep[];
@@ -33,15 +65,20 @@ export interface CalcSection {
   chart?: { kind: 'pm' | 'biaxial'; label: string };
 }
 
+/** Fixed-decimal formatter for sheet text. The sheet is imperial throughout — an EC2
+ *  project uses `calcBreakdownEC2.ts` instead, which does its own SI conversion. */
 function fmt(n: number, dec = 2): string {
   return n.toFixed(dec);
 }
 
+/** β₁ per §22.2.2.4.3. LOCAL COPY of `concreteDesign.beta1` — keep the two identical. */
 function beta1(fc: number): number {
   if (fc <= 4000) return 0.85;
   return Math.max(0.65, 0.85 - 0.05 * (fc - 4000) / 1000);
 }
 
+/** Effective flange width per §6.3.2. LOCAL COPY of `concreteDesign.effectiveFlange` —
+ *  keep the two identical. `span` is in FEET; the clause limits are in inches. */
 function effectiveFlange(section: SectionDimensions, span: number): number {
   if (section.type === 'T_beam') {
     const bw = section.bw ?? section.b;
@@ -58,6 +95,14 @@ function effectiveFlange(section: SectionDimensions, span: number): number {
   return section.b;
 }
 
+/**
+ * Build the full ACI Calc Sheet for ONE member and ONE load case.
+ *
+ * `zoneVu` carries the per-third shear envelope from the imported station forces; pass
+ * it whenever the member has stirrup zones, or the zoned-shear section can only report
+ * the demand of the single row being shown. `biaxialAlpha` must match what
+ * `designMember` was called with — see the file header.
+ */
 export function generateBreakdown(
   section: SectionDimensions,
   material: MaterialProps,
@@ -86,6 +131,15 @@ export function generateBreakdown(
   const ccSide = coverFor(section, 'side');
   const d = effectiveDepthMulti(section, rebar.botBars, sClear, 'bot');       // to bottom steel centroid
   const d_neg = effectiveDepthMulti(section, rebar.topBars, sClear, 'top');   // to top steel centroid
+  // dt — the EXTREME layer of tension steel, which is where §21.2.2 measures εt.
+  // On a one-layer cage dt = d; on a two-layer cage it is deeper, and the engine
+  // uses dt, so the sheet must too.
+  const dtOf = (bars: typeof rebar.botBars, face: CoverFace, fallback: number) => {
+    const ls = layerDepths(section, bars, sClear, face);
+    return ls.length ? h - Math.min(...ls.map(l => l.y)) : fallback;
+  };
+  const dt = dtOf(rebar.botBars, 'bot', d);
+  const dt_neg = dtOf(rebar.topBars, 'top', d_neg);
   const yBot = layerCentroidOffset(section, rebar.botBars, sClear, 'bot');
   const botLayers = rebar.botBars.filter(g => g.numBars > 0).length;
   const b1 = beta1(fc);
@@ -197,19 +251,11 @@ export function generateBreakdown(
     },
   ];
 
-  if (botLayers > 1 || rebar.topBars.filter(g => g.numBars > 0).length > 1) {
-    const allLayers = [...rebar.topBars, ...rebar.botBars].filter(g => g.numBars > 0);
-    const dbMax = Math.max(...allLayers.map(g => getBarDiam(g.barSize)));
-    const sReq = Math.max(1.0, dbMax);
-    rebarSteps.push({
-      ref: 'ACI 318-19 §25.2.2',
-      label: 'Vertical clear spacing between bar layers',
-      equation: 's_layer ≥ max(1", db)',
-      substitution: `s_layer = ${sClear}"  vs  max(1", ${fmt(dbMax)}") = ${fmt(sReq)}"`,
-      result: `${sClear} in  ${sClear >= sReq ? '✓ OK' : '⚠ NG'}`,
-    });
-  }
-
+  // NO §25.2.2 ROW. The vertical clear-spacing VERDICT was removed from the engine —
+  // it demanded max(1", db) between layers, which is §25.2.1's horizontal rule, where the
+  // clause itself asks only for a flat 1 in. See `designMember`. `layerClearSpacing` is
+  // still printed above as part of the effective-depth derivation, because it places the
+  // inner layers and so moves d; what is gone is the pass/fail beside it.
   if (rebar.ties) {
     rebarSteps.push({
       ref: 'Input',
@@ -240,133 +286,229 @@ export function generateBreakdown(
     }
   }
 
-  // Steel limits
+  // Steel limits. BOTH are written on d, the tension-group centroid — §9.3.3.1 was
+  // evaluated on dt (the extreme layer) until the project chose to match S-CONCRETE,
+  // which measures the strain limit at the centroid. See `steelLimits`.
+  //
+  // As,min comes from the ENGINE's `minSteelCheck`, not a second derivation here. The
+  // sheet used to compute the raw §9.6.1.2 figure and judge the cage against it, so a
+  // beam the engine had exempted under §9.6.1.3 still drew a warning triangle on the
+  // sheet — panel silent, sheet warning, same beam and same load row.
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
-  const As_min = rho_min * bw * d;
-  const As_max = 0.85 * b1 * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
+  const minBot = minSteelCheck(section, material, rebar, 'bot', load.Mu_pos, span, sClear);
+  const minTop = minSteelCheck(section, material, rebar, 'top', load.Mu_neg, span, sClear);
+  const As_min = minBot.As_min;
+  const etyLim = fy / (material.Es > 0 ? material.Es : 29_000_000);
+  // From the ENGINE, not a second derivation — same reason as As,min above. Both faces,
+  // because the engine warns on each against its own limit and they differ whenever the
+  // depths do.
+  const maxBot = steelLimits(section, material, 'bot', rebar.botBars, sClear, load.Pu);
+  const maxTop = steelLimits(section, material, 'top', rebar.topBars, sClear, load.Pu);
+  const As_max = maxBot.As_max;
+
+  /** One As,min row. BOTH faces get one — the engine warns on each separately, and a
+   *  hogging-governed beam used to have its own check missing from the sheet entirely. */
+  const minSteelStep = (
+    m: ReturnType<typeof minSteelCheck>, faceLabel: string, dFace: number, AsFace: number, MuFace: number,
+  ) => ({
+    ref: 'ACI 318-19 §9.6.1.2',
+    label: `Minimum flexural steel — ${faceLabel}`,
+    equation: "As,min = max(3√f'c/fy, 200/fy) × bw × d",
+    substitution: `max(3×√${fc}/${fy}, 200/${fy}) × ${fmt(bw)} × ${fmt(dFace)} = ${fmt(rho_min, 5)} × ${fmt(bw)} × ${fmt(dFace)}`
+      + (m.exempt
+        ? ` — §9.6.1.3: As,req by analysis = ${fmt(m.As_req_raw)} in², (4/3)×that = ${fmt(m.As_min_eff)} in² < ${fmt(m.As_min)} in², so the lower figure governs`
+        : ''),
+    result: m.exempt
+      ? `${fmt(m.As_min_eff)} in²  (§9.6.1.2 alone gives ${fmt(m.As_min)})`
+      : `${fmt(m.As_min)} in²`,
+    note: MuFace <= 0
+      ? '— no moment on this face; §9.6.1.1 asks for a minimum only where tension steel is required'
+      : AsFace < m.As_min_eff
+        ? `⚠ Provided ${fmt(AsFace)} in² < As,min ${fmt(m.As_min_eff)} in²`
+        : `✓ Provided ${fmt(AsFace)} in² ≥ As,min ${fmt(m.As_min_eff)} in²`,
+  });
+
+  /** One As,max row per face, each on its own depth. Not gated on the moment: As,max
+   *  asks whether the cage would be compression-controlled if this face were the tension
+   *  face, which is a property of the section rather than of one load row. */
+  const maxSteelStep = (
+    m: ReturnType<typeof steelLimits>, faceLabel: string, dFace: number, AsFace: number,
+  ) => ({
+    ref: 'ACI 318-19 §9.3.3.1',
+    label: `Maximum flexural steel — ${faceLabel} (εt ≥ εty + 0.003 = ${fmt(etyLim + 0.003, 4)})`,
+    equation: "As,max = 0.85β₁(f'c/fy)(0.003/(0.003 + εty + 0.003)) × bw × d",
+    substitution: `0.85 × ${fmt(b1)} × (${fc}/${fy}) × (0.003/${fmt(0.006 + etyLim, 5)}) × ${fmt(bw)} × ${fmt(dFace)}`,
+    result: `${fmt(m.As_max)} in²`,
+    note: !m.asMaxApplies
+      ? `— Pu = ${fmt(load.Pu ?? 0)} kips ≥ 0.10·f′c·Ag = ${fmt(0.10 * fc * bw * h / 1000)} kips: §9.3.3.1 is scoped to beams, so this limit does not apply here`
+      : AsFace > m.As_max
+          ? `⚠ Provided ${fmt(AsFace)} in² > As,max ${fmt(m.As_max)} in² — over-reinforced`
+          : `✓ Provided ${fmt(AsFace)} in² ≤ As,max ${fmt(m.As_max)} in²`,
+  });
 
   rebarSteps.push(
-    {
-      ref: 'ACI 318-19 §9.6.1.2',
-      label: 'Minimum flexural steel',
-      equation: 'As,min = max(3√f\'c/fy, 200/fy) × bw × d',
-      substitution: `max(3×√${fc}/${fy}, 200/${fy}) × ${fmt(bw)} × ${fmt(d)} = ${fmt(rho_min, 5)} × ${fmt(bw)} × ${fmt(d)}`,
-      result: `${fmt(As_min)} in²`,
-      note: As_bot < As_min ? '⚠ Provided As_bot < As_min' : '✓ As_bot ≥ As_min',
-    },
-    {
-      ref: 'ACI 318-19 §9.3.3.1',
-      label: 'Maximum flexural steel (net strain εt ≥ 0.004)',
-      equation: 'As,max = 0.85β₁(f\'c/fy)(0.003/(0.003+0.004)) × bw × d',
-      substitution: `0.85 × ${fmt(b1)} × (${fc}/${fy}) × (3/7) × ${fmt(bw)} × ${fmt(d)}`,
-      result: `${fmt(As_max)} in²`,
-      note: As_bot > As_max ? '⚠ Provided As_bot > As_max (over-reinforced!)' : '✓ As_bot ≤ As_max',
-    }
+    minSteelStep(minBot, 'bottom face (sagging)', d, As_bot, load.Mu_pos),
+    minSteelStep(minTop, 'top face (hogging)', d_neg, As_top, load.Mu_neg),
+    maxSteelStep(maxBot, 'bottom face', d, As_bot),
+    maxSteelStep(maxTop, 'top face', d_neg, As_top),
   );
 
   // ── Flexure — engine call (identical numbers to the results screen) ──
   const flex = computeFlexure(section, material, As_top, As_bot, span,
     rebar.topBars[0]?.barSize ?? 8, rebar.botBars[0]?.barSize ?? 8,
     rebar.topBars, rebar.botBars, sClear);
-  const a_pos = flex.a_pos;
-  const c_pos = a_pos / b1;
-  const et_pos = c_pos > 0 ? 0.003 * (d - c_pos) / c_pos : 99;
-  const phi_pos = flex.phi_pos;
-  const Mn_pos = flex.Mn_pos;
-  const phi_Mn_pos = flex.phi_Mn_pos;
-  const DCR_pos = phi_Mn_pos > 0 ? load.Mu_pos / phi_Mn_pos : 0;
+  const Es = material.Es > 0 ? material.Es : 29_000_000;
+  const ety = fy / Es;
 
-  const flexPosSteps: CalcStep[] = [
-    {
-      ref: 'ACI 318-19 §22.2.2',
-      label: 'Depth of stress block (positive moment)',
-      equation: 'a = As·fy / (0.85·f\'c·beff)',
-      substitution: `a = ${fmt(As_bot)} × ${fy} / (0.85 × ${fc} × ${fmt(beff)})`,
-      result: `a = ${fmt(a_pos)} in`,
-    },
-    {
-      ref: 'ACI 318-19 §22.2.2.4',
-      label: 'Neutral axis depth',
-      equation: 'c = a / β₁',
-      substitution: `c = ${fmt(a_pos)} / ${fmt(b1)}`,
-      result: `c = ${fmt(c_pos)} in`,
-    },
-    {
-      ref: 'ACI 318-19 §21.2.2',
-      label: 'Net tensile strain',
-      equation: 'εt = 0.003 × (d − c) / c',
-      substitution: `εt = 0.003 × (${fmt(d)} − ${fmt(c_pos)}) / ${fmt(c_pos)}`,
-      result: `εt = ${fmt(et_pos, 4)}`,
-      note: et_pos >= 0.005 ? 'Tension-controlled (εt ≥ 0.005)' : et_pos >= 0.004 ? 'Transition zone (0.002 < εt < 0.005)' : '⚠ Compression-controlled (εt ≤ 0.002)',
-    },
-    {
-      ref: 'ACI 318-19 Table 21.2.2',
-      label: 'Strength reduction factor φ (flexure)',
-      equation: 'φ = 0.90 if εt ≥ 0.005; interpolate if transition',
-      substitution: et_pos >= 0.005 ? `εt = ${fmt(et_pos, 4)} ≥ 0.005 → φ = 0.90` : `φ = 0.65 + (εt − 0.002)(250/3) = ${fmt(phi_pos, 3)}`,
-      result: `φ = ${fmt(phi_pos, 3)}`,
-    },
-    {
-      ref: 'ACI 318-19 §22.3.2',
-      label: 'Nominal moment capacity',
-      equation: 'Mn = As·fy·(d − a/2)',
-      substitution: `Mn = ${fmt(As_bot)} × ${fy} × (${fmt(d)} − ${fmt(a_pos / 2)}) / 12,000`,
-      result: `Mn = ${fmt(Mn_pos)} kip-ft`,
-    },
-    {
-      ref: 'ACI 318-19 §21.2',
-      label: 'Design moment capacity (positive)',
-      equation: 'φMn = φ × Mn',
-      substitution: `φMn = ${fmt(phi_pos, 3)} × ${fmt(Mn_pos)}`,
-      result: `φMn⁺ = ${fmt(phi_Mn_pos)} kip-ft`,
-    },
-    {
-      ref: 'Design check',
-      label: 'DCR — Positive flexure',
-      equation: 'DCR = Mu / φMn',
-      substitution: `DCR = ${load.Mu_pos} / ${fmt(phi_Mn_pos)}`,
-      result: `DCR = ${fmt(DCR_pos, 3)}  ${DCR_pos <= 1 ? '✓ OK' : '✗ NG'}`,
-      note: `Mu⁺ = ${load.Mu_pos} kip-ft`,
-    },
-  ];
+  /**
+   * The flexure derivation for one bending sense.
+   *
+   * The engine has THREE derivations for `a` and the sheet must print the one
+   * that actually ran. It used to print `a = As·fy/(0.85 f'c b)` unconditionally
+   * while showing the engine's `a`, so on any beam with compression steel in the
+   * compression zone — i.e. most beams — the substitution shown did not produce
+   * the result shown (12×28, 8-#8/4-#8: it read 6.20" over a printed 4.12").
+   */
+  function flexSteps(sense: 'pos' | 'neg'): CalcStep[] {
+    const isPos = sense === 'pos';
+    const sup = isPos ? '⁺' : '⁻';
+    const As_t = isPos ? As_bot : As_top;                       // tension steel
+    const As_c = isPos ? As_top : As_bot;                       // compression steel
+    const dSense = isPos ? d : d_neg;
+    const dtSense = isPos ? dt : dt_neg;
+    const dPrime = layerCentroidOffset(section, isPos ? rebar.topBars : rebar.botBars,
+      sClear, isPos ? 'top' : 'bot');
+    const mode = isPos ? flex.mode_pos : flex.mode_neg;
+    // Sagging compresses the flange; hogging compresses the web only.
+    const bComp = isPos ? beff : bw;
+    const bLabel = isPos ? (isT ? 'beff' : 'b') : 'bw';
+    const a = isPos ? flex.a_pos : flex.a_neg;
+    const c = b1 > 0 ? a / b1 : 0;
+    const et = c > 0 ? 0.003 * (dtSense - c) / c : 99;
+    const phi = isPos ? flex.phi_pos : flex.phi_neg;
+    const Mn = isPos ? flex.Mn_pos : flex.Mn_neg;
+    const phiMn = isPos ? flex.phi_Mn_pos : flex.phi_Mn_neg;
+    const Mu = isPos ? load.Mu_pos : load.Mu_neg;
+    const DCR = phiMn > 0 ? Mu / phiMn : 0;
+    const hf = section.hf ?? h;
 
-  // ── Flexure — negative moment (engine values) ────────────────────────
-  const a_neg = flex.a_neg;
-  const Mn_neg = flex.Mn_neg;
-  const phi_Mn_neg = flex.phi_Mn_neg;
-  const DCR_neg = phi_Mn_neg > 0 ? load.Mu_neg / phi_Mn_neg : 0;
+    const steps: CalcStep[] = [];
 
-  const flexNegSteps: CalcStep[] = [
-    {
-      ref: 'ACI 318-19 §22.2.2',
-      label: 'Depth of stress block (negative moment)',
-      equation: 'a = As\'·fy / (0.85·f\'c·bw)',
-      substitution: `a = ${fmt(As_top)} × ${fy} / (0.85 × ${fc} × ${fmt(bw)})`,
-      result: `a = ${fmt(a_neg)} in`,
-      note: 'Negative moment: compression in web only (bw used)',
-    },
-    {
-      ref: 'ACI 318-19 §22.3.2',
-      label: 'Nominal moment (negative)',
-      equation: 'Mn⁻ = As\'·fy·(d − a/2)',
-      substitution: `Mn⁻ = ${fmt(As_top)} × ${fy} × (${fmt(d_neg)} − ${fmt(a_neg / 2)}) / 12,000`,
-      result: `Mn⁻ = ${fmt(Mn_neg)} kip-ft`,
-    },
-    {
-      ref: 'ACI 318-19 §21.2',
-      label: 'Design moment capacity (negative)',
-      equation: 'φMn⁻ = φ × Mn⁻  (φ same procedure as positive)',
-      substitution: `φMn⁻ = ${fmt(phi_Mn_neg > 0 && Mn_neg > 0 ? phi_Mn_neg / Mn_neg : 0.9, 3)} × ${fmt(Mn_neg)}`,
-      result: `φMn⁻ = ${fmt(phi_Mn_neg)} kip-ft`,
-    },
-    {
-      ref: 'Design check',
-      label: 'DCR — Negative flexure',
-      equation: 'DCR = Mu⁻ / φMn⁻',
-      substitution: `DCR = ${load.Mu_neg} / ${fmt(phi_Mn_neg)}`,
-      result: `DCR = ${fmt(DCR_neg, 3)}  ${DCR_neg <= 1 ? '✓ OK' : '✗ NG'}`,
-    },
-  ];
+    if (mode === 'doubly') {
+      steps.push({
+        ref: 'ACI 318-19 §22.2.2',
+        label: `Depth of stress block (${isPos ? 'positive' : 'negative'} moment) — doubly reinforced`,
+        equation: 'Solve  0.85·f\'c·b·a + ΣAs\'ᵢ(f\'sᵢ − 0.85f\'c) = As·fy,  f\'sᵢ = min(Es·0.003(c−dᵢ)/c, fy)',
+        substitution: `As = ${fmt(As_t)} in², As' = ${fmt(As_c)} in² at d' = ${fmt(dPrime)}", ${bLabel} = ${fmt(bComp)}"`,
+        result: `a = ${fmt(a)} in`,
+        note: 'Compression steel lies inside the stress block, so a is solved from equilibrium — it is NOT As·fy/(0.85f\'c·b).',
+      });
+    } else if (mode === 'flanged') {
+      const Cf = 0.85 * fc * (bComp - bw) * hf / 1000;
+      const Cw = As_t * fy / 1000 - Cf;
+      const a_web = Cw * 1000 / (0.85 * fc * bw);
+      steps.push({
+        ref: 'ACI 318-19 §22.2.2',
+        label: 'Depth of stress block — T/L flange + web split',
+        equation: 'Cf = 0.85f\'c(beff − bw)hf;  a = hf + (As·fy − Cf)/(0.85·f\'c·bw)',
+        substitution: `Cf = ${fmt(Cf)} kip, Cw = ${fmt(Cw)} kip, a_web = ${fmt(a_web)}" + hf = ${fmt(hf)}"`,
+        result: `a = ${fmt(a)} in`,
+        note: 'Stress block runs past the flange, so the compression zone is flange + web.',
+      });
+    } else {
+      steps.push({
+        ref: 'ACI 318-19 §22.2.2',
+        label: `Depth of stress block (${isPos ? 'positive' : 'negative'} moment)`,
+        equation: `a = As·fy / (0.85·f'c·${bLabel})`,
+        substitution: `a = ${fmt(As_t)} × ${fy} / (0.85 × ${fc} × ${fmt(bComp)})`,
+        result: `a = ${fmt(a)} in`,
+        note: isPos
+          ? undefined
+          : `Negative moment: compression in ${isT ? 'the web only (bw used) — the flange is in tension' : 'the rectangular section'}`,
+      });
+    }
+
+    steps.push(
+      {
+        ref: 'ACI 318-19 §22.2.2.4',
+        label: 'Neutral axis depth',
+        equation: 'c = a / β₁',
+        substitution: `c = ${fmt(a)} / ${fmt(b1)}`,
+        result: `c = ${fmt(c)} in`,
+      },
+      {
+        ref: 'ACI 318-19 §21.2.2',
+        label: 'Net tensile strain (extreme tension layer)',
+        equation: 'εt = 0.003 × (dt − c) / c',
+        substitution: `εt = 0.003 × (${fmt(dtSense)} − ${fmt(c)}) / ${fmt(c)}`,
+        result: `εt = ${fmt(et, 4)}`,
+        note: et >= ety + 0.003
+          ? `Tension-controlled (εt ≥ εty + 0.003 = ${fmt(ety + 0.003, 4)})`
+          : et > ety
+            ? `Transition zone (${fmt(ety, 4)} < εt < ${fmt(ety + 0.003, 4)})`
+            : `⚠ Compression-controlled (εt ≤ εty = ${fmt(ety, 4)})`,
+      },
+      {
+        ref: 'ACI 318-19 Table 21.2.2',
+        label: 'Strength reduction factor φ (flexure)',
+        equation: 'φ = 0.90 if εt ≥ εty + 0.003; φ = 0.65 + 0.25(εt − εty)/0.003 in transition',
+        substitution: et >= ety + 0.003
+          ? `εt = ${fmt(et, 4)} ≥ ${fmt(ety + 0.003, 4)} → φ = 0.90`
+          : `φ = 0.65 + 0.25(${fmt(et, 4)} − ${fmt(ety, 4)})/0.003 = ${fmt(phi, 3)}`,
+        result: `φ = ${fmt(phi, 3)}`,
+        note: `εty = fy/Es = ${fy}/${Es} = ${fmt(ety, 5)}`,
+      },
+    );
+
+    if (mode === 'doubly') {
+      steps.push({
+        ref: 'ACI 318-19 §22.3.2',
+        label: `Nominal moment capacity${isPos ? '' : ' (negative)'}`,
+        equation: 'Mn = 0.85f\'c·b·a(d − a/2) + ΣAs\'ᵢ(f\'sᵢ − 0.85f\'c)(d − dᵢ)',
+        substitution: `Cc = ${fmt(0.85 * fc * bComp * a / 1000)} kip at (${fmt(dSense)} − ${fmt(a / 2)})", plus the compression-steel couple`,
+        result: `Mn${sup} = ${fmt(Mn)} kip-ft`,
+        note: 'Moments taken about the tension-steel centroid, each compression layer at its own strain.',
+      });
+    } else if (mode === 'flanged') {
+      steps.push({
+        ref: 'ACI 318-19 §22.3.2',
+        label: 'Nominal moment capacity — flange + web',
+        equation: 'Mn = Cf(d − hf/2) + Cw(d − hf − a_web/2)',
+        substitution: `d = ${fmt(dSense)}", hf = ${fmt(hf)}", a = ${fmt(a)}"`,
+        result: `Mn${sup} = ${fmt(Mn)} kip-ft`,
+      });
+    } else {
+      steps.push({
+        ref: 'ACI 318-19 §22.3.2',
+        label: `Nominal moment capacity${isPos ? '' : ' (negative)'}`,
+        equation: 'Mn = As·fy·(d − a/2)',
+        substitution: `Mn = ${fmt(As_t)} × ${fy} × (${fmt(dSense)} − ${fmt(a / 2)}) / 12,000`,
+        result: `Mn${sup} = ${fmt(Mn)} kip-ft`,
+      });
+    }
+
+    steps.push(
+      {
+        ref: 'ACI 318-19 §21.2',
+        label: `Design moment capacity (${isPos ? 'positive' : 'negative'})`,
+        equation: `φMn${sup} = φ × Mn${sup}`,
+        substitution: `φMn${sup} = ${fmt(phi, 3)} × ${fmt(Mn)}`,
+        result: `φMn${sup} = ${fmt(phiMn)} kip-ft`,
+      },
+      {
+        ref: 'Design check',
+        label: `DCR — ${isPos ? 'Positive' : 'Negative'} flexure`,
+        equation: `DCR = Mu${sup} / φMn${sup}`,
+        substitution: `DCR = ${Mu} / ${fmt(phiMn)}`,
+        result: `DCR = ${fmt(DCR, 3)}  ${DCR <= 1 ? '✓ OK' : '✗ NG'}`,
+        note: isPos ? `Mu⁺ = ${load.Mu_pos} kip-ft` : undefined,
+      },
+    );
+    return steps;
+  }
+
+  const flexPosSteps = flexSteps('pos');
+  const flexNegSteps = flexSteps('neg');
 
   // ── Shear — engine call (identical numbers to the results screen) ────
   const shear = computeShear(section, material, rebar, load.Pu, zoneSpacing, shearFace);
@@ -383,7 +525,12 @@ export function generateBreakdown(
   const nuTermRaw = load.Pu * 1000 / (6 * bw * h);
   const nuTerm = Math.min(nuTermRaw, 0.05 * fc);
   const nuCapped = nuTermRaw > 0.05 * fc;
-  const Vs = shear.Vs;
+  const Vs = shear.Vs;                    // AFTER the §22.5.1.2 ceiling
+  // The uncapped value and the ceiling itself, so the sheet can show both and say which
+  // one the capacity came from. Same expression `computeShear` caps with — note it
+  // carries no λ, matching the clause and the engine.
+  const VsMax = 8 * Math.sqrt(fc) * bw * d_shear / 1000;
+  const VsRaw = sv > 0 ? Av * fyt * d_shear / (sv * 1000) : 0;
   const phi_v = 0.75;
   const phi_Vn = shear.phi_Vn;
   const DCR_shear = phi_Vn > 0 ? load.Vu / phi_Vn : 0;
@@ -438,7 +585,29 @@ export function generateBreakdown(
       substitution: sv > 0
         ? `Vs = ${fmt(Av, 3)} × ${fyt} × ${fmt(d_shear)} / (${sv} × 1000)`
         : 'No stirrups provided',
-      result: `Vs = ${fmt(Vs)} kips`,
+      // The RAW value the formula above produces. `shear.Vs` is already capped, so
+      // printing it here would show a substitution that does not produce its own result
+      // whenever the ceiling binds — the next step is where the cap is applied and said.
+      result: `Vs = ${fmt(VsRaw)} kips`,
+    },
+    {
+      ref: 'ACI 318-19 §22.5.1.2',
+      label: 'Upper limit on the stirrup contribution',
+      equation: "Vs ≤ Vs,max = 8√f'c·bw·d",
+      substitution: `Vs,max = 8 × √${fc} × ${fmt(bw)} × ${fmt(d_shear)} / 1000`,
+      result: shear.VsCapped
+        ? `Vs,max = ${fmt(VsMax)} kips  — Vs CAPPED, capacity taken as ${fmt(Vs)} kips`
+        : `Vs,max = ${fmt(VsMax)} kips  ✓ not governing (Vs = ${fmt(Vs)} kips)`,
+      // This used to be a WARNING on the member. It is a property of the section, not a
+      // defect: once Vs is at its ceiling, more or tighter links add no capacity, and if
+      // φVn still covers Vu the beam is perfectly good. Reaching the ceiling is worth
+      // KNOWING — it tells you which lever has stopped working — so it is reported here
+      // rather than flagged there. Breaching it is a different matter and still an error:
+      // see the crushing-limit step below.
+      note: shear.VsCapped
+        ? 'The stirrups have reached their ceiling — closer spacing or bigger links add no '
+          + 'shear capacity from here. Not a failure on its own: only φVn vs Vu decides that.'
+        : 'Ceiling on what stirrups can contribute, whatever the spacing.',
     },
     {
       ref: 'ACI 318-19 Table 21.2.1',
@@ -570,6 +739,21 @@ export function generateBreakdown(
       equation: 'DCR = Tu / φTn',
       substitution: `DCR = ${load.Tu} / ${fmt(phi_Tn)}`,
       result: `DCR = ${fmt(DCR_torsion, 3)}  ${DCR_torsion <= 1 ? '✓ OK' : '✗ NG'}`,
+    },
+    {
+      // The number S-Concrete headlines as "V & T Util", and the only one of the three
+      // that sees the SUM: §22.7.6.1's transverse demand is (A_v + 2A_t)/s, so a cage
+      // can clear Shear and Torsion singly and still be short of links. Suppressed
+      // below φ·T_th, where §22.7.1.1 permits torsion to be neglected outright.
+      ref: 'ACI 318-19 §22.7.6.1',
+      label: 'Combined shear + torsion on the links',
+      equation: 'V&T util = Vu/φVn + Tu/φTn   — the same legs carry both, so the demands add',
+      substitution: load.Tu > Tu_thresh
+        ? `V&T = ${fmt(DCR_shear, 3)} + ${fmt(DCR_torsion, 3)}`
+        : `Tu = ${fmt(load.Tu)} kip-ft ≤ φ·T_th = ${fmt(Tu_thresh)} kip-ft — §22.7.1.1 permits torsion to be neglected`,
+      result: load.Tu > Tu_thresh
+        ? `V&T util = ${fmt(DCR_shear + DCR_torsion, 3)}  ${DCR_shear + DCR_torsion <= 1 ? '✓ OK' : '✗ NG — more links needed'}`
+        : `V&T util = ${fmt(DCR_shear, 3)} (shear alone)  ${DCR_shear <= 1 ? '✓ OK' : '✗ NG'}`,
     },
     {
       ref: 'ACI 318-19 §22.7.7.1',

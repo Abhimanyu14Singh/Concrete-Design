@@ -7,6 +7,7 @@
 import { Component } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
 import { FONT, STATUS } from '../../theme';
+import { track, trackException } from '../../utils/usage';
 
 interface Props {
   children: ReactNode;
@@ -27,9 +28,21 @@ export default class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Keep a record in the console for debugging; never crash the app.
     console.error('Caught render error:', error, info.componentStack);
+    // A caught render error is the highest-value signal the app produces: the user saw
+    // a broken panel and, because this boundary let them dismiss it and carry on, will
+    // very likely never mention it. Only the component stack's first frames are kept —
+    // enough to name the panel that failed.
+    trackException(error, this.props.area ?? 'unknown', {
+      componentStack: (info.componentStack ?? '').split('\n').slice(0, 6).join(' | ').slice(0, 300),
+    });
   }
 
-  reset = () => this.setState({ error: null });
+  reset = () => {
+    // Dismissals are worth counting on their own: a boundary tripped once is a bug, and
+    // the same one dismissed five times in a session is a bug someone is working around.
+    track('error.dismissed', { area: this.props.area ?? 'unknown' });
+    this.setState({ error: null });
+  };
 
   render() {
     const { error } = this.state;
@@ -60,7 +73,12 @@ export default class ErrorBoundary extends Component<Props, State> {
             style={{ padding: '7px 14px', background: STATUS.fail, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
             Dismiss & continue
           </button>
-          <button onClick={() => window.location.reload()}
+          <button onClick={() => {
+            // Reloading loses the session's unsaved work, so nobody clicks this lightly.
+            // It reads as "the app is unusable", which `error.dismissed` does not.
+            track('error.reload', { area: this.props.area ?? 'unknown' });
+            window.location.reload();
+          }}
             style={{ padding: '7px 14px', background: 'white', color: '#374151', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
             Reload app
           </button>

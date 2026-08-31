@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "Pk057GRBwIU=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\abhimanyu.singh\\Documents\\GitHub\\Concrete-Design\\tools\\Shell\\Shell.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\abhimanyu.singh\\.nuget\\packages\\microsoft.web.webview2\\1.0.2903.40\\microsoft.web.webview2.1.0.2903.40.nupkg.sha512"
+  ],
+  "logs": []
+}

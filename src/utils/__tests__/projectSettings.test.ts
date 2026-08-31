@@ -33,7 +33,7 @@ function project(over: Partial<Project> = {}): Project {
 describe('code-derived elastic constants', () => {
   it('ACI Ec = 57000·√f\'c (§19.2.2.1)', () => {
     expect(autoEc(4000, 'ACI318-19')).toBeCloseTo(57000 * Math.sqrt(4000), 3);
-    expect(autoEc(5000, 'ACI318-14')).toBeCloseTo(57000 * Math.sqrt(5000), 3);
+    expect(autoEc(5000, 'ACI318-19')).toBeCloseTo(57000 * Math.sqrt(5000), 3);
   });
 
   it('EC2 Ecm = 22000·((fck+8)/10)^0.3 — C30 ≈ 32.8 GPa', () => {

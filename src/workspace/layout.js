@@ -10,8 +10,15 @@
 // `dock`. Reopening two OS windows before the user has asked for anything is startling,
 // and in a browser it would be a pop-up on load, which browsers block anyway. The
 // toolbar count tells them what was detached; one click puts it back.
+//
+// `winOf` / `winDock` — which window holds each detached panel, and that window's own
+// column layout — follow the same rule for the same reason, and are cleared on load
+// rather than merely ignored. Leaving them behind a hosts map that no longer says
+// 'window' would be a model that contradicts itself on boot; `prune` would repair it,
+// but a saved state should not need repairing.
 
 import { isLayout } from './dockLayout'
+import { mergeElementStyles, DEFAULT_ELEMENT_STYLES } from '../components/ModelMap/elementStyle.ts'
 import { DEFAULT_DCR_THRESHOLDS, MAP_DCR_COLORS } from '../theme.ts'
 
 const KEY = 'sdash-beam-demo/layout/v2'
@@ -36,6 +43,10 @@ const DEFAULTS = {
     // so it starts closed like the rest of the second rank — one toolbar click away.
     sconcrete: null,
   },
+  // Which detached window holds each panel, and each window's internal column layout.
+  // Empty on boot — see the note at the top of this file about not restoring windows.
+  winOf: {},         // kind  -> winId ('w1', 'w2', …)
+  winDock: {},       // winId -> the column layout inside that window
   geom: {},          // kind -> {x, y, w, h} for the floating state
   // The rail starts SHUT. It is navigation you reach for, not something to look at
   // while working, and the workspace is the better use of 258px by default.
@@ -53,11 +64,23 @@ const DEFAULTS = {
   // reference an engineer reads positions against, so hiding either by default would be
   // hiding information to save clutter that is not there.
   planElements: { columns: true, walls: true, floors: true, grids: true },
-  planColorMode: 'dcr',
+  // NONE by default: the plan opens as a drawing of the model rather than as a result
+  // map. A colour scheme answers a question, and the first thing to see is the structure
+  // you are about to ask it about — booting straight into DCR also colours a model that
+  // has not been designed yet, which reads as a verdict rather than as "nothing run".
+  planColorMode: 'none',
+  // How each element kind is drawn (Preferences → Model appearance). Per MACHINE, so it
+  // lives with the layout rather than in the project file.
+  elementStyles: { ...DEFAULT_ELEMENT_STYLES },
   // The M / V force overlay on the plan: 'off' | 'moment' | 'shear'. A view preference
   // like the projection, so it persists — but it starts OFF, because booting into a
   // model covered in purple polygons hides the colouring that is the plan's usual job.
   planDiagram: 'off',
+  // Which load combination the M / V overlay draws; '' is the envelope across all of
+  // them. Empty by default because the envelope is the honest answer to "how much does
+  // this member have to take" — picking a combo is how you go from that to a diagram
+  // you can actually read.
+  planCombo: '',
   // The DCR colour scale: three ascending cut-points and the four band colours they
   // divide. Both are the APP's defaults, imported rather than retyped — a demo that
   // booted on a different green than the product would be the wrong picture of it.
@@ -72,6 +95,12 @@ const DEFAULTS = {
   storyBefore3d: null,
   // Which face the ρ ramp measures, in the 'flexSteel' colour mode. 'bot' is the sagging
   // steel, which is the face most beams are actually designed on.
+  // Line weight on the plan — the pen the model is drawn with, in SCREEN px so it does
+  // not change as you zoom: 0 is a 0.75px hairline, 1 a 5px heavy line, and section
+  // width modulates it by ±25% either side. Kept low by default: a heavy plan reads as
+  // one undifferentiated mat at import scale, and the width differentiation is what lets
+  // you pick girders out of infill without drowning the model in ink.
+  lineWeightScale: 0.35,
   flexFace: 'bot',       // 'bot' | 'top'
   groupsTab: 'groups',   // 'groups' | 'auto'
   selectionKind: 'member',
@@ -102,7 +131,18 @@ export function loadLayout() {
     const hexes = v => Array.isArray(v) && v.length === 4 && v.every(c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c))
     const dcrThresholds = nums(saved.dcrThresholds) ? saved.dcrThresholds : [...DEFAULTS.dcrThresholds]
     const dcrColors = hexes(saved.dcrColors) ? saved.dcrColors : [...DEFAULTS.dcrColors]
-    return { ...DEFAULTS, ...saved, hosts, dock, dcrThresholds, dcrColors }
+    // Windows are not reopened on boot, so nothing may claim to be in one.
+    // Merged field by field so one bad colour cannot discard three good preferences.
+    const elementStyles = mergeElementStyles(saved.elementStyles)
+    // The S-Concrete pass/fail scheme was withdrawn — its DCR sibling says the same thing
+    // and more. A machine that was last left on it would otherwise boot into a colour
+    // mode with no entry in the dropdown: the picker reads back the raw key and the
+    // histogram goes blank, which looks like a broken panel rather than a retired option.
+    const planColorMode = saved.planColorMode === 'sconcrete'
+      ? 'sconcreteDcr'
+      : (saved.planColorMode ?? DEFAULTS.planColorMode)
+    // Windows are not reopened on boot, so nothing may claim to be in one.
+    return { ...DEFAULTS, ...saved, hosts, dock, dcrThresholds, dcrColors, elementStyles, planColorMode, winOf: {}, winDock: {} }
   } catch {
     return { ...DEFAULTS }      // corrupt or unavailable storage must never break boot
   }

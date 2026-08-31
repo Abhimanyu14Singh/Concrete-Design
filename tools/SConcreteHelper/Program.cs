@@ -25,18 +25,33 @@ using System.Text.Json;
 using System.Threading;
 using System.Windows.Automation;
 
+// WHY UI AUTOMATION AND NOT AN API: BatchReporter.exe ships no callable interface —
+// no COM server, no command line that runs a batch. Driving its window is the only way
+// to run one. That makes this code inherently brittle against S-Concrete UI changes,
+// which is why every element is located by AutomationId (stable across versions and
+// locales) rather than by screen position or visible label, every lookup is a POLL with
+// a timeout rather than a single attempt against a window that may not have finished
+// drawing, and every failure path returns a BatchResult instead of throwing — the app
+// must be able to tell the user what broke.
 internal static class Program
 {
     private const string WindowTitle = "Batch Processing and Reporting Utility";
+    /// Buttons a blocking pop-up might carry, in the order the watcher prefers them.
     private static readonly string[] DismissButtons = { "OK", "Ok", "Yes", "Continue", "Ignore" };
 
+    // Timeouts are generous on purpose: this runs on the engineer's workstation while
+    // they wait, and a spurious timeout on a slow machine costs more than the wait does.
     private const int StartupTimeout = 60;    // s to wait for the reporter window
     private const int FolderLoadTimeout = 20; // s for the file-count label to update
     private const int BatchTimeout = 1800;    // s for the batch to finish
     private const int ReportTimeout = 120;    // s for the PDF to appear
 
+    /// Set false to stop the dialog watcher. Volatile — written from the main thread,
+    /// read from the watcher thread.
     private static volatile bool _watch;
 
+    /// The one-shot JSON result written to stdout. Lowercase members are deliberate:
+    /// they are serialized as-is and the renderer reads these exact key names.
     private sealed class BatchResult
     {
         public bool ok { get; set; }
@@ -78,6 +93,9 @@ internal static class Program
     }
 
     // ── Locate S-Concrete ─────────────────────────────────────────────────────
+    /// Locate BatchReporter.exe (and Sconcrete.exe when present) by scanning the S-FRAME
+    /// install root, newest product suite first. Returns (null, null) when nothing is
+    /// installed — the caller reports that as a clean "not found", not an error.
     private static (string? reporter, string? sconcrete) FindSConcrete()
     {
         const string baseDir = @"C:\Program Files (x86)\S-FRAME Software";
@@ -94,6 +112,13 @@ internal static class Program
     }
 
     // ── Batch automation ──────────────────────────────────────────────────────
+    /// Run one batch end to end: launch the reporter, point it at the folder, fill the
+    /// title block, Run Batch, poll until the status line reports results, then Create
+    /// Report if a PDF was asked for.
+    ///
+    /// Stale .SCRS files are deleted FIRST. Run Batch only rewrites results for files it
+    /// processes, so a leftover .SCRS from an earlier run would otherwise be read back as
+    /// if it were this run's result — a silently wrong verification.
     private static BatchResult RunBatch(string folder, string title, string engineer, bool makePdf)
     {
         if (!Directory.Exists(folder))
@@ -193,6 +218,9 @@ internal static class Program
     }
 
     // ── UI Automation helpers ─────────────────────────────────────────────────
+    /// Poll for a top-level window by title until it appears or the timeout expires.
+    /// Lookups are wrapped in try/catch because the UIA tree throws transiently while a
+    /// window is being created — a single failed probe means "not yet", not "never".
     private static AutomationElement? FindTopWindow(string name, int timeoutSec)
     {
         var deadline = DateTime.UtcNow.AddSeconds(timeoutSec);
@@ -206,6 +234,8 @@ internal static class Program
         return null;
     }
 
+    /// Poll for a descendant control by AutomationId. Matched by id rather than label so
+    /// the automation survives UI wording and localisation changes.
     private static AutomationElement? FindById(AutomationElement root, string automationId, int timeoutSec)
     {
         var deadline = DateTime.UtcNow.AddSeconds(timeoutSec);
@@ -219,24 +249,31 @@ internal static class Program
         return null;
     }
 
+    /// Type text into a control via its ValuePattern. Focus is best-effort: not every
+    /// control accepts focus, and the pattern works regardless.
     private static void SetValue(AutomationElement el, string text)
     {
         try { el.SetFocus(); } catch { /* not always focusable */ }
         if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var p)) ((ValuePattern)p).SetValue(text);
     }
 
+    /// "Click" a control. Falls back to TogglePattern because some of the reporter's
+    /// buttons expose themselves as toggles rather than invokables.
     private static void Invoke(AutomationElement el)
     {
         if (el.TryGetCurrentPattern(InvokePattern.Pattern, out var p)) ((InvokePattern)p).Invoke();
         else if (el.TryGetCurrentPattern(TogglePattern.Pattern, out var t)) ((TogglePattern)t).Toggle();
     }
 
+    /// Set a field if it exists. Optional title-block fields must not fail the batch.
     private static void TrySet(AutomationElement win, string automationId, string text)
     {
         var el = FindById(win, automationId, 5);
         if (el != null) SetValue(el, text);
     }
 
+    /// Read a control's text, preferring its ValuePattern and falling back to its Name.
+    /// The reporter's status label exposes its text through either depending on state.
     private static string LabelText(AutomationElement? el)
     {
         if (el == null) return "";
@@ -244,6 +281,9 @@ internal static class Program
         try { return el.Current.Name ?? ""; } catch { return ""; }
     }
 
+    /// Watch the status label until it reports finished results, echoing each change to
+    /// stderr so the app can show live progress. Returns the last status seen — on
+    /// timeout that is whatever the batch had reached, which is more useful than "".
     private static string PollStatus(AutomationElement win, int timeoutSec)
     {
         var last = "";
@@ -258,6 +298,10 @@ internal static class Program
         return last;
     }
 
+    /// Does the status line mean "finished with results"? There is no completion event to
+    /// subscribe to, so completion is inferred from the text: the reporter's pre-run and
+    /// in-progress states all say "no results" / "click…" / "running", and a finished one
+    /// carries counts. Hence: no such phrase, and at least one digit.
     private static bool StatusHasResults(string s)
     {
         if (string.IsNullOrEmpty(s)) return false;
@@ -265,6 +309,9 @@ internal static class Program
         return !sl.Contains("no results") && !sl.Contains("click") && !sl.Contains("running") && s.Any(char.IsDigit);
     }
 
+    /// Wait for the reporter to report a non-zero file count after the folder is set.
+    /// Only a warning on timeout — the label is a convenience, and Run Batch may still
+    /// work; failing here would turn a cosmetic problem into a failed run.
     private static void WaitFolderLoaded(AutomationElement win)
     {
         var deadline = DateTime.UtcNow.AddSeconds(FolderLoadTimeout);
@@ -278,6 +325,17 @@ internal static class Program
     }
 
     // ── Background dialog watcher (win32; the pop-ups are #32770 dialogs) ──────
+    /// Background thread that finds and dismisses modal pop-ups for the whole run.
+    ///
+    /// Without it the batch DEADLOCKS: the reporter throws licence, overwrite and
+    /// confirmation dialogs that block its own UI thread, so the status label never
+    /// updates and the poll above waits out its full timeout on a run that would have
+    /// completed in seconds.
+    ///
+    /// Uses raw win32 rather than UIA because these are plain #32770 dialogs that the
+    /// UIA tree does not reliably surface. The filters — dialog class, not the main
+    /// window's own title, and a plausible dialog size — keep it from clicking something
+    /// that merely looks like a pop-up. Each handle is dismissed at most once.
     private static void DialogWatcher()
     {
         var seen = new HashSet<IntPtr>();
@@ -322,8 +380,15 @@ internal static class Program
     }
 
     // ── stdout / stderr ───────────────────────────────────────────────────────
+    // The two streams carry different things and the caller parses them differently:
+    // stdout is EXACTLY ONE line of JSON (the result), stderr is free-form progress.
+    // Never write progress to stdout — it would corrupt the JSON the app parses.
+
+    /// Write the single JSON result line to stdout.
     private static void WriteJson(object o) { Console.Out.WriteLine(JsonSerializer.Serialize(o)); Console.Out.Flush(); }
+    /// Write a progress line to stderr. Flushed immediately so the app can stream it.
     private static void Log(string m) { Console.Error.WriteLine(m); Console.Error.Flush(); }
+    /// Read the value following `name` in argv, or null if absent.
     private static string? GetOpt(string[] args, string name)
     {
         var i = Array.IndexOf(args, name);
@@ -331,6 +396,11 @@ internal static class Program
     }
 
     // ── win32 P/Invoke ────────────────────────────────────────────────────────
+    // Needed by DialogWatcher only: the pop-ups it dismisses are plain #32770 dialogs
+    // that UI Automation does not reliably expose, so they are enumerated and clicked
+    // at the win32 layer instead.
+
+    /// Callback for EnumWindows / EnumChildWindows. Return false to stop enumerating.
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc cb, IntPtr lParam);
@@ -348,12 +418,16 @@ internal static class Program
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int left, top, right, bottom; }
 
+    /// Send a real Tab keystroke. Some of the reporter's text fields only commit their
+    /// value on focus change, and a UIA SetValue alone leaves the old value in effect.
     private static void PressTab()
     {
         keybd_event(VK_TAB, 0, 0, UIntPtr.Zero);
         keybd_event(VK_TAB, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
     }
 
+    /// Window class name, e.g. "#32770" for a dialog.
     private static string ClassName(IntPtr h) { var sb = new StringBuilder(256); GetClassName(h, sb, sb.Capacity); return sb.ToString(); }
+    /// Window title / control caption.
     private static string WinText(IntPtr h) { var sb = new StringBuilder(512); GetWindowText(h, sb, sb.Capacity); return sb.ToString(); }
 }

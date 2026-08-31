@@ -1,18 +1,60 @@
+/**
+ * Excel export — two workbooks, both built from live engine results.
+ *
+ * `buildProjectWorkbook` is the full report: a summary sheet plus one sheet per member.
+ * `buildDcrListWorkbook` is the flat one-row-per-member DCR list a reviewer marks up.
+ * Both are PURE — they return a workbook and touch no filesystem — so the tests can
+ * assert on cell contents. The thin `exportExcel` / `exportDcrList` wrappers add the
+ * `writeFile` and are the only part that can't be unit-tested.
+ *
+ * The per-member sheets are deliberately HALF live: the geometry/axial chain (Ag, ρg,
+ * φPn,max) is written as real spreadsheet formulas over labelled input cells, so a
+ * reviewer can change b, h or f'c and watch it recompute in Excel. The flexure, shear,
+ * torsion and P-M capacities cannot be — they come out of a strain-compatibility
+ * iteration — so they are written as engine values under a heading that says so. Never
+ * fake those as formulas; a formula that silently disagrees with the engine is worse
+ * than an honest static number.
+ *
+ * Formula cells carry BOTH `.f` and a cached `.v`, so the numbers are visible before
+ * the host application recalculates (and in viewers that never do).
+ */
+
 import * as XLSX from 'xlsx';
 import type { Project, Member } from '../../types';
-import { runDesign } from '../../engines';
+import { effectiveLoad, runDesign } from '../../engines';
 import { getBarArea } from '../concreteDesign';
 import { settingsFromProject } from '../projectSettings';
 
+/**
+ * Project design preferences the exports must honour.
+ *
+ * These reports already PRINT the settings in their standards block, so computing under
+ * different ones is not a small inconsistency — it is a document that contradicts itself
+ * on the same page.
+ */
+interface ExportPrefs { cotTheta?: number; ignoreTorsion?: boolean }
+
+/** The preferences a project's exports run under. */
+const prefsOf = (project: Project): ExportPrefs =>
+  ({ cotTheta: project.cotTheta, ignoreTorsion: project.ignoreTorsion });
+
+/** Worst ULS DCR across the strength checks. Crack width is NOT included — see govDcrOf. */
 function worstOf(r: ReturnType<typeof runDesign>): number {
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
     r.DCR_PM ?? 0, r.DCR_axial ?? 0);
 }
 
-function worstResult(member: Member, code?: string) {
+/**
+ * Re-run design for every load case on the member and keep the worst.
+ *
+ * A member carries many load rows and different rows govern different checks, so the
+ * summary row must be chosen across ALL of them — never `loads[0]`. This picks the row
+ * with the highest single DCR, which is what a one-line-per-member summary can show.
+ */
+function worstResult(member: Member, code?: string, prefs: ExportPrefs = {}) {
   let worst = null as ReturnType<typeof runDesign> | null;
   for (const lc of member.loads) {
-    const r = runDesign(member.section, member.material, member.rebar, lc, member.span ?? 20, code, member.crackParams);
+    const r = runDesign(member.section, member.material, member.rebar, lc, member.span ?? 20, code, member.crackParams, prefs.cotTheta, prefs.ignoreTorsion);
     if (!worst || worstOf(r) > worstOf(worst)) worst = r;
   }
   return worst;
@@ -32,6 +74,7 @@ function setStr(ws: XLSX.WorkSheet, c: number, r: number, v: string): void {
 function setFormula(ws: XLSX.WorkSheet, c: number, r: number, f: string, cached: number): void {
   ws[addr(c, r)] = { t: 'n', f, v: cached };
 }
+/** Total longitudinal steel area (top + bottom + side bars), in². */
 function totalLongAst(m: Member): number {
   return [...m.rebar.topBars, ...m.rebar.botBars, ...(m.rebar.sideBars ?? [])]
     .reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
@@ -44,7 +87,7 @@ function totalLongAst(m: Member): number {
  * from the strain-compatibility engine and are written as labelled values — they
  * cannot be expressed as a single spreadsheet formula.
  */
-function buildMemberSheet(m: Member, code: string): XLSX.WorkSheet {
+function buildMemberSheet(m: Member, code: string, prefs: ExportPrefs = {}): XLSX.WorkSheet {
   const ws: XLSX.WorkSheet = {};
   const isCircular = false; // beams only
   const spiral = m.rebar.tieType === 'spiral';
@@ -99,10 +142,13 @@ function buildMemberSheet(m: Member, code: string): XLSX.WorkSheet {
   headers.forEach((hd, c) => setStr(ws, c, r, hd));
   r += 1;
   for (const lc of m.loads) {
-    const res = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
+    // Both the DESIGN and the printed demand row use the load as the engine sees it,
+    // so a sheet headed "Torsion — Neglected (Tu = 0)" cannot also tabulate Tu = 40.
+    const row = effectiveLoad(lc, prefs.ignoreTorsion);
+    const res = runDesign(m.section, m.material, m.rebar, row, m.span ?? 20, code, m.crackParams, prefs.cotTheta, prefs.ignoreTorsion);
     const warns = res.warnings.map(w => `[${w.code}] ${w.message}`).join('; ');
     const vals: (string | number)[] = [
-      lc.label, lc.Mu_pos, lc.Mu_neg, lc.Vu, lc.Tu, lc.Pu, lc.Mux ?? 0, lc.Muy ?? 0,
+      row.label, row.Mu_pos, row.Mu_neg, row.Vu, row.Tu, row.Pu, row.Mux ?? 0, row.Muy ?? 0,
       +res.phi_Mn_pos.toFixed(2), +res.phi_Mn_neg.toFixed(2), +res.phi_Vn.toFixed(2), +res.phi_Tn.toFixed(2),
       res.phi_Pn_max !== undefined ? +res.phi_Pn_max.toFixed(1) : '—',
       +res.DCR_flex_pos.toFixed(3), +res.DCR_flex_neg.toFixed(3), +res.DCR_shear.toFixed(3),
@@ -148,7 +194,7 @@ export function buildProjectWorkbook(project: Project): XLSX.WorkBook {
       'DCR Flex+', 'DCR Flex-', 'DCR Shear', 'DCR Torsion', 'DCR P-M', 'Status'],
   ];
   for (const m of project.members) {
-    const r = worstResult(m, project.code);
+    const r = worstResult(m, project.code, prefsOf(project));
     if (!r) continue;
     const sec = `${m.section.b}"×${m.section.h}"`;
     summaryData.push([
@@ -168,13 +214,14 @@ export function buildProjectWorkbook(project: Project): XLSX.WorkBook {
 
   // ── Per-member sheets (axial/geometry chain as live formulas) ────────────
   for (const m of project.members) {
-    const ws = buildMemberSheet(m, project.code);
+    const ws = buildMemberSheet(m, project.code, prefsOf(project));
     const safeId = m.id.replace(/[:\\/?*[\]]/g, '_');
     XLSX.utils.book_append_sheet(wb, ws, safeId.slice(0, 31));
   }
   return wb;
 }
 
+/** Build and download the full project workbook. */
 export function exportExcel(project: Project): void {
   const wb = buildProjectWorkbook(project);
   XLSX.writeFile(wb, `${project.name.replace(/\s+/g, '_')}_Results.xlsx`);
@@ -207,7 +254,7 @@ export function buildDcrListWorkbook(project: Project): XLSX.WorkBook {
       'DCR Flex+', 'DCR Flex-', 'DCR Shear', 'DCR Torsion', 'DCR Crack', 'DCR P-M', 'Status'],
   ];
   for (const m of project.members) {
-    const r = worstResult(m, project.code);
+    const r = worstResult(m, project.code, prefsOf(project));
     if (!r) continue;
     const sec = `${m.section.b}"×${m.section.h}"`;
     data.push([
@@ -227,6 +274,7 @@ export function buildDcrListWorkbook(project: Project): XLSX.WorkBook {
   return wb;
 }
 
+/** Build and download the single-sheet DCR list. */
 export function exportDcrList(project: Project): void {
   const wb = buildDcrListWorkbook(project);
   XLSX.writeFile(wb, `${project.name.replace(/\s+/g, '_')}_DCR_List.xlsx`);

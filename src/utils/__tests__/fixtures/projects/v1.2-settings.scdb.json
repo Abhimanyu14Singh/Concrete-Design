@@ -1,0 +1,35 @@
+{
+  "_version": "1.2",
+  "id": "p-v12",
+  "name": "Podium Level 3",
+  "code": "EN1992-1-1",
+  "description": "Frozen artefact of a v1.2 build. Do not edit.",
+  "engineer": "A. Singh",
+  "date": "2025-01-20",
+  "settings": {
+    "fc": 4351.13, "fy": 72518.87, "fyt": 72518.87,
+    "coverTop": 1.1811, "coverBottom": 1.1811, "coverSide": 1.1811,
+    "barFamily": "euro", "displayScale": 1
+  },
+  "members": [
+    {
+      "id": "m-v12-1",
+      "label": "B201",
+      "memberType": "beam",
+      "material": { "fc": 4351.13, "fy": 72518.87, "fyt": 72518.87, "Es": 29008000, "lambdaConcrete": 1, "Ec": 4700000 },
+      "section": {
+        "type": "T_beam", "b": 47.24, "bw": 11.81, "h": 23.62, "hf": 5.91,
+        "coverClear": 1.1811, "coverTop": 1.1811, "coverBottom": 1.5748, "coverSide": 1.1811,
+        "stirrupDia": -10
+      },
+      "rebar": {
+        "topBars": [{ "numBars": 3, "barSize": -20 }],
+        "botBars": [{ "numBars": 4, "barSize": -25 }],
+        "ties": { "barSize": -10, "spacing": 7.874, "legs": 2 }
+      },
+      "loads": [
+        { "id": "lc1", "label": "ULS", "Mu_pos": 210, "Mu_neg": 160, "Vu": 62, "Tu": 4, "Pu": 0 }
+      ]
+    }
+  ]
+}

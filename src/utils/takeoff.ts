@@ -18,6 +18,8 @@ import { steelWeightPerFt } from './autoGroup';
 const FT3_PER_YD3 = 27;
 const LB_PER_TON = 2000; // US short ton
 
+/** One member's quantities. Steel is split long/tie because they are priced and
+ *  scheduled separately; `steelLb` is their sum. */
 export interface MemberTakeoff {
   memberId: string;
   label: string;
@@ -29,12 +31,15 @@ export interface MemberTakeoff {
   steelLb: number;
 }
 
+/** Quantities subtotalled for one member type. */
 export interface TakeoffByType {
   count: number;
   concreteFt3: number;
   steelLb: number;
 }
 
+/** Whole-project quantities, in both working and reporting units. Unlike the savings
+ *  estimate in `autoGroup.ts`, this counts the steel actually detailed. */
 export interface ProjectTakeoff {
   members: MemberTakeoff[];
   concreteFt3: number;

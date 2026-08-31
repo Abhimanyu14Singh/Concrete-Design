@@ -74,11 +74,39 @@ try {
 
     # 'dotnet' on PATH only proves a RUNTIME is installed; publishing needs the SDK.
     # 'dotnet --list-sdks' is the reliable discriminator (empty on a runtime-only box).
-    $hasDotnet = $false
+    #
+    # But check the USER-LOCAL install too. dotnet-install.ps1 (the no-admin route,
+    # and what CI-less dev boxes usually end up with) drops a complete SDK in
+    # %USERPROFILE%\.dotnet with its OWN dotnet.exe. A machine-wide runtime in
+    # 'C:\Program Files\dotnet' still wins the PATH lookup, and that host only reports
+    # SDKs sitting beside it — so 'dotnet --list-sdks' says "No SDKs were found" on a
+    # box that has a perfectly good one. That false negative sends you off to install
+    # an SDK you already have, so look before giving up.
     $sdkList = $null
+    $hasDotnet = $false
+    $probe = {
+        param($exe)
+        try { $out = & $exe --list-sdks 2>$null } catch { return $null }
+        if ($out | Where-Object { $_ -match '\S' }) { return $out }
+        return $null
+    }
     if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-        try { $sdkList = & dotnet --list-sdks 2>$null } catch { $sdkList = $null }
-        $hasDotnet = [bool]($sdkList | Where-Object { $_ -match '\S' })
+        $sdkList = & $probe 'dotnet'
+        $hasDotnet = [bool]$sdkList
+    }
+    if (-not $hasDotnet) {
+        $userDotnet = Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'
+        if (Test-Path $userDotnet) {
+            $sdkList = & $probe $userDotnet
+            if ($sdkList) {
+                # Put it FIRST so the bare 'dotnet' in npm run build:helper resolves
+                # here, and set DOTNET_ROOT so that host finds its own runtimes.
+                $env:DOTNET_ROOT = Split-Path -Parent $userDotnet
+                $env:PATH = "$($env:DOTNET_ROOT);$($env:PATH)"
+                $hasDotnet = $true
+                Write-Warn2 "Using the user-local .NET SDK at $($env:DOTNET_ROOT) (the machine-wide dotnet on PATH has runtimes only)."
+            }
+        }
     }
     if ($hasDotnet) {
         $sdkCount = @($sdkList | Where-Object { $_ -match '\S' }).Count
@@ -200,8 +228,26 @@ Or, to build a UI-only installer WITHOUT ETABS / S-Concrete support, re-run:
     Write-Host 'Installer ready' -ForegroundColor Green
     Write-Host "  $($installer.FullName)"
     Write-Host "  $sizeMb MB"
+    # Report what was actually PACKAGED, not what was skipped. -SkipHelpers only
+    # skips the REBUILD: electron-builder still copies whatever is in build-helper*,
+    # so a previous run's binaries do ship. Saying "built WITHOUT sidecars" in that
+    # case describes an installer that was not the one produced.
     if ($SkipHelpers) {
-        Write-Warn2 'Built WITHOUT sidecars - ETABS import and S-Concrete verification will not work.'
+        $packed = @(
+            @{ Path = 'release\win-unpacked\resources\etabs-helper\EtabsHelper.exe';         Name = 'ETABS helper' },
+            @{ Path = 'release\win-unpacked\resources\sconcrete-helper\SConcreteHelper.exe'; Name = 'S-Concrete helper' }
+        ) | Where-Object { Test-Path $_.Path }
+        if ($packed) {
+            foreach ($h in $packed) {
+                $built = (Get-Item $h.Path).LastWriteTime
+                Write-Warn2 "$($h.Name) was NOT rebuilt - packaged the existing binary from $built. Re-run without -SkipHelpers if its source has changed since."
+            }
+            if ($packed.Count -lt 2) {
+                Write-Warn2 'The other sidecar is absent entirely - that feature will not work in this build.'
+            }
+        } else {
+            Write-Warn2 'Built WITHOUT sidecars - ETABS import and S-Concrete verification will not work.'
+        }
     }
     Write-Host ''
     Write-Host 'Run it to install, or double-click it in Explorer.' -ForegroundColor White

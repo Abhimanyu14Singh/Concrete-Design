@@ -79,6 +79,15 @@ export default function CalcPanel({
               M<sub>u</sub>+ {fmtVal(row.Mu_pos, 'moment')} · M<sub>u</sub>− {fmtVal(row.Mu_neg, 'moment')} {M}
               &nbsp;·&nbsp; V<sub>u</sub> {fmtVal(row.Vu, 'force')} {F}
               &nbsp;·&nbsp; T<sub>u</sub> {fmtVal(row.Tu, 'moment')} {M}
+              {/* Axial. Shown ALWAYS, including at zero — unlike the member panel, which
+                  hides it when there is none. This band is the sheet's statement of what
+                  the row's forces were, and a quantity that silently disappears leaves
+                  "no axial" and "axial not carried through the import" looking identical.
+                  The P-M spark in this panel's own title bar is positioned by this
+                  number, so the sheet should say what it is. */}
+              &nbsp;·&nbsp; <span title="Axial force on the section — positive is compression. This is what places the marker on the P-M interaction diagram in the header.">
+                N<sub>u</sub> {fmtVal(row.Pu ?? 0, 'force')} {F}
+              </span>
             </span>
             <span className="gov">{govFor.length ? `governs ${govFor.join(', ')}` : 'not governing'}</span>
           </div>

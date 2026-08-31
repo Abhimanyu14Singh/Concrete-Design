@@ -11,10 +11,10 @@
  *
  * Rectangular columns only; circular uses a separate S-Concrete template.
  *
- * A beam writer (S-Concrete Member Type 1) is a planned follow-up: it will reuse
- * this same format/machinery but populate the `Bm *` reinforcement tables from a
- * beam's top/bottom bars. It has no Python reference, so it must be validated
- * against a real S-Concrete beam .SCO on Windows before use.
+ * COLUMNS ONLY. Beams are not written in this legacy format at all — see the note
+ * at the foot of this file. What the rest of the app still uses from here is the
+ * US bar table (`BAR_INFO` / `barIdx`), which the 2026 ACI writer resolves against,
+ * and `designCodeToScoHeader`.
  */
 
 import type { DesignCode } from '../../types';
@@ -449,63 +449,18 @@ export function designCodeToScoHeader(
     case 'ACI318-19':
       return { codeNumber: 18, units: 0, barType: 2 };
     default:
-      // ACI318-14: unknown S-Concrete enum — confirm before emitting. (EC2 has
-      // its own writer, scoWriterEC2, and does not use this header.)
+      // EC2 has its own writer (scoWriterEC2) and does not use this header; any
+      // other code has no confirmed S-Concrete enum, so emit nothing.
       return null;
   }
 }
 
-export interface BeamScoParams {
-  memberName: string;
-  bIn: number;             // web / overall width (in)
-  hIn: number;             // overall depth (in)
-  fcKsi: number;
-  fyKsi: number;
-  /** Elastic constants (ksi) — see ColumnScoParams. */
-  ecKsi?: number; gcKsi?: number; esKsi?: number;
-  coverIn?: number;        // default 1.5
-  stirrupBar: string;      // e.g. '#4'
-  stirrupSpacingIn: number;
-  topBar?: string;         // representative longitudinal bar (seed only)
-  forces?: ScoForce;
-  loadCases?: ScoLoadCase[];
-  codeNumber?: number;
-  units?: number;
-  barType?: number;
-}
-
-/**
- * Build an S-Concrete BEAM .SCO (Member Type 1).
- *
- * BEST-EFFORT / UNVALIDATED: this reuses the byte-validated column .SCO machinery
- * and switches the member type to beam. The section, cover, stirrups, and — most
- * importantly — the load forces (carried into the Sectional Loads table) are
- * correct; the seed longitudinal reinforcement is approximate (S-Concrete designs
- * a beam from the loads when "Initialize Reinf" is set). The exact `Bm *`
- * reinforcement-table mapping and the load-component convention MUST be confirmed
- * against a real S-Concrete beam .SCO on Windows before production use.
- */
-export function buildBeamScoText(p: BeamScoParams): string {
-  const col = buildColumnScoText({
-    memberName: p.memberName,
-    bIn: p.bIn,
-    hIn: p.hIn,
-    fcKsi: p.fcKsi,
-    fyKsi: p.fyKsi,
-    ecKsi: p.ecKsi, gcKsi: p.gcKsi, esKsi: p.esKsi,
-    nzBars: 2,
-    nyBars: 2,
-    longBar: p.topBar ?? '#8',
-    tieBar: p.stirrupBar,
-    tieSpacingIn: p.stirrupSpacingIn,
-    coverIn: p.coverIn,
-    forces: p.forces,
-    loadCases: p.loadCases,
-    codeNumber: p.codeNumber,
-    units: p.units,
-    barType: p.barType,
-  });
-  // Switch Member Type 3 (column) -> 1 (beam) in the Identifiers + Parameters
-  // blocks. "Member Status 3" is a different token and is left untouched.
-  return col.split('Member Type\t 3').join('Member Type\t 1');
-}
+// NOTE — there is deliberately NO beam writer here any more.
+//
+// This module used to carry `buildBeamScoText`, which built a column file and
+// string-replaced `Member Type 3` → `1`. A real S-Concrete 2026 ACI/imperial beam
+// file (Examples/SCRS/Level_3_B14X28_S12.SCO, saved by S-Concrete itself) shows
+// that was wrong twice over: an ACI beam is written in the **2026.0** format, not
+// Version 7, and its member type is **2**, not 1 — the same as an EN 1992 beam.
+// ACI beams now go through `scoWriterACI.buildAciBeamSco`, which injects into that
+// real file as a template. See scoWriter2026.ts for the shared mechanics.

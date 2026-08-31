@@ -6,14 +6,17 @@
  * getBarArea/getBarDiam in concreteDesign.ts handle both, returning in²/in.
  */
 
+/** US bar designations (#3..#18, ASTM A615). Note the gaps — #12, #13 do not exist. */
 export const US_BAR_SIZES = [3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18];
 
 import type { BarFamily } from '../types';
 
 /** European metric bar diameters (mm), stored as negative barSize values. */
 export const METRIC_BAR_DIAMETERS = [8, 10, 12, 16, 20, 25, 32, 40];
+/** The same metric bars as stored `barSize` values (negated — see the file header). */
 export const METRIC_BAR_SIZES = METRIC_BAR_DIAMETERS.map(d => -d);
 
+/** True for a metric bar. The sign IS the family — there is no separate flag to check. */
 export function isMetricBar(size: number): boolean {
   return size < 0;
 }

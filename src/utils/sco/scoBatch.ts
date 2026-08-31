@@ -8,57 +8,48 @@
  * .SCRS) happens in the Electron main process — see electron/sconcreteBridge.cjs.
  * This module is the pure, testable orchestration logic.
  *
- * Writer selection by design code:
- *  • ACI beams → buildBeamScoText (Member Type 1).
- *  • EC2 beams → buildEc2BeamSco (S-Concrete 2026 template; see scoWriterEC2).
- *    Crack width is handled in-file (the EC2 file enables the crack check and
- *    carries the SLS quasi-permanent combo as a load row), so no separate set.
- *  • Beam: Mfy (M3) = governing factored moment, Vfy (V3) = Vu, Tf = Tu, Nf = Pu.
+ * Writer selection by design code — BOTH are S-Concrete 2026.0, Member Type 2:
+ *  • ACI 318 beams → buildAciBeamSco   (templates/aciBeam.sco, imperial, Codes 18)
+ *  • EN 1992 beams → buildEc2BeamSco   (templates/ec2Beam.sco, SI, Codes 14)
+ * EC2 per-member files handle crack width in-file; the per-group envelope splits it
+ * into a ULS set and a separate crack set (see buildGroupEnvelopeScoFiles).
+ *
+ * Beam force mapping: Nf = Pu, Tf = Tu, **Vfz = Vu**, and Mfy = the factored moment
+ * — emitted as a +M row and a −M row so BOTH faces are checked. Vfz pairs with Mfy
+ * in the Sectional Loads table; Vfy/Mfz are the minor-axis pair and stay zero.
+ *
+ * A beam fans out to one file per distinct L/3 REGION section (cage + link spacing),
+ * each carrying only the load rows whose station sits in it — see "The three L/3
+ * regions" below.
  */
-import { buildBeamScoText, designCodeToScoHeader, type ScoLoadCase } from './scoWriter';
+import { designCodeToScoHeader } from './scoWriter';
 import {
   buildEc2BeamSco, buildEc2BeamScoExplicit, ec2BeamUlsRows, ec2BeamCrackRows,
 } from './scoWriterEC2';
+import { buildAciBeamSco, buildAciBeamScoExplicit, aciBeamUlsRows } from './scoWriterACI';
 import { parseScrs, type ScrsResult } from './scrsParser';
-import type { Member, DesignCode, DesignGroup, Project, LoadCase } from '../../types';
+import type { Member, DesignCode, DesignGroup, Project, LoadCase, RebarLayout, BarGroup } from '../../types';
+import { beamMarkEnd } from '../curtailment';
 
 const isEc2 = (code: DesignCode): boolean => code === 'EN1992-1-1';
 
-/**
- * Elastic constants for an ACI .SCO, in ksi. Only emitted when the project has
- * overridden them in settings — otherwise the writers derive Ec/Gc from f'c
- * exactly as the byte-validated reference files do, so untouched projects
- * produce byte-identical .SCO output.
- */
-function elasticOverrides(m: Member): { ecKsi?: number; gcKsi?: number; esKsi?: number } {
-  const { Ec, Gc, Es } = m.material;
-  return {
-    ...(Ec ? { ecKsi: Ec / 1000 } : {}),
-    ...(Gc ? { gcKsi: Gc / 1000 } : {}),
-    // 29,000 ksi is the writers' built-in default; only override a real change.
-    ...(Es && Math.abs(Es - 29_000_000) > 1 ? { esKsi: Es / 1000 } : {}),
-  };
-}
-
+/** One generated .SCO, still in memory. `memberId` is carried so results parsed back
+ *  out of the .SCRS can be matched to the member that produced them. */
 export interface ScoFile {
   fileName: string;
   text: string;
   memberId: string;
 }
 
+/** Every .SCO generated for one design group, batched so the group verifies together. */
 export interface GroupScoBundle {
   groupId: string;
   groupLabel: string;
   files: ScoFile[];
 }
 
-const barName = (n: number): string => `#${n}`;
 const sanitize = (s: string): string => s.replace(/[^A-Za-z0-9_.-]+/g, '_');
 
-/** Map a beam member's load cases onto S-Concrete Sectional Loads rows. The load
- *  label is also written to the row's Comment column so the governing case stays
- *  traceable — important for the per-group envelope file, where the rows pool
- *  every member's combos. */
 /**
  * "Neglect torsion" project setting → drop Tu to 0 on every BEAM load row so no
  * torsion is written into the .SCO (S-Concrete then reports zero torsion demand
@@ -73,17 +64,159 @@ function stripTorsion(members: Member[], project?: Project): Member[] {
     : m);
 }
 
-function beamLoadCases(m: Member): ScoLoadCase[] {
-  return m.loads.map((lc, i) => ({
-    name: lc.label || `LC${i + 1}`,
-    comment: lc.label || `LC${i + 1}`,
-    P: lc.Pu ?? 0,
-    M3: Math.max(Math.abs(lc.Mu_pos ?? 0), Math.abs(lc.Mu_neg ?? 0)),
-    V3: lc.Vu ?? 0,
-    T: lc.Tu ?? 0,
-    M2: 0,
-    V2: 0,
-  }));
+// ── The three L/3 regions ─────────────────────────────────────────────────────
+// A .SCO describes ONE prismatic section: one top cage, one bottom cage, one link
+// spacing, for the whole member. A beam in this app is not that. It is three
+// regions over equal thirds of the span, and BOTH the cage and the links can differ
+// between them:
+//
+//   region      top cage                          bottom cage                links
+//   ─────────── ───────────────────────────────── ────────────────────────── ─────────
+//   mark end    rebar.topBars (the heavy cage)    endThirdBotBars ?? botBars tieZones[·]
+//   middle ⅓    midThirdTopBars ?? topBars        rebar.botBars              tieZones[1]
+//   opposite    oppositeTopBars ?? topBars        endThirdBotBars ?? botBars tieZones[·]
+//
+// (Mirrors MemberResults' elevation regions and curtailment.steppedMomentCapacity —
+// top governs at the supports and is curtailed through mid-span; bottom governs at
+// mid-span and is curtailed toward the supports.)
+//
+// So one file per region, carrying that region's cage, that region's link spacing,
+// and only the load rows whose station falls in it. Regions that come out identical
+// merge, which is what makes the common cases read properly:
+//
+//   uniform cage, uniform links      → 1 file  (no suffix)
+//   uniform cage, 4"/8"/4" links     → 2 files (_ends, _mid)
+//   curtailed top AND opposite end   → 3 files (_mark, _mid, _opp)
+//
+// This replaces an earlier split that keyed on link SPACING alone: it got the
+// stirrups right but carried the mark-end cage into every file, so a top cage
+// curtailed to 2-#9 through mid-span was still verified as 6-#9 there.
+
+type RegionLabel = 'mark' | 'mid' | 'opp';
+const REGION_ORDER: RegionLabel[] = ['mark', 'mid', 'opp'];
+
+/** One L/3 region's section: the cage and links that actually run through it. */
+interface RegionCage {
+  label: RegionLabel;
+  topBars: BarGroup[];
+  botBars: BarGroup[];
+  spacing: number;
+}
+
+/** A set of regions that share a section, plus the load rows sitting in them. */
+interface RegionBucket extends Omit<RegionCage, 'label'> {
+  labels: Set<RegionLabel>;
+  loads: LoadCase[];
+}
+
+/** Which third of the span a station sits in (0 = start, 1 = middle, 2 = end). */
+const zoneOf = (x: number, span: number): number =>
+  Math.min(2, Math.max(0, Math.floor((x / span) * 3)));
+
+/** Compact spacing tag: "4", "7.5", "150". */
+const spacingTag = (s: number): string => String(Math.round(s * 100) / 100);
+
+const barsSig = (bars: BarGroup[]): string => bars.map((b) => `${b.numBars}x${b.barSize}`).join(',');
+
+/**
+ * The three regions of ONE beam, in STATION order (index 0 = the x ≈ 0 end).
+ *
+ * Which physical end is the "mark" end is a property of the MEMBER, not the group:
+ * `beamMarkEnd` picks the support with the greater hogging moment, so a group can
+ * hold beams whose heavy end is at x = 0 and beams whose heavy end is at x = L. That
+ * is why regions are resolved per member and only then bucketed — pinning "mark" to
+ * the start would pair the heavier hogging demand with the LIGHTER opposite-end cage
+ * on half the beams, which is unconservative and invisible in the output.
+ *
+ * With no station forces to judge from, `beamMarkEnd` returns null and both ends take
+ * the full mark cage — the heavier one, so the fallback errs safe.
+ */
+function memberRegions(m: Member, rebar: RebarLayout, g?: DesignGroup): [RegionCage, RegionCage, RegionCage] | null {
+  const ties = rebar.ties;
+  if (!ties) return null;
+  const spacingAt = (i: number): number => rebar.tieZones?.[i]?.spacing || ties.spacing;
+  const pick = (bars: BarGroup[] | undefined, fallback: BarGroup[]): BarGroup[] =>
+    bars && bars.length ? bars : fallback;
+
+  const endBot = pick(g?.endThirdBotBars, rebar.botBars);
+  const midTop = pick(g?.midThirdTopBars, rebar.topBars);
+  const oppTop = pick(g?.oppositeTopBars, rebar.topBars);
+  const markAtStart = (beamMarkEnd(m) ?? 'start') === 'start';
+
+  const startEnd: RegionCage = markAtStart
+    ? { label: 'mark', topBars: rebar.topBars, botBars: endBot, spacing: spacingAt(0) }
+    : { label: 'opp', topBars: oppTop, botBars: endBot, spacing: spacingAt(0) };
+  const farEnd: RegionCage = markAtStart
+    ? { label: 'opp', topBars: oppTop, botBars: endBot, spacing: spacingAt(2) }
+    : { label: 'mark', topBars: rebar.topBars, botBars: endBot, spacing: spacingAt(2) };
+
+  return [
+    startEnd,
+    { label: 'mid', topBars: midTop, botBars: rebar.botBars, spacing: spacingAt(1) },
+    farEnd,
+  ];
+}
+
+/** File-name suffix for the regions a bucket covers: `_mark`, `_mid`, `_ends`, … */
+function regionSuffix(labels: Set<RegionLabel>): string {
+  const ordered = REGION_ORDER.filter((l) => labels.has(l));
+  // Both supports, one section — the overwhelmingly common shape. "ends" says that
+  // far better than "mark-opp".
+  if (ordered.length === 2 && labels.has('mark') && labels.has('opp')) return '_ends';
+  return `_${ordered.join('-')}`;
+}
+
+/**
+ * Split a set of beams sharing one group cage into one bucket per DISTINCT region
+ * section. Returns null — meaning "one file, the whole member" — when the regions
+ * all come out identical, or when the beam cannot be divided: no span, no load rows,
+ * or any row without a station (`x`). That last case is the hand-entered model, where
+ * the app itself falls back to a single section, so the .SCO should too.
+ */
+function regionSplit(ms: Member[], rebar: RebarLayout, g: DesignGroup | undefined, qualify: boolean): RegionBucket[] | null {
+  const byKey = new Map<string, RegionBucket>();
+  for (const m of ms) {
+    if (!m.span || m.span <= 0 || !m.loads.length) return null;
+    const regions = memberRegions(m, rebar, g);
+    if (!regions) return null;
+    for (const lc of m.loads) {
+      if (lc.x == null || !Number.isFinite(lc.x)) return null;
+      const r = regions[zoneOf(lc.x, m.span)];
+      if (!r.spacing || r.spacing <= 0) return null;
+      const key = `${barsSig(r.topBars)}|${barsSig(r.botBars)}|${spacingTag(r.spacing)}`;
+      let b = byKey.get(key);
+      if (!b) {
+        b = { labels: new Set(), topBars: r.topBars, botBars: r.botBars, spacing: r.spacing, loads: [] };
+        byKey.set(key, b);
+      }
+      b.labels.add(r.label);
+      b.loads.push(qualify ? { ...lc, label: `${m.label} / ${lc.label || lc.id}` } : lc);
+    }
+  }
+  if (byKey.size < 2) return null;   // one section across every row → nothing to split
+  // Mark end first, then mid, then the opposite end — reading order along the beam.
+  const rank = (b: RegionBucket) => Math.min(...[...b.labels].map((l) => REGION_ORDER.indexOf(l)));
+  return [...byKey.values()].sort((a, b) => rank(a) - rank(b));
+}
+
+/** The cage without its zone list — a single-spacing cage the writers can emit. */
+function unzoned(rebar: RebarLayout): RebarLayout {
+  const { tieZones: _zones, ...rest } = rebar;
+  return rest;
+}
+
+/** The member as it is inside one region: that region's cage, links and rows. */
+function memberInRegion(m: Member, rebar: RebarLayout, b: RegionBucket): Member {
+  return {
+    ...m,
+    rebar: {
+      ...unzoned(rebar),
+      topBars: b.topBars,
+      botBars: b.botBars,
+      ties: { ...rebar.ties!, spacing: b.spacing },
+    },
+    loads: b.loads,
+  };
 }
 
 /**
@@ -109,31 +242,22 @@ export function buildGroupScoFiles(members: Member[], code: DesignCode, project?
   members = stripTorsion(members, project); // neglect-torsion → no Tu in the .SCO
   const files: ScoFile[] = [];
   for (const m of members) {
-    if (m.memberType === 'beam') {
-      const text = ec2
-        ? buildEc2BeamSco(m, project!)
-        : buildBeamScoText({
-            memberName: m.label,
-            bIn: m.section.bw ?? m.section.b,
-            hIn: m.section.h,
-            fcKsi: m.material.fc / 1000,
-            fyKsi: m.material.fy / 1000,
-            ...elasticOverrides(m),
-            coverIn: m.section.coverClear,
-            stirrupBar: m.rebar.ties ? barName(m.rebar.ties.barSize) : barName(m.section.stirrupDia),
-            stirrupSpacingIn: m.rebar.ties?.spacing ?? 12,
-            topBar: barName(m.rebar.topBars[0]?.barSize ?? m.rebar.botBars[0]?.barSize ?? 8),
-            loadCases: beamLoadCases(m),
-            codeNumber: hdr!.codeNumber,
-            units: hdr!.units,
-            barType: hdr!.barType,
-          });
-      files.push({ fileName: `${sanitize(m.label)}.SCO`, text, memberId: m.id });
+    if (m.memberType !== 'beam') continue; // other member types are not S-Concrete sections
+    // Zoned stirrups → one file per distinct spacing, each with its own rows.
+    const zones = regionSplit([m], m.rebar, undefined, false);
+    const variants = zones
+      ? zones.map((z) => ({ member: memberInRegion(m, m.rebar, z), suffix: regionSuffix(z.labels) }))
+      : [{ member: m, suffix: '' }];
+    for (const v of variants) {
+      const name = `${m.label}${v.suffix}`;
+      const named = { ...v.member, label: name };
+      const text = ec2 ? buildEc2BeamSco(named, project!) : buildAciBeamSco(named);
+      files.push({ fileName: `${sanitize(name)}.SCO`, text, memberId: m.id });
     }
-    // other member types are not S-Concrete sections — skipped
   }
   return files;
 }
+
 
 /**
  * Build .SCO files for each design group the user created, resolving the group's
@@ -170,8 +294,12 @@ export function collectGroupScoFiles(
   const out: ScoFile[] = [];
   for (const bundle of buildScoFilesByGroup(groups, members, code, project)) {
     for (const f of bundle.files) {
-      if (seen.has(f.memberId)) continue;
-      seen.add(f.memberId);
+      // Key on member AND file name: one member can now legitimately produce
+      // several files (one per stirrup zone), so deduping on memberId alone would
+      // keep only the first zone and silently drop the rest.
+      const key = `${f.memberId}|${f.fileName}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(f);
     }
   }
@@ -205,6 +333,11 @@ export interface GroupEnvelopeScoFile extends ScoFile {
   /** What the file checks: 'uls' (strength) / 'crack' (EC2 SLS crack width) /
    *  'single' (combined ULS+in-file, ACI beams & all columns). */
   kind: 'uls' | 'crack' | 'single';
+  /** Link spacing (in) this file checks, when the group was split by region.
+   *  Undefined when one file covers the whole span. */
+  zoneSpacing?: number;
+  /** Which L/3 regions this file covers ('mark' | 'mid' | 'opp'), when split. */
+  regions?: string[];
 }
 
 /** Stable signature of a member's section + materials, used to find the most
@@ -274,7 +407,7 @@ export function buildGroupEnvelopeScoFiles(
   const usedNames = new Set<string>();
   const out: GroupEnvelopeScoFile[] = [];
 
-  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; mixedRebar: boolean; excludedMemberIds: string[]; kind: 'uls' | 'crack' | 'single' };
+  type Meta = { memberCount: number; loadCaseCount: number; mixedSections: boolean; mixedRebar: boolean; excludedMemberIds: string[]; kind: 'uls' | 'crack' | 'single'; zoneSpacing?: number; regions?: string[] };
   const pushFile = (fileBase: string, text: string, g: DesignGroup, meta: Meta) => {
     let name = `${sanitize(fileBase)}.SCO`;
     if (usedNames.has(name)) {
@@ -285,10 +418,14 @@ export function buildGroupEnvelopeScoFiles(
     }
     usedNames.add(name);
     out.push({
-      fileName: name, text, memberId: `group:${g.id}:${meta.kind}`,
+      // The region belongs in the id too — a group split by region emits several ULS
+      // files, and they must not collide on one key.
+      fileName: name, text, memberId: `group:${g.id}:${meta.kind}${meta.regions ? `:${meta.regions.join('-')}` : ''}`,
       groupId: g.id, groupLabel: g.label,
       memberCount: meta.memberCount, loadCaseCount: meta.loadCaseCount,
       mixedSections: meta.mixedSections, mixedRebar: meta.mixedRebar, excludedMemberIds: meta.excludedMemberIds, kind: meta.kind,
+      ...(meta.zoneSpacing != null ? { zoneSpacing: meta.zoneSpacing } : {}),
+      ...(meta.regions ? { regions: meta.regions } : {}),
     });
   };
 
@@ -309,30 +446,61 @@ export function buildGroupEnvelopeScoFiles(
       // file used one member's cage for all of them.
       const mixedRebar = !g.rebar && new Set(sub.map(rebarSignature)).size > 1;
       const baseLabel = `${g.label}${multiType ? (type === 'beam' ? '_beam' : '_col') : ''}`;
-      const synth: Member = { ...rep, label: baseLabel, rebar: g.rebar ?? rep.rebar, loads: poolLoads(sub) };
+      const effRebar = g.rebar ?? rep.rebar;
+
+      // One STRENGTH file per distinct L/3 region section, each pooling only the rows
+      // whose station sits in it. The split has to happen HERE, not inside
+      // buildGroupScoFiles, for two reasons: the region of a row depends on its OWN
+      // member's span, and which end is the mark end depends on its OWN hogging —
+      // both associations are gone once the envelope has pooled the rows.
+      const buckets = regionSplit(sub, effRebar, g, true);
+      const variants = buckets
+        ? buckets.map((z) => ({
+            rebar: memberInRegion(rep, effRebar, z).rebar, loads: z.loads,
+            suffix: regionSuffix(z.labels), spacing: z.spacing as number | undefined,
+            regions: REGION_ORDER.filter((l) => z.labels.has(l)) as string[] | undefined,
+          }))
+        // No split (unzoned, or a member without a span / rows without a station).
+        // Drop tieZones from the synthetic member so the generic path cannot then
+        // re-split on the REPRESENTATIVE's span — the pooled rows come from members
+        // whose spans differ, and that association is gone by this point.
+        : [{ rebar: unzoned(effRebar), loads: poolLoads(sub), suffix: '', spacing: undefined as number | undefined, regions: undefined as string[] | undefined }];
+
+      for (const v of variants) {
+        const label = `${baseLabel}${v.suffix}`;
+        const synth: Member = { ...rep, label, rebar: v.rebar, loads: v.loads };
+        const meta = {
+          memberCount: sub.length, mixedSections, mixedRebar, excludedMemberIds,
+          ...(v.spacing != null ? { zoneSpacing: v.spacing } : {}),
+          ...(v.regions ? { regions: v.regions } : {}),
+        };
+        if (ec2 && type === 'beam') {
+          // ULS file, crack check OFF — crack width is a separate file below.
+          const ulsRows = ec2BeamUlsRows(synth, 1);
+          const ulsText = buildEc2BeamScoExplicit(synth, project!, { rows: ulsRows, checkCracks: false, memberName: label });
+          pushFile(label, ulsText, g, { ...meta, loadCaseCount: ulsRows.length || 1, kind: 'uls' });
+        } else {
+          // Single envelope file (ACI beams, EC2 columns) via the generic path.
+          const built = buildGroupScoFiles([synth], code, project);
+          if (built.length) {
+            pushFile(label, built[0].text, g, { ...meta, loadCaseCount: synth.loads.length || 1, kind: 'single' });
+          }
+        }
+      }
 
       if (ec2 && type === 'beam') {
-        // TWO SETS: a ULS file (crack check OFF) and a separate crack-width file
-        // (crack check ON) that pools EVERY member's SLS quasi-permanent row — so
-        // the group's crack control envelopes all members, not just the representative.
-        const ulsRows = ec2BeamUlsRows(synth, 1);
-        const ulsText = buildEc2BeamScoExplicit(synth, project!, { rows: ulsRows, checkCracks: false, memberName: baseLabel });
-        pushFile(baseLabel, ulsText, g, { memberCount: sub.length, loadCaseCount: ulsRows.length || 1, mixedSections, mixedRebar, excludedMemberIds, kind: 'uls' });
-
+        // ONE crack-width file for the group (crack check ON), pooling EVERY
+        // member's SLS quasi-permanent row. It is not split by stirrup zone —
+        // crack width is a flexural SLS check and does not see the links.
         let ci = 1;
         const crackRows: string[] = [];
         for (const m of sub) { const r = ec2BeamCrackRows(m, project!, ci); crackRows.push(...r); ci += r.length; }
         if (crackRows.length) {
-          const crackText = buildEc2BeamScoExplicit(synth, project!, { rows: crackRows, checkCracks: true, memberName: `${baseLabel} (crack)` });
+          const crackSynth: Member = { ...rep, label: baseLabel, rebar: effRebar, loads: poolLoads(sub) };
+          const crackText = buildEc2BeamScoExplicit(crackSynth, project!, { rows: crackRows, checkCracks: true, memberName: `${baseLabel} (crack)` });
           pushFile(`${baseLabel}_crack`, crackText, g, { memberCount: sub.length, loadCaseCount: crackRows.length, mixedSections, mixedRebar, excludedMemberIds, kind: 'crack' });
         }
-        continue;
       }
-
-      // Single envelope file (ACI beams/columns, EC2 columns) via the generic path.
-      const built = buildGroupScoFiles([synth], code, project);
-      if (!built.length) continue;
-      pushFile(baseLabel, built[0].text, g, { memberCount: sub.length, loadCaseCount: synth.loads.length || 1, mixedSections, mixedRebar, excludedMemberIds, kind: 'single' });
     }
   }
   return out;

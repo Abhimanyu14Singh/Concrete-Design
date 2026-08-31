@@ -164,16 +164,75 @@ describe('suggestGroupRebar', () => {
       expect(ignored.rebar.ties).toEqual(zeroTu.rebar.ties);
     });
 
+    // EC2 reports DCR_torsion in two different currencies:
+    //   T_Ed ≤ T_Rd,c → T_Ed/T_Rd,c, a utilisation of the CONCRETE's resistance
+    //   T_Ed > T_Rd,c → T_Ed/T_Rd,   a utilisation of the LINKS
+    // The first does not move when link steel is added, so a beam sitting at 92–99 % of
+    // T_Rd,c read the same DCR on every rung of the ladder and the search concluded the
+    // section could not carry it — refusing essentially every EC2 group with any torsion
+    // in it. Below that threshold the code says there is no torsion to design for.
+    it('EC2: a beam just under T_Rd,c is not chased with links (this refused every EC2 group)', () => {
+      const MM = 25.4, KNM = 1 / 1.35582, KN = 1 / 4.44822;
+      const m: Member = {
+        id: 'ec2-t', label: 'EC2 spandrel', memberType: 'beam',
+        material: { fc: 30 / 0.00689476, fy: 500 / 0.00689476, fyt: 500 / 0.00689476, Es: 200000 / 0.00689476, lambdaConcrete: 1 },
+        section: { type: 'rectangular_beam', b: 400 / MM, h: 800 / MM, coverClear: 35 / MM, stirrupDia: -10 },
+        rebar: {
+          topBars: [{ numBars: 3, barSize: -20 }], botBars: [{ numBars: 3, barSize: -20 }],
+          ties: { barSize: -10, spacing: 150 / MM, legs: 2 },
+        },
+        loads: [{ id: 'lc', label: 'ULS', Mu_pos: 240 * KNM, Mu_neg: 400 * KNM, Vu: 400 * KN, Tu: 60 * KNM, Pu: 0 }],
+        span: 8000 / MM / 12,
+      };
+      const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9, undefined, 'euro');
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      const d = runDesign(m.section, m.material, r.rebar, m.loads[0], m.span, 'EN1992-1-1');
+      // Below T_Rd,c: no torsion design is required, so the cage is not sized for it…
+      expect(m.loads[0].Tu).toBeLessThanOrEqual(d.Tu_threshold!);
+      // …but everything the links DO govern still lands on target.
+      expect(d.DCR_shear).toBeLessThanOrEqual(0.9 + 1e-6);
+      expect(d.VT_util ?? 0).toBeLessThanOrEqual(0.9 + 1e-6);
+    });
+
+    it('EC2: §6.3.2(4) cross-section interaction is a section limit, not a cage one', () => {
+      const MM = 25.4, KNM = 1 / 1.35582, KN = 1 / 4.44822;
+      const m: Member = {
+        id: 'ec2-x', label: 'EC2-B4', memberType: 'beam',
+        material: { fc: 30 / 0.00689476, fy: 500 / 0.00689476, fyt: 500 / 0.00689476, Es: 200000 / 0.00689476, lambdaConcrete: 1 },
+        section: { type: 'rectangular_beam', b: 250 / MM, h: 500 / MM, coverClear: 35 / MM, stirrupDia: -10 },
+        rebar: {
+          topBars: [{ numBars: 3, barSize: -20 }], botBars: [{ numBars: 3, barSize: -20 }],
+          ties: { barSize: -10, spacing: 150 / MM, legs: 2 },
+        },
+        loads: [{ id: 'lc', label: 'ULS', Mu_pos: 90 * KNM, Mu_neg: 150 * KNM, Vu: 180 * KN, Tu: 25 * KNM, Pu: 0 }],
+        span: 8000 / MM / 12,
+      };
+      const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9, undefined, 'euro');
+      // The verdict is unchanged — the CONCRETE is over the limit and no cage answers it
+      // — but it now rides on a returned cage rather than replacing one. The flexural
+      // half was solvable and is not made wrong by the shear+torsion interaction.
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(r.sectionLimit).toBeDefined();
+      expect(r.sectionLimit).toMatch(/T_Rd,max/);
+      expect(r.sectionLimit).toMatch(/EC2-B4/);
+      expect(r.rebar.botBars.length).toBeGreaterThan(0);   // and there IS a cage to read
+    });
+
     it('names the section (and the member) when links cannot fix it — §22.7.7.1', () => {
       // 12×26 carrying V 47 / T 47: √(v_u²+v_t²) is past φ(V_c/b_w d + 8λ√f'c), so no
-      // cage is a design. Refusing beats handing back one that opens NG.
+      // cage is a design. The message still says exactly that, and still names the
+      // member — it is now attached to the best cage the section can hold rather than
+      // handed over instead of one, so the moment answer survives the shear verdict.
       const m = { ...spandrel({ b: 12, h: 26, Vu: 47, Tu: 47 }), label: 'L2-B7' };
       const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
-      expect(isSuggestError(r)).toBe(true);
-      if (!isSuggestError(r)) return;
-      expect(r.error).toMatch(/L2-B7/);
-      expect(r.error).toMatch(/Cross-section inadequate/);
-      expect(r.error).toMatch(/ENLARGE THE SECTION/);
+      expect(isSuggestError(r)).toBe(false);
+      if (isSuggestError(r)) return;
+      expect(r.sectionLimit).toMatch(/L2-B7/);
+      expect(r.sectionLimit).toMatch(/Cross-section inadequate/);
+      expect(r.sectionLimit).toMatch(/ENLARGE THE SECTION/);
+      expect(r.shearBelowTarget).toBe(true);
     });
   });
 
@@ -307,10 +366,16 @@ describe('suggestGroupRebar', () => {
     expect(isSuggestError(r)).toBe(true);
   });
 
-  it('returns an error when demand is impossible for the section', () => {
+  it('says so plainly when the demand is impossible for the section', () => {
+    // A 10×12 asked for 900 kip-ft. There is no cage, and the tool must not pretend
+    // otherwise — but "impossible" is now reported ON a cage (the section's ceiling,
+    // with the tightest links) instead of instead of one, so the shortfall is a number.
     const m = makeBeam({ id: 'tiny', b: 10, h: 12, MuPos: 900, MuNeg: 800, Vu: 200 });
     const r = suggestGroupRebar([m], 'ACI318-19', 0.9);
-    expect(isSuggestError(r)).toBe(true);
+    if (isSuggestError(r)) return;                 // an outright refusal is also honest
+    expect(r.belowTarget || r.shearBelowTarget || !!r.sectionLimit).toBe(true);
+    // The DCRs must be over target — a flagged cage that reported 0.9 would be a lie.
+    expect(Math.max(r.worstDCRFlex, r.worstDCRShear)).toBeGreaterThan(0.9);
   });
 });
 
@@ -365,13 +430,16 @@ describe('suggestGroupRebar — deep EC2 beams the old search abandoned', () => 
     expect(chk.DCR_shear).toBeLessThanOrEqual(0.9 + 1e-6);
   });
 
-  it('names the strut limit when shear genuinely cannot be met by links', () => {
-    // Enormous shear on a slender web → V_Ed > V_Rd,max: no link layout can help.
+  it('flags the strut limit — and still returns the cage — when links cannot help', () => {
+    // Enormous shear on a slender web → V_Ed > V_Rd,max: no link layout can help. The
+    // flexural cage is unaffected by that and comes back solved; the links come back as
+    // the tightest detailed, with the shear DCR saying how far over the web is.
     const m = makeEC2Beam({ id: 'crush', b: 300, h: 700, MuNeg: 150, MuPos: 150, Vu: 2000 });
     const r = suggestGroupRebar([m], 'EN1992-1-1', 0.9);
-    expect(isSuggestError(r)).toBe(true);
-    if (!isSuggestError(r)) return;
-    expect(r.error).toMatch(/strut|V_Rd,max|widen/i);
+    if (isSuggestError(r)) { expect(r.error).toMatch(/strut|V_Rd,max|widen/i); return; }
+    expect(r.shearBelowTarget).toBe(true);
+    expect(r.worstDCRShear).toBeGreaterThan(0.9);      // honest about the shortfall
+    expect(r.worstDCRFlex).toBeLessThanOrEqual(0.9 + 1e-6);  // moment still solved
   });
 });
 

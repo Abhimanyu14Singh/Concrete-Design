@@ -13,8 +13,9 @@
  *
  * Run modes:
  *   • `run`   — write the app-generated .SCO files into <outDir>, then report.
- *   • `rerun` — DON'T write anything; report on the .SCO files already in <outDir>
- *               (the "tweak a .SCO by hand, then re-run" loop — edits preserved).
+ *               With `clean: true`, every S-Concrete artefact in the folder is
+ *               deleted first, so the batch sees only what this run produced.
+ *   • `clean` — delete those artefacts without running anything.
  *   • `detect`— report whether S-Concrete/BatchReporter is installed.
  *
  * Windows + S-Concrete only; elsewhere the run rejects with a clear message.
@@ -49,9 +50,54 @@ function writeScoFiles(outDir, files) {
   return count;
 }
 
+/**
+ * Files this workflow OWNS in the output folder, and is therefore allowed to delete
+ * on a clean re-run:
+ *   • *.SCO   — the app generates these
+ *   • *.SCRS  — BatchReporter's result file
+ *   • Report_<timestamp>.pdf — the sidecar's own report naming (see SConcreteHelper)
+ *
+ * Deliberately narrow. The output folder is a folder the USER picked and may hold
+ * their own files, so a clean run removes only what a run produced — never "*", and
+ * never anything in a subfolder.
+ */
+const OWNED = [/\.sco$/i, /\.scrs$/i, /^Report_\d{8}_\d{6}\.pdf$/i];
+const isOwned = (name) => OWNED.some((re) => re.test(name));
+
 /** Count the .SCO files already present in a folder (case-insensitive). */
 function countScoFiles(outDir) {
   return fs.readdirSync(outDir).filter((f) => /\.sco$/i.test(f)).length;
+}
+
+/**
+ * Delete every S-Concrete artefact in <outDir> so the next run starts from nothing.
+ *
+ * Why this exists: BatchReporter reports on EVERY .SCO in the folder, not just the
+ * ones the app just wrote. Writing over a folder therefore leaves ghosts — a group
+ * you renamed, a member you deleted, or (since zoned beams fan out to `B1_S4.SCO` /
+ * `B1_S8.SCO`) the old un-suffixed `B1.SCO` from a previous run. Those stale files
+ * come back in the .SCRS as results for members that no longer exist.
+ *
+ * Returns the names removed and any it could not (locked by S-Concrete, etc.) so the
+ * caller can say so rather than silently proceeding on a dirty folder.
+ */
+function cleanScoFolder(outDir) {
+  if (!outDir) throw new Error('outDir is required');
+  if (!fs.existsSync(outDir)) return { removed: [], failed: [], kept: 0 };
+  const entries = fs.readdirSync(outDir, { withFileTypes: true });
+  const removed = [];
+  const failed = [];
+  let kept = 0;
+  for (const e of entries) {
+    if (!e.isFile() || !isOwned(e.name)) { kept += 1; continue; }
+    try {
+      fs.unlinkSync(path.join(outDir, e.name));
+      removed.push(e.name);
+    } catch (err) {
+      failed.push(`${e.name} (${err.code || err.message})`);
+    }
+  }
+  return { removed, failed, kept };
 }
 
 function requireHelper() {
@@ -152,29 +198,32 @@ async function driveBatch(scoCount, { outDir, title, engineer, makePdf }, onProg
   return { exitCode: r.exitCode, scoCount, scrsPath, scrsText, stderr: r.stderr, pdf: r.json.pdf || '', status: r.json.status || '' };
 }
 
-/** Write the app's .SCO files, then run the reporter. */
+/**
+ * Write the app's .SCO files, then run the reporter.
+ *
+ * `args.clean` wipes every S-Concrete artefact in the folder FIRST, so the batch
+ * reports on exactly what this run generated and nothing left over. Without it the
+ * write is additive and stale files from earlier runs are still reported on.
+ */
 async function runBatch(args, onProgress) {
-  const { outDir, files } = args || {};
+  const { outDir, files, clean } = args || {};
   if (!outDir) throw new Error('outDir is required');
+  let cleaned = null;
+  if (clean) {
+    if (onProgress) onProgress('Clearing the output folder…');
+    cleaned = cleanScoFolder(outDir);
+    if (cleaned.failed.length) {
+      throw new Error(
+        `Could not clear ${cleaned.failed.length} file(s) in "${outDir}": ${cleaned.failed.join(', ')}. ` +
+        'Close S-Concrete / BatchReporter (or anything holding those files open) and try again.',
+      );
+    }
+    if (onProgress) onProgress(`Cleared ${cleaned.removed.length} file(s).`);
+  }
   if (onProgress) onProgress(`Writing ${(files || []).length} .SCO file(s)…`);
   const scoCount = writeScoFiles(outDir, files);
-  return driveBatch(scoCount, args, onProgress);
-}
-
-/** Re-run on the .SCO files ALREADY in <outDir> — no writing, so manual edits survive. */
-async function rerunBatch(args, onProgress) {
-  const { outDir } = args || {};
-  if (!outDir) throw new Error('outDir is required');
-  let scoCount;
-  try {
-    scoCount = countScoFiles(outDir);
-  } catch (e) {
-    throw new Error(`Cannot read the output folder "${outDir}": ${e.message}`);
-  }
-  if (!scoCount) {
-    throw new Error(`No .SCO files found in "${outDir}". Generate or place .SCO files there first.`);
-  }
-  return driveBatch(scoCount, args, onProgress);
+  const out = await driveBatch(scoCount, args, onProgress);
+  return { ...out, cleanedCount: cleaned ? cleaned.removed.length : 0 };
 }
 
 function registerSconcreteBridge(ipcMain) {
@@ -184,8 +233,8 @@ function registerSconcreteBridge(ipcMain) {
     const a = args ?? {};
     switch (method) {
       case 'generate': return { outDir: a.outDir, scoCount: writeScoFiles(a.outDir, a.files) };
-      case 'run': return runBatch(a, onProgress);
-      case 'rerun': return rerunBatch(a, onProgress);
+      case 'run': return runBatch(a, onProgress);   // a.clean === true → wipe first
+      case 'clean': return cleanScoFolder(a.outDir);
       case 'detect': return detect();
       case 'readScrs': return { scrsText: fs.readFileSync(a.scrsPath, 'utf8') };
       default: throw new Error(`Unknown sconcrete method: ${method}`);
@@ -193,4 +242,6 @@ function registerSconcreteBridge(ipcMain) {
   });
 }
 
-module.exports = { registerSconcreteBridge };
+// cleanScoFolder is exported for its unit test — it is the one destructive
+// operation in this module, so which files it selects is worth pinning down.
+module.exports = { registerSconcreteBridge, cleanScoFolder };

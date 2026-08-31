@@ -8,8 +8,14 @@ import { dcrToColor } from '../EtabsImport/dcrColors';
 import { valueToRampColor } from './colorRamp';
 import { groupColor } from './groupColors';
 import { MAP_GRAY, STATUS, type DcrBand } from '../../theme';
+import { DEFAULT_ELEMENT_STYLES } from './elementStyle';
 
 export type ColorMode =
+  /** No scheme: every beam in the standard colour from Preferences. The DEFAULT — the
+   *  plan opens as a drawing of the model rather than as a result map, so what you see
+   *  first is the structure, and a colour scheme is something you turn on to ask a
+   *  question of it. */
+  | 'none'
   | 'dcr' | 'group' | 'groupTags' | 'section' | 'flexSteel' | 'stirrups' | 'weight'
   | 'height' | 'width' | 'concGrade' | 'steelGrade' | 'autoGroup' | 'sconcrete'
   | 'sconcreteDcr';
@@ -72,11 +78,17 @@ export interface FrameColorContext {
   scoDcrById?: Record<string, number>;
   /** The Map's (possibly user-edited) DCR bands. Defaults to MAP_DCR_BANDS. */
   dcrBands?: readonly DcrBand[];
+  /** The standard beam colour from Preferences, used by the 'none' mode. */
+  beamColor?: string;
 }
 
 /** Color a frame for the current mode. Mirrors the original MapCanvas logic 1:1. */
 export function frameColorFor(f: Pick<MapFrame, 'memberId' | 'sectionName'>, ctx: FrameColorContext): string {
   const { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, scoDcrById, dcrBands } = ctx;
+  // No scheme — one colour for every beam, whatever Preferences says it is. Deliberately
+  // FIRST: it is the default mode, and it needs none of the maps the others index into,
+  // so it also answers correctly on a model with no results yet.
+  if (colorMode === 'none') return ctx.beamColor ?? DEFAULT_ELEMENT_STYLES.beam.color;
   // S-Concrete's own utilisation, on the SAME bands as the app's DCR — the two maps are
   // meant to be flipped between, and a different scale would make that comparison a
   // reading exercise instead of a glance.

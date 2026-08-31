@@ -2,7 +2,7 @@
 import type { UnitSystem } from '../utils/units';
 
 export type SectionType = 'rectangular_beam' | 'T_beam' | 'L_beam';
-export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1';
+export type DesignCode = 'ACI318-19' | 'EN1992-1-1';
 /** This is a beam-design app; the type is kept as a single-member discriminant
  *  so persisted files and the engine registry keep a stable shape. */
 export type MemberType = 'beam';
@@ -67,8 +67,12 @@ export interface RebarLayout {
   tieZones?: [TieZone, TieZone, TieZone];
   /**
    * Vertical clear spacing between bar layers when topBars/botBars have more
-   * than one entry (each entry = one layer, outermost first). Default 1.0"
-   * (ACI §25.2.2 minimum).
+   * than one entry (each entry = one layer, outermost first). Default 1.0".
+   *
+   * It is a GEOMETRY input, not a checked one: it places the inner layers and therefore
+   * sets d. The app raises no verdict on it — see `designMember` on why the §25.2.2
+   * spacing warning was removed — but the fit check still refuses a stack that cannot
+   * physically sit in the section.
    */
   layerClearSpacing?: number;
 }
@@ -105,6 +109,34 @@ export interface StationForce {
 export interface ComboForces {
   combo: string;
   stations: StationForce[];
+}
+
+/**
+ * One frozen model — what the project looked like when it was pushed, under the name it
+ * was pushed as.
+ *
+ * FROZEN, not a recipe: it carries its own members and groups rather than a reference
+ * into the live model, because a recipe would silently follow later edits and the
+ * comparison that justifies keeping it would quietly stop being one.
+ */
+export interface ModelVersion {
+  id: string;
+  /** The ETABS model name it was saved as — what the picker shows. */
+  name: string;
+  /** ISO timestamp, for ordering and for saying how old a design is. */
+  savedAt?: string;
+  /** The design code this version ran under; a project that later switches code must
+   *  not re-read an old version under the new one. */
+  code: DesignCode;
+  /** Design prefs frozen with it, for the same reason — re-deriving under today's
+   *  torsion policy would change a number the engineer already signed off. */
+  prefs?: { cotTheta?: number; ignoreTorsion?: boolean; slsCombo?: string };
+  members: Member[];
+  groups?: DesignGroup[];
+  /** groupId → the cage that group carried. */
+  groupRebar?: Record<string, RebarLayout>;
+  /** What was resized in the push that produced it — the "what changed" line. */
+  properties?: Array<{ label: string; name: string; b: number; h: number; fc?: number }>;
 }
 
 /** A set of beams designed together with one rebar layout vs the group envelope. */
@@ -344,6 +376,10 @@ export interface DesignResults {
   /** Top-face As,min — differs from `As_min` once a project sets per-face covers.
    *  Sizing the TOP cage against `As_min` picks a cage the engine then fails. */
   As_min_top?: number;
+  /** §9.3.3.1 cap for the TOP face. `As_max` is the BOTTOM face's — the two differ
+   *  whenever the faces have different depths (a stacked layer, or split covers),
+   *  and the engine warns on each against its own, so both have to be reportable. */
+  As_max_top?: number;
   As_max: number;
   Av_req: number;       // Required stirrup area (in²/in)
   Av_min_per_s: number; // Min Av/s per ACI §9.6.3.3 (in²/in)
@@ -438,6 +474,21 @@ export interface Project {
   settings?: ProjectSettings;
   members: Member[];
   designGroups?: DesignGroup[]; // beam design groups (ETABS import)
+  /**
+   * Frozen snapshots of models that have been pushed, newest last — the history behind
+   * the model picker in the top bar.
+   *
+   * Kept IN THE PROJECT, so they travel in the one `.scdb` and a past design survives
+   * closing the app. That is the point of them: a push produces a new ETABS model, and
+   * "what did the groups look like on rev 2" is a question asked days later, not in the
+   * same session.
+   *
+   * `designs` are deliberately NOT stored — they are derived from `members` + `code` +
+   * the design prefs frozen alongside, and re-deriving on load is deterministic. Storing
+   * them would roughly double an already large file to hold numbers the engine can
+   * reproduce exactly.
+   */
+  modelVersions?: ModelVersion[];
   modelMap?: ModelMap;          // persistent connectivity snapshot
   /** Target DCR for rebar suggestions and savings analytics (default 0.9). */
   targetDCR?: number;

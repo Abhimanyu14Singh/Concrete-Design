@@ -458,6 +458,17 @@ body { background: #fff; }
   width: 236px; flex: none; min-height: 0; overflow-y: auto;
   border-right: 1px solid #eceef0; background: #fff; padding: 6px;
 }
+/* Drag handle between the group list and the beam list. A 6px hit strip rather than a
+   1px line — a divider you have to aim at is one people give up on — and transparent
+   until hovered, because the list already draws its own right border and a second
+   permanent bar beside it reads as a rendering fault. The width itself is inline, set
+   from the panel's state; this rule only styles the grip. */
+.demo-dashdiv {
+  flex: none; width: 6px; cursor: col-resize;
+  background: transparent; transition: background 0.12s;
+}
+.demo-dashdiv:hover, .demo-dashdiv:active { background: #c7d2fe; }
+
 .demo-grouprow {
   display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 8px;
   width: 100%; padding: 6px 8px; margin-bottom: 1px;
@@ -494,6 +505,16 @@ body { background: #fff; }
 }
 .demo-fd-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .demo-fd-legend i { width: 11px; height: 3px; border-radius: 2px; display: inline-block; }
+/* The same strip carrying the hover readout instead of the key. Tabular figures and
+   nowrap so the three numbers hold their columns as the pointer sweeps — a readout that
+   reflows on every mouse move is unreadable at exactly the moment you are reading it. */
+.demo-fd-legend.read {
+  color: #0f172a; font-variant-numeric: tabular-nums; flex-wrap: nowrap;
+  overflow: hidden; white-space: nowrap;
+}
+.demo-fd-legend.read span { flex: none; }
+.demo-fd-x { font-weight: 700; color: #2563eb; }
+.demo-fd-hint { color: #cbd5e1; margin-left: auto; }
 
 /* A flex child will not shrink below its content unless told to, so without min-height
    the scroll box grows to fit all 33 rows and pushes the footnote out of the panel. */
@@ -669,3 +690,150 @@ body { background: #fff; }
   letter-spacing: .04em; text-transform: uppercase;
   color: #b45309; background: #fffbeb; border: 1px solid #fde68a; white-space: nowrap;
 }
+
+/* Line-weight slider on the plan bar. The app puts this control on its own map toolbar;
+   here it rides in the panel bar beside the projection toggle, with the app's own range
+   (0–1, step 0.05) and its `slim-range` styling so the two read as the same control. */
+.demo-lineweight {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  color: #94a3b8; cursor: pointer;
+}
+.demo-lineweight .slim-range { width: 84px; }
+
+/* ── Plan histogram ─────────────────────────────────────────────────────────
+   Overlaid on the plan at the bottom-left, above the DCR legend. Absolute over the
+   canvas rather than a row beneath it: the plan is the panel's whole point, and a
+   permanent 100px band under it would cost that on every layout to show something you
+   read occasionally. `pointer-events` is on the panel only, so the map stays draggable
+   everywhere the histogram is not. */
+.demo-hist {
+  position: absolute; left: 8px; bottom: 8px; z-index: 3;
+  width: 252px; padding: 6px 8px 4px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e2e8f0; border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(2px);
+}
+.demo-hist-head { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.demo-hist-by { font-size: 10px; color: #94a3b8; }
+.demo-hist-x, .demo-histbtn {
+  border: 1px solid #e2e8f0; background: white; color: #64748b;
+  border-radius: 4px; font-size: 10px; line-height: 1; cursor: pointer; padding: 2px 5px;
+}
+.demo-hist-x:hover, .demo-histbtn:hover { background: #f8fafc; color: #2563eb; }
+.demo-histbtn { position: absolute; left: 8px; bottom: 8px; z-index: 3; padding: 3px 8px; }
+/* In the DCR modes MapCanvas puts its scale legend in this exact corner. Clearing it is a
+   fixed offset rather than a measurement because the legend is one row of 10px text in
+   every mode that draws it. */
+.demo-hist.raised, .demo-histbtn.raised { bottom: 38px; }
+.demo-hist-svg { display: block; overflow: visible; }
+.demo-hist-bar { fill: #93c5fd; }
+.demo-hist-bar:hover, .demo-hist-bar.on { fill: #2563eb; }
+/* A bar carrying the MAP's colour keeps it on hover — recolouring it would break the one
+   thing it is there to say, at exactly the moment you are pointing at it. So the hover
+   state is an outline instead of a fill. */
+.demo-hist-bar.mapped:hover, .demo-hist-bar.mapped.on { stroke: #0f172a; stroke-width: 1.2; }
+.demo-hist-read {
+  font-size: 10px; color: #475569; margin-top: 3px; min-height: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.demo-hist-read b { color: #0f172a; font-weight: 700; }
+/* The histogram names what it bins rather than offering a picker — the map's colour-by
+   is the picker now. */
+.demo-hist-title { font-size: 10.5px; font-weight: 700; color: #0f172a; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.demo-hist-grid { stroke: #eef2f7; stroke-width: 1; }
+.demo-hist-axis { stroke: #cbd5e1; stroke-width: 1; }
+.demo-hist-tick { font-size: 8px; fill: #94a3b8; font-variant-numeric: tabular-nums; }
+/* An end bar holding clamped out-of-range beams is not the same kind of bar as its
+   neighbours, and saying so in the fill is cheaper than a legend. */
+.demo-hist-bar.clamped { fill: #c7d2fe; }
+.demo-hist-bar.clamped:hover, .demo-hist-bar.clamped.on { fill: #4f46e5; }
+.demo-hist-lim { display: flex; align-items: center; gap: 4px; margin-top: 3px;
+  font-size: 9.5px; color: #94a3b8; }
+.demo-hist-lim input { width: 46px; font: inherit; font-variant-numeric: tabular-nums;
+  padding: 1px 4px; border: 1px solid #e2e8f0; border-radius: 4px; color: #0f172a;
+  background: #fff; text-align: center; }
+.demo-hist-lim input:focus { border-color: #2563eb; outline: none; }
+
+/* ── Preferences dialog ─────────────────────────────────────────────────────
+   Appearance only, applied live — see the note in PreferencesDialog. Narrow and
+   top-anchored so the plan stays visible behind it; judging a colour means seeing it
+   on the drawing it is for. */
+.demo-prefback {
+  position: fixed; inset: 0; z-index: 6000;
+  background: rgba(15, 23, 42, 0.18);
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 78px;
+}
+.demo-prefdlg {
+  width: 520px; background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18); padding: 14px 16px 12px;
+}
+.demo-prefhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.demo-prefhead b { font-size: 14px; color: #0f172a; }
+.demo-prefhead span { font-size: 11px; color: #94a3b8; flex: 1; }
+.demo-prefrow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0; border-top: 1px solid #f1f5f9;
+}
+.demo-prefname { flex: 1; min-width: 0; }
+.demo-prefname b { display: block; font-size: 12px; color: #0f172a; font-weight: 600; }
+.demo-prefname span { display: block; font-size: 10.5px; color: #94a3b8; }
+.demo-prefctl { display: flex; align-items: center; gap: 10px; }
+.demo-prefctl input[type=color] {
+  width: 30px; height: 24px; padding: 0; border: 1px solid #cbd5e1;
+  border-radius: 5px; background: white; cursor: pointer;
+}
+.demo-prefop { display: flex; align-items: center; gap: 6px; }
+.demo-prefop input[type=range] { width: 88px; }
+.demo-prefop span { font-size: 10.5px; color: #64748b; width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+.demo-prefctl select {
+  font-size: 11px; padding: 2px 4px; border: 1px solid #cbd5e1;
+  border-radius: 5px; background: white; color: #0f172a; width: 104px;
+}
+.demo-preffill-na { width: 104px; text-align: center; color: #cbd5e1; font-size: 12px; }
+.demo-preffoot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.demo-prefreset, .demo-prefdone {
+  font-size: 11.5px; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #cbd5e1; background: white; color: #334155;
+}
+.demo-prefdone { background: #2563eb; border-color: #2563eb; color: white; font-weight: 600; }
+.demo-prefreset:hover { background: #f8fafc; }
+
+/* ── Push to ETABS: the stepped run ────────────────────────────────────────────
+   One button per step, lit in order. GREEN is the whole point — a glance has to say
+   how far the push got, including on a run that stopped half way. */
+.demo-pushsteps {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid #eef0f2; background: #fbfcfd;
+}
+.demo-pushstep { display: inline-flex; align-items: center; gap: 6px; }
+.demo-pushstep-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid #cbd5e1; background: #fff; color: #0f172a;
+  border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 11.5px;
+  font-weight: 600; cursor: pointer;
+}
+.demo-pushstep-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
+/* Disabled here means "not your turn yet", not "broken" — so it stays legible rather
+   than greying out to the point of looking like a fault. */
+.demo-pushstep-btn:disabled { cursor: default; opacity: 0.55; }
+.demo-pushstep-btn.done {
+  background: #ecfdf5; border-color: #6ee7b7; color: #047857; opacity: 1;
+}
+.demo-pushstep-btn.running { border-color: #2563eb; color: #2563eb; opacity: 1; }
+.demo-pushstep-btn.failed { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; opacity: 1; }
+.demo-pushstep-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 8px; font-size: 9.5px; font-weight: 700;
+  background: #eef2f7; color: #64748b;
+}
+.demo-pushstep-btn.done .demo-pushstep-n { background: #10b981; color: #fff; }
+.demo-pushstep-btn.running .demo-pushstep-n { background: #2563eb; color: #fff; }
+.demo-pushstep-btn.failed .demo-pushstep-n { background: #b91c1c; color: #fff; }
+.demo-pushstep-err {
+  font-size: 10px; color: #b91c1c; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.demo-pushstep-ok { font-size: 11px; font-weight: 700; color: #047857; margin-left: 4px; }

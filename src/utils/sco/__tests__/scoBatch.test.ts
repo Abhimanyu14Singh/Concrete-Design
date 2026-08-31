@@ -36,12 +36,17 @@ describe('buildGroupScoFiles', () => {
     expect(files[0].fileName).toBe('B1.SCO');
     expect(files[0].memberId).toBe('b1');
     const t = files[0].text;
-    expect(t.includes('Member Type\t 1')).toBe(true);
-    expect(t.includes('Codes\t 18')).toBe(true);     // ACI 318-19
-    expect(t.includes('Bm b\t 14')).toBe(true);       // web width
+    // S-Concrete 2026.0, ACI 318 (Codes 18), imperial (Units 0), beam (Member Type 2).
+    expect(t.includes('Version\t2026.0')).toBe(true);
+    expect(t.includes('Member Type\t 2')).toBe(true);
+    expect(t.includes('Codes\t 18')).toBe(true);
+    expect(t.includes('Units\t 0')).toBe(true);
+    expect(t.includes('Bar Type\t 2')).toBe(true);    // US #-bars
+    expect(t.includes('Bm b\t 14')).toBe(true);        // web width, inches
     expect(t.includes('Bm h\t 24')).toBe(true);
-    expect(t.includes(' 180.0')).toBe(true);          // governing moment max(|+180|,|-90|)
-    expect(t.includes('45.0')).toBe(true);            // shear
+    expect(t.includes(' 180')).toBe(true);             // sagging moment
+    expect(t.includes('-90')).toBe(true);              // hogging moment, own sign
+    expect(t.includes(' 45')).toBe(true);              // shear
   });
 
   it('sanitizes member labels into file names', () => {

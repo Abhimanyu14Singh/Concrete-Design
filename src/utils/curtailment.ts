@@ -29,11 +29,15 @@ import type { Member, RebarLayout, DesignCode, LoadCase, BarGroup, DesignResults
 import { runDesign } from '../engines';
 import { getBarArea } from './concreteDesign';
 
+/** How a face's curtailment reads: 'purple' = steel can be curtailed here (an
+ *  opportunity), 'red' = more than half the cage must run through (a constraint). */
 export type CurtailFlag = 'red' | 'purple';
 
 /** The 50 % curtailment threshold (fraction of provided steel). */
 export const CURTAIL_THRESHOLD_PCT = 50;
 
+/** The curtailment verdict for ONE face of a group's cage, with the full basis for it —
+ *  demand, provided, required, and which of the moment or the code minimum governed. */
 export interface FaceCurtailment {
   face: 'top' | 'bot';
   /** Region examined: top → middle third, bottom → worse end third. */
@@ -57,6 +61,7 @@ export interface FaceCurtailment {
   governingMemberId: string;
 }
 
+/** Both faces' verdicts for a group. A face is null when it could not be assessed. */
 export interface GroupCurtailment {
   /** True when at least one beam in the group carries station forces. */
   hasStationData: boolean;
@@ -226,6 +231,8 @@ export function beamMarkEnd(m: Member): 'start' | 'end' | null {
   return e.startHog >= e.endHog ? 'start' : 'end';
 }
 
+/** Comparison of the two ends' hogging demand, so the lighter end can take a lighter
+ *  cage than the "mark" end that sets the group. */
 export interface OppositeEndResult {
   hasStationData: boolean;
   /** Which end governs the top steel (the "mark" side). */
@@ -348,6 +355,8 @@ export function curtailmentNote(fc: FaceCurtailment): string {
  *  "~50% continuous" rule of thumb this module is built around (see file header). */
 export const CURTAIL_CONTINUOUS_FRAC = 0.5;
 
+/** Moment capacity at each step of a curtailed cage, for overlaying the stepped capacity
+ *  line on the moment diagram — so a curtailment can be seen to envelope the demand. */
 export interface SteppedMomentCapacity {
   /** Hogging capacity with the full top cage — governs the END thirds (kip-ft). */
   negFull: number;

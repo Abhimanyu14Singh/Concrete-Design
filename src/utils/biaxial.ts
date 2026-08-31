@@ -48,6 +48,8 @@ import { beamAxialFlexure } from './axialFlexure';
 /** Default contour exponent. 1.0 = linear, the conservative floor. */
 export const DEFAULT_BIAXIAL_ALPHA = 1.0;
 
+/** Bresler load-contour check result, carrying both capacities and the exponent used, so
+ *  the Calc Sheet can reproduce the utilisation rather than restate it. */
 export interface BiaxialResult {
   /** Applied moments (kip-ft), as supplied. */
   Mux: number;

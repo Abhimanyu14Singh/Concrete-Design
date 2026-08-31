@@ -2,7 +2,7 @@
 
 A structural reinforced concrete design web application built with **React + TypeScript + Vite** — beams and columns.
 
-Supports **ACI 318-19**, **ACI 318-14**, and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
+Supports **ACI 318-19** and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
 
 > **Important:** All calculations must be independently verified by a licensed engineer before use in any real project.
 
@@ -21,7 +21,6 @@ S-Concrete provides a complete concrete design workflow — from geometry and ma
 | Code | Flexure | Shear | Torsion | Detailing | Crack Width |
 |------|---------|-------|---------|-----------|-------------|
 | ACI 318-19 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
-| ACI 318-14 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
 | EN 1992-1-1 (EC2) | §6.1 M_Rd | §6.2 V_Rd,c/s/max | §6.3 T_Rd | §9.2 | §7.3.4 |
 
 **ACI 318-19 beam design**
@@ -70,7 +69,7 @@ A slim, always-visible **Import → Design → Verify** ribbon sits directly und
 The **design code selector lives in this ribbon** (it moved out of the header), because the chosen code drives the generated `.SCO` handed to S-Concrete. Selecting **EN 1992-1-1** also switches the display to SI units.
 
 ### Design Code Selector
-Switch between ACI 318-19, ACI 318-14, and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the workflow ribbon without losing project data.
+Switch between ACI 318-19 and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the workflow ribbon without losing project data.
 
 ### Member Results — Progressive Disclosure
 The per-member results view groups its 15–20 DCR rows into collapsible **per-check sections** so it reads as a short summary rather than a wall of numbers. The governing (highest-DCR) check is expanded by default; the rest collapse to a header plus a colour-coded DCR chip that you can click to expand:
@@ -300,7 +299,7 @@ npm run electron:dev   # Electron against an already-running dev server
 ```
 src/
   engines/
-    aci/                    # ACI 318-19 / 318-14 beam design engine
+    aci/                    # ACI 318-19 beam design engine
     ec2/
       ec2Beam.ts            # Eurocode 2 beam design engine
     dispatcher.ts           # Routes calculations to the correct engine
@@ -367,5 +366,4 @@ The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidec
 ## Design Codes Supported
 
 - **ACI 318-19** — Building Code Requirements for Structural Concrete (beams, columns)
-- **ACI 318-14** — Previous edition (same clause structure)
 - **EN 1992-1-1:2004 (Eurocode 2)** — Design of Concrete Structures, Part 1-1 (beams, columns)

@@ -7,6 +7,8 @@ import type { RebarLayout, SectionDimensions, TieZone, DesignCode, BarGroup } fr
 import { getBarArea, getBarDiam, effectiveDepth } from '../../utils/concreteDesign';
 import { skinMinArea } from '../../engines/ec2/ec2Beam';
 
+/** The wizard's "typical reinforcement" inputs. Percentages are of b·d, NOT of the
+ *  gross section — a seeded cage is a starting point for design, not a design. */
 export interface SeedOptions {
   rhoTopPct: number;             // top steel, % of b·d (e.g. 0.4)
   rhoBotPct: number;             // bottom steel, % of b·d

@@ -179,6 +179,14 @@ function rebarInFamily(r: RebarLayout, family: BarFamily): RebarLayout {
   };
 }
 
+/**
+ * Write project-wide standards onto the project and every member.
+ *
+ * This is a bulk edit of the engineer's model, so it is deliberately conservative about
+ * what it overwrites — an imported frame carries a real per-section grade read from
+ * ETABS, and flattening a mixed-grade model to one project number would be a silent,
+ * unrecoverable change. See the guards below for exactly which fields propagate.
+ */
 export function applyProjectSettings(project: Project, settings: ProjectSettings): Project {
   const s = withDerivedModuli(settings, project.code);
   const material = materialFromSettings(s);
@@ -225,6 +233,7 @@ export function applyProjectSettings(project: Project, settings: ProjectSettings
  *  ABSENCE is what makes the setup dialog appear on first launch. */
 export const STANDARDS_STORAGE_KEY = 'sc-project-standards';
 
+/** The design code + standards pair persisted between sessions. */
 export interface StoredStandards { code: DesignCode; settings: ProjectSettings }
 
 /**
@@ -238,14 +247,20 @@ export function loadStandards(): StoredStandards | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredStandards>;
     if (!parsed?.settings || typeof parsed.settings.fc !== 'number' || !parsed.code) return null;
+    // Only the codes the app still ships are accepted. Anything else — a code
+    // this build has dropped, or a hand-edited value — reads back as ACI 318-19
+    // rather than putting an unknown code in front of the pickers and the badge.
+    const code: DesignCode = parsed.code === 'EN1992-1-1' ? 'EN1992-1-1' : 'ACI318-19';
     // Merge over the code's defaults so standards saved by an older build gain
     // any field added since instead of arriving undefined.
-    return { code: parsed.code, settings: { ...defaultSettings(parsed.code), ...parsed.settings } };
+    return { code, settings: { ...defaultSettings(code), ...parsed.settings } };
   } catch {
     return null;
   }
 }
 
+/** Remember these standards as the machine's defaults for the next new project. Storage
+ *  failures are ignored — the project carries its own settings regardless. */
 export function saveStandards(code: DesignCode, settings: ProjectSettings): void {
   try {
     localStorage.setItem(STANDARDS_STORAGE_KEY, JSON.stringify({ code, settings }));

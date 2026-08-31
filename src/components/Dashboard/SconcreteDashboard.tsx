@@ -133,16 +133,19 @@ export default function SconcreteDashboard({
             style={hdrBtn(batch.desktop ? primaryBtn : disabledBtn)}
             disabled={!!batch.busy || !batch.desktop}
             title={batch.desktop
-              ? 'Re-runs the .SCO files ALREADY in the folder, as they are — hand-edits survive. Does NOT regenerate from the app.'
+              ? 'CLEAN re-run: DELETES every .SCO, .SCRS and Report_*.pdf in the output folder, '
+                + 'regenerates them all from the current app design, then runs the batch. '
+                + 'Use after renaming a group or deleting a member — a plain Batch leaves the old files behind '
+                + 'and S-Concrete still reports on them. Hand-edits to .SCO files are discarded.'
               : 'Re-run requires the Windows desktop app'}
-            onClick={batch.rerunExisting}
+            onClick={batch.rerunClean}
           >
-            {batch.busy === 'rerun' ? 'Re-running…' : '↻ Re-run'}
+            {batch.busy === 'rerun' ? 'Clearing & re-running…' : '↻ Clean re-run'}
           </button>
 
           {batch.canPick && (
             <button style={hdrBtn()} disabled={!!batch.busy}
-              title="Open the output folder to view or hand-edit the .SCO files, then Re-run"
+              title="Open the output folder to inspect the .SCO / .SCRS files"
               onClick={batch.openFolder}>📂 Open folder</button>
           )}
 
@@ -256,7 +259,6 @@ function ResultDetail({ r }: { r: SconcreteResult }) {
       {r.cage && (
         <div style={{ marginBottom: 4 }}>
           Cage used: <b style={{ ...MONO_NUM, color: INK.strong }}>{r.cage}</b>
-          <span style={{ color: INK.secondary }}> — not the bars you picked? Edit them on the Dashboard, then re-run.</span>
         </div>
       )}
       {warns.length > 0 && (

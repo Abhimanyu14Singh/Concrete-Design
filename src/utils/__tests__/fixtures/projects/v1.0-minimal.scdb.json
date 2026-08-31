@@ -1,0 +1,26 @@
+{
+  "_version": "1.0",
+  "id": "p-v10",
+  "name": "Warehouse Roof",
+  "code": "ACI318-19",
+  "description": "Frozen artefact of a v1.0 build. Do not edit.",
+  "engineer": "A. Singh",
+  "date": "2024-03-11",
+  "members": [
+    {
+      "id": "m-v10-1",
+      "label": "B1",
+      "material": { "fc": 4000, "fy": 60000 },
+      "section": { "type": "rectangular_beam", "b": 12, "h": 24, "coverClear": 1.5, "stirrupDia": 4 },
+      "rebar": {
+        "topBars": [{ "numBars": 2, "barSize": 8 }],
+        "botBars": [{ "numBars": 3, "barSize": 8 }],
+        "ties": { "barSize": 4, "spacing": 10, "legs": 2 }
+      },
+      "loads": [
+        { "id": "lc1", "label": "1.2D+1.6L", "Mu_pos": 120, "Mu_neg": 45, "Vu": 38, "Tu": 0, "Pu": 0 }
+      ],
+      "results": [{ "status": "OK", "DCR_flex_pos": 0.51 }]
+    }
+  ]
+}

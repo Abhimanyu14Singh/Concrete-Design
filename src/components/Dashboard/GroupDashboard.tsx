@@ -10,7 +10,7 @@ import type { RebarLayout } from '../../types';
 import { membersForGroup, type DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
 import { DCRChip, DcrHistogram } from './dashboardShared';
-import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg , ICON } from '../../theme';
+import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg , ICON, Z } from '../../theme';
 import { Icon } from '../common/Icon';
 
 const hdrBtn: CSSProperties = {
@@ -372,7 +372,7 @@ function RowMenu({ x, y, groups, onMove, onCreateOwn, onClose }: {
   }, [onClose]);
   const item: CSSProperties = { padding: '7px 14px', cursor: 'pointer', color: INK.strong, display: 'flex', alignItems: 'center', gap: 6 };
   return (
-    <div ref={ref} style={{ position: 'fixed', left: x, top: y, zIndex: 9999, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', fontSize: 12, minWidth: 190, maxHeight: 320, overflow: 'auto', paddingBottom: 4 }}>
+    <div ref={ref} style={{ position: 'fixed', left: x, top: y, zIndex: Z.popover, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', fontSize: 12, minWidth: 190, maxHeight: 320, overflow: 'auto', paddingBottom: 4 }}>
       <div style={{ padding: '6px 14px 4px', fontSize: 10, color: INK.muted, textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #f3f4f6' }}>Change group</div>
       {onCreateOwn && (
         <div style={item}

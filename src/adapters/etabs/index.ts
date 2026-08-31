@@ -206,10 +206,20 @@ interface RawEtabsJson {
   frameSections?: unknown[];
 }
 
+/**
+ * The registered ETABS ModelAdapter.
+ *
+ * Detection only — `importProject` deliberately throws. An ETABS import needs choices no
+ * one-shot file parse can make (which stories, which combos, which force source, what
+ * units, what seed reinforcement), so the real path is the multi-step wizard driving an
+ * `EtabsConnection`. This class exists so a dropped ETABS JSON file is RECOGNISED and
+ * the user is pointed at that wizard, rather than falling through to "unknown format".
+ */
 export class EtabsAdapter implements ModelAdapter {
   readonly name = 'ETABS';
   readonly description = 'ETABS model JSON (frames, sections, forces) or tables export';
 
+  /** Structural sniff for ETABS model JSON: a frames array and a frameSections array. */
   canImport(data: unknown): boolean {
     if (typeof data === 'string') {
       try { data = JSON.parse(data); } catch { return false; }

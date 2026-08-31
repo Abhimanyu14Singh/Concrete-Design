@@ -150,13 +150,11 @@ export const DIAGRAM = { moment: '#7c3aed', shear: '#0891b2' } as const;
 // ── Engineering-domain conventions ────────────────────────────────────────────
 export const CODE_ACCENT: Record<string, string> = {
   'ACI318-19': ACCENT.primary,
-  'ACI318-14': ACCENT.primary,
   'EN1992-1-1': '#7c3aed',
 };
 
 export const CODE_BG: Record<string, string> = {
   'ACI318-19': ACCENT.softBg,
-  'ACI318-14': ACCENT.softBg,
   'EN1992-1-1': '#f5f3ff',
 };
 
@@ -210,3 +208,29 @@ export const MONO_NUM: CSSProperties = {
   fontFamily: FONT.mono,
   fontVariantNumeric: 'tabular-nums',
 };
+
+// ── Stacking order ────────────────────────────────────────────────────────────
+/**
+ * One scale for everything that escapes the layout by portalling to `<body>`.
+ *
+ * Anything portalled lands in the ROOT stacking context, so these numbers are
+ * compared against each other directly and a locally-chosen value is a bet against
+ * every other portal in the app. That bet was lost once already: the Suggest dialog
+ * picked `10000` as "higher than anything", `Dropdown` had `9999`, and so the three
+ * bar-size lists INSIDE that dialog rendered underneath its own backdrop — visibly
+ * nothing happened when you clicked one.
+ *
+ * The ordering that matters: a POPOVER opened from inside a MODAL has to sit above
+ * that modal, because it is a child of it in every sense but the DOM's. So popovers
+ * outrank modals, and nothing is served by a portal picking its own number.
+ */
+export const Z = {
+  /** Docked chrome that overlaps the page but is part of it. */
+  chrome: 1000,
+  /** Full-screen backdrop + card: settings, Suggest, the report. */
+  modal: 10000,
+  /** Menus, dropdown lists, context menus, tooltips — including inside a modal. */
+  popover: 11000,
+  /** A drag ghost follows the cursor and must clear even an open menu. */
+  drag: 12000,
+} as const;

@@ -8,6 +8,12 @@ const { pathToFileURL } = require('url')
 // is the whole integration: nothing about the batch is re-implemented for the demo, in
 // the same way nothing about the design engine is.
 const { registerSconcreteBridge } = require('../../electron/sconcreteBridge.cjs')
+// The app's ETABS bridge, for the same reason: the read half (tables, forces) and the
+// write half (define sections, assign frames, save-as, run) are already written and
+// tested one directory up. A push only lights up when the model in front of you came
+// FROM ETABS — see `canPushLive` in App.js — so attaching this to a demo model that
+// never did is harmless.
+const { registerEtabsBridge } = require('../../electron/etabsBridge.cjs')
 
 // The desktop shell. It adds two things over the browser: a detached panel gets a real
 // OS window with its own taskbar entry (which can go behind the main window and onto a
@@ -132,6 +138,7 @@ ipcMain.handle('sconcrete-autodetect', async () => {
 })
 
 registerSconcreteBridge(ipcMain)
+registerEtabsBridge(ipcMain)
 
 // Closing the app takes its panels with it.
 app.on('before-quit', () => {

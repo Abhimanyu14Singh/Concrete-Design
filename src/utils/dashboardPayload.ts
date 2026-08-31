@@ -12,6 +12,8 @@ import { flexSteelRatioPct, steelWeightPerFt } from './autoGroup';
 import { modeDCRs, worstOf } from '../components/Dashboard/dashboardShared';
 import { analyzeGroupCurtailment, analyzeOppositeEnd, regionCageDcr, continuousCage, type GroupCurtailment, type OppositeEndResult } from '../utils/curtailment';
 
+/** One design group, flattened to scalars. No `Member` references and no functions —
+ *  the whole payload has to survive `structuredClone` across the IPC boundary. */
 export interface DashboardGroup {
   id: string;
   label: string;
@@ -63,6 +65,7 @@ export interface DashboardGroup {
   notePinned: { top: boolean; bot: boolean };
 }
 
+/** One member, reduced to what the dashboard grid renders: size, per-mode DCRs, status. */
 export interface DashboardMember {
   id: string;
   label: string;
@@ -75,6 +78,8 @@ export interface DashboardMember {
   warnings: DesignWarning[];
 }
 
+/** The complete state the dashboard window renders from. Pushed main → dashboard on
+ *  every change; the dashboard holds no model of its own. */
 export interface DashboardPayload {
   code: DesignCode;
   units: 'imperial' | 'si';
@@ -82,6 +87,13 @@ export interface DashboardPayload {
   members: DashboardMember[];
 }
 
+/**
+ * An action the dashboard asks the main window to perform (dashboard → main).
+ *
+ * Commands are INTENTIONS, not mutations: the dashboard never owns project state, so it
+ * describes what it wants and the main window applies it and pushes a fresh payload
+ * back. That keeps one source of truth whether the dashboard is inline or popped out.
+ */
 export type DashboardCommand =
   | { type: 'select-group'; groupId: string | null }
   | { type: 'apply-rebar'; groupId: string; rebar: RebarLayout }

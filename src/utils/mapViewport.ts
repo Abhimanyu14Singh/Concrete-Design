@@ -203,6 +203,7 @@ export const VIEW_PRESETS = {
   iso:   DEFAULT_CAMERA,
 } as const satisfies Record<string, Camera>;
 
+/** Name of a canned camera position ('top', 'front', 'right', 'iso'). */
 export type ViewPreset = keyof typeof VIEW_PRESETS;
 
 /** Wrap an angle difference into (−π, π] so damping always takes the short way. */

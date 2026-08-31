@@ -15,7 +15,7 @@ import type { Project, Member, MapFrame, DesignGroup, LoadCase, DesignCode } fro
 import { formatBarLabel } from '../rebar';
 import { barsStr, skinStr, stirrupZoneStr, continuousBars } from './scheduleData';
 import { winAnsiSafe } from './pdfExport';
-import { runDesign } from '../../engines';
+import { effectiveLoad, runDesign } from '../../engines';
 import { analyzeGroupCurtailment, curtailmentNote } from '../curtailment';
 
 // ── colour palette ─────────────────────────────────────────────────────────
@@ -41,6 +41,12 @@ const C = {
 
 // ── draw context ───────────────────────────────────────────────────────────
 
+/** A page plus its fonts and metrics. PDF coordinates start BOTTOM-left, so every
+ *  table below walks `y` DOWNWARD from `h - margin` and breaks when it nears 0. */
+/** Project design preferences the schedule must honour — same rule as the other exports. */
+interface SchedPrefs { cotTheta?: number; ignoreTorsion?: boolean }
+const prefsOf = (p: Project): SchedPrefs => ({ cotTheta: p.cotTheta, ignoreTorsion: p.ignoreTorsion });
+
 interface Ctx {
   page: ReturnType<PDFDocument['addPage']>;
   font: PDFFont;
@@ -50,6 +56,7 @@ interface Ctx {
   margin: number;
 }
 
+/** Draw a string at (x, y), sanitised for the PDF text stream. */
 function txt(
   ctx: Ctx, s: string, x: number, y: number,
   size = 9, color = C.dark, f?: PDFFont,
@@ -57,14 +64,17 @@ function txt(
   ctx.page.drawText(winAnsiSafe(String(s)), { x, y, size, color, font: f ?? ctx.font });
 }
 
+/** Solid rectangle — zebra row shading and header bands. */
 function fillRect(ctx: Ctx, x: number, y: number, w: number, h: number, fill = C.light) {
   ctx.page.drawRectangle({ x, y, width: w, height: h, color: fill, borderWidth: 0 });
 }
 
+/** Hairline rectangle outline, no fill — table and plan-canvas borders. */
 function strokeRect(ctx: Ctx, x: number, y: number, w: number, h: number) {
   ctx.page.drawRectangle({ x, y, width: w, height: h, borderColor: C.mid, borderWidth: 0.4, color: undefined });
 }
 
+/** Horizontal rule — the separator under each schedule row. */
 function hline(ctx: Ctx, x1: number, y: number, x2: number, thickness = 0.4, color = C.mid) {
   ctx.page.drawLine({ start: { x: x1, y }, end: { x: x2, y }, thickness, color });
 }
@@ -80,11 +90,17 @@ function fitSize(font: PDFFont, s: string, maxW: number, base: number, min = 5):
 
 // ── rebar formatting ───────────────────────────────────────────────────────
 
+/** One face's bars as "3-#8 + 2-#6". Multiple layers join with "+"; empty is an em dash. */
 function rebarStr(bars: { numBars: number; barSize: number }[]): string {
   if (!bars.length) return '—';
   return bars.map(b => `${b.numBars}-${formatBarLabel(b.barSize)}`).join(' + ');
 }
 
+/**
+ * Stirrups as "#4 @ 4.0 in", or "#4 @ 4.0/8.0/4.0 in" when the member has tie zones —
+ * a schedule that printed only the single `ties.spacing` would show the end spacing as
+ * if it ran the full length, which is not what gets built.
+ */
 function stirrupStr(
   rebar: { ties?: { barSize: number; spacing: number; legs: number }; tieZones?: { spacing: number }[] },
   isEC2: boolean,
@@ -100,6 +116,7 @@ function stirrupStr(
   return `${bar} @ ${conv(t.spacing)}${sfx}`;
 }
 
+/** Section size as "16.00"×24.00"" (US) or "400×600" mm (EC2). */
 function sectionLabel(m: Member, isEC2: boolean): string {
   const s = m.section;
   if (isEC2) return `${(s.b * 25.4).toFixed(0)}×${(s.h * 25.4).toFixed(0)}`;
@@ -108,7 +125,13 @@ function sectionLabel(m: Member, isEC2: boolean): string {
 
 // ── DCR computation ────────────────────────────────────────────────────────
 
-function computeMaxDCR(m: Member, code: string): number {
+/**
+ * The member's governing DCR for its schedule row — the max over EVERY load row and
+ * every check, crack width included. Prefers the results already on the member and only
+ * re-runs design when there are none, because a schedule of a large model would
+ * otherwise re-solve the whole project to print one column.
+ */
+function computeMaxDCR(m: Member, code: string, prefs: SchedPrefs = {}): number {
   // Use pre-computed results if available
   let best = 0;
   for (const r of m.results ?? []) {
@@ -123,7 +146,7 @@ function computeMaxDCR(m: Member, code: string): number {
 
   // Run design inline if no cached results
   for (const lc of m.loads) {
-    const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams);
+    const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams, prefs.cotTheta, prefs.ignoreTorsion);
     const d = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0);
     if (d > best) best = d;
   }
@@ -154,6 +177,11 @@ export function buildCurtailmentNotes(
   return out;
 }
 
+/**
+ * The "Schedule Notes" page listing the pinned curtailment notes. Swatch colour carries
+ * the meaning: red = more than half the face must run through, purple = there is real
+ * steel to be saved. Returns the next page number.
+ */
 function drawNotesPage(
   doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont,
   notes: CurtailNote[], projectName: string, pageNum: number,
@@ -190,6 +218,11 @@ export function setFontLoader(fn: () => Promise<{ regular: ArrayBuffer; bold: Ar
   _boldBytes = null;
 }
 
+/**
+ * DejaVu TTF bytes, fetched once and cached for the process. `BASE_URL` is used rather
+ * than a leading-slash path because an Electron build is served from `file://`, where
+ * `/fonts/…` resolves to the filesystem root and 404s.
+ */
 async function getFontBytes(): Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }> {
   if (_fontLoader) return _fontLoader();
   if (!_regularBytes || !_boldBytes) {
@@ -206,12 +239,16 @@ async function getFontBytes(): Promise<{ regular: ArrayBuffer; bold: ArrayBuffer
 
 // ── page factory ───────────────────────────────────────────────────────────
 
+/** Append a fresh A4-landscape page and return its draw context. Landscape throughout —
+ *  the schedule is 14 columns wide and will not fit portrait. */
 function addPage(doc: PDFDocument, font: PDFFont, bold: PDFFont, margin = 36): Ctx {
   const page = doc.addPage([842, 595]); // A4 landscape
   const { width: w, height: h } = page.getSize();
   return { page, font, bold, w, h, margin };
 }
 
+/** Navy header/footer bands with title, project name and page number — drawn on every
+ *  page so a schedule stays identifiable once it is printed and separated. */
 function drawPageFrame(ctx: Ctx, pageTitle: string, projectName: string, pageNum: number, banner = 'Beam Schedule') {
   const { w, h, margin } = ctx;
   fillRect(ctx, 0, h - 28, w, 28, C.navy);
@@ -274,6 +311,17 @@ interface GroupSchedRow {
   groupIdx: number; // for colour swatch
 }
 
+/**
+ * One schedule row per design group, with every face resolved to the three L/3 regions
+ * the detailer actually builds.
+ *
+ * The group's own `rebar` wins over the first member's — a group is designed as a unit
+ * and its cage is the one that gets built. Where a region has no explicit override, the
+ * mark cage runs through rather than being blanked, which is what the moment diagram
+ * and the group pop-out show. Bottom steel is the exception: with no explicit end-third
+ * cage it falls back to the curtailment analysis, so the row states the bars that must
+ * remain continuous instead of implying the full mid-span cage reaches the supports.
+ */
 function buildGroupRows(
   groups: DesignGroup[],
   memberById: Map<string, Member>,
@@ -324,6 +372,12 @@ function buildGroupRows(
   });
 }
 
+/**
+ * The two-band group-schedule header: "Top bars / Bottom bars / Stirrups" spanning
+ * their sub-columns above, individual headers below. Spans are measured from
+ * GRP_COL_DEFS rather than hard-coded, so changing a column width can't slide a
+ * super-header off its columns.
+ */
 function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
   const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
   fillRect(ctx, x0, y, totalW, GRP_HEADER_H, C.navy);
@@ -370,6 +424,8 @@ function drawGroupTableHeader(ctx: Ctx, x0: number, y: number) {
   }
 }
 
+/** One group row: colour swatch in column 0 (matching the tagged plan), then the cells,
+ *  each auto-shrunk to its column width. `shade` drives the zebra banding. */
 function drawGroupRow(ctx: Ctx, row: GroupSchedRow, x0: number, y: number, shade: boolean) {
   const totalW = GRP_COL_DEFS.reduce((s, c) => s + c.w, 0);
   if (shade) fillRect(ctx, x0, y, totalW, ROW_H, C.light);
@@ -419,7 +475,12 @@ interface BeamSchedRow {
   dcr: string; dcrVal: number;
 }
 
-function buildBeamRows(members: Member[], isEC2: boolean, code: string): BeamSchedRow[] {
+/**
+ * One row per beam, sorted by story then label so the schedule reads in the order
+ * someone walks the model. Columns are non-grouped and non-columns are filtered out,
+ * so this is the fallback view when a project has no design groups yet.
+ */
+function buildBeamRows(members: Member[], isEC2: boolean, code: string, prefs: SchedPrefs = {}): BeamSchedRow[] {
   return members
     .filter(m => m.memberType === 'beam' || !m.memberType)
     .sort((a, b) => {
@@ -431,7 +492,7 @@ function buildBeamRows(members: Member[], isEC2: boolean, code: string): BeamSch
       const span = isEC2
         ? `${((m.span ?? 0) * 0.3048).toFixed(2)} m`
         : `${(m.span ?? 0).toFixed(1)} ft`;
-      const maxDCR = computeMaxDCR(m, code);
+      const maxDCR = computeMaxDCR(m, code, prefs);
       return {
         label: m.etabs?.frameName ?? m.label,
         story: m.etabs?.story ?? '—',
@@ -447,6 +508,7 @@ function buildBeamRows(members: Member[], isEC2: boolean, code: string): BeamSch
     });
 }
 
+/** Single-band header for the beam schedule (no super-headers — no grouped columns). */
 function drawBeamTableHeader(ctx: Ctx, x0: number, y: number) {
   const totalW = BEAM_COL_DEFS.reduce((s, c) => s + c.w, 0);
   fillRect(ctx, x0, y, totalW, HEADER_H, C.navy);
@@ -457,6 +519,8 @@ function drawBeamTableHeader(ctx: Ctx, x0: number, y: number) {
   }
 }
 
+/** One beam row. Only the DCR cell is coloured (green / amber ≥0.9 / red >1) — colouring
+ *  the whole row would make a printed schedule unreadable. */
 function drawBeamRow(ctx: Ctx, row: BeamSchedRow, x0: number, y: number, shade: boolean) {
   const totalW = BEAM_COL_DEFS.reduce((s, c) => s + c.w, 0);
   if (shade) fillRect(ctx, x0, y, totalW, ROW_H, C.light);
@@ -473,6 +537,11 @@ function drawBeamRow(ctx: Ctx, row: BeamSchedRow, x0: number, y: number, shade: 
   hline(ctx, x0, y, x0 + totalW);
 }
 
+/**
+ * Paginate and draw either schedule. Rows per page are derived from the usable height
+ * rather than fixed, so the two table shapes (which have different header depths) each
+ * fill their page without a row straddling the bottom edge. Returns the next page number.
+ */
 function drawScheduleTable(
   doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont,
   rows: GroupSchedRow[] | BeamSchedRow[],
@@ -523,6 +592,11 @@ function drawScheduleTable(
 
 // ── plan view ──────────────────────────────────────────────────────────────
 
+/**
+ * Fit the story's frames into the plan canvas: a single uniform `scale` (never
+ * per-axis — that would distort the grid) plus the offsets that centre the extents,
+ * with a fixed padding so frames at the edge of the model aren't clipped by the border.
+ */
 function buildTransform(frames: MapFrame[], x0: number, y0: number, canW: number, canH: number) {
   if (!frames.length) return { scale: 1, ox: x0, oy: y0 };
   const xs = frames.flatMap(f => [f.pt1.x, f.pt2.x]);
@@ -537,6 +611,15 @@ function buildTransform(frames: MapFrame[], x0: number, y0: number, canW: number
   return { scale, ox, oy };
 }
 
+/**
+ * One tagged-plan page for a story: every frame drawn in its design group's colour,
+ * with the group's index printed at the beam midpoint and a legend down the right.
+ *
+ * The number is what makes the page usable — ten palette colours have to cover any
+ * number of groups, so beyond ten the colours repeat and only the index disambiguates.
+ * It sits on a white knockout because a coloured numeral on a coloured line is
+ * unreadable at 5pt once printed.
+ */
 function drawPlanPage(
   ctx: Ctx,
   frames: MapFrame[],
@@ -626,6 +709,14 @@ export interface ScheduleExportOptions {
   memberIds?: string[];
 }
 
+/**
+ * Build the schedule PDF: cover, schedule table pages, curtailment notes, then a tagged
+ * plan per story. Returns bytes — the caller decides whether to download or save them.
+ *
+ * `memberById` is keyed by BOTH member id and ETABS frame name, because `MapFrame`
+ * records may carry either: frames imported before members were linked reference the
+ * frame name, and a lookup on id alone silently drops them from the plan.
+ */
 export async function buildSchedulePDF(
   project: Project,
   options: ScheduleExportOptions = {},
@@ -679,7 +770,7 @@ export async function buildSchedulePDF(
     const rows = buildGroupRows(groups, memberById, isEC2, code);
     pageNum = drawScheduleTable(doc, fontReg, fontBold, rows, true, projectName, pageNum);
   } else {
-    const rows = buildBeamRows(members, isEC2, code);
+    const rows = buildBeamRows(members, isEC2, code, prefsOf(project));
     pageNum = drawScheduleTable(doc, fontReg, fontBold, rows, false, projectName, pageNum);
   }
 
@@ -735,7 +826,13 @@ interface DcrRow {
   gov: number; status: string; reviewed: boolean;
 }
 
-function govResultOf(m: Member, code: string): ReturnType<typeof runDesign> | null {
+/**
+ * The single result row that governs the member — the load row whose worst check is
+ * highest, across every check including crack width. The DCR list prints per-mode values
+ * from ONE row, so it has to be this row; picking a different row per column would show
+ * a combination of demands that never actually occurs.
+ */
+function govResultOf(m: Member, code: string, prefs: SchedPrefs = {}): ReturnType<typeof runDesign> | null {
   let worst: ReturnType<typeof runDesign> | null = null;
   let worstMax = -1;
   const consider = (r: ReturnType<typeof runDesign>) => {
@@ -743,18 +840,20 @@ function govResultOf(m: Member, code: string): ReturnType<typeof runDesign> | nu
     if (mx > worstMax) { worstMax = mx; worst = r; }
   };
   if (m.results?.length) for (const r of m.results) consider(r);
-  else for (const lc of m.loads) consider(runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, m.crackParams));
+  else for (const lc of m.loads) consider(runDesign(m.section, m.material, m.rebar, effectiveLoad(lc, prefs.ignoreTorsion), m.span ?? 20, code, m.crackParams, prefs.cotTheta, prefs.ignoreTorsion));
   return worst;
 }
 
-function buildDcrRows(members: Member[], groups: DesignGroup[], isEC2: boolean, code: string): DcrRow[] {
+/** One DCR row per member, tagged with its group label and whether that group has been
+ *  marked Reviewed (which changes only how the row is PRINTED, never the numbers). */
+function buildDcrRows(members: Member[], groups: DesignGroup[], isEC2: boolean, code: string, prefs: SchedPrefs = {}): DcrRow[] {
   const groupLabel = new Map<string, string>();
   const reviewed = new Set<string>();
   for (const g of groups)
     for (const id of g.memberIds) { groupLabel.set(id, g.label); if (g.reviewed) reviewed.add(id); }
   const rows: DcrRow[] = [];
   members.forEach((m, i) => {
-    const r = govResultOf(m, code);
+    const r = govResultOf(m, code, prefs);
     if (!r) return;
     const gov = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.DCR_PM ?? 0);
     const isRev = reviewed.has(m.id);
@@ -769,9 +868,13 @@ function buildDcrRows(members: Member[], groups: DesignGroup[], isEC2: boolean, 
   return rows;
 }
 
+/** Governing-DCR colour. Neutral below 0.9 — in a dense table, colouring everything
+ *  green destroys the contrast that makes the amber and red rows findable. */
 const dcrColorFor = (v: number) => (v > 1.0 ? C.red : v > 0.9 ? C.amber : C.dark);
+/** Status-cell colour, matching the on-screen chips. */
 const statusColorFor = (s: string) => (s === 'NG' ? C.red : s === 'Warning' ? C.amber : C.green);
 
+/** Draw one cell, shrunk to fit and aligned left / right / centre within its column. */
 function drawCell(ctx: Ctx, s: string, x: number, w: number, y: number, align: 'l' | 'r' | 'c', color = C.dark, font?: PDFFont) {
   const f = font ?? ctx.font;
   const size = fitSize(f, s, w - 6, 8.5);
@@ -780,12 +883,15 @@ function drawCell(ctx: Ctx, s: string, x: number, w: number, y: number, align: '
   txt(ctx, s, tx, y, size, color, f);
 }
 
+/** Navy header band for the DCR table. */
 function drawDcrTableHeader(ctx: Ctx, x0: number, y: number) {
   fillRect(ctx, x0, y, DCR_TABLE_W, HEADER_H, C.navy);
   let x = x0;
   for (const col of DCR_COL_DEFS) { drawCell(ctx, col.header, x, col.w, y + 7, col.align, C.white, ctx.bold); x += col.w; }
 }
 
+/** One DCR row. Only the governing DCR and the status are emphasised; the per-mode
+ *  columns stay plain so the eye lands on the two cells that decide the member. */
 function drawDcrRow(ctx: Ctx, row: DcrRow, x0: number, y: number, zebra: boolean) {
   if (zebra) fillRect(ctx, x0, y - 4, DCR_TABLE_W, ROW_H, C.light);
   let x = x0;
@@ -812,6 +918,8 @@ function drawDcrRow(ctx: Ctx, row: DcrRow, x0: number, y: number, zebra: boolean
   }
 }
 
+/** Paginate and draw the DCR table, repeating the header on each page. Returns the next
+ *  page number. */
 function drawDcrTable(doc: PDFDocument, fontReg: PDFFont, fontBold: PDFFont, rows: DcrRow[], projectName: string, startPage: number): number {
   const topY = 595 - 44;
   const rowsPerPage = Math.floor((topY - 24 - HEADER_H) / ROW_H);
@@ -846,7 +954,7 @@ export async function buildDcrListPDF(project: Project): Promise<Uint8Array> {
   const projectName = winAnsiSafe(project.name ?? 'Unnamed Project');
   const groups = project.designGroups ?? [];
   const members = (project.members ?? []).filter(m => !m.memberType || m.memberType === 'beam');
-  const rows = buildDcrRows(members, groups, isEC2, code);
+  const rows = buildDcrRows(members, groups, isEC2, code, prefsOf(project));
   const ngCount = rows.filter(r => r.status === 'NG').length;
   const reviewedCount = rows.filter(r => r.reviewed).length;
 

@@ -12,14 +12,17 @@ import type { ModelAdapter } from './types';
 
 const _adapters = new Map<string, ModelAdapter>();
 
+/** Register an adapter under its display name. Last registration for a name wins. */
 export function registerAdapter(adapter: ModelAdapter): void {
   _adapters.set(adapter.name, adapter);
 }
 
+/** Look up an adapter by display name, or undefined if none is registered. */
 export function getAdapter(name: string): ModelAdapter | undefined {
   return _adapters.get(name);
 }
 
+/** Names of every registered adapter — populates the import dialog. */
 export function listAdapters(): string[] {
   return Array.from(_adapters.keys());
 }

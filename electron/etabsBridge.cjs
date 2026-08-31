@@ -121,6 +121,15 @@ const handlers = {
   selectCombos: ({ combos }) => call('selectCombos', { combos: combos ?? [] }),
   // Write-back: create an ETABS group and assign member frames to it.
   setGroupAssign: ({ groupName, frameNames }) => call('setGroupAssign', { groupName, frameNames: frameNames ?? [] }, 60000),
+  // Write-back, the model-changing half: define the resized frame-section properties,
+  // move frames onto them, save under a new name, re-run. Budgets differ by step —
+  // defining and assigning are quick edits, saving a large .EDB is minutes, and an
+  // analysis run is the one that can genuinely take an hour, so it gets its own.
+  defineFrameSections: ({ sections }) => call('defineFrameSections', { sections: sections ?? [] }, 120000),
+  assignSections: ({ assignments }) => call('assignSections', { assignments: assignments ?? [] }, 300000),
+  setRebarBeam: ({ beams }) => call('setRebarBeam', { beams: beams ?? [] }, 120000),
+  saveModelAs: ({ path }) => call('saveModelAs', { path }, 600000),
+  runAnalysis: () => call('runAnalysis', {}, 3600000),
   disconnect: async () => {
     try { await call('disconnect', {}, 5000); } catch { /* best effort */ }
     killHelper();

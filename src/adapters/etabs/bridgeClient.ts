@@ -6,8 +6,11 @@
  */
 import { TableConnection, type TableRow } from './tableConnection';
 
+/** Loopback only — the bridge exposes model data unauthenticated and must never bind
+ *  to an external interface. */
 export const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:8744';
 
+/** TableConnection over HTTP to a locally-run bridge server. */
 export class BridgeConnection extends TableConnection {
   readonly kind = 'bridge' as const;
   private base: string;
@@ -17,6 +20,9 @@ export class BridgeConnection extends TableConnection {
     this.base = baseUrl.replace(/\/$/, '');
   }
 
+  /** POST /connect — attach to whatever model the bridge's ETABS has open. Both failure
+   *  modes (bridge unreachable / bridge can't attach) get their own message, because
+   *  the fix is different and "connection failed" doesn't tell the user which it was. */
   protected async openSession(): Promise<{ modelName: string }> {
     let res: Response;
     try {

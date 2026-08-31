@@ -16,6 +16,8 @@
  */
 import { getBarDiam } from './concreteDesign';
 
+/** Splice classification. Grouped by what it produces: no lap, a compression lap, or a
+ *  tension lap. 'Lap' is an alias for 'Tension B'. */
 export type SpliceType =
   | 'None' | 'Tangential' | 'Bearing' | 'Mech/Weld' | 'Mechanical'  // → no lap length
   | 'Compression' | 'Radial'                                        // compression lap
@@ -23,6 +25,7 @@ export type SpliceType =
 
 const NO_LAP: ReadonlySet<string> = new Set(['None', 'Tangential', 'Bearing', 'Mech/Weld', 'Mechanical']);
 
+/** Inputs for a splice-length calculation. Units are psi in, inches out. */
 export interface SpliceParams {
   barSize: number;        // longitudinal bar (US # positive; metric Ø mm negative)
   spliceType: SpliceType;

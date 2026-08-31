@@ -35,6 +35,9 @@ import { buildDashboardPayload } from '../../src/utils/dashboardPayload.ts'
 import HelpView from '../../src/components/Help/HelpView.tsx'
 import MenuBar from './MenuBar.js'
 import PushToEtabsDialog from './PushToEtabsDialog.js'
+// The write half of the ETABS round trip, from the app: plan builder, runner, summary.
+import { canPushSections, runSectionPush, summarizeSectionPush } from '../../src/adapters/etabs/pushSections.ts'
+import { ComConnection } from '../../src/adapters/etabs/comClient.ts'
 import { resizedGroups, defaultModelName } from './etabsPush.js'
 import SuggestSizeDialog from '../../src/components/common/SuggestSizeDialog.tsx'
 // The plan's colour schemes are the APP's, not a demo subset — same modes, same metrics,
@@ -175,6 +178,7 @@ export default function App() {
   const [versions, setVersions] = useState([])
   const [modelVersion, setModelVersion] = useState('live')
   const [pushOpen, setPushOpen] = useState(false)
+  const [pushBusy, setPushBusy] = useState(null)   // the live push step, or null
   // Which Help sub-tab the menu asked for; null = closed. 'about' is the app's native
   // dialog, which a web page has no equivalent of, so it gets a panel of its own.
   const [helpTarget, setHelpTarget] = useState(null)
@@ -669,6 +673,22 @@ export default function App() {
   // The baseline: the model exactly as data.js describes it, which is what an ETABS
   // import would have handed over. Compared against the live model to decide what has
   // been resized, so a beam edited back to its original size correctly stops counting.
+  /**
+   * Can this push actually reach ETABS?
+   *
+   * Two conditions, and the second is the one that matters. The desktop bridge gives us
+   * a connection that CAN write (`canPushSections` tests the five calls); the members
+   * having real `etabs.frameName` links is what makes writing SAFE. Without them the
+   * frame names are member ids from a synthetic model, and pushing those into whatever
+   * .EDB happens to be open would either fail on every frame or — worse — hit a real
+   * frame that shares a name. So an unlinked model simulates, automatically.
+   */
+  const canPushLive = useMemo(() => {
+    const bridged = typeof window !== 'undefined' && !!window.electronAPI?.etabs;
+    if (!bridged || !canPushSections(new ComConnection())) return false
+    return members.length > 0 && members.every(m => !!m.etabs?.frameName)
+  }, [members])
+
   const resizedRows = useMemo(
     () => resizedGroups(groups.map(g => ({ ...g, dcrById })), members, MEMBERS),
     [groups, members, dcrById],
@@ -684,7 +704,29 @@ export default function App() {
    * the Electron bridge or the C# sidecar), so the payload is built and the app's own
    * engine produces what the re-run would return. The dialog says as much on its face.
    */
-  const onPush = useCallback(({ rows, modelName, payload }) => {
+  const onPush = useCallback(async ({ rows, modelName, properties, plan, live }) => {
+    // LIVE: the model in front of us came from ETABS and the desktop bridge is up, so
+    // the plan is executed against it — define, assign, save, run — and the outcome is
+    // reported. Anything that fails per-frame comes back in the summary rather than as
+    // an exception, because "39 of 40 frames moved" is a result, not a crash.
+    if (live) {
+      setPushBusy('Connecting to ETABS…')
+      try {
+        const conn = new ComConnection()
+        await conn.connect()
+        const out = await runSectionPush(conn, plan, step => setPushBusy(step))
+        setSuggestNote(summarizeSectionPush(out))
+        setPushBusy(null)
+        setPushOpen(false)
+        return
+      } catch (e) {
+        setPushBusy(null)
+        setSuggestNote(`ETABS push failed: ${e?.message || e}`)
+        return
+      }
+    }
+    // SIMULATED: no live model to write to. Freeze the working model under the new name
+    // and produce what the re-run would have returned, using the app's own engine.
     const snapshot = members.map(m => ({ ...m }))
     const vDesigns = snapshot.map(m => designMemberAllRows(m, code))
     setVersions(vs => {
@@ -1481,7 +1523,13 @@ export default function App() {
         <PushToEtabsDialog
           rows={resizedRows}
           modelName={defaultModelName(MODEL_MAP.modelName, versions.length + 1)}
-          onCancel={() => setPushOpen(false)}
+          // A live push needs BOTH a desktop bridge that can write and a model whose
+          // frames are real ETABS frames. The second half is what stops this offering to
+          // write the demo's synthetic frame names into whatever model happens to be
+          // open: no `etabs` link on the members, no live push, and it simulates instead.
+          live={canPushLive}
+          busy={pushBusy}
+          onCancel={() => { setPushBusy(null); setPushOpen(false) }}
           onPush={onPush}
         />
       )}

@@ -3,12 +3,13 @@
  * (Groups | Auto-Group | Savings).
  */
 import { useState, useMemo, useRef, useCallback, useEffect, useDeferredValue, startTransition } from 'react';
-import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, AutoGroupBin } from '../../types';
+import type { Project, DesignGroup, RebarLayout, ComboForces, DesignResults, DesignWarning, AutoGroupBin } from '../../types';
 import { runDesign } from '../../engines';
 import { resolveCrack } from '../../utils/resolveCrack';
 import { formatBarLabel } from '../../utils/rebar';
 import { flexSteelRatioPct, stirrupAvPerFt, steelWeightPerFt } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
+import { track } from '../../utils/usage';
 import { beamMarkEnd } from '../../utils/curtailment';
 import SuggestSizeDialog from '../common/SuggestSizeDialog';
 import MapCanvas, { type ColorMode, type FrameInfo, type DiagramMode } from './MapCanvas';
@@ -134,7 +135,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   const [flexFace, setFlexFace] = useState<FlexFace>(mapViewCache.flexFace ?? 'bot');
   const [story, setStory] = useState<string>(mapViewCache.story ?? 'All');
   const [diagramMode, setDiagramMode] = useState<DiagramMode>(mapViewCache.diagramMode ?? 'off');
-  const [lineWeightScale, setLineWeightScale] = useState(0.4); // feature ④: 0 = uniform 3px
+  const [lineWeightScale, setLineWeightScale] = useState(0.35); // feature ④: pen width, 0 = hairline
   const [legendKey, setLegendKey] = useState<string | null>(null); // clicked legend row → isolate on plan
   const [dashHoverFrame, setDashHoverFrame] = useState<string | null>(null); // hovered dashboard beam → highlight on plan
   // In-map Group Dashboard: splits the map area (plan | dashboard) and can pop out.
@@ -332,6 +333,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
         // (which understate a mode that peaks on a different load station).
         let mFlexPos = 0, mFlexNeg = 0, mCrack = 0;
         let bestRes: DesignResults | null = null;
+        // Warnings are collected across EVERY row — not read off the governing row alone.
+        // Several checks only run on some rows (§24.3.2 needs a sagging row, §22.7.x needs
+        // Tu past its threshold), so one row's list silently drops what the others raised,
+        // and the chips here then disagree with a Calc Sheet opened on a different row.
+        //
+        // Collapsed on the clause and the SHAPE of the sentence, with the row's own
+        // numbers blanked out of the key: messages carry "DCR = 1.23" / "Vu 45.2 kips",
+        // so keying on the text itself deduplicates nothing and one failing clause comes
+        // back once per load row — 50 chips on an imported member.
+        const seenWarn = new Map<string, DesignWarning>();
+        const warnShape = (w: DesignWarning) => w.code + '|' + w.message.replace(/-?\d[\d,.]*/g, '#');
+        const worstSeen = new Map<string, number>();
         for (const l of m.loads) {
           const r = runDesign(m.section, m.material, m.rebar, l, m.span, project.code, resolveCrack(m, project.code, project.slsCombo), project.cotTheta, project.ignoreTorsion);
           const govDCR = Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion, r.DCR_crack ?? 0, r.VT_util ?? 0);
@@ -343,8 +356,18 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           // Fold the combined shear+torsion link utilisation into the shear bucket
           // so map colouring reflects it (torsion links add to the shear links).
           dcrShear = Math.max(dcrShear, r.DCR_shear, r.VT_util ?? 0);
+          for (const w of r.warnings ?? []) {
+            const k = warnShape(w);
+            const prev = seenWarn.get(k);
+            // Keep the worst row's wording, and let an error anywhere outrank a warning.
+            if (!prev) seenWarn.set(k, w);
+            else if (w.severity === 'error' && prev.severity !== 'error') seenWarn.set(k, w);
+            else if (govDCR > worstSeen.get(k)!) seenWarn.set(k, prev.severity === 'error' ? { ...w, severity: 'error' } : w);
+            worstSeen.set(k, Math.max(worstSeen.get(k) ?? 0, govDCR));
+          }
         }
-        if (bestRes) results[m.id] = bestRes;
+        const allWarnings = [...seenWarn.values()];
+        if (bestRes) results[m.id] = { ...bestRes, warnings: allWarnings };
         const w = steelWeightPerFt(m);
         info[m.id] = {
           dcr: Math.max(dcrFlex, dcrShear),
@@ -354,7 +377,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
           bot: rebarStr(m.rebar.botBars),
           stirrups: stirrupStr(m.rebar, v => fmtVal(v, 'length'), label('length')),
           weight: `${fmtVal(w.totalLbFt, 'steelWeightPerLength')} ${label('steelWeightPerLength')} (L ${fmtVal(w.longLbFt, 'steelWeightPerLength')} + S ${fmtVal(w.stirrupLbFt, 'steelWeightPerLength')})`,
-          warnings: bestRes?.warnings,
+          warnings: allWarnings,
           status: bestRes?.status,
         };
       } catch (e) {
@@ -741,10 +764,24 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
   // defaults, which impose no floor — the original behavior).
   function handleSuggestAllGroups() { setSuggestAllOpen(true); }
 
+  /**
+   * NOTE: this is the SECOND Suggest sweep in the app — `WorkspaceView.runSuggestAll`
+   * drives the shared `createSweep` in workspace/design.js, and this one re-implements
+   * the same loop for the map's own group list. They already differ (this one keeps only
+   * the FIRST error and says nothing about torsion), which is exactly why both have to
+   * report the same telemetry: a sweep that is invisible from one of the two entry points
+   * makes "how often does Suggest fail" unanswerable rather than merely incomplete.
+   */
   function runSuggestAllGroups(floors?: SuggestFloors) {
     const target = project.targetDCR ?? 0.9;
+    const t0 = Date.now();
     let ok = 0, fail = 0;
+    let overRein = 0;   // resolved, but past ρmax
+    let below = 0;      // returned the section's ceiling — still short of the target
+    let sectionOver = 0; // over a cross-section limit — the concrete, not the cage
     let firstError: string | null = null;
+    // Counted by reason code, never by label — see SuggestError['kind'].
+    const reasons: Record<string, number> = {};
     // Resolve the suggested rebar per group up front; apply it inside the
     // functional update so we never clobber a concurrent member/group edit.
     const rebarByGroupId = new Map<string, RebarLayout>();
@@ -754,13 +791,23 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       const membersInGroup = members.filter(m => g.memberIds.includes(m.id));
       const designed = membersInGroup.filter(m => m.memberType === 'beam' && m.loads.length > 0);
       if (!designed.length) continue; // skip empty / no designed beams
-      const r = suggestGroupRebar(membersInGroup, project.code, target, floors, barFamily, project.cotTheta, project.ignoreTorsion);
+      const r = suggestGroupRebar(membersInGroup, project.code, target, floors, barFamily, project.cotTheta, project.ignoreTorsion, project.slsCombo);
       if (isSuggestError(r)) {
         fail++;
+        const k = r.kind ?? 'unclassified';
+        reasons[k] = (reasons[k] ?? 0) + 1;
         if (!firstError) firstError = r.error;
         continue;
       }
       ok++;
+      // A cage that carries the moment only by going past ρmax is a RESULT, not a
+      // refusal — but a sweep that applies twelve of them and reports "Suggested 12/12"
+      // has told the engineer nothing. Counted separately and named in the summary.
+      if (r.overReinforced) overRein++;
+      // Mutually exclusive — see the workspace sweep. A section-limited group is short
+      // too, and counting it in both makes one problem read as two.
+      if (r.sectionLimit) sectionOver++;
+      else if (r.belowTarget || r.shearBelowTarget) below++;
       rebarByGroupId.set(g.id, r.rebar);
       for (const id of g.memberIds) rebarByMemberId.set(id, r.rebar);
     }
@@ -773,10 +820,29 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
       }));
     }
     const total = ok + fail;
+    track('suggest.sweep', {
+      from: 'map',
+      groups: groups.length,
+      attempted: total,
+      resolved: ok,
+      overReinforced: overRein,
+      belowTarget: below,
+      sectionLimited: sectionOver,
+      failed: fail,
+      reasons,
+      applied: rebarByGroupId.size,
+      hasFloors: !!floors && Object.keys(floors).length > 0,
+      code: project.code,
+      ms: Date.now() - t0,
+    });
     setSuggestAllNote(
       total === 0
         ? 'No groups with designed beams to suggest.'
-        : `Suggested ${ok}/${total} groups${fail > 0 ? ` · ${fail} unresolved${firstError ? ` — ${firstError}` : ''}` : ''}`
+        : `Suggested ${ok}/${total} groups`
+          + (below > 0 ? ` · ⚠ ${below} STILL SHORT at the section's max cage (enlarge the section)` : '')
+          + (sectionOver > 0 ? ` · ⚠ ${sectionOver} over the CROSS-SECTION limit (concrete governs)` : '')
+          + (overRein > 0 ? ` · ⚠ ${overRein} EXCEED ρmax (over-reinforced — not code-compliant)` : '')
+          + (fail > 0 ? ` · ${fail} unresolved${firstError ? ` — ${firstError}` : ''}` : '')
     );
   }
 
@@ -1173,7 +1239,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
 
           <div style={toolSep} />
 
-          {/* Line weight — stroke thickness proportional to beam width */}
+          {/* Line weight — the pen the plan is drawn with, hairline → heavy */}
           <span title="Line weight" style={{ display: 'flex', color: INK.secondary }}>
             <Icon name="lineWeight" title="Line weight" />
           </span>
@@ -1181,7 +1247,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
             className="slim-range"
             type="range" min={0} max={1} step={0.05} value={lineWeightScale}
             onChange={e => setLineWeightScale(parseFloat(e.target.value))}
-            title="Line weight — thicker lines for wider beams (0 = uniform)"
+            title="Line weight — drag left for a hairline plan, right for heavy lines (wider beams always read a little heavier)"
             style={{ width: 84 }}
           />
 
@@ -1450,6 +1516,7 @@ export default function ModelMapView({ project, onProjectChange, onOpenEtabsImpo
               targetDCR={project.targetDCR ?? 0.9}
               cotTheta={project.cotTheta}
               ignoreTorsion={project.ignoreTorsion}
+              slsCombo={project.slsCombo}
             />
           </div>
         </div>

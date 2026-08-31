@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import PanelFrame from '../PanelFrame'
 import { useFmt } from '../format'
 
@@ -30,6 +31,40 @@ const THRESH = '#94a3b8'
 
 const PAD = { l: 44, r: 12, t: 12, b: 18 }
 
+/**
+ * The envelope at an arbitrary point along the span — what the crosshair reads.
+ *
+ * INTERPOLATED between the bracketing stations rather than snapped to the nearest one.
+ * ETABS gives us a handful of stations (often 5 over a 25 ft span), so snapping would
+ * make the number jump in 5 ft steps while the line you are pointing at moves smoothly:
+ * the readout would disagree with the picture directly above it. Between two stations
+ * the envelope IS drawn as a straight segment, so linear interpolation returns exactly
+ * the value the polygon has at that x — the readout and the drawing cannot drift.
+ *
+ * `x` is in the same units as `stations[].x` (stored-imperial everywhere this is used).
+ * Off either end it clamps to the end station; with no stations it returns null.
+ */
+export function envelopeAt(stations, x) {
+  if (!stations || !stations.length) return null
+  const KEYS = ['Mlo', 'Mhi', 'Vlo', 'Vhi', 'Tlo', 'Thi']
+  const pick = st => { const o = { x: st.x }; for (const k of KEYS) o[k] = st[k] ?? 0; return o }
+  if (x <= stations[0].x) return pick(stations[0])
+  const last = stations[stations.length - 1]
+  if (x >= last.x) return pick(last)
+  for (let i = 1; i < stations.length; i++) {
+    const b = stations[i]
+    if (x > b.x) continue
+    const a = stations[i - 1]
+    const dx = b.x - a.x
+    // Two stations at the same x (duplicate in the import) would divide by zero.
+    const t = dx > 1e-9 ? (x - a.x) / dx : 0
+    const out = { x }
+    for (const k of KEYS) out[k] = (a[k] ?? 0) + t * ((b[k] ?? 0) - (a[k] ?? 0))
+    return out
+  }
+  return pick(last)
+}
+
 export default function ForcePanel({ series, marker, memberId, ...frame }) {
   // The payload is stored-imperial, as everything that crosses the bus is. Convert once
   // here rather than inside the drawing, so Chart stays a pure "numbers to pixels" and
@@ -61,6 +96,22 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
   }
   const mark = marker === undefined || marker === null ? marker : D(marker, 'spanLength')
   const spanText = `${fmtVal(series.span, 'spanLength')} ${label('spanLength')}`
+
+  // Where the pointer is along the span, as a FRACTION of it. A fraction rather than a
+  // position because the three diagrams share one x scale but not one unit — the drawing
+  // wants display feet, the readout wants stored-imperial to hand to fmtVal — and a
+  // fraction converts to either without a second source of truth.
+  const [hoverF, setHoverF] = useState(null)
+  const hoverRaw = hoverF == null ? null : hoverF * series.span
+  const at = hoverRaw == null ? null : envelopeAt(series.stations, hoverRaw)
+
+  // "−211.2 … 0.0", or one number when the envelope has no width at this station (a
+  // single combo, or a quantity that never reverses). Printing "0.0 … 0.0" for the
+  // torsion of a beam that has none is noise, not information.
+  const range = (lo, hi, q) => {
+    const one = v => fmtVal(v, q, 1)
+    return Math.abs(hi - lo) < 5e-2 ? one(hi) : `${one(lo)} … ${one(hi)}`
+  }
   return (
     <PanelFrame {...frame}
       title="Force Diagram" subtitle={`${memberId} · envelope of ${series.combos} combos`}>
@@ -77,7 +128,21 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
         const ch = h / N
         return (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'auto' }}>
-            <svg width={w} height={h} style={{ display: 'block', flex: 'none' }}>
+            {/* One listener for all three diagrams, on the <svg> rather than per chart.
+                The three share an x scale, so pointing at a station on any one of them is
+                pointing at the same station on the other two — which is the whole reason
+                to draw the crosshair on all three rather than only the one under the
+                cursor. Reading clientX against the element's own rect (not offsetX) is
+                what makes that work: offsetX is relative to whichever child polygon the
+                pointer happens to be over. */}
+            <svg width={w} height={h} style={{ display: 'block', flex: 'none' }}
+                 onPointerMove={e => {
+                   const r = e.currentTarget.getBoundingClientRect()
+                   const iw = Math.max(1, w - PAD.l - PAD.r)
+                   const f = (e.clientX - r.left - PAD.l) / iw
+                   setHoverF(Math.min(1, Math.max(0, f)))
+                 }}
+                 onPointerLeave={() => setHoverF(null)}>
               <Chart
                 x={0} y={0} w={w} h={ch} span={S.span} marker={mark} spanText={spanText}
                 lo={S.Mmin} hi={S.Mmax} label={`M  ${label('moment')}`} color={MOMENT}
@@ -85,6 +150,9 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
                 caps={[{ v: S.capPos, t: `${series.capLabels.M}+` },
                        { v: -S.capNeg, t: `${series.capLabels.M}−` }]}
                 invert
+                hover={hoverF} hoverColor={MOMENT}
+                hoverAt={at && { lo: D(at.Mlo, 'moment'), hi: D(at.Mhi, 'moment'),
+                                 text: range(at.Mlo, at.Mhi, 'moment') }}
               />
               {/* The real shear diagram: signed, so it runs positive at the I-node,
                   crosses zero and goes negative at the J-node. `mirrorSteps` draws each
@@ -97,6 +165,9 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
                 band={S.stations.map(st => [st.x, st.Vlo, st.Vhi])}
                 steps={S.vZones}
                 mirrorSteps
+                hover={hoverF} hoverColor={SHEAR}
+                hoverAt={at && { lo: D(at.Vlo, 'force'), hi: D(at.Vhi, 'force'),
+                                 text: range(at.Vlo, at.Vhi, 'force') }}
               />
               {/* Torsion, drawn like shear because it behaves like shear: signed (a
                   spandrel twists one way at one end and the other way at the other), and
@@ -125,8 +196,23 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
                   { v: S.capTcr, t: series.capLabels.Tcr, muted: true },
                   { v: -S.capTcr, muted: true },
                 ] : []}
+                hover={hoverF} hoverColor={TORSION}
+                hoverAt={at && { lo: D(at.Tlo, 'moment'), hi: D(at.Thi, 'moment'),
+                                 text: range(at.Tlo, at.Thi, 'moment') }}
               />
             </svg>
+            {/* While the pointer is over a diagram the legend gives way to the numbers.
+                It is the same strip rather than an extra row because a strip that appears
+                on hover would reflow all three charts under the cursor; and the legend is
+                what you stop needing the moment you are reading values off a station. */}
+            {at ? (
+              <div className="demo-fd-legend read">
+                <span className="demo-fd-x">x = {fmtVal(hoverRaw, 'spanLength', 2)} {label('spanLength')}</span>
+                <span><i style={{ background: MOMENT }} /> M {range(at.Mlo, at.Mhi, 'moment')} {label('moment')}</span>
+                <span><i style={{ background: SHEAR }} /> V {range(at.Vlo, at.Vhi, 'force')} {label('force')}</span>
+                <span><i style={{ background: TORSION }} /> T {range(at.Tlo, at.Thi, 'moment')} {label('moment')}</span>
+              </div>
+            ) : (
             <div className="demo-fd-legend">
               <span><i style={{ background: MOMENT }} /> moment envelope</span>
               <span><i style={{ background: SHEAR }} /> shear envelope</span>
@@ -140,7 +226,9 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
               {S.vZones.length > 1
                 ? <span style={{ color: '#b45309' }}>{series.capLabels.V} steps at the tie zones</span>
                 : null}
+              <span className="demo-fd-hint">hover a diagram for M, V and T at that station</span>
             </div>
+            )}
           </div>
         )
       }}
@@ -148,8 +236,10 @@ export default function ForcePanel({ series, marker, memberId, ...frame }) {
   )
 }
 
-/** One diagram: a filled demand envelope, dashed capacity, and the selected station. */
-function Chart({ x, y, w, h, span, lo, hi, label, color, band, caps = [], steps, mirrorSteps, marker, invert, spanText }) {
+/** One diagram: a filled demand envelope, dashed capacity, the selected station, and the
+ *  hover crosshair. */
+function Chart({ x, y, w, h, span, lo, hi, label, color, band, caps = [], steps, mirrorSteps, marker, invert, spanText,
+                 hover, hoverAt, hoverColor }) {
   const iw = Math.max(1, w - PAD.l - PAD.r)
   const ih = Math.max(1, h - PAD.t - PAD.b)
   // Include the capacities in the scale, or a beam with plenty of headroom draws its
@@ -221,6 +311,38 @@ function Chart({ x, y, w, h, span, lo, hi, label, color, band, caps = [], steps,
         <line x1={px(marker)} y1={PAD.t} x2={px(marker)} y2={PAD.t + ih}
               stroke="#2563eb" strokeWidth="1.4" />
       ) : null}
+
+      {/* The crosshair. Dashed and grey so it never competes with the blue marker, which
+          means something else entirely — that is the station the Calc Sheet is showing,
+          and it must stay findable while you sweep the pointer past it.
+
+          The two dots sit on the envelope edges, which is what makes the number
+          trustworthy: you can see the value being read off the polygon rather than
+          computed somewhere out of sight. When the envelope has no width they land on
+          top of each other, and that is the honest picture of a station with one value. */}
+      {hover != null && hoverAt ? (() => {
+        const hx = px(hover * span)
+        const flip = hx > PAD.l + iw * 0.62      // keep the label inside the plot
+        // The chip behind the text. The top strip of the plot already carries the capacity
+        // step numbers, and a moving label crossing a fixed one leaves both unreadable —
+        // so the one that moves gets an opaque backing. Monospace at a known size, so the
+        // width is countable rather than measurable (SVG has no layout pass to ask).
+        const tw = hoverAt.text.length * 5.75 + 7
+        return (
+          <g pointerEvents="none">
+            <line x1={hx} y1={PAD.t} x2={hx} y2={PAD.t + ih}
+                  stroke="#64748b" strokeWidth="1" strokeDasharray="3 3" />
+            <circle cx={hx} cy={py(hoverAt.lo)} r="2.6" fill={hoverColor || color} />
+            <circle cx={hx} cy={py(hoverAt.hi)} r="2.6" fill={hoverColor || color} />
+            <rect x={flip ? hx - 2 - tw : hx + 2} y={PAD.t + 1} width={tw} height={12}
+                  rx="2" fill="#ffffff" fillOpacity="0.92" />
+            <text x={hx + (flip ? -5 : 5)} y={PAD.t + 10} textAnchor={flip ? 'end' : 'start'}
+                  fontSize="9.5" fontWeight="700" fill={hoverColor || color} fontFamily="var(--mono)">
+              {hoverAt.text}
+            </text>
+          </g>
+        )
+      })() : null}
 
       <text x={4} y={PAD.t + 9} fontSize="9" fill="#94a3b8" fontFamily="var(--mono)">{label}</text>
       <text x={PAD.l} y={h - 5} fontSize="9" fill="#94a3b8" fontFamily="var(--mono)">0</text>

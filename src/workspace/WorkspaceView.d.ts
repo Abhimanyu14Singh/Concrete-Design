@@ -17,6 +17,9 @@ export interface WorkspaceViewProps {
   onSettingsSave?: (next: { name: string; code: DesignCode; settings: ProjectSettings }) => void;
   /** Disk and ETABS — App's, because they outlive any panel. */
   onSaveProject?: () => void;
+  onSaveProjectAs?: () => void;
+  /** Help deep-link from App: a sub-tab, or a guide section to scroll to. */
+  helpTarget?: { tab?: string; section?: string } | null;
   onOpenProject?: () => void;
   onNewProject?: () => void;
   onImportEtabs?: () => void;

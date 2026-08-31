@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { breakdownFor, chartsFor, designMemberAllRows, forceSeries, regionsFor, stationEnvelope, suggestAllGroups, summaryMaps } from './design'
+import { breakdownFor, chartsFor, comboNames, designMemberAllRows, forceSeries, modelSignatureOf, NEAR_CAPACITY, regionsFor, stationEnvelope, suggestAllGroupsChunked, summaryMaps } from './design'
+import StatusBar from './StatusBar'
+import { beginActivity } from '../utils/activity'
+import { track, trackTiming } from '../utils/usage'
+import { togglePerf } from '../utils/perfProbe'
 import { PANEL_ORDER, PANELS, canDetach } from './popoutBus'
 import { loadLayout, saveLayout, clearLayout, DEFAULT_LAYOUT } from './layout'
+import { exportMenuItems } from './exportMenu'
+import PreferencesDialog from './PreferencesDialog'
+import ReportModal from '../components/ReportModal.tsx'
 import usePopoutHost from './usePopoutHost'
 import Portal from './Portal'
 import Workspace from './Workspace'
 import useDockDrag from './useDockDrag'
 import { defaultLayout, placePanel, reconcile } from './dockLayout'
+import {
+  DOCK, closeWindowPanels, mergeWindows, movePanelToWindow, newWinId, panelsInWindow, windowIds, windowLabel,
+} from './windowDock'
 // The app's own header chips, not lookalikes. `hdrBtn` below is the app's chip style
 // (src/App.tsx:32) and Icon is the app's icon set, so a chip here is the same object
 // the product ships — same 12px/600 label, same 1px #d1d5db border, same
@@ -34,8 +44,11 @@ import { buildDashboardPayload } from '../utils/dashboardPayload.ts'
 import HelpView from '../components/Help/HelpView.tsx'
 import MenuBar from './MenuBar'
 import PushToEtabsDialog from './PushToEtabsDialog'
+// The write half of the ETABS round trip: plan builder, runner, summary.
+import { SECTION_PUSH_STEPS, canPushSections, emptyPushOutcome, runSectionPush, summarizeSectionPush } from '../adapters/etabs/pushSections'
+import { stationLoadCases } from '../adapters/etabs'
+import { ComConnection } from '../adapters/etabs/comClient'
 import { resizedGroups, defaultModelName } from './etabsPush'
-import SuggestSizeDialog from '../components/common/SuggestSizeDialog.tsx'
 // The plan's colour schemes are the APP's, not a demo subset — same modes, same metrics,
 // same palettes, computed by the same functions. A mode that looked right here and
 // different in the app would be worse than not having it.
@@ -90,7 +103,9 @@ export default function WorkspaceView({
   project, setProject,
   // The product's own flows, owned by App because they touch disk, ETABS and the
   // Electron menu. The workspace only offers the affordance; App does the work.
-  onSettingsSave, onSaveProject, onOpenProject, onNewProject, onImportEtabs,
+  onSettingsSave, onSaveProject, onSaveProjectAs, onOpenProject, onNewProject, onImportEtabs,
+  /** {tab} or {section} pushed in from App - the native Help menu, F1, a panel's "?". */
+  helpTarget: externalHelp,
 }) {
   const saved = useMemo(loadLayout, [])
 
@@ -163,6 +178,12 @@ export default function WorkspaceView({
   const [railPinned, setRailPinned] = useState(saved.railPinned)
   const [railW, setRailW] = useState(saved.railW)
   const [dock, setDock] = useState(saved.dock)          // null until first reconcile
+  // Detached windows are CONTAINERS: `winOf` says which window holds each detached panel
+  // and `winDock` is that window's own column layout. Together with `hosts` and `dock`
+  // they are the whole "where is everything" model — see windowDock.js, which owns the
+  // operations on them so no reducer here has to reason about two levels at once.
+  const [winOf, setWinOf] = useState(saved.winOf || {})
+  const [winDock, setWinDock] = useState(saved.winDock || {})
   const [maximized, setMaximized] = useState(saved.maximized)
   // Storeys are now a HIDE set rather than a single choice: the Filter lets several be
   // on at once, and "hidden" is the shape MapCanvas already takes.
@@ -173,7 +194,11 @@ export default function WorkspaceView({
   // view preference like any other, so it persists rather than resetting every time you
   // pass through that mode.
   const [flexFace, setFlexFace] = useState(saved.flexFace)
+  const [lineWeightScale, setLineWeightScale] = useState(saved.lineWeightScale ?? 0.35)
   const [planDiagram, setPlanDiagram] = useState(saved.planDiagram)
+  // Which load combination the M / V overlay draws. '' = the envelope across all of them.
+  // A view preference like the projection, so it persists with the rest of the layout.
+  const [planCombo, setPlanCombo] = useState(saved.planCombo ?? '')
   // The DCR colour scale — where the four bands cut, and what colour each one is. A view
   // preference like the projection and the overlay, so it rides in the saved layout
   // rather than resetting every reload: a scale you have to re-tune each time is a scale
@@ -220,11 +245,40 @@ export default function WorkspaceView({
   // toggled units from a chip the app does not have was demonstrating a control that
   // does not exist.
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [prefsOpen, setPrefsOpen] = useState(false)
+  // How the map draws each element kind. A MACHINE preference, not project data — it
+  // rides with the layout for the same reason the panel arrangement does.
+  const [elementStyles, setElementStyles] = useState(saved.elementStyles)
+
+  // The NATIVE Preferences menu, in the packaged app. The in-page menu bar is hidden in
+  // the desktop build, so without this the entry exists only in the browser — which is
+  // exactly how it shipped in 0.1.16. Subscribed here rather than in App because this is
+  // where the dialog's state lives; `off` on unmount so a re-mount cannot double-fire.
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined
+    if (!api?.onOpenPreferences) return undefined
+    api.onOpenPreferences(() => setPrefsOpen(true))
+    return () => api.offOpenPreferences?.()
+  }, [])
+  // A one-line status beside the Export button: "Building …", or why a build failed.
+  // The PDF builders fetch and embed fonts, so they take a visible moment and can fail
+  // — without this, a click on a PDF entry looks like a control that does nothing.
+  const [exportNote, setExportNote] = useState(null)
   const [query, setQuery] = useState('')
   const [failsOnly, setFailsOnly] = useState(false)
-  // ✨ Suggest: the size-floor dialog, and the one-line outcome it reports.
-  const [suggestOpen, setSuggestOpen] = useState(false)
+  // ✨ Suggest: the one-line outcome the sweep reports. The size-floor DIALOG is not
+  // here — it belongs to the Group Dashboard panel, so it opens in whichever window the
+  // button was pressed in. Only the floors it collects come back.
   const [suggestNote, setSuggestNote] = useState(null)
+  // The sweep is long enough to click twice. The status bar narrates it, but the button
+  // that started it is on the Group Dashboard — which may be on another screen with the
+  // strip nowhere in sight — so it reports its own state as well.
+  const [suggestBusy, setSuggestBusy] = useState(false)
+  // What a DETACHED panel is told when its button opened a dialog over here — see
+  // `revealHere`. Separate from `suggestNote` so it can be cleared the moment the dialog
+  // closes without taking a real outcome ("12 groups resized") down with it.
+  const [awayNote, setAwayNote] = useState(null)
   // ── model versions ──────────────────────────────────────────────────────────
   // Each push freezes the working model under a name and keeps its designs, so the
   // dashboard can be pointed at "what the model said before I resized anything" and at
@@ -234,12 +288,50 @@ export default function WorkspaceView({
   // Frozen deliberately: a version holds its OWN members and designs, not a recipe for
   // re-deriving them. A recipe would silently follow later edits and the comparison —
   // the entire point — would quietly stop being one.
-  const [versions, setVersions] = useState([])
+  // Held in the PROJECT, not in local state, so they go into the one `.scdb` and a past
+  // design survives closing the app — which is the whole reason to keep one. `designs`
+  // are re-derived below rather than stored: they follow deterministically from the
+  // frozen members, code and prefs, and storing them would double the file to hold
+  // numbers the engine can reproduce.
+  const versions = useMemo(() => {
+    const raw = project.modelVersions ?? []
+    return raw.map(v => ({
+      ...v,
+      groups: v.groups ?? [],
+      groupRebar: v.groupRebar ?? {},
+      designs: v.members.map(m => designMemberAllRows(m, v.code, v.prefs ?? {})),
+    }))
+  }, [project.modelVersions])
   const [modelVersion, setModelVersion] = useState('live')
   const [pushOpen, setPushOpen] = useState(false)
+  const [pushBusy, setPushBusy] = useState(null)   // the live push step, or null
+  // The prompt lives exactly as long as the dialog it points at. Cleared on close rather
+  // than by whoever closed it, so cancel, confirm, Escape and a click on the backdrop all
+  // retire it — a note still saying "confirm in the main window" over a dialog that is
+  // no longer open would be worse than no note at all.
+  useEffect(() => { if (!pushOpen) setAwayNote(null) }, [pushOpen])
   // Which Help sub-tab the menu asked for; null = closed. 'about' is the app's native
   // dialog, which a web page has no equivalent of, so it gets a panel of its own.
   const [helpTarget, setHelpTarget] = useState(null)
+  /**
+   * Help opened from OUTSIDE this component: the native Electron menu, F1, and every
+   * panel's "?" deep-link. All three land in App.tsx, which kept a `helpTarget` and a
+   * `setTab('help')` for the old tabbed shell and rendered `HelpView` in neither. The
+   * workspace is the only shell now, so those three routes did nothing at all - and in
+   * the packaged app the native menu is the ONLY Help menu, so every entry under it
+   * opened an empty screen. Mirroring the prop into local state is what connects them.
+   */
+  useEffect(() => {
+    if (!externalHelp) return
+    setHelpTarget(externalHelp.section ? { section: externalHelp.section } : (externalHelp.tab ?? 'guide'))
+  }, [externalHelp])
+  // STABLE object for HelpView. Built inline as `{{ tab }}` it is a new reference every
+  // render, so HelpView's deep-link effect re-runs and forces its sub-tab back - which
+  // would fight the reader clicking tabs inside the guide.
+  const helpView = useMemo(
+    () => (helpTarget && typeof helpTarget === 'object' ? helpTarget : { tab: helpTarget }),
+    [helpTarget],
+  )
   // `label` and `toDisplay` are for the plan's metric colour ramps — the only numbers
   // the main window formats itself now that the header strip is gone; everything else a
   // panel renders, it formats.
@@ -254,8 +346,8 @@ export default function WorkspaceView({
   // NOT saved: this is a demo of a shell, and a stale edit surviving a reload would make
   // it impossible to tell what the engine actually produces from a clean start.
   useEffect(() => {
-    saveLayout({ memberId, groupId, code, font, units, hosts, geom, openGroups, hiddenStories, planElements, planColorMode, planDiagram, flexFace, dcrThresholds, dcrColors, view3d, storyBefore3d, groupsTab, selectionKind, dock, maximized, railOpen, railPinned, railW })
-  }, [memberId, groupId, code, font, units, hosts, geom, openGroups, hiddenStories, planElements, planColorMode, planDiagram, flexFace, view3d, storyBefore3d, groupsTab, selectionKind, dock, maximized, railOpen, railPinned, railW])
+    saveLayout({ memberId, groupId, code, font, units, hosts, winOf, winDock, geom, elementStyles, openGroups, hiddenStories, planElements, planColorMode, planDiagram, planCombo, flexFace, lineWeightScale, dcrThresholds, dcrColors, view3d, storyBefore3d, groupsTab, selectionKind, dock, maximized, railOpen, railPinned, railW })
+  }, [memberId, groupId, code, font, units, hosts, winOf, winDock, geom, elementStyles, openGroups, hiddenStories, planElements, planColorMode, planDiagram, planCombo, flexFace, lineWeightScale, view3d, storyBefore3d, groupsTab, selectionKind, dock, maximized, railOpen, railPinned, railW])
 
   // ── model ───────────────────────────────────────────────────────────────────
   // Edits are whole MEMBERS, not just cages: the Editor panel can change geometry and
@@ -307,7 +399,50 @@ export default function WorkspaceView({
   // Every member, every load row, through the real engine — ~7,000 rows, under 40 ms.
   // Eager because it is what lets the rail carry live DCRs; if it ever stops being
   // affordable the fix is a cache keyed on member identity, not a cheaper number.
-  const liveDesigns = useMemo(() => liveMembers.map(m => designMemberAllRows(m, code)), [liveMembers, code])
+  /**
+   * The project's design preferences, in one object.
+   *
+   * Bundled rather than passed one at a time because `runDesign` takes them
+   * POSITIONALLY, and a call site that stops short of an argument silently designs under
+   * different rules with no type error. That is exactly how "Neglect torsion" ended up
+   * honoured in the member panel, the dashboard and the .SCO writers — but NOT in this
+   * shell, which is the UI most of the work actually happens in.
+   */
+  const designPrefs = useMemo(() => ({
+    cotTheta: project.cotTheta,
+    ignoreTorsion: project.ignoreTorsion,
+    // The EC2 crack check reads its quasi-permanent moments from this combo's station
+    // forces. Omitted, every EC2 crack DCR in the shell falls back to `qpFactor × Mu`
+    // while the member screen and the .SCO writers use the real Mqp — the same beam,
+    // two different SLS demands.
+    slsCombo: project.slsCombo,
+  }), [project.cotTheta, project.ignoreTorsion, project.slsCombo])
+
+  const liveDesigns = useMemo(
+    () => liveMembers.map(m => designMemberAllRows(m, code, designPrefs)),
+    [liveMembers, code, designPrefs],
+  )
+
+  /**
+   * Is the working model still exactly the newest frozen one?
+   *
+   * Immediately after a push it is — the push freezes what you have, so "Working model"
+   * and the model you just made are the same thing under two names. Listing both turns a
+   * two-model job (the one you opened, the one you pushed) into a three-entry picker
+   * where two entries are identical, which is what made the list confusing.
+   *
+   * A cheap structural signature rather than a deep compare: what distinguishes one
+   * revision from the next is the sections, the cages and the demand, so those are what
+   * it reads. It is only deciding whether to show a row — a false "changed" costs a
+   * redundant entry, not a wrong number.
+   */
+  const modelSignature = useCallback(ms => modelSignatureOf(ms), [])
+
+  const workingIsNewest = useMemo(() => {
+    const newest = versions[versions.length - 1]
+    if (!newest) return false
+    return modelSignature(liveMembers) === modelSignature(newest.members)
+  }, [versions, liveMembers, modelSignature])
 
   // ── which model the workspace is showing ────────────────────────────────────
   // A pushed version is a FROZEN model: its own members, its own designs, the groups and
@@ -320,10 +455,16 @@ export default function WorkspaceView({
   // And it is READ-ONLY, necessarily: a frozen snapshot has no future. Every mutator
   // below returns early rather than forking a version behind the user's back, and the
   // top bar says so beside the picker.
-  const frozenModel = useMemo(
-    () => versions.find(v => v.id === modelVersion) || null,
-    [versions, modelVersion],
-  )
+  const frozenModel = useMemo(() => {
+    const v = versions.find(x => x.id === modelVersion) || null
+    // Selecting the newest model while the working model still equals it is not
+    // "viewing history" — it is the model you are working in, under its own name.
+    // Treating it as frozen would lock the workspace the moment a push finished, so the
+    // engineer could not resize again for the next revision.
+    const newest = versions[versions.length - 1]
+    if (v && newest && v.id === newest.id && workingIsNewest) return null
+    return v
+  }, [versions, modelVersion, workingIsNewest])
   const readOnly = !!frozenModel
   const members = frozenModel ? frozenModel.members : liveMembers
   const designs = frozenModel ? frozenModel.designs : liveDesigns
@@ -372,8 +513,54 @@ export default function WorkspaceView({
     if (maximized && hosts[maximized] !== 'dock') setMaximized(null)
   }, [maximized, hosts])
 
-  const setHost = useCallback((kind, host) => setHosts(h => ({ ...h, [kind]: host })), [])
-  const closePanel = useCallback(kind => setHosts(h => ({ ...h, [kind]: null })), [])
+  // ── where panels live ───────────────────────────────────────────────────────
+  //
+  // The four pieces of "where is everything" are separate useState, but a move touches
+  // all of them at once and each has to see the others' CURRENT value — a panel leaving
+  // window w2 for w1 changes hosts, winOf, both window layouts and possibly the dock. A
+  // ref gives the mover one coherent snapshot; functional setState could not, because
+  // each updater only sees its own slice.
+  const dockStateRef = useRef(null)
+  dockStateRef.current = { hosts, winOf, winDock, dock }
+  const hostRef = useRef(null)
+
+  /**
+   * Move a panel to a window. THE one way anything changes where a panel lives.
+   *
+   * `to` is a window id, `'dock'` for the main workspace, or `'new'` to allocate a fresh
+   * window. Every route lands here — the header buttons, the context menu, a drag inside
+   * this window, a drag from a detached window, a tear-off — so there is exactly one
+   * place that has to be right, and the popout bus can express a move as data rather
+   * than as a sequence of host changes that could interleave.
+   */
+  const movePanel = useCallback((kind, to, target) => {
+    const cur = dockStateRef.current
+    const winId = to === 'new' ? newWinId(cur.hosts, cur.winOf) : to
+    const next = movePanelToWindow(cur, kind, winId, target || null)
+    setHosts(next.hosts)
+    setWinOf(next.winOf)
+    setWinDock(next.winDock)
+    setDock(next.dock)
+    // A maximised panel and a move are incompatible: the panel being moved may be the
+    // maximised one, and even if not, the workspace behind it has just changed shape.
+    setMaximized(null)
+    // Bring the destination forward, or the drop lands on a window still behind this one
+    // and reads as nothing having happened.
+    if (winId !== DOCK && hostRef.current) hostRef.current.focusWindow(winId)
+  }, [])
+
+  const setHost = useCallback((kind, host) => {
+    // 'window' is no longer a place — it is a place PER WINDOW. Detaching means "into a
+    // new window of its own", which is what it always meant when a window could only
+    // hold one panel.
+    if (host === 'window') { movePanel(kind, 'new'); return }
+    setHosts(h => ({ ...h, [kind]: host }))
+    setWinOf(w => { if (!w[kind]) return w; const n = { ...w }; delete n[kind]; return n })
+  }, [movePanel])
+  const closePanel = useCallback(kind => {
+    setHosts(h => ({ ...h, [kind]: null }))
+    setWinOf(w => { if (!w[kind]) return w; const n = { ...w }; delete n[kind]; return n })
+  }, [])
   const togglePanel = useCallback(kind => setHosts(h => ({ ...h, [kind]: h[kind] ? null : 'dock' })), [])
   const setGeomFor = useCallback((kind, g) => setGeom(all => ({ ...all, [kind]: g })), [])
 
@@ -462,6 +649,30 @@ export default function WorkspaceView({
     // that still exists rather than rendering a blank.
     setGroupId(cur => (next.some(g => g.id === cur) ? cur : (next[0]?.id ?? null)))
   }, [readOnly])
+
+  /**
+   * Delete ONE beam. The member is removed and everything follows from that: the plan
+   * filters frames to live members, the design memo re-runs, every rollup re-counts.
+   *
+   * No confirm — `setProject` in App pushes a 20-deep undo history, so Ctrl+Z is the
+   * undo, and a modal on every delete is friction for an action that is already
+   * reversible. It is a no-op on a frozen version, like every other writer here.
+   */
+  const deleteMember = useCallback(id => {
+    if (readOnly) return
+    const frameName = frameOf.get(id)
+    setMembers(ms => ms.filter(m => m.id !== id))
+    onGroupsChange(groups.map(g => (
+      g.memberIds.includes(id) ? { ...g, memberIds: g.memberIds.filter(x => x !== id) } : g
+    )))
+    // selectedFrames is populated as frame NAMES by the plan (onSelectFrames) and as a
+    // member ID by pickMember, so drop both rather than betting on which one put this
+    // beam there.
+    setSelectedFrames(names => names.filter(n => n !== id && n !== frameName))
+    // Leaving every other panel describing a beam that no longer exists reads as a
+    // frozen UI; move the selection to any survivor.
+    setMemberId(cur => (cur === id ? (baseMembers.find(m => m.id !== id)?.id ?? cur) : cur))
+  }, [readOnly, groups, onGroupsChange, frameOf, baseMembers])
 
   /** Delete a group AND its beams. The members go into a removal set; the design memo,
    *  the plan and every rollup follow from that one fact. */
@@ -676,9 +887,47 @@ export default function WorkspaceView({
    * group would re-run the engine over all ~5,700 load rows once per group, and would
    * half-apply the sweep if one group could not be resolved.
    */
-  const runSuggestAll = useCallback(floors => {
-    setSuggestOpen(false)
-    const { rebarByGroup, note } = suggestAllGroups(groups, members, code, barFamily, floors)
+  const runSuggestAll = useCallback(async floors => {
+    // Chunked, so the status bar can narrate it and the user can hold it at a group
+    // boundary. Nothing below runs until every group has resolved, so a pause — or a
+    // sweep abandoned while paused — leaves the model exactly as it was.
+    const task = beginActivity({
+      label: 'Suggest — preparing…',
+      total: groups.length,
+      pausable: true,
+    })
+    let rebarByGroup, note, stats
+    setSuggestBusy(true)
+    // Counted, not narrated. The status-bar sentence spends its length listing the groups
+    // that failed and drops the REASON off the end — which is exactly the half needed to
+    // answer "why did 10 of 12 not resolve". See createSweep.finish in design.js.
+    // `from` separates this from the map's own sweep (ModelMapView.runSuggestAllGroups),
+    // which is a second implementation of the same operation — without it the two are
+    // indistinguishable in the log and neither can be compared against the other.
+    const doneSweep = trackTiming('suggest.sweep', { from: 'workspace', groups: groups.length, code })
+    try {
+      ({ rebarByGroup, note, stats } = await suggestAllGroupsChunked(
+        groups, members, code, barFamily, floors, undefined, designPrefs,
+        {
+          gate: () => task.gate(),
+          onProgress: (done, total, label) => task.update({
+            done,
+            total,
+            label: label
+              ? `Sizing ${label} — group ${done + 1} of ${total}`
+              : 'Applying suggested cages…',
+          }),
+        },
+      ))
+    } finally {
+      // Both end on the throw path too: a bar — or a button — left saying "Sizing…"
+      // after the sweep died is the one state that would make them liars.
+      task.end(note ?? 'Suggest stopped')
+      setSuggestBusy(false)
+      // In the finally so an abandoned or thrown sweep is recorded as one. A sweep that
+      // vanishes from the log is indistinguishable from a sweep nobody ran.
+      doneSweep(stats ? { ...stats, applied: rebarByGroup?.size ?? 0 } : { aborted: true })
+    }
     setSuggestNote(note)
     if (!rebarByGroup.size) return
     setGroupRebar(t => {
@@ -695,7 +944,7 @@ export default function WorkspaceView({
       }
       return ms.map(m => (byId.has(m.id) ? { ...m, rebar: byId.get(m.id) } : m))
     })
-  }, [groups, members, code, barFamily, setMembers])
+  }, [groups, members, code, barFamily, setMembers, designPrefs])
 
   // `font` and `units` ride along in every payload because a detached window is a
   // separate document: it inherits neither the <html> attribute nor the React context.
@@ -707,9 +956,63 @@ export default function WorkspaceView({
   // the one place in this app where that would actually be felt.
   const { resultById, dcrById, modeById } = useMemo(() => summaryMaps(designs), [designs])
 
+  /**
+   * The state of the model, as numbers — the one thing the log was missing entirely.
+   *
+   * Everything recorded up to now describes what the user DID. This records what the app
+   * produced: how many members pass, how many are over capacity, which check is driving
+   * each one. Without it a session reads "imported 123 members, ran Suggest" and stops
+   * exactly where the interesting question starts — 123 members in what state, failing on
+   * what? The per-mode counts are the part that generalises: shear governing 80% of a
+   * model is a different product problem from flexure governing it.
+   *
+   * DEBOUNCED, and deliberately not memoised on every keystroke: this fires after imports,
+   * sweeps and cage edits settle, not while a number is being typed into a spinner. Engine
+   * truth, not the display layer — an engineer's "Reviewed" override belongs to their
+   * judgement and is counted separately (`override.apply`), never folded in here.
+   */
+  useEffect(() => {
+    if (!designs.length) return
+    const t = setTimeout(() => {
+      let ok = 0, warn = 0, ng = 0, worst = 0
+      const governing = {}
+      for (const d of designs) {
+        const dcr = dcrById[d.member.id] ?? 0
+        if (dcr > worst) worst = dcr
+        if (dcr > 1) ng++; else if (dcr > NEAR_CAPACITY) warn++; else ok++
+        const modes = modeById[d.member.id]
+        if (modes) {
+          // Which check is actually driving this member — the max across its modes.
+          let key = null, top = 0
+          for (const [k, v] of Object.entries(modes)) {
+            if (typeof v === 'number' && v > top) { top = v; key = k }
+          }
+          if (key) governing[key] = (governing[key] || 0) + 1
+        }
+      }
+      track('design.summary', {
+        members: designs.length,
+        ok, warn, ng,
+        worstDcr: Math.round(worst * 100) / 100,
+        governing,
+        code,
+        frozen: !!frozenModel,
+      })
+    }, 2000)
+    return () => clearTimeout(t)
+  }, [designs, dcrById, modeById, code, frozenModel])
+
   // The baseline: the model exactly as data.js describes it, which is what an ETABS
   // import would have handed over. Compared against the live model to decide what has
   // been resized, so a beam edited back to its original size correctly stops counting.
+  /** A live push needs a bridge that can write AND members that are real ETABS frames —
+   *  see the note on the demo's copy. An unlinked model simulates, automatically. */
+  const canPushLive = useMemo(() => {
+    const bridged = typeof window !== 'undefined' && !!window.electronAPI?.etabs
+    if (!bridged || !canPushSections(new ComConnection())) return false
+    return members.length > 0 && members.every(m => !!m.etabs?.frameName)
+  }, [members])
+
   const resizedRows = useMemo(
     () => resizedGroups(groups.map(g => ({ ...g, dcrById })), members, baselineRef.current),
     [groups, members, dcrById],
@@ -718,39 +1021,228 @@ export default function WorkspaceView({
   /**
    * Freeze the working model under a new name and re-run it.
    *
-   * This is where the ETABS round trip would go: define one frame-section property per
-   * resized group, assign the group's frames to it, File→Save As under the new name, then
-   * Analyze→Run and re-read the results. The connection is read-only today (no
-   * DefineFrameSection / AssignSection / SaveAs / RunAnalysis anywhere in the adapters,
-   * the Electron bridge or the C# sidecar), so the payload is built and the app's own
-   * engine produces what the re-run would return. The dialog says as much on its face.
+   * The ETABS round trip: define one frame-section property per resized group, assign
+   * the group's frames to it, File→Save As under the new name, then Analyze→Run.
+   *  owns that sequence; this decides whether it can be run at all.
+   *
+   * Without a live model to write to, the same plan is built and the app's own engine
+   * produces what the re-run would return, under a new version name. The dialog says
+   * which of the two is about to happen.
    */
-  const onPush = useCallback(({ rows, modelName, payload }) => {
-    const snapshot = members.map(m => ({ ...m }))
-    const vDesigns = snapshot.map(m => designMemberAllRows(m, code))
-    setVersions(vs => {
-      const id = `v${vs.length + 1}`
-      const next = [...vs, {
-        id,
-        name: modelName,
-        members: snapshot,
-        designs: vDesigns,
-        groups: groups.map(g => ({ ...g, memberIds: g.memberIds.slice() })),
-        groupRebar: { ...groupRebar },
-        code,
-        payload,
-        properties: rows.map(r => ({ label: r.label, name: r.propertyName, b: r.to.b, h: r.to.h, fc: r.to.fc })),
-      }]
-      setModelVersion(id)
-      return next
+  /**
+   * Run ONE step of the live push, keeping the connection open between calls.
+   *
+   * The dialog drives the sequence a button at a time, so the connection has to outlive
+   * a single call — reconnecting per step would be four attaches, and worse, a step
+   * could land on a different ETABS instance than the one before it. Held in a ref
+   * rather than state because nothing renders from it and a re-render mid-push must not
+   * drop it.
+   */
+  /**
+   * Freeze the working model under a name and keep it.
+   *
+   * Called by BOTH push paths. The live one used to skip this entirely — it wrote to
+   * ETABS and returned — so a real push produced a new .EDB and nothing to come back to
+   * in the app, which is the opposite of what the history is for. The simulated path is
+   * the one that always froze, so for a while the only revisitable designs were the ones
+   * that never touched ETABS.
+   */
+  /**
+   * Write re-analysed forces onto the members they came from.
+   *
+   * Shared by both push paths. The one-click path already ASKED for the forces — it runs
+   * the same step list — and then dropped them on the floor, so a one-click push
+   * re-analysed the model and went on designing against the old demand. Same bug as the
+   * stepped path had, one level up.
+   */
+  const applyReimportedForces = useCallback((byFrame, combos) => {
+    if (!byFrame) return { count: 0, members: null }
+    const label = `ETABS env (${(combos ?? []).join(', ')})`
+    const patch = (m) => {
+      const fn = m.etabs?.frameName
+      const next = fn ? byFrame[fn] : undefined
+      if (!next || !next.length) return m
+      return { ...m, stationForces: next, loads: stationLoadCases(next, label, m.span) }
+    }
+    setProject(p2 => ({ ...p2, members: p2.members.map(patch) }))
+    // The same patch applied to the DERIVED members, returned for a caller that needs
+    // them in this tick. `setProject` is async, so a caller freezing a version
+    // immediately after would otherwise snapshot the state from BEFORE the re-import —
+    // and keep the design against the old demand, which is the bug this whole step
+    // exists to close. The patch only touches loads / stationForces, which the
+    // derivation passes straight through, so patching either end gives the same array.
+    const patched = members.map(patch)
+    return { count: patched.filter((m, i) => m !== members[i]).length, members: patched }
+  }, [setProject, members])
+
+  /**
+   * The model AS IMPORTED, frozen so the first push has something to be different from.
+   *
+   * Without it the picker was useless on the run that matters most. The engineer imports,
+   * resizes, pushes — and the only two entries are "Working model" and rev 1, which by
+   * then hold the same members, because rev 1 was frozen FROM the working model. The
+   * state they actually want to compare against — original sections, original forces —
+   * had been overwritten by the resize and then by the re-import, and was never kept.
+   *
+   * `baselineRef` already holds exactly those members: it is captured when a model
+   * arrives and left alone through every edit, because "what resized" is measured
+   * against it. This just stops it being thrown away.
+   *
+   * The groups are today's, which is an approximation: a group created after the import
+   * did not exist at the baseline. The MEMBERS are the honest part — each carries its own
+   * as-imported cage, and `groupRebar` is left empty so nothing overrides it.
+   */
+  const baselineVersion = useCallback(() => ({
+    id: 'v-imported',
+    name: `${MODEL_MAP.modelName || 'Model'} — as imported`,
+    savedAt: new Date().toISOString(),
+    code,
+    prefs: designPrefs,
+    members: baselineRef.current.map(m => ({ ...m })),
+    groups: groups.map(g => ({ ...g, memberIds: g.memberIds.slice() })),
+    groupRebar: {},
+    properties: [],
+  }), [MODEL_MAP.modelName, code, designPrefs, groups])
+
+  const freezeVersion = useCallback(({ modelName, rows, membersOverride }) => {
+    const snapshot = (membersOverride ?? members).map(m => ({ ...m }))
+    const v = {
+      id: `v${Date.now().toString(36)}`,
+      name: modelName,
+      savedAt: new Date().toISOString(),
+      code,
+      prefs: designPrefs,
+      members: snapshot,
+      groups: groups.map(g => ({ ...g, memberIds: g.memberIds.slice() })),
+      groupRebar: { ...groupRebar },
+      properties: (rows ?? []).map(r => ({ label: r.label, name: r.propertyName, b: r.to.b, h: r.to.h, fc: r.to.fc })),
+    }
+    setProject(p => {
+      const existing = p.modelVersions ?? []
+      // The baseline goes in ahead of the first pushed version, once, so the list reads
+      // "as imported → rev 1 → rev 2" rather than starting at the first thing that
+      // changed. Keyed off emptiness rather than a flag: a project that already has
+      // versions has already had one.
+      const withBase = existing.length || !baselineRef.current?.length
+        ? existing
+        : [baselineVersion(), ...existing]
+      return { ...p, modelVersions: [...withBase, v] }
     })
+    setModelVersion(v.id)
+    return v.id
+  }, [members, code, groups, groupRebar, designPrefs, setProject, baselineVersion])
+
+  const pushConnRef = useRef(null)
+  const pushOutRef = useRef(null)
+  const onPushStep = useCallback(async (stepId, plan) => {
+    // `setProject` is used by the re-import branch below; declared in the dep list so a
+    // stale closure cannot write to a project that has since been replaced.
+    try {
+      if (!pushConnRef.current) {
+        const conn = new ComConnection()
+        await conn.connect()
+        pushConnRef.current = conn
+        pushOutRef.current = emptyPushOutcome(plan)
+      }
+      const step = SECTION_PUSH_STEPS.find(x => x.id === stepId)
+      if (!step) return { ok: false, error: `Unknown push step "${stepId}".` }
+      await step.run(pushConnRef.current, plan, pushOutRef.current)
+
+      // The re-import is the one step whose result belongs to the MODEL rather than to
+      // the push report, so it lands here: forces come back keyed by ETABS frame name,
+      // and every member linked to one of those frames takes the new set.
+      //
+      // Written to the LIVE model, not just to the frozen version. The whole point is
+      // that the beams you just enlarged are now carrying more moment; leaving the
+      // working model on the old forces would keep showing the DCR that made you resize
+      // them in the first place.
+      if (stepId === 'reimport' && pushOutRef.current.forces) {
+        // BOTH fields, and that is the whole fix. `stationForces` is the raw analysis
+        // output — it draws the force diagram and nothing else. Every DCR, every
+        // applied-force readout and the calc sheet run off `loads`, the expansion of
+        // those stations into one LoadCase per station per combo. Writing only the raw
+        // forces left the design on the demand from before the resize: the diagram
+        // moved, the numbers did not, and the screen disagreed with itself.
+        const { count } = applyReimportedForces(pushOutRef.current.forces, plan.combos)
+        pushOutRef.current.reimported = count
+        // Kept for the Finish button: by then React has re-rendered and `members` is
+        // fresh, but carrying it costs nothing and removes the dependence on that.
+        pushOutRef.current.patchedMembers = null
+        return { ok: true, note: `${count} member${count === 1 ? '' : 's'} updated` }
+      }
+      // Per-step failures come back in the outcome rather than as a throw — a define
+      // that skipped two properties is a partial success, and the button has to say so.
+      const failed = pushOutRef.current.failures.length
+      return { ok: true, note: failed ? `${failed} item${failed === 1 ? '' : 's'} failed` : undefined }
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) }
+    }
+  }, [applyReimportedForces])
+
+  /** The stepped run finished — report it the way the one-click path does, and drop the
+   *  connection so the next push starts clean. */
+  const onPushDone = useCallback(({ modelName, rows } = {}) => {
+    if (pushOutRef.current) setSuggestNote(summarizeSectionPush(pushOutRef.current))
+    // Same reason as the one-click path: the run made a model, so the app keeps its
+    // design. Done on FINISH rather than per step — a push abandoned half way produced
+    // a copy but not a design worth naming.
+    if (modelName) freezeVersion({ modelName, rows })
+    pushConnRef.current = null
+    pushOutRef.current = null
     setPushOpen(false)
-  }, [members, code, groups, groupRebar])
+  }, [freezeVersion])
+
+  const onPush = useCallback(async ({ rows, modelName, plan, live }) => {
+    void plan;
+    if (live) {
+      setPushBusy('Connecting to ETABS…')
+      try {
+        const conn = new ComConnection()
+        await conn.connect()
+        const out = await runSectionPush(conn, plan, step => setPushBusy(step))
+        // The forces the last step read back — applied before freezing, so the version
+        // that gets kept is the design against the NEW demand, not the old one.
+        const { members: patched } = applyReimportedForces(out.forces, plan.combos)
+        // Freeze it here too. The push produced a NEW ETABS model; the app has to keep
+        // the design that went with it, or the picker never learns about the models the
+        // engineer actually made. Frozen from the PATCHED members — see above.
+        freezeVersion({ modelName, rows, membersOverride: patched })
+        setSuggestNote(summarizeSectionPush(out))
+        setPushBusy(null)
+        setPushOpen(false)
+        return
+      } catch (e) {
+        setPushBusy(null)
+        setSuggestNote(`ETABS push failed: ${e?.message || e}`)
+        return
+      }
+    }
+    freezeVersion({ modelName, rows })
+    setPushOpen(false)
+  }, [freezeVersion])
 
   const versionOptions = useMemo(() => ([
-    { value: 'live', label: 'Working model' },
-    ...versions.map(v => ({ value: v.id, label: v.name })),
-  ]), [versions])
+    // "Working model" only appears once it has actually diverged from the newest pushed
+    // one. Straight after a push there is nothing to diverge — the two are the same
+    // model — so the list is just the ETABS models: the one you opened and the one you
+    // pushed to.
+    ...(workingIsNewest ? [] : [{ value: 'live', label: 'Working model (edited)' }]),
+    // Newest first: the model you want is nearly always the one you just made, and a
+    // list that grows downward puts it further away every push.
+    ...[...versions].reverse().map(v => ({
+      value: v.id,
+      // The name is the ETABS file; the date is what tells two revisions apart when
+      // someone has called them both "Tower-rev2".
+      label: v.savedAt ? `${v.name} · ${new Date(v.savedAt).toLocaleDateString()}` : v.name,
+    })),
+  ]), [versions, workingIsNewest])
+
+  // If the working model is the newest one and the picker is pointing at 'live', move the
+  // selection onto that model's own entry — otherwise the control would show a value it
+  // no longer offers, and render blank.
+  useEffect(() => {
+    if (workingIsNewest && modelVersion === 'live') setModelVersion(versions[versions.length - 1].id)
+  }, [workingIsNewest, modelVersion, versions])
 
   const dashPayload = useMemo(() => {
     const withRebar = groups.map(g => ({ ...g, rebar: groupRebar[g.id] || g.rebar }))
@@ -885,6 +1377,7 @@ export default function WorkspaceView({
     }
   }, [members, planColorMode, flexFace, label, toDisplay])
 
+
   // Concrete / steel GRADE is categorical, not a ramp: distinct strengths get distinct
   // colours off the categorical palette (which carries no status hues, so a grade can
   // never be misread as a pass/fail). A Map, and it crosses the bus as one — structured
@@ -896,6 +1389,14 @@ export default function WorkspaceView({
     const byVal = new Map(distinct.map((v, i) => [v, CATEGORICAL[i % CATEGORICAL.length]]))
     return new Map(members.map(m => [m.id, byVal.get(valOf(m))]))
   }, [planColorMode, members])
+
+  /** memberId → section width (in), for the plan's proportional line weight. The web
+   *  width where there is one: a T-beam's flange is not what the line represents. */
+  const widthById = useMemo(() => {
+    const out = {}
+    for (const m of members) out[m.id] = m.section.bw ?? m.section.b
+    return out
+  }, [members])
 
   /** Which end carries a beam's mark, so 'Group + tags' parks the tag near the governing
    *  support instead of at midspan where several beams' tags would collide. */
@@ -953,6 +1454,50 @@ export default function WorkspaceView({
     return out
   }, [sco.results])
 
+  /** Every combo ETABS gave us, for the overlay's picker. */
+  const combos = useMemo(() => comboNames(members), [members])
+
+  /**
+   * What the histogram bins — the SAME quantity the map is coloured by.
+   *
+   * One series, chosen by `planColorMode`, already in display units with its label and
+   * unit, because the component draws numbers and cannot format them. Returns null for
+   * the categorical modes (group, group+tags, section, auto-group overlay, S-Concrete
+   * pass/fail): they have no numeric axis, and the panel is then not rendered at all
+   * rather than shown empty.
+   *
+   * This replaced a histogram with its own axis picker, deliberately built independent
+   * of the colour mode. Independent meant the chart and the picture could be answering
+   * two different questions at once, which is not a comparison — reading a DCR spread
+   * beside a map coloured by group tells you nothing about either.
+   */
+  const histSeries = useMemo(() => {
+    const beams = members.filter(m => m.memberType === 'beam' || !m.memberType)
+    if (!beams.length) return null
+    const si = units === 'si'
+    const spec = {
+      dcr:          { pick: m => dcrById[m.id],                       label: 'DCR', unit: '', decimals: 2 },
+      sconcreteDcr: { pick: m => scoDcrById?.[m.id],                  label: 'S-Concrete DCR', unit: '', decimals: 2 },
+      flexSteel:    { pick: m => flexSteelRatioPct(m, flexFace),
+                      label: `Steel ρ${flexFace === 'bot' ? '⁺ (bottom)' : '⁻ (top)'}`, unit: '%', decimals: 2 },
+      stirrups:     { pick: m => stirrupAvPerFt(m),                   label: 'Stirrups Av/s', unit: label('areaPerLength'), decimals: 2 },
+      weight:       { pick: m => steelWeightPerFt(m).totalLbFt,       label: 'Steel weight', unit: label('steelWeightPerLength'), decimals: 1 },
+      height:       { pick: m => toDisplay(m.section.h, 'length'),    label: 'Height', unit: label('length'), decimals: si ? 0 : 1 },
+      width:        { pick: m => toDisplay(m.section.bw ?? m.section.b, 'length'), label: 'Width', unit: label('length'), decimals: si ? 0 : 1 },
+      concGrade:    { pick: m => toDisplay(m.material.fc, 'stress'),  label: 'Concrete f′c', unit: label('stress'), decimals: 0 },
+      steelGrade:   { pick: m => toDisplay(m.material.fy, 'stress'),  label: 'Steel f_y', unit: label('stress'), decimals: 0 },
+    }[planColorMode]
+    if (!spec) return null
+    // {id, v} rather than a bare number, so a bar can point back at the beams inside it —
+    // hovering one draws them heavy on the map, which is the only way to answer "where
+    // are these?" for a bar holding nine beams out of a hundred and seventy.
+    const items = beams
+      .map(m => ({ id: m.id, v: spec.pick(m) }))
+      .filter(it => typeof it.v === 'number' && Number.isFinite(it.v))
+    if (!items.length) return null
+    return { items, label: spec.label, unit: spec.unit, decimals: spec.decimals }
+  }, [members, planColorMode, flexFace, dcrById, scoDcrById, label, toDisplay, units])
+
   const planProps = useMemo(() => {
     const infoById = {}, errorFrames = []
     for (const d of designs) {
@@ -979,9 +1524,14 @@ export default function WorkspaceView({
     // and it is pure waste while nothing draws it.
     const diagramDataById = {}
     if (planDiagram !== 'off') {
+      // A combo saved from a previous model may not exist in this one. Falling back to
+      // the envelope beats drawing nothing: an empty overlay looks like a member with no
+      // forces rather than like a stale selection.
+      const combo = planCombo && combos.includes(planCombo) ? planCombo : ''
       for (const d of designs) {
         if (!d.member.stationForces) continue
-        diagramDataById[d.member.id] = stationEnvelope(d.member.stationForces, planDiagram === 'moment' ? 'M' : 'V')
+        diagramDataById[d.member.id] =
+          stationEnvelope(d.member.stationForces, planDiagram === 'moment' ? 'M' : 'V', combo)
       }
     }
     return {
@@ -990,10 +1540,13 @@ export default function WorkspaceView({
       stories: MODEL_MAP.stories,
       hiddenStories, elements: planElements, colorMode: planColorMode, view3d,
       diagramMode: planDiagram, diagramDataById,
+      combos, planCombo,
       dcrById, infoById, errorFrames,
       designGroups: groups,
       autoGroupOverlay: autoOverlay,
-      metricById, metricRange, metricLabel, flexFace,
+      metricById, metricRange, metricLabel, flexFace, elementStyles,
+      histSeries,
+      widthById, lineWeightScale,
       dcrThresholds, dcrColors,
       gradeColorMap, gradeLegend, markEndById,
       // S-Concrete pass/fail per member, from the last batch. Derived exactly as the app
@@ -1006,8 +1559,9 @@ export default function WorkspaceView({
       focusFrames,
       selectedFrames,
     }
-  }, [font, units, designs, frames, dcrById, hiddenStories, planElements, planColorMode, planDiagram, view3d, groups, autoOverlay,
-    metricById, metricRange, metricLabel, flexFace, dcrThresholds, dcrColors, gradeColorMap, gradeLegend, markEndById, scoStatusById, scoDcrById, focusFrames, selectedFrames])
+  }, [font, units, designs, frames, dcrById, hiddenStories, planElements, planColorMode, planDiagram, planCombo, combos, view3d, groups, autoOverlay,
+    metricById, metricRange, metricLabel, flexFace, histSeries, elementStyles, widthById, lineWeightScale,
+    dcrThresholds, dcrColors, gradeColorMap, gradeLegend, markEndById, scoStatusById, scoDcrById, focusFrames, selectedFrames])
 
   const groupsProps = useMemo(() => ({
     font, units, memberId,
@@ -1030,13 +1584,21 @@ export default function WorkspaceView({
 
   const dashboardProps = useMemo(
     () => ({
-      font, units, selectedGroupId: groupId, payload: dashPayload, suggestNote,
+      font, units, selectedGroupId: groupId, payload: dashPayload,
+      // The "confirm in the main window" prompt outranks the last outcome while a
+      // dialog is actually open — it is the line that answers "did my click do
+      // anything?", which is the question being asked at that moment.
+      suggestNote: awayNote ?? suggestNote, suggestBusy,
+      // The size-floor dialog's inputs. They travel as data because the dialog is raised
+      // in the PANEL's window, which has its own UnitsProvider and no idea what the
+      // project chose.
+      code, barFamily,
       // The push button stays on the dashboard — it acts on the GROUPS shown there. The
       // version picker moved to the top bar beside the project settings, because which
       // model you are reading is workspace-wide context, not a dashboard setting.
       resizedCount: resizedRows.length, readOnly,
     }),
-    [font, units, groupId, dashPayload, suggestNote, resizedRows.length, readOnly],
+    [font, units, code, barFamily, groupId, dashPayload, awayNote, suggestNote, suggestBusy, resizedRows.length, readOnly],
   )
 
   /**
@@ -1044,23 +1606,34 @@ export default function WorkspaceView({
    * members and groups, the app holds a Project, and the batch wants the latter — it
    * writes one .SCO per design group and needs the group's cage, its members and the
    * code that produced them. Only the fields the batch and its dashboard actually read
-   * are built (grep `project.` in useSconcreteBatch: members, designGroups, code,
-   * slsCombo, sconcreteResults, sconcreteRanAt), so this cannot drift into a half-copy
-   * of a Project that looks complete and is not.
+   * are built (grep `project.` in useSconcreteBatch and scoBatch: members, designGroups,
+   * code, slsCombo, ignoreTorsion, sconcreteResults, sconcreteRanAt), so this cannot
+   * drift into a half-copy of a Project that looks complete and is not.
    *
    * Groups carry their EDITED cage (`groupRebar`), the same one the dashboard and the
    * plan use — verifying the cage as imported while the screen shows the cage you just
    * applied would make the whole round trip meaningless.
+   *
+   * The same rule applies to the DESIGN PREFERENCES, which is why `ignoreTorsion` and
+   * `slsCombo` are read off the real project here:
+   *  • `ignoreTorsion` drives scoBatch's stripTorsion. Omitting it meant "Neglect
+   *    torsion" zeroed Tu in the app's own DCRs but still wrote Tu into the .SCO, so
+   *    S-Concrete checked a load case the app had deliberately dropped.
+   *  • `slsCombo` seeds the EC2 crack-width file. Defaulting it to the panel's local
+   *    null meant the combo picked in project settings never reached the batch and NO
+   *    crack file was generated until the user re-picked it inside the panel.
+   * A run-local override (set in the panel) still wins over the project value.
    */
   const scoProject = useMemo(() => ({
     name: 'S-Dash demo model',
     code,
     members,
     designGroups: groups.map(g => ({ ...g, rebar: groupRebar[g.id] || g.rebar })),
-    slsCombo: sco.slsCombo ?? undefined,
+    slsCombo: sco.slsCombo ?? project.slsCombo ?? undefined,
+    ignoreTorsion: project.ignoreTorsion,
     sconcreteResults: sco.results ?? undefined,
     sconcreteRanAt: sco.ranAt ?? undefined,
-  }), [code, members, groups, groupRebar, sco])
+  }), [code, members, groups, groupRebar, sco, project.slsCombo, project.ignoreTorsion])
 
   const sconcreteProps = useMemo(
     // frameOf is a Map; the bus takes pairs. The panel rebuilds it.
@@ -1081,10 +1654,14 @@ export default function WorkspaceView({
   // the controller reads it to decide what a release means.
   const resolverRef = useRef(null)
   const onDragResult = useCallback((kind, res) => {
-    if (res.type === 'tear') { setMaximized(null); setHost(kind, 'window'); return }
+    // Released over ANOTHER window — dock into it. This is the drop that makes several
+    // detached windows a workspace rather than a set of islands.
+    if (res.type === 'window') { movePanel(kind, res.winId); return }
+    if (res.type === 'tear') { movePanel(kind, 'new'); return }
     if (res.type === 'dock') {
       setMaximized(null)
       setHosts(h => (h[kind] === 'dock' ? h : { ...h, [kind]: 'dock' }))
+      setWinOf(w => { if (!w[kind]) return w; const n = { ...w }; delete n[kind]; return n })
       setDock(cur => placePanel(cur || { cols: [] }, kind, res.target))
       return
     }
@@ -1092,8 +1669,15 @@ export default function WorkspaceView({
     // in the corner, so the panel appears under the hand that dragged it.
     setGeom(all => ({ ...all, [kind]: { ...(all[kind] || DEFAULT_GEOM(kind)), x: Math.max(0, res.x - 90), y: Math.max(0, res.y - 14) } }))
     setHost(kind, 'float')
-  }, [setHost])
-  const dockDrag = useDockDrag({ resolverRef, onResult: onDragResult })
+  }, [setHost, movePanel])
+  const dockDrag = useDockDrag({
+    resolverRef,
+    onResult: onDragResult,
+    // The main window can answer "where is everyone" directly; a detached one has to ask
+    // over the bus. Same hit test either way.
+    getBounds: () => (hostRef.current ? hostRef.current.bounds() : Promise.resolve([])),
+    selfWinId: DOCK,
+  })
 
   const toggleMax = useCallback(kind => setMaximized(m => (m === kind ? null : kind)), [])
 
@@ -1102,12 +1686,45 @@ export default function WorkspaceView({
   // labels travel and the chosen index comes back — so a menu item does the same thing
   // wherever it was clicked, because it IS the same item.
   const menuItemsFor = useCallback(kind => ([
-    { label: `Detach ${PANELS[kind].title}`, disabled: hosts[kind] === 'window' || !canDetach(), on: () => setHost(kind, 'window') },
+    // Always available, including from inside a detached window — that is how a panel is
+    // split back OUT of a window holding several, which is the reverse of the drag that
+    // put it there and the only route when the two windows overlap on one screen.
+    {
+      label: hosts[kind] === 'window' ? 'Move to a new window' : `Detach ${PANELS[kind].title}`,
+      disabled: !canDetach(),
+      on: () => movePanel(kind, 'new'),
+    },
     { label: hosts[kind] === 'float' ? 'Dock in workspace' : 'Float over workspace', disabled: hosts[kind] === 'window', on: () => setHost(kind, hosts[kind] === 'float' ? 'dock' : 'float') },
     { label: maximized === kind ? 'Restore' : 'Maximise', disabled: hosts[kind] !== 'dock', on: () => toggleMax(kind) },
+    // Every OTHER open window, so a panel can be sent to one without dragging across
+    // the desktop. The drag is the quick route; this is the one that always works —
+    // including on a single screen where the target window is behind this one.
+    ...windowIds(hosts, winOf)
+      .filter(id => id !== winOf[kind])
+      .map(id => ({
+        label: `Move to ${windowLabel(id)} (${panelsInWindow(hosts, winOf, id).map(k => PANELS[k].title).join(', ')})`,
+        on: () => movePanel(kind, id),
+      })),
+    ...(hosts[kind] === 'window'
+      ? [{ label: 'Move to workspace', on: () => movePanel(kind, DOCK) }]
+      : []),
     { sep: true },
     { label: 'Jump to governing row', on: () => selectRow(design.governing.row.load.id) },
-    { label: 'Detach every panel', disabled: !canDetach(), on: () => setHosts(h => { const n = { ...h }; for (const k of PANEL_ORDER) if (n[k]) n[k] = 'window'; return n }) },
+    // Every open panel into ONE window, not one window each. A window per panel was what
+    // this did when a window could only hold one, and on a 10-panel model it carpeted the
+    // desktop; the point of the second screen is a second workspace, not ten windows.
+    {
+      label: 'Detach every panel to one window',
+      disabled: !canDetach(),
+      on: () => {
+        const cur = dockStateRef.current
+        const id = newWinId(cur.hosts, cur.winOf)
+        let next = cur
+        for (const k of PANEL_ORDER) if (cur.hosts[k]) next = movePanelToWindow(next, k, id)
+        setHosts(next.hosts); setWinOf(next.winOf); setWinDock(next.winDock); setDock(next.dock)
+        setMaximized(null)
+      },
+    },
     { sep: true },
     // Reset's home now that it has no toolbar chip. Deliberately NOT in the dep array:
     // resetAll is declared further down, so naming it there would be read at render time
@@ -1116,7 +1733,7 @@ export default function WorkspaceView({
     // its identity never changes and there is no stale closure to worry about.
     { label: 'Reset workspace and edits', on: () => resetAll() },
     { label: `Close ${PANELS[kind].title}`, on: () => closePanel(kind) },
-  ]), [hosts, design, setHost, closePanel, selectRow, maximized, toggleMax])
+  ]), [hosts, winOf, design, setHost, movePanel, closePanel, selectRow, maximized, toggleMax])
 
   /**
    * Apply what the settings dialog hands back — the app's own handleSettingsSave
@@ -1144,6 +1761,29 @@ export default function WorkspaceView({
     // nothing would remember what each member's ETABS section had said.
   }, [])
 
+  /**
+   * The model as it is ON SCREEN, for the exports.
+   *
+   * Not `project`. Two things differ, and both would make a report describe something
+   * the user is not looking at:
+   *
+   *  · `members` / `groups` follow the MODEL VERSION picker — point the workspace at a
+   *    pushed snapshot and the export has to be of that snapshot.
+   *  · groups carry their EDITED cage (`groupRebar`), which `project.designGroups` can
+   *    lag behind; a schedule of the cage as imported, printed from a screen showing the
+   *    cage you just applied, is the same class of mistake the S-Concrete batch had.
+   *
+   * Everything else is spread from the real project, so title-block fields, settings,
+   * the model map and the design preferences stay whatever they actually are — rather
+   * than a hand-built object that quietly omits one.
+   */
+  const exportProject = useMemo(() => ({
+    ...project,
+    code,
+    members,
+    designGroups: groups.map(g => ({ ...g, rebar: groupRebar[g.id] || g.rebar })),
+  }), [project, code, members, groups, groupRebar])
+
   const openMenu = useCallback((x, y, items) => setMenu({ x, y, items }), [])
   const menuOn = kind => e => { e.preventDefault(); openMenu(e.clientX, e.clientY, menuItemsFor(kind)) }
 
@@ -1163,25 +1803,41 @@ export default function WorkspaceView({
    */
   const beamMenuItems = useCallback((memberId, frameName) => {
     const current = groups.find(g => g.memberIds.includes(memberId))
+    const groupItems = groups.map(g => {
+      const isCurrent = g.id === current?.id
+      const t = groupTemplate(g.id)
+      return {
+        // The donor is named in the label because this is a destructive edit and the
+        // beam it copies from is the one fact that decides what you get.
+        label: `${isCurrent ? '✓ ' : '→ '}${g.label}${t && !isCurrent ? `  (as ${t.donorId})` : ''}`,
+        disabled: isCurrent || !t,
+        on: () => moveMemberToGroup(memberId, g.id),
+      }
+    })
     return [
       { label: frameName || memberId, disabled: true },
       { label: 'Open in the workspace', on: () => pickMember(memberId) },
+      {
+        // A SUBMENU, not an inline list: the group count is unbounded, and inlining it
+        // turned a short menu into a wall on any real model. The nested list scrolls.
+        label: 'Change group',
+        title: 'Adopts the target group’s section, material and cage',
+        children: groupItems.length
+          ? groupItems
+          : [{ label: 'No groups yet — make one in the Groups panel', disabled: true }],
+      },
       { sep: true },
-      { label: 'Change group — adopts its section, material and cage', disabled: true },
-      ...groups.map(g => {
-        const isCurrent = g.id === current?.id
-        const t = groupTemplate(g.id)
-        return {
-          // The donor is named in the label because this is a destructive edit and the
-          // beam it copies from is the one fact that decides what you get.
-          label: `${isCurrent ? '✓ ' : '→ '}${g.label}${t && !isCurrent ? `  (as ${t.donorId})` : ''}`,
-          disabled: isCurrent || !t,
-          on: () => moveMemberToGroup(memberId, g.id),
-        }
-      }),
-      ...(groups.length ? [] : [{ label: 'No groups yet — make one in the Groups panel', disabled: true }]),
+      {
+        label: 'Delete beam',
+        title: readOnly
+          ? 'This is a frozen version — it cannot be edited'
+          : 'Removes it from the model and from its group. Ctrl+Z undoes it.',
+        danger: true,
+        disabled: readOnly,
+        on: () => deleteMember(memberId),
+      },
     ]
-  }, [groups, groupTemplate, moveMemberToGroup, pickMember])
+  }, [groups, groupTemplate, moveMemberToGroup, pickMember, deleteMember, readOnly])
 
   /** Docked / floating: the menu opens in this window, from these very items. */
   const onBeamMenu = useCallback(
@@ -1190,10 +1846,91 @@ export default function WorkspaceView({
   )
 
   // ── where each panel mounts ─────────────────────────────────────────────────
-  const host = usePopoutHost()
+  //
+  // The host is told about WINDOWS (open these, close those, here is what each holds)
+  // and about PANELS (here are this one's props). Everything a detached window asks of
+  // the model — move a panel, persist a rearranged layout, report that the OS closed it
+  // — comes back through these three callbacks and is applied here, because this window
+  // owns the model.
+  const host = usePopoutHost({
+    onMove: movePanel,
+    /**
+     * Fold one whole window into another — three windows become two.
+     *
+     * A window-level verb, not a loop of panel moves at the call site: doing it in one
+     * transition means the emptied window is closed once, and a four-panel window is one
+     * action rather than four trips through a menu with a half-emptied window in between.
+     */
+    onMerge: (from, to) => {
+      const cur = dockStateRef.current
+      const next = mergeWindows(cur, from, to)
+      if (next === cur) return
+      setHosts(next.hosts); setWinOf(next.winOf); setWinDock(next.winDock); setDock(next.dock)
+      setMaximized(null)
+      if (to !== DOCK && hostRef.current) hostRef.current.focusWindow(to)
+    },
+    onWinDock: (winId, next) => setWinDock(w => ({ ...w, [winId]: next })),
+    /**
+     * A closed window takes its panels with it — CLOSED, not sent home.
+     *
+     * Closing a window is how you get rid of a view, so the panels in it end up closed
+     * (`hosts[kind] = null`) exactly as if each had been dismissed with its own ✕.
+     * Re-docking them into the main workspace instead would mean the ✕ on a second
+     * monitor silently rearranged the first one — you shut a window and the panels you
+     * were trying to be rid of reappear behind it.
+     *
+     * Getting a panel back is one click on its toolbar chip, and the deliberate route
+     * home is still there: the ⇤ button on each panel inside a detached window, or
+     * "Move to workspace" in its menu. Those SAY they move the panel; the window's ✕
+     * says close.
+     */
+    onWindowClosed: winId => {
+      const cur = dockStateRef.current
+      const next = closeWindowPanels(cur, winId)
+      if (next === cur) return           // already emptied by a move — nothing to close
+      setHosts(next.hosts); setWinOf(next.winOf); setWinDock(next.winDock)
+    },
+  })
+  hostRef.current = host
+
+  // What each detached window is holding, DERIVED rather than stored — so a window's
+  // layout can never claim a panel that has moved on, and reconciling here means the
+  // stored layout is only ever a hint about arrangement, never the source of truth about
+  // membership.
+  const windows = useMemo(() => windowIds(hosts, winOf).map(id => {
+    const kinds = panelsInWindow(hosts, winOf, id)
+    return { id, kinds, dock: reconcile(winDock[id] || { cols: [] }, kinds) }
+  }), [hosts, winOf, winDock])
+
+  // Opening and closing OS windows is a side effect, so it happens after the render that
+  // decided there should be one — never during it.
+  useEffect(() => { host.syncWindows(windows) }, [windows])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * A panel button that opens a MODAL over here, pressed from a detached window.
+   *
+   * The dialog stays in this window — it is app state, and the rule this whole bus is
+   * built on is that the main window owns the state. But from the second monitor, "press
+   * the button, a dialog appears on the OTHER screen, possibly behind something" is
+   * indistinguishable from a button that does nothing. That is the Group Dashboard's
+   * ✨ Suggest, and it is why this exists.
+   *
+   * Two things, because neither is sufficient alone. RAISE this window, which is the
+   * real fix and works properly on the desktop host (`popout:focus` with the dock id).
+   * And leave a line in the panel that asked — the only feedback that lands on the
+   * screen the user is actually looking at, and the whole of it in a browser, where a
+   * window cannot reliably focus itself without a gesture of its own.
+   *
+   * A no-op for a docked panel: the dialog is already in front of you.
+   */
+  const revealHere = (kind, note) => {
+    if (hosts[kind] !== 'window') return
+    if (hostRef.current) hostRef.current.focusWindow(DOCK)
+    setAwayNote(note)
+  }
+
   const fns = kind => ({
     onClose: () => closePanel(kind),
-    onWindowClosed: () => setHost(kind, 'dock'),   // the window's ✕ re-docks the panel
     onSelectRow: selectRow,
     onRebarChange,
     onSectionChange,
@@ -1203,9 +1940,11 @@ export default function WorkspaceView({
     onElements: setPlanElements,
     onColorMode: setPlanColorMode,
     onDiagramMode: setPlanDiagram,
+    onPlanCombo: setPlanCombo,
     onDcrThresholds: setDcrThresholds,
     onDcrColors: setDcrColors,
     onFlexFace: setFlexFace,
+    onLineWeight: setLineWeightScale,
     onView3d,
     // A req, not a fn: the caller needs the items back. Detached, only their labels
     // travel and the chosen index returns, so the closure runs here either way.
@@ -1221,10 +1960,12 @@ export default function WorkspaceView({
     onOverlayChange,
     onHighlightFrames,
     onTab: setGroupsTab,
-    // Opens the size-floor dialog in the MAIN window even when the dashboard is
-    // detached — the dialog is app state, and it belongs where the state lives.
-    onSuggestAll: () => setSuggestOpen(true),
-    onPushToEtabs: () => setPushOpen(true),
+    // Suggest arrives with its floors already chosen — the dialog ran in the panel's own
+    // window. Push still opens a dialog HERE: it drives a live ETABS connection and
+    // narrates its progress, neither of which a detached document can hold, so that one
+    // gets `revealHere` instead.
+    onSuggestAll: runSuggestAll,
+    onPushToEtabs: () => { revealHere(kind, '⇪ Push — confirm in the main window'); setPushOpen(true) },
     onToggleCurtailmentNote: setCurtailmentNote,
     onSetOppositeTop: setOppositeTop,
     onSetMidThirdTop: setMidThirdTop,
@@ -1241,7 +1982,12 @@ export default function WorkspaceView({
   }
   const here = {}
   for (const kind of PANEL_ORDER) {
-    here[kind] = hosts[kind] ? host.publish(kind, hosts[kind] === 'window', payload[kind], fns(kind)) : false
+    // The second argument is WHICH WINDOW holds it — null meaning this one. A panel that
+    // is docked, floating or closed renders here; a detached one is published to its
+    // window instead and `publish` returns false so it is not also rendered in-page.
+    here[kind] = hosts[kind]
+      ? host.publish(kind, hosts[kind] === 'window' ? winOf[kind] : null, payload[kind], fns(kind))
+      : false
   }
 
   const panelNode = kind => {
@@ -1263,7 +2009,9 @@ export default function WorkspaceView({
           onHiddenStories={setHiddenStories} onElements={setPlanElements}
           onColorMode={setPlanColorMode} onView3d={onView3d}
           onDiagramMode={setPlanDiagram}
+          onPlanCombo={setPlanCombo}
           onDcrThresholds={setDcrThresholds} onDcrColors={setDcrColors} onFlexFace={setFlexFace}
+          onLineWeight={setLineWeightScale}
           onSelectFrames={onSelectFrames} onOpenMember={pickMember}
           onBeamMenu={onBeamMenu} />
       )
@@ -1310,10 +2058,15 @@ export default function WorkspaceView({
       <DashboardPanel key="dashboard" {...dashboardProps} {...common}
         onSelectGroup={pickGroup} onApplyRebar={applyGroupRebar} onOpenMember={pickMember}
         onSetReviewed={setGroupReviewed}
-        onSuggestAll={() => setSuggestOpen(true)}
+        onSuggestAll={runSuggestAll}
         onPushToEtabs={() => setPushOpen(true)} />
     )
   }
+
+  // Desktop = the native menu bar exists, so the in-page one stands down. Read once at
+  // module scope of this render rather than per-click: `window.electronAPI` is injected
+  // by the preload before any React runs, so it cannot appear later.
+  const isDesktopBuild = typeof window !== 'undefined' && !!window.electronAPI
 
   const docked = PANEL_ORDER.filter(k => here[k] && hosts[k] === 'dock')   // for the toolbar count
   const floating = PANEL_ORDER.filter(k => here[k] && hosts[k] === 'float')
@@ -1338,11 +2091,35 @@ export default function WorkspaceView({
     setView3d(false); setStoryBefore3d(null)
     setHiddenStories(DEFAULT_LAYOUT.hiddenStories); setPlanElements(DEFAULT_LAYOUT.planElements)
     setPlanColorMode(DEFAULT_LAYOUT.planColorMode)
-    setPlanDiagram(DEFAULT_LAYOUT.planDiagram); setFlexFace(DEFAULT_LAYOUT.flexFace)
+    setPlanDiagram(DEFAULT_LAYOUT.planDiagram); setPlanCombo(''); setFlexFace(DEFAULT_LAYOUT.flexFace)
+    setLineWeightScale(DEFAULT_LAYOUT.lineWeightScale)
     // Pushed model versions go with the rest of the model. A "new project" that kept
     // three revisions of a frame it no longer has would be describing nothing.
-    setVersions([]); setModelVersion('live'); setPushOpen(false); setSuggestNote(null)
+    // The versions live in the project now, so a new project drops them with everything
+    // else — nothing to clear here beyond the selection.
+    setModelVersion('live'); setPushOpen(false); setSuggestNote(null)
     setDcrThresholds(DEFAULT_LAYOUT.dcrThresholds); setDcrColors(DEFAULT_LAYOUT.dcrColors)
+  }, [])
+
+  // File → Reset the workspace, from the NATIVE menu. It is wired here rather than in
+  // App because resetAll is this component's state, all of it — hoisting a dozen
+  // setters just to let the parent relay one menu click would be the wrong trade.
+  // Optional-chained: a renderer running against an older preload simply has no
+  // listener rather than throwing on load.
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : null
+    if (!api?.onResetWorkspace) return
+    api.onResetWorkspace(resetAll)
+    return () => api.offResetWorkspace?.()
+  }, [resetAll])
+
+  // View -> Performance meter, from the native menu. See utils/perfProbe.ts: the meter
+  // is off by default and costs nothing until it is asked for.
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : null
+    if (!api?.onTogglePerf) return
+    api.onTogglePerf(togglePerf)
+    return () => api.offTogglePerf?.()
   }, [])
 
   // ── render ──────────────────────────────────────────────────────────────────
@@ -1351,6 +2128,18 @@ export default function WorkspaceView({
       {/* Pushes `units` into the app's real UnitsContext, which is what SectionView and
           every formatter read. Rendered, not called, because it owns an effect. */}
       <UnitsSync units={units} />
+      {/* The report dialog lives HERE rather than in App because it needs the model as
+          displayed — the same `exportProject` every other entry in the menu uses. */}
+      {reportOpen && <ReportModal project={exportProject} onClose={() => setReportOpen(false)} />}
+      {prefsOpen && (
+        <Portal>
+          <PreferencesDialog
+            styles={elementStyles}
+            onChange={setElementStyles}
+            onClose={() => setPrefsOpen(false)}
+          />
+        </Portal>
+      )}
       {settingsOpen && (
         <ProjectSettingsDialog
           mode="settings"
@@ -1374,21 +2163,29 @@ export default function WorkspaceView({
             <span className="sdash-brand">S-DASH</span>
             <span className="sdash-pill">BEAM</span>
           </span>
-          {/* The app's application menu, in the page — see MenuBar.js for why it is not
-              the native one the product uses. */}
-          <MenuBar
-            onNewProject={onNewProject}
-            onOpenProject={onOpenProject}
-            onSaveProject={onSaveProject}
-            onImportEtabs={onImportEtabs}
-            onReset={resetAll}
-            onOpenHelp={tab => setHelpTarget(tab)}
-          />
-          <select className="sdash-code" value={code} disabled onChange={() => {}}
-                  title="Design code — switches the engine and the calc sheet">
-            <option value="ACI318-19">ACI 318-19</option>
-            <option value="EN1992-1-1">EN 1992-1-1</option>
-          </select>
+          {/* The application menu, in the page — BROWSER ONLY. The desktop build has the
+              real one at the OS level (electron/main.cjs), and two identical menu bars
+              stacked one above the other is worse than either alone: it doubles the
+              places to look and halves the confidence that they agree. Served over
+              http:// there is no native menu to defer to, so this renders instead —
+              same labels, same order, same accelerators.
+
+              Everything this offers is on the native menu too, Import from ETABS and
+              Reset the workspace included, so the desktop app loses no command by
+              hiding it. */}
+          {!isDesktopBuild && (
+            <MenuBar
+              onNewProject={onNewProject}
+              onOpenProject={onOpenProject}
+              onSaveProject={onSaveProject}
+              onSaveProjectAs={onSaveProjectAs}
+              onImportEtabs={onImportEtabs}
+              onReset={resetAll}
+              onPreferences={() => setPrefsOpen(true)}
+              onTogglePerf={togglePerf}
+              onOpenHelp={tab => setHelpTarget(tab)}
+            />
+          )}
         </div>
 
         {/* Panel toggles. A pill group, as the Template does its tool clusters. */}
@@ -1419,13 +2216,18 @@ export default function WorkspaceView({
 
               A frozen version is read-only, and says so rather than letting an edit
               silently fork it. */}
+          {/* Always shown once anything has been pushed. It used to appear only at two
+              entries, which meant the FIRST push produced a history the engineer could
+              not see — the one moment they most want to know it was kept. */}
           {versionOptions.length > 1 && (
             <>
               <select
                 className="demo-modelsel"
                 value={modelVersion}
                 onChange={e => setModelVersion(e.target.value)}
-                title="Which model the whole workspace is reading — the working model, or one you pushed"
+                title={`Which model the workspace is reading. ${versions.length} saved `
+                  + `design${versions.length === 1 ? '' : 's'} in this project — switching shows that `
+                  + `model's groups and their DCRs.`}
               >
                 {versionOptions.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
               </select>
@@ -1436,9 +2238,34 @@ export default function WorkspaceView({
               )}
             </>
           )}
-          {/* The app's gear chip, and the app's dialog behind it. Units, design code,
-              materials, cover, moduli, bar family and display scale all live in there —
-              which is why the demo no longer carries its own unit toggle. */}
+          {/* No design-code chip here. The code is set in Project settings and nowhere
+              else, so a disabled select in the top bar was a dead control: a second
+              place to look for a setting that lives behind the gear, and one you could
+              not actually set. The panels that depend on the code still name it — the
+              Editor's CodeBadge and the Calc sheet's clause references. */}
+          {/* Export — the app's output formats, beside the gear because both are
+              project-wide actions rather than anything to do with the selected member.
+              It opens the shell's OWN menu (portalled, dismiss-on-outside-click) rather
+              than an absolutely-positioned div: App.tsx wraps the workspace in a zoom
+              transform, which makes it the containing block for fixed descendants, and a
+              hand-rolled popover lands in the wrong place at non-100% Display Scale. */}
+          {exportNote && (
+            <span className="demo-tb-note" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  title={exportNote}>{exportNote}</span>
+          )}
+          <button
+            onClick={e => {
+              const r = e.currentTarget.getBoundingClientRect()
+              openMenu(r.left, r.bottom + 6, exportMenuItems(exportProject, {
+                onOpenReport: () => setReportOpen(true),
+                onNote: setExportNote,
+              }))
+            }}
+            style={{ ...hdrBtn, padding: '5px 8px' }}
+            title="Export — PDF report, schedules and spreadsheets"
+          >
+            <Icon name="export" title="Export" />
+          </button>
           <button
             onClick={() => setSettingsOpen(true)}
             style={{ ...hdrBtn, padding: '5px 8px', background: settingsOpen ? ACCENT.softBg : 'white', color: settingsOpen ? ACCENT.primary : INK.base }}
@@ -1526,8 +2353,18 @@ export default function WorkspaceView({
         <PushToEtabsDialog
           rows={resizedRows}
           modelName={defaultModelName(MODEL_MAP.modelName, versions.length + 1)}
-          onCancel={() => setPushOpen(false)}
+          live={canPushLive}
+          busy={pushBusy}
+          combos={combos}
+          onCancel={() => {
+            // Drop the held connection too — a dialog closed half way through a stepped
+            // push must not leave one attached for the next one to inherit.
+            pushConnRef.current = null; pushOutRef.current = null
+            setPushBusy(null); setPushOpen(false)
+          }}
           onPush={onPush}
+          onPushStep={onPushStep}
+          onPushDone={onPushDone}
         />
       )}
 
@@ -1560,7 +2397,7 @@ export default function WorkspaceView({
                     </div>
                   </div>
                 ) : (
-                  <HelpView target={{ tab: helpTarget }} />
+                  <HelpView target={helpView} />
                 )}
               </div>
             </div>
@@ -1568,18 +2405,12 @@ export default function WorkspaceView({
         </Portal>
       )}
 
-      {suggestOpen && (
-        <Portal>
-          <SuggestSizeDialog
-            code={code}
-            title="Suggest all groups"
-            onCancel={() => setSuggestOpen(false)}
-            onConfirm={runSuggestAll}
-          />
-        </Portal>
-      )}
-
       {menu && <Menu menu={menu} onClose={() => setMenu(null)} />}
+
+      {/* The last line of the shell. Outside .demo-body so it spans the full width
+          under BOTH the rail and the workspace, and so the panels keep their own
+          height rather than each carrying a slice of it. */}
+      <StatusBar />
     </div>
   )
 }

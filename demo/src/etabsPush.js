@@ -96,31 +96,27 @@ export function resizedGroups(groups, current, baseline) {
 }
 
 /**
- * The payload the four COM calls would take, in their order.
+ * The dialog's rows → the app's `SectionPushProperty[]`, which is what the real write
+ * path takes. Nothing about the call sequence, the unit conversion or the de-duplication
+ * lives here any more: `buildSectionPushPlan` in `src/adapters/etabs/pushSections.ts`
+ * owns all three, and is unit-tested against a mock connection. This is only the mapping
+ * from what the screen shows to what that function wants.
  *
- * Written out even though nothing consumes it yet, because it is the part that has to be
- * RIGHT when the sidecar lands: one DefineFrameSection per distinct property, one
- * AssignSection per group, then SaveAs and RunAnalysis. Two groups that resized to the
- * same section and grade share one property — ETABS would reject the second definition,
- * and an engineer reading the schedule should not find B16X32-C5000 twice.
+ * `matProp` is the SOURCE property's material where the model has one — a resized beam
+ * keeps its grade unless the engineer changed f′c, and reusing the name means ETABS
+ * defines nothing it already has. The fallback name is only reached for a grade the
+ * model has never seen, which is exactly when the sidecar has to invent a material.
  */
-export function buildPushPayload(rows, modelName) {
-  const byProperty = new Map()
-  for (const r of rows) {
-    const p = byProperty.get(r.propertyName) || { name: r.propertyName, b: r.to.b, h: r.to.h, fc: r.to.fc, frameNames: [] }
-    p.frameNames.push(...r.frameNames)
-    byProperty.set(r.propertyName, p)
-  }
-  const properties = [...byProperty.values()].map(p => ({
-    ...p, frameNames: [...new Set(p.frameNames)],
+export function toPushProperties(rows) {
+  return rows.map(r => ({
+    name: String(r.propertyName || '').trim(),
+    matProp: r.matProp || `C${Math.round(r.to.fc)}`,
+    fc: r.to.fc,
+    depth: r.to.h,
+    width: r.to.b,
+    frameNames: r.frameNames,
+    ...(r.rebar ? { rebar: r.rebar } : {}),
   }))
-  return {
-    defineFrameSections: properties.map(({ name, b, h, fc }) => ({ name, b, h, fc })),
-    assignSections: properties.map(({ name, frameNames }) => ({ name, frameNames })),
-    saveAs: modelName,
-    runAnalysis: true,
-    frameCount: properties.reduce((n, p) => n + p.frameNames.length, 0),
-  }
 }
 
 /** Names must be present and distinct, or ETABS would silently collapse two properties

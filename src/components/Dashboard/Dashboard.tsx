@@ -30,7 +30,7 @@ type Selection =
 const dcrColor = themeDcrColor;
 const dcrBg = themeDcrBg;
 
-const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
+const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'EN1992-1-1'];
 
 export default function Dashboard({ project, onSelectMember, onProjectUpdate, collapsedGroups, setCollapsedGroups }: Props) {
   const { setUnits, barFamily, fmtVal, label } = useUnits();
@@ -84,6 +84,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
 
   const selectedMemberId = selection.kind === 'member' ? selection.id : null;
   const selectedMember = selectedMemberId ? (project.members.find(m => m.id === selectedMemberId) ?? null) : null;
+  // The member's own group carries the per-L/3 cages the engineer set on the group card.
+  // They are a GROUP property, so the member view can only show them by looking the group
+  // up — without this the elevation and the stepped moment capacity both silently fall
+  // back to the single mark-end cage and never react to a curtailment edit.
+  const selectedMemberGroup = selectedMemberId
+    ? designGroups.find(g => g.memberIds.includes(selectedMemberId)) : undefined;
   const selectedGroupId = selection.kind === 'group' ? selection.id : null;
   const ungroupedEntry = ungrouped.length
     ? { id: '__ungrouped', label: 'Ungrouped', color: INK.muted, rebar: undefined as RebarLayout | undefined, members: ungrouped }
@@ -435,7 +441,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                 </div>
                 {/* Right: live DCR / diagrams */}
                 <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '12px 14px' }}>
-                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} cotTheta={project.cotTheta} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate} />
+                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} cotTheta={project.cotTheta} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate}
+                    midThirdTopBars={selectedMemberGroup?.midThirdTopBars}
+                    oppositeTopBars={selectedMemberGroup?.oppositeTopBars}
+                    endThirdBotBars={selectedMemberGroup?.endThirdBotBars} />
                 </div>
               </div>
             </>

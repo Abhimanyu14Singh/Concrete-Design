@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Project, Member, ModelMap, DesignGroup, DesignCode, ProjectSettings } from './types';
 import { defaultProject } from './utils/sampleData';
+import { buildDemoProject } from './utils/demoProject';
+import { logActivity } from './utils/activity';
+import { track, trackOnce, setUsageContext } from './utils/usage';
 import {
   applyProjectSettings, coversFromSettings, loadStandards, materialFromSettings,
   saveStandards, settingsFromProject,
@@ -9,10 +12,6 @@ import { runDesign } from './engines';
 import { resolveCrack } from './utils/resolveCrack';
 import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
-import { exportExcel, exportDcrList } from './utils/export/excelExport';
-import { buildSchedulePDF, buildDcrListPDF } from './utils/export/schedulePdfExport';
-import { exportGroupScheduleExcel } from './utils/export/groupScheduleExcel';
-import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
 import HelpView from './components/Help/HelpView';
 import MemberResults from './components/Results/MemberResults';
@@ -27,6 +26,7 @@ import './workspace/ui.css';
 import './workspace/shell.css';
 import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import WelcomeScreen from './components/Welcome/WelcomeScreen';
 import ProjectSettingsDialog from './components/Settings/ProjectSettingsDialog';
 import Dropdown from './components/common/Dropdown';
 import { Icon } from './components/common/Icon';
@@ -80,18 +80,79 @@ export default function App() {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
   });
-  // Project standards dialog: 'setup' on a first run (no way out — the project
-  // needs standards), 'settings' whenever the header gear is used.
-  const [settingsMode, setSettingsMode] = useState<'setup' | 'settings' | null>(
-    () => (loadStandards() ? null : 'setup'),
-  );
-  const [showExport, setShowExport] = useState(false);
-  const [showReport, setShowReport] = useState(false);
+  /**
+   * The launch gate. Every start shows the welcome screen until a model is chosen
+   * — imported from ETABS, opened from disk, or the demo taken deliberately. It is
+   * session state, not persisted: "where is this model coming from" is a question
+   * worth asking each time, and answering it is one click.
+   */
+  const [launched, setLaunched] = useState(false);
+  // Project standards dialog: 'settings' whenever the header gear is used, and
+  // 'setup' once — but only AFTER a model is in, so the dialog can pre-fill from
+  // what was imported instead of asking for materials against a blank project.
+  const [settingsMode, setSettingsMode] = useState<'setup' | 'settings' | null>(null);
+  /** Pass the gate, and ask for standards on the way through if none are stored. */
+  const enterWorkspace = useCallback(() => {
+    setLaunched(true);
+    if (!loadStandards()) setSettingsMode('setup');
+  }, []);
+
+  /**
+   * "Explore the demo model" — load the built-in two-storey frame, then pass the gate.
+   *
+   * It is a real model, not the two-beam seed the app boots on: 34 beams over two
+   * levels, columns, slabs, a core wall and grid lines, with design groups and station
+   * forces, assembled by `buildDemoProject` through the same adapter path an ETABS
+   * import walks. That matters because the panels this button exists to show — Model,
+   * Groups, the group dashboard — have nothing to draw without a modelMap and groups,
+   * which is exactly what the seed project lacks and why this used to open on an empty
+   * plan.
+   *
+   * Standards stored from an earlier session are re-applied, same as on a normal start.
+   * The per-section grades (4000 / 5000 psi) survive that: `applyProjectSettings` keeps
+   * imported materials whenever a modelMap is present and the override is off.
+   */
+  const handleUseDemo = useCallback(async () => {
+    // The launch gate is the app's first fork, and which way people go is the first
+    // thing worth knowing: an install where everyone takes the demo and nobody ever
+    // reaches an import is a very different problem from one where nobody gets past it.
+    track('launch.choice', { choice: 'demo' });
+    try {
+      const demo = await buildDemoProject();
+      const stored = loadStandards();
+      const next = stored
+        ? applyProjectSettings({ ...demo, code: stored.code }, stored.settings)
+        : demo;
+      setProjectRaw(next);
+      // A fresh model is a fresh history, and it is not the file the last one lived in.
+      historyRef.current = [next];
+      historyIndexRef.current = 0;
+      setActiveMemberId(next.members[0].id);
+      setFilePath(null);
+      setIsDirty(false);
+      setTab('map');
+      logActivity(`Demo model loaded — ${next.members.length} beams, `
+        + `${next.designGroups?.length ?? 0} groups, ${next.modelMap?.stories.length ?? 0} storeys`);
+    } catch (err) {
+      logActivity(`Could not build the demo model: ${(err as Error).message}`, 'error');
+    }
+    enterWorkspace();
+  }, [enterWorkspace]);
   const [helpTarget, setHelpTarget] = useState<{ tab?: string; section?: string } | null>(null);
   const { units, setUnits, setBarFamily, fmt } = useUnits();
 
   // B5: dirty indicator
   const [isDirty, setIsDirty] = useState(false);
+  /**
+   * The file this project is currently associated with, or null for one that has never
+   * been written. It is what separates Save from Save As: with a path, Ctrl+S overwrites
+   * silently; without one it has to ask, which is a Save As by another name.
+   *
+   * Always null in a browser — a page is handed file CONTENT, never a path it could
+   * write back to — so there both commands download, and this stays null on purpose
+   * rather than pretending to a location the page does not have.
+   */
+  const [filePath, setFilePath] = useState<string | null>(null);
 
   // B4: undo/redo history
   const historyRef = useRef<Project[]>([defaultProject]);
@@ -148,21 +209,48 @@ export default function App() {
   }
 
   // ── File handlers ──────────────────────────────────────────────────────────
-  const handleSave = useCallback(async () => {
+  /**
+   * Write the project. `asNew` forces the picker; otherwise it goes straight to the
+   * file this project came from, and only asks when there isn't one yet.
+   */
+  const saveWith = useCallback(async (asNew: boolean) => {
     try {
-      const saved = await saveProject(project);
+      const { saved, filePath: written } = await saveProject(project, asNew ? null : filePath);
+      track('project.save', { asNew, saved, members: project.members.length });
       // Only clear the dirty flag when the file was actually written
       // (not when the user cancelled the save dialog).
-      if (saved) setIsDirty(false);
+      if (!saved) return;
+      if (written) setFilePath(written);
+      setIsDirty(false);
     } catch (e) {
-      alert(`Could not save the project:\n${(e as Error).message}`);
+      track('project.save', { asNew, saved: false, error: (e as Error).message }, 'error');
+      alert(`Could not save the project:
+${(e as Error).message}`);
     }
-  }, [project]);
+  }, [project, filePath]);
+
+  const handleSave = useCallback(() => saveWith(false), [saveWith]);
+  const handleSaveAs = useCallback(() => saveWith(true), [saveWith]);
 
   const handleOpen = useCallback(async () => {
     try {
-      const loaded = await openProject();
-      if (!loaded) return; // cancelled
+      const opened = await openProject();
+      if (!opened) { track('project.open', { opened: false }); return false; } // cancelled
+      const loaded = opened.project;
+      // The file's own FILE_VERSION is recorded separately, by deserializeProject —
+      // it is stripped before the project reaches here.
+      track('project.open', {
+        opened: true,
+        code: loaded.code,
+        members: loaded.members.length,
+        groups: loaded.designGroups?.length ?? 0,
+        hasModelMap: !!loaded.modelMap,
+        hasSettings: !!loaded.settings,
+      });
+      // Adopt the file as this session's save target, so the next Ctrl+S writes back to
+      // it instead of asking again. Undefined in a browser, which correctly leaves the
+      // project pathless.
+      setFilePath(opened.filePath ?? null);
       setProjectRaw(loaded);
       historyRef.current = [loaded];
       historyIndexRef.current = 0;
@@ -177,13 +265,43 @@ export default function App() {
         setZoom(loaded.settings.displayScale);
         localStorage.setItem('sc-zoom', String(loaded.settings.displayScale));
       }
+      // A saved project carries its own standards, so this never needs the setup
+      // dialog — but it does pass the launch gate.
+      setLaunched(true);
+      return true;
     } catch (e) {
       alert(`Could not open the project file:\n${(e as Error).message}`);
+      return false;
     }
   }, [setUnits, setBarFamily]);
 
-  function handleNewProject() {
-    if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
+  /**
+   * File → New Project. Returns to the LAUNCH SCREEN, not to a workspace holding the
+   * sample beams.
+   *
+   * "New project" is the same question the app asks on a cold start — where is this
+   * model coming from: ETABS, a saved file, or the demo? Dropping straight into the
+   * workspace answered it silently with "the demo", which is the one option an engineer
+   * starting real work never wants, and left them deleting sample beams to begin.
+   *
+   * The project is still reset behind the gate so whichever route they pick starts
+   * clean, and the STANDARDS carry forward — a new project should not silently revert to
+   * stock ACI defaults once the engineer has set their own. That is why this does not
+   * re-open the setup dialog: `enterWorkspace` asks for standards only when none are
+   * stored, so a first run still gets the dialog and a later New Project does not.
+   */
+  const handleNewProject = useCallback(() => {
+    // Only ask when there is something to lose. A prompt that fires whether or not any
+    // work would be destroyed carries no information, and the habit it trains — click
+    // through it — is exactly what loses the one that mattered.
+    //
+    // Gating on `isDirty` is only safe because this is a useCallback that CLOSES OVER a
+    // current one, and because it is in the Electron-menu effect's dependencies below.
+    // As a plain function it was registered once with whatever `isDirty` happened to be
+    // at the time, and a stale `false` there would skip the prompt and take unsaved work
+    // with it. That it did not already misfire was luck: `handleSave` depends on
+    // `project`, so the effect re-ran on every edit and re-registered this by accident.
+    if (isDirty && !confirm('Start a new project? Unsaved changes will be lost.')) return;
     // Native confirm() can steal keyboard focus from the window in Electron
     window.focus();
     // Carry the office standards forward — a new project should not silently
@@ -198,12 +316,43 @@ export default function App() {
     setActiveMemberId(fresh.members[0].id);
     setTab('dashboard');
     setIsDirty(false);
-  }
+    // A fresh project is not the file the last one lived in — forgetting the path is
+    // what stops the first Ctrl+S from silently overwriting the project just closed.
+    setFilePath(null);
+    // Back through the launch gate, with nothing left open over it: a modal from the
+    // project just closed, floating above the welcome screen, belongs to a model that no
+    // longer exists.
+    setShowEtabsImport(false);
+    setSettingsMode(null);
+    setLaunched(false);
+  }, [isDirty]);
 
   function changeZoom(z: number) {
     setZoom(z);
     localStorage.setItem('sc-zoom', String(z));
   }
+
+  // ── Usage log ──────────────────────────────────────────────────────────────
+  // COUNTS AND CODES ONLY. Model size and design code are what make a report legible
+  // ("EC2, 900 members" is a different app from "ACI, 12"); names and geometry are the
+  // client's and never leave. Emitted only when one of them changes — see usage.ts.
+  useEffect(() => {
+    setUsageContext({
+      code: project.code,
+      members: project.members.length,
+      groups: project.designGroups?.length ?? 0,
+      stories: project.modelMap?.stories.length ?? 0,
+      frames: project.modelMap?.frames.length ?? 0,
+      units,
+      zoom,
+    });
+  }, [project.code, project.members.length, project.designGroups?.length,
+      project.modelMap?.stories.length, project.modelMap?.frames.length, units, zoom]);
+
+  // Which screen, and how long they stayed. The dwell time between two `view` events is
+  // the whole point: a Member panel opened and left inside two seconds, over and over,
+  // is someone hunting for something they are not finding.
+  useEffect(() => { track('view', { tab }); }, [tab]);
 
   // ── Project standards ──────────────────────────────────────────────────────
   // Projects saved before the setup dialog existed have no `settings`; derive a
@@ -231,9 +380,14 @@ export default function App() {
   }
 
   // ── B4: Undo/Redo ──────────────────────────────────────────────────────────
+  // Undo is the app's clearest confession that something did not do what was expected —
+  // an edit surprised someone, or a control was harder to aim than it looked. A run of
+  // them in one place is worth more than any satisfaction survey, so the depth goes with
+  // it: three in a row is a different story from one.
   function undo() {
-    if (historyIndexRef.current <= 0) return;
+    if (historyIndexRef.current <= 0) { track('edit.undo', { at: 0, blocked: true }); return; }
     historyIndexRef.current--;
+    track('edit.undo', { at: historyIndexRef.current, tab });
     const prev = historyRef.current[historyIndexRef.current];
     setProjectRaw(prev);
     setIsDirty(historyIndexRef.current > 0);
@@ -242,6 +396,7 @@ export default function App() {
   function redo() {
     if (historyIndexRef.current >= historyRef.current.length - 1) return;
     historyIndexRef.current++;
+    track('edit.redo', { at: historyIndexRef.current, tab });
     const next = historyRef.current[historyIndexRef.current];
     setProjectRaw(next);
     setIsDirty(true);
@@ -267,7 +422,13 @@ export default function App() {
       // a second dialog. Ctrl+N uses confirm() not a dialog, so it's safe to
       // keep in both environments.
       const inElectron = !!window.electronAPI;
-      if (e.key === 's' && !inElectron) { e.preventDefault(); handleSave(); }
+      // Shift+S first: with Shift held the browser reports 'S', so a lowercase-only
+      // test would miss Save As and then fall through to Save — silently overwriting
+      // the very file the user was trying to branch away from.
+      if (e.key.toLowerCase() === 's' && !inElectron) {
+        e.preventDefault();
+        (e.shiftKey ? handleSaveAs : handleSave)();
+      }
       if (e.key === 'o' && !inElectron) { e.preventDefault(); handleOpen(); }
       if (e.key === 'n') { e.preventDefault(); handleNewProject(); }
       if (e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
@@ -275,34 +436,37 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [project, activeMemberId, tab, handleSave, handleOpen]);
+  }, [project, activeMemberId, tab, handleSave, handleSaveAs, handleOpen]);
 
   // ── Electron menu → renderer events ───────────────────────────────────────
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
     api.onTriggerSave(handleSave);
+    // Optional — a renderer running against an older preload simply has no Save As
+    // accelerator rather than throwing on startup.
+    api.onTriggerSaveAs?.(handleSaveAs);
     api.onTriggerOpen(handleOpen);
     api.onNewProject(handleNewProject);
     return () => {
       api.offTriggerSave();
+      api.offTriggerSaveAs?.();
       api.offTriggerOpen();
       api.offNewProject();
     };
-  }, [handleSave, handleOpen]);
+  }, [handleSave, handleSaveAs, handleOpen, handleNewProject]);
 
   // ── Click outside to close popovers ───────────────────────────────────────
   useEffect(() => {
-    if (!showExport && !membersOpen) return;
+    if (!membersOpen) return;
     function close(e: MouseEvent) {
       if (!(e.target as Element).closest('[data-popover]')) {
-        setShowExport(false);
         setMembersOpen(false);
       }
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
-  }, [showExport, membersOpen]);
+  }, [membersOpen]);
 
   // ── A1: Split-pane drag ───────────────────────────────────────────────────
   function onSplitMouseDown(e: React.MouseEvent) {
@@ -326,16 +490,38 @@ export default function App() {
   }, []);
 
   // ── ETABS import ───────────────────────────────────────────────────────────
-  const [showEtabsImport, setShowEtabsImport] = useState(false);
+  /**
+   * The ETABS wizard, and HOW it was opened.
+   *
+   *   'com'  — from the launch gate's "Import from the running ETABS model". That
+   *            button IS the source question, so the wizard connects on open and goes
+   *            straight to Filter rather than asking the same thing again.
+   *   'ask'  — from the File menu or the workspace, where nothing has been chosen yet
+   *            and the source picker is the first ask, not a second one.
+   */
+  const [showEtabsImport, setShowEtabsImport] = useState<false | 'ask' | 'com'>(false);
+
+  // File → Import from ETABS…, from the NATIVE menu — the only route to it in the
+  // desktop app now that the in-page menu bar is the browser's fallback. Its own effect
+  // beside the state it sets, rather than in the menu block above, which runs before
+  // this line and so cannot reach the setter.
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onImportEtabs) return;
+    api.onImportEtabs(() => setShowEtabsImport('ask'));
+    return () => api.offImportEtabs?.();
+  }, []);
 
   // Open the Help tab, closing any open dialog first so the guide is visible.
   // Two entry points funnel here: a panel's "?" (HelpLink → window `open-help`
   // event, carries a doc section) and the native Help menu (Electron IPC, carries
   // a sub-tab). HelpView reads `target` to pick the sub-tab / scroll to a section.
   const openHelpTarget = useCallback((t: { tab?: string; section?: string }) => {
-    setShowEtabsImport(false); setShowReport(false); setShowExport(false);
-    setHelpTarget(t);
-    setTab('help');
+    setShowEtabsImport(false);
+    // A NEW object every time, deliberately: asking for the same tab twice in a row must
+    // re-open the modal, and the workspace syncs on this prop's identity. There is no
+    // 'help' TAB any more - the workspace is the only shell, and it owns the modal.
+    setHelpTarget({ ...t });
   }, []);
 
   useEffect(() => {
@@ -365,6 +551,22 @@ export default function App() {
     applyUnits?: 'imperial' | 'si',
   ) {
     if (applyUnits) setUnits(applyUnits);
+    // The end of the import funnel — the event every `wizard.*` before it is measured
+    // against. Reaching it at all is the number that matters; the split between members
+    // and groups says whether auto-grouping did anything useful.
+    track('import.complete', {
+      members: members.length,
+      groups: groups.length,
+      frames: modelMap?.frames.length ?? 0,
+      stories: modelMap?.stories.length ?? 0,
+      code: applyCode ?? project.code,
+      units: applyUnits,
+      hasSls: !!slsCombo,
+    });
+    trackOnce('milestone.imported');
+    // The model is in — leave the launch gate. Standards are asked for now rather
+    // than before, so the dialog pre-fills from what was just imported.
+    enterWorkspace();
     setProject(p => {
       // Fresh import: the imported members/groups fully REPLACE whatever was in
       // the project (the default sample members and any prior import). This is
@@ -571,15 +773,27 @@ export default function App() {
 
   return (
     <div id="app-root" style={{ height: '100vh', overflow: 'hidden', fontFamily: FONT.ui }}>
-      <WorkspaceView
+      {/* The launch gate. The workspace is not rendered until a model has been
+          chosen; the modals below stay mounted either way, because the ETABS
+          wizard is opened FROM this screen. */}
+      {!launched && (
+        <WelcomeScreen
+          onImportEtabs={() => { track('launch.choice', { choice: 'import' }); setShowEtabsImport('com'); }}
+          onOpenProject={() => { track('launch.choice', { choice: 'open' }); return handleOpen(); }}
+          onUseDemo={handleUseDemo}
+        />
+      )}
+      {launched && <WorkspaceView
         project={project}
         setProject={setProject}
         onSettingsSave={handleSettingsSave}
         onSaveProject={handleSave}
+        onSaveProjectAs={handleSaveAs}
         onOpenProject={handleOpen}
         onNewProject={handleNewProject}
-        onImportEtabs={() => setShowEtabsImport(true)}
-      />
+        onImportEtabs={() => setShowEtabsImport('ask')}
+        helpTarget={helpTarget}
+      />}
 
       {/* App-owned modals. They outlive any one panel, and two of them (the ETABS
           wizard and the first-run setup) can rewrite the whole project — so they stay
@@ -587,11 +801,11 @@ export default function App() {
       {showEtabsImport && (
         <EtabsImportWizard
           code={project.code}
+          autoSource={showEtabsImport === 'ask' ? undefined : showEtabsImport}
           onClose={() => setShowEtabsImport(false)}
           onImport={handleEtabsImport}
         />
       )}
-      {showReport && <ReportModal project={project} onClose={() => setShowReport(false)} />}
       {settingsMode === 'setup' && (
         <ProjectSettingsDialog
           mode="setup"

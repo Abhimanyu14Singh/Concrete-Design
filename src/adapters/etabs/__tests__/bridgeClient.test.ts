@@ -141,7 +141,9 @@ function describeMapping(name: string, makeConn: () => BridgeConnection | ComCon
       expect(max.stations).toHaveLength(2);
       expect(max.stations[0].V).toBeCloseTo(100 * 0.2248089, 4);              // kN → kip
       expect(max.stations[1].M).toBeCloseTo(350 * 0.2248089 * 3.280839895, 3); // kN·m → kip-ft
-      expect(max.stations[0].P).toBeCloseTo(10 * 0.2248089, 4);
+      // NEGATED: the row's P = +10 kN is TENSION in ETABS (compression-negative),
+      // and LoadCase.Pu is compression-positive, so it arrives as −10 kN in kips.
+      expect(max.stations[0].P).toBeCloseTo(-10 * 0.2248089, 4);
       expect(max.stations[0].T).toBeCloseTo(5 * 0.2248089 * 3.280839895, 4);
       expect(max.stations[1].x).toBeCloseTo(3 * 3.280839895, 4);
       expect(out['no-such']).toEqual([]);

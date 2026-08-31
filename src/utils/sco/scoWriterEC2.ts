@@ -27,6 +27,11 @@ import { getBarDiam } from '../concreteDesign';
 import { maxBarsPerLayer } from '../suggestRebar';
 import { resolveCrack } from '../resolveCrack';
 import { signedMomentEnvelope } from '../autoGroup';
+import {
+  buildBeamSco2026, loadRow2026, r3, splitLayers, type Beam2026Params,
+} from './scoWriter2026';
+
+export { splitLayers };
 
 // ── Unit conversions (app stores imperial; the EC2 file is SI) ────────────────
 const IN_TO_MM = 25.4;
@@ -69,43 +74,18 @@ export function barIndexEC2(barSize: number): number {
   return best;
 }
 
-const r3 = (x: number): number => Math.round(x * 1000) / 1000;
-/** Number formatting matching the sample: ≤3 decimals, positives get a leading
- *  space, the minus sign of a negative takes that slot. */
-const sp = (x: number): string => (x < 0 ? '' : ' ') + String(r3(x));
+/** Header trio for an EN 1992 / SI / European-bar file, from the sample. */
+export const EC2_2026_HEADER = { codes: 14, units: 1, barType: 8 } as const;
 
-// The sample is Windows-authored (CRLF). Preserve those line endings so the file
-// still loads in S-Concrete — value matches must stop at \r as well as \t/\n.
-const EOL = '\r\n';
+// Metric sections are whole millimetres, so dimensions round; materials and the
+// crack-width limit keep 3 decimals.
+const dimMm = (x: number): number => Math.round(x);
+const valMpa = (x: number): number => r3(x);
 
-/** Replace every `Key\t value` occurrence in the template with a new value. */
-function setParam(text: string, key: string, value: string | number): string {
-  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(${esc}\\t) ?[^\\t\\r\\n]*`, 'g');
-  if (!re.test(text)) throw new Error(`EC2 template missing field: ${key}`);
-  return text.replace(re, `$1 ${value}`);
-}
+const ec2LoadRow = loadRow2026;
 
-const SO_HEADER =
-  'LC\tNf\tTf\tVfz\tMfy\tCmy\tVfy\tMfz\tCmz\tPdistr\tCheckLC\tLoad Type\tComment\tAutoGen\tSustFactor\tServLdFactor';
-
-interface RowOpts { vfy?: number; mfz?: number; sust?: number; comment?: string }
-/** One Sectional Loads row (Table 16). Columns are biaxial, so Vfy/Mfz are
- *  populated; beams leave them 0. */
-function ec2LoadRow(i: number, nf: number, tf: number, vfz: number, mfy: number, opts: RowOpts = {}): string {
-  const { vfy = 0, mfz = 0, sust = 1, comment = '--' } = opts;
-  return ` ${i}\t${sp(nf)}\t${sp(tf)}\t${sp(vfz)}\t${sp(mfy)}\t 1\t${sp(vfy)}\t${sp(mfz)}\t 1\t 0\t1\t 1\t${comment}\t0\t ${sp(sust).trimStart()}\t 1`;
-}
-
-function replaceSectionalLoads(text: string, rows: string[]): string {
-  const tag = `@Object@S-CONCRETE Sectional Loads@${EOL}@Table@16@${EOL}`;
-  const start = text.indexOf(tag);
-  if (start < 0) throw new Error('EC2 template missing Sectional Loads table');
-  const bodyStart = start + tag.length;
-  const end = text.indexOf('@EndTable@', bodyStart);
-  return text.slice(0, bodyStart) + SO_HEADER + EOL + rows.join(EOL) + EOL + text.slice(end);
-}
-
+/** Everything the EN beam .SCO block needs. NOTE the units: this writer works in SI
+ *  (mm, MPa, kN) throughout, unlike the imperial ACI writer in `scoWriter.ts`. */
 export interface Ec2BeamScoParams {
   memberName: string;
   webMm: number; depthMm: number; flangeWidthMm: number; flangeThkMm: number; ignoreFlange: boolean;
@@ -120,6 +100,8 @@ export interface Ec2BeamScoParams {
   ecMpa?: number; gcMpa?: number;
   topLayers: number[]; topBarIdx: number;   // bars per stacked layer, top face
   botLayers: number[]; botBarIdx: number;   // bars per stacked layer, bottom face
+  /** Skin bars PER FACE (the app's beam convention). Doubled on the way into
+   *  S-Concrete's `Bm NbmFace`, which counts both faces. */
   faceCount: number; faceBarIdx: number;
   stirrupBarIdx: number; stirrupSpacingMm: number; stirrupLegs: number;
   crackWidthLimitMm: number;
@@ -127,96 +109,36 @@ export interface Ec2BeamScoParams {
   rows: string[]; // pre-built Sectional Loads rows
 }
 
+/** Map EC2 params onto the shared 2026 shape (mm/MPa go straight through). */
+function toShared(p: Ec2BeamScoParams): Beam2026Params {
+  return {
+    memberName: p.memberName,
+    ...EC2_2026_HEADER,
+    fmtDim: dimMm,
+    fmtVal: valMpa,
+    web: p.webMm, depth: p.depthMm,
+    flangeWidth: p.flangeWidthMm, flangeThk: p.flangeThkMm, ignoreFlange: p.ignoreFlange,
+    cover: p.coverMm,
+    coverTop: p.coverTopMm, coverBottom: p.coverBottomMm, coverSide: p.coverSideMm,
+    fy: p.fyMpa, fcu: p.fcuMpa, es: p.esMpa,
+    ...(p.ecMpa ? { ec: p.ecMpa } : {}),
+    ...(p.gcMpa ? { gc: p.gcMpa } : {}),
+    topLayers: p.topLayers, topBarIdx: p.topBarIdx,
+    botLayers: p.botLayers, botBarIdx: p.botBarIdx,
+    faceCount: p.faceCount, faceBarIdx: p.faceBarIdx,
+    stirrupBarIdx: p.stirrupBarIdx, stirrupSpacing: p.stirrupSpacingMm, stirrupLegs: p.stirrupLegs,
+    crackWidthLimit: p.crackWidthLimitMm,
+    checkCracks: p.checkCracks,
+    rows: p.rows,
+  };
+}
+
 /** Inject EC2 beam parameters into the sample template. */
 export function buildBeamScoTextEC2(p: Ec2BeamScoParams): string {
-  let t = ec2BeamTemplate;
-  // Header (Identifiers + Parameters tables)
-  t = setParam(t, 'Codes', 14);
-  t = setParam(t, 'Units', 1);
-  t = setParam(t, 'Bar Type', 8);
-  t = setParam(t, 'Member Type', 2);
-  t = setParam(t, 'Member Name', p.memberName);
-  // Section
-  t = setParam(t, 'Bm b', Math.round(p.webMm));
-  t = setParam(t, 'Bm h', Math.round(p.depthMm));
-  t = setParam(t, 'Bm bf', Math.round(p.flangeWidthMm));
-  t = setParam(t, 'Bm hf', Math.round(p.flangeThkMm));
-  t = setParam(t, 'Bm IgnoreFlange', p.ignoreFlange ? 1 : 0);
-  t = setParam(t, 'Bm Top', Math.round(p.coverTopMm ?? p.coverMm));
-  t = setParam(t, 'Bm Bottom', Math.round(p.coverBottomMm ?? p.coverMm));
-  t = setParam(t, 'Bm Side', Math.round(p.coverSideMm ?? p.coverMm));
-  // Materials
-  t = setParam(t, 'fy', r3(p.fyMpa));
-  t = setParam(t, 'fy2', r3(p.fyMpa));
-  t = setParam(t, 'fy3', r3(p.fyMpa));
-  t = setParam(t, 'fcu', r3(p.fcuMpa));
-  t = setParam(t, 'Es', r3(p.esMpa));
-  if (p.ecMpa) t = setParam(t, 'Ec', r3(p.ecMpa));
-  if (p.gcMpa) t = setParam(t, 'Gc', r3(p.gcMpa));
-  // Longitudinal bars — distribute each face across S-Concrete's stacked layers
-  // NT/NB(1,j) (j = 1..5), so a face that needs two rows (e.g. 8 bottom bars in a
-  // 300 mm web → 4 + 4) is emitted with real layers instead of one crowded row.
-  // Curtain 2 (N(2,j)) is unused; every populated layer takes the same bar size
-  // (SameDTop/SameDBot = 1 in the template).
-  const writeFace = (t0: string, N: 'NT' | 'NB', D: 'DT' | 'DB', layers: number[], barIdx: number): string => {
-    let tt = t0;
-    for (let j = 1; j <= 5; j++) {
-      tt = setParam(tt, `Bm ${N}(1,${j})`, layers[j - 1] ?? 0);
-      tt = setParam(tt, `Bm ${N}(2,${j})`, 0);
-      tt = setParam(tt, `Bm ${D}(1,${j})`, barIdx);
-    }
-    return tt;
-  };
-  t = writeFace(t, 'NT', 'DT', p.topLayers, p.topBarIdx);
-  t = writeFace(t, 'NB', 'DB', p.botLayers, p.botBarIdx);
-  // Side / skin face bars. ApplyFace drives whether S-Concrete DESIGNS/imposes face
-  // (skin) steel; the template ships it ON, so without this every beam — including a
-  // shallow 300×700 that is below the EC2 §7.3.3 h ≥ 1000 mm skin threshold and
-  // carries no side bars in the app — gets S-Concrete-invented face steel. Honour the
-  // app's cage: enable it only when the section actually has side bars.
-  t = setParam(t, 'Bm ApplyFace', p.faceCount > 0 ? 1 : 0);
-  t = setParam(t, 'Bm NbmFace', p.faceCount);
-  t = setParam(t, 'Bm DbmFace', p.faceBarIdx);
-  // Stirrups
-  t = setParam(t, 'Bm Dstir', p.stirrupBarIdx);
-  t = setParam(t, 'Bm Sstir', Math.round(p.stirrupSpacingMm));
-  t = setParam(t, 'Bm NlegsZ', p.stirrupLegs);
-  t = setParam(t, 'Bm NlegsY', p.stirrupLegs);
-  // Crack width — CheckCracks and CheckCracksF are the direct crack-width (SLS)
-  // checks: off in the ULS file, on only in the SLS/crack file (both follow
-  // p.checkCracks). CheckCracksF is a separate template token from CheckCracks,
-  // so setParam targets it independently. (Bm CheckBarS — the §7.3.3 deemed-to-
-  // satisfy spacing check — is intentionally left at the template default.)
-  t = setParam(t, 'Bm CheckCracks', p.checkCracks ? 1 : 0);
-  t = setParam(t, 'Bm CheckCracksF', p.checkCracks ? 1 : 0);
-  t = setParam(t, 'Bm CrkWdthLmt', r3(p.crackWidthLimitMm));
-  // Forces
-  t = replaceSectionalLoads(t, p.rows);
-  return t;
+  return buildBeamSco2026(ec2BeamTemplate, toShared(p));
 }
 
 const sumBars = (gs: { numBars: number }[]) => gs.reduce((s, g) => s + g.numBars, 0);
-
-/**
- * Distribute `total` bars of one face across S-Concrete's up-to-5 stacked layers
- * (NT/NB(1,j)), filling `perLayer` bars per row — so a face wider than one layer
- * holds (e.g. 8 bars in a 300 mm web → 4 + 4) is emitted as real layers instead
- * of one impossibly-crowded row. Any remainder beyond 5 layers folds into the
- * last row (a degenerate case S-Concrete will flag).
- */
-export function splitLayers(total: number, perLayer: number, maxLayers = 5): number[] {
-  if (total <= 0) return [0];
-  const n = Math.max(1, perLayer);
-  const layers: number[] = [];
-  let rem = total;
-  while (rem > 0 && layers.length < maxLayers) {
-    const c = Math.min(rem, n);
-    layers.push(c);
-    rem -= c;
-  }
-  if (rem > 0) layers[layers.length - 1] += rem;
-  return layers;
-}
 
 /** ULS sagging + hogging Sectional Loads rows for a beam, numbered from `start`. */
 export function ec2BeamUlsRows(member: Member, start = 1): string[] {

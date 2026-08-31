@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Portal from './Portal.js'
-import { buildPushPayload, validatePush } from './etabsPush.js'
+import { toPushProperties } from './etabsPush.js'
+import { buildSectionPushPlan, validateSectionPush } from '../../src/adapters/etabs/pushSections.ts'
 
 // "Push to ETABS" — review what resized, name the properties, name the model, push.
 //
@@ -19,17 +20,31 @@ import { buildPushPayload, validatePush } from './etabsPush.js'
 // transport. A dialog that said "pushed to ETABS" while doing that would be lying about
 // the one thing the user cannot check from here.
 
-export default function PushToEtabsDialog({ rows, modelName: initialName, onCancel, onPush }) {
+export default function PushToEtabsDialog({ rows, modelName: initialName, live = false, eUnits = null, busy = null, onCancel, onPush }) {
   // Local drafts: a name being typed is this dialog's business until Push. Lifting it
   // would re-run the app's design memo on every keystroke of a text field that changes
   // nothing about the model.
   const [names, setNames] = useState(() => Object.fromEntries(rows.map(r => [r.groupId, r.propertyName])))
   const [modelName, setModelName] = useState(initialName)
+  // Run the analysis after saving, on by default — it is the point of the round trip,
+  // and the one step worth being able to skip because it is the one that takes an hour.
+  const [runAnalysis, setRunAnalysis] = useState(true)
 
   const draft = rows.map(r => ({ ...r, propertyName: names[r.groupId] ?? r.propertyName }))
-  const errors = validatePush(draft, modelName)
-  const payload = buildPushPayload(draft, modelName)
-  const canPush = rows.length > 0 && errors.length === 0
+  const properties = toPushProperties(draft)
+  // The app's own validation and plan builder — the same ones the write path runs, so
+  // what this screen shows is what ETABS will be told, converted into its units.
+  const errors = validateSectionPush(properties, modelName)
+  const plan = buildSectionPushPlan(properties, modelName, { eUnits, runAnalysis })
+  const canPush = rows.length > 0 && errors.length === 0 && !busy
+
+  /** Native file picker on the desktop; the field stays typeable either way. */
+  const pickPath = async () => {
+    const api = typeof window !== 'undefined' && window.electronAPI
+    if (!api?.pickPath) return
+    const r = await api.pickPath({ mode: 'file', filters: [{ name: 'ETABS model', extensions: ['EDB'] }] })
+    if (r && r.path) setModelName(r.path)
+  }
 
   return (
     <Portal>
@@ -85,19 +100,35 @@ export default function PushToEtabsDialog({ rows, modelName: initialName, onCanc
                   ))}
                 </div>
 
+                {/* A PATH, not a name: File.Save writes where it is told, and a bare
+                    "model_rev2.EDB" lands wherever ETABS' working directory points. */}
                 <label className="demo-pushfield wide">
-                  <span>New model name</span>
-                  <input value={modelName} spellCheck={false} onChange={e => setModelName(e.target.value)} />
+                  <span>Save the new model as</span>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <input value={modelName} spellCheck={false} style={{ flex: 1 }}
+                           onChange={e => setModelName(e.target.value)} />
+                    {typeof window !== 'undefined' && window.electronAPI?.pickPath && (
+                      <button className="sdash-loads-chip" onClick={pickPath} title="Browse…">…</button>
+                    )}
+                  </span>
                 </label>
 
-                {/* What the four COM calls would receive. Shown rather than described,
-                    because this is the part that has to be right when the sidecar lands
-                    and the only way to check it from here is to read it. */}
+                <label className="demo-pushcheck">
+                  <input type="checkbox" checked={runAnalysis} onChange={e => setRunAnalysis(e.target.checked)} />
+                  <span>Re-run the analysis after saving <i>— editing a section unlocks the
+                    model and discards its results, so without this the new file has none</i></span>
+                </label>
+
+                {/* What ETABS will actually be told, in ITS units. Shown rather than
+                    described: it is the part that has to be right, and reading it is the
+                    only way to check it from here. */}
                 <div className="demo-pushplan">
-                  <b>{payload.defineFrameSections.length}</b> frame propert
-                  {payload.defineFrameSections.length === 1 ? 'y' : 'ies'} defined ·
-                  {' '}<b>{payload.frameCount}</b> frame{payload.frameCount === 1 ? '' : 's'} reassigned ·
-                  {' '}saved as <b>{modelName || '—'}</b> · analysis re-run
+                  <b>{plan.define.length}</b> frame propert{plan.define.length === 1 ? 'y' : 'ies'} defined ·
+                  {' '}<b>{plan.frameCount}</b> frame{plan.frameCount === 1 ? '' : 's'} reassigned ·
+                  {' '}saved as <b>{modelName || '—'}</b>{plan.runAnalysis ? ' · analysis re-run' : ''}
+                  {plan.lengthFactor !== 1 && (
+                    <> · dimensions ×<b>{plan.lengthFactor}</b> into the model&rsquo;s units</>
+                  )}
                 </div>
 
                 {errors.map(e => <div key={e} className="demo-pusherr">{e}</div>)}
@@ -109,19 +140,24 @@ export default function PushToEtabsDialog({ rows, modelName: initialName, onCanc
             {/* Stated plainly, not buried in a tooltip. The user cannot verify from here
                 whether ETABS was touched, so the screen has to tell them. */}
             <span className="demo-pushnote">
-              Simulated — the ETABS connection is read-only today, so this builds the push
-              payload and re-runs the design here. Nothing is written to a .EDB.
+              {busy || (live
+                ? <>Writes to the open ETABS model: defines the properties, reassigns the
+                    frames, saves to the path above and{runAnalysis ? ' re-runs the analysis' : ' leaves it unanalysed'}.
+                    The original file is not modified — every edit so far is in memory until the save.</>
+                : <>Simulated — no live ETABS model is attached, so this builds the plan and
+                    re-runs the design here. Nothing is written to a .EDB.</>)}
             </span>
             <span style={{ flex: 1 }} />
             <button className="sdash-loads-chip" onClick={onCancel}>Cancel</button>
             <button
               className="demo-suggest"
               disabled={!canPush}
-              title={canPush ? 'Create the properties, reassign the frames, save as the new model and re-run'
-                : rows.length ? errors[0] : 'Nothing has been resized'}
-              onClick={() => onPush({ rows: draft, modelName, payload })}
+              title={!rows.length ? 'Nothing has been resized' : errors[0]
+                || (live ? 'Define the properties, reassign the frames, save as the new model and re-run'
+                         : 'Build the plan and re-run the design here — nothing is written to ETABS')}
+              onClick={() => onPush({ rows: draft, modelName, properties, plan, live })}
             >
-              Push, save as, and run
+              {busy ? 'Working…' : live ? 'Push, save as, and run' : 'Simulate the push'}
             </button>
           </div>
         </div>

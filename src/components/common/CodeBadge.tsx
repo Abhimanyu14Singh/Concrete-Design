@@ -7,7 +7,6 @@ interface Props {
 
 const DISPLAY: Record<string, string> = {
   'ACI318-19': 'ACI 318-19',
-  'ACI318-14': 'ACI 318-14',
   'EN1992-1-1': 'EN 1992-1-1',
 };
 

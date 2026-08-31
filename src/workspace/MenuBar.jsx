@@ -17,9 +17,9 @@ import Menu from './Menu'
 // A menu that quietly drops "Save Project" teaches that the app has no such thing; one
 // that greys it out and says "the demo's model is data.js" tells the truth about both.
 
-const ACCEL = { new: 'Ctrl+N', open: 'Ctrl+O', save: 'Ctrl+S', help: 'F1' }
+const ACCEL = { new: 'Ctrl+N', open: 'Ctrl+O', save: 'Ctrl+S', saveAs: 'Ctrl+Shift+S', help: 'F1', perf: 'Ctrl+Alt+P' }
 
-export default function MenuBar({ onNewProject, onOpenProject, onSaveProject, onImportEtabs, onOpenHelp, onReset }) {
+export default function MenuBar({ onNewProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportEtabs, onOpenHelp, onReset, onPreferences, onTogglePerf }) {
   const [open, setOpen] = useState(null)          // {label, x, y, items}
   const barRef = useRef(null)
 
@@ -38,12 +38,15 @@ export default function MenuBar({ onNewProject, onOpenProject, onSaveProject, on
       { label: `New Project        ${ACCEL.new}`, on: onNewProject, disabled: !onNewProject },
       { label: `Open Project…      ${ACCEL.open}`, on: onOpenProject, disabled: !onOpenProject },
       { label: `Save Project       ${ACCEL.save}`, on: onSaveProject, disabled: !onSaveProject },
+      { label: `Save Project As…   ${ACCEL.saveAs}`, on: onSaveProjectAs, disabled: !onSaveProjectAs },
       { sep: true },
       { label: 'Import from ETABS…', on: onImportEtabs, disabled: !onImportEtabs },
       { sep: true },
       { label: 'Reset the workspace', on: onReset },
     ],
     View: () => [
+      { label: `Performance meter      ${ACCEL.perf}`, on: onTogglePerf, disabled: !onTogglePerf },
+      { sep: true },
       { label: 'Reload', on: () => window.location.reload() },
       { sep: true },
       {
@@ -54,6 +57,12 @@ export default function MenuBar({ onNewProject, onOpenProject, onSaveProject, on
           else d.documentElement.requestFullscreen?.()
         },
       },
+    ],
+    // Between View and Help, because it belongs with them: View changes what is on
+    // screen NOW, Preferences changes how it is drawn from now on. Neither touches the
+    // model — that is the gear, and it is deliberately not in this bar.
+    Preferences: () => [
+      { label: 'Model appearance…', on: onPreferences, disabled: !onPreferences },
     ],
     Help: () => [
       { label: `Doc Resources        ${ACCEL.help}`, on: () => onOpenHelp('guide') },

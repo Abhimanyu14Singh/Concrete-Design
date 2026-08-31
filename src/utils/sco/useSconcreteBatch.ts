@@ -5,18 +5,21 @@
  *   • Push the design groups back into ETABS (named groups + frame assignment).
  *   • Generate one .SCO per group (envelope) or per member, run the S-Concrete batch,
  *     and pull the pass/fail + utilization results back in (persisted on the project).
- *   • Re-run the .SCO files already in the output folder (hand-edits survive).
+ *   • Clean re-run: clear every S-Concrete artefact from the output folder, then do
+ *     the whole thing again from the current design.
  *
  * The desktop round-trips only work in the Windows app (live ETABS / installed
  * S-Concrete); on web the derived `desktop`/`hasEtabs` flags let the UI explain why.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Project, SconcreteResult, RebarLayout } from '../../types';
+import { beginIndeterminate } from '../activity';
+import { trackTiming, trackOnce } from '../usage';
 import { formatBarLabel } from '../rebar';
 import { collectGroupScoFiles, buildGroupEnvelopeScoFiles, parseBatchResults, type ScoFile } from './scoBatch';
 import type { ScrsResult } from './scrsParser';
-import { summarize, governingDcr, statusView, type StatusTone } from './resultStatus';
-import { runScoBatch, rerunScoBatch, hasSconcrete, detectSconcrete, type SconcreteRunConfig, type SconcreteRunResult, type SconcreteDetect } from './sconcreteClient';
+import { summarize, governingDcr, worstStatusView, type StatusTone } from './resultStatus';
+import { runScoBatch, hasSconcrete, detectSconcrete, type SconcreteRunConfig, type SconcreteRunResult, type SconcreteDetect } from './sconcreteClient';
 import { buildGroupPushPayload, summarizePushResults } from '../../adapters/etabs/pushGroups';
 import { ComConnection } from '../../adapters/etabs/comClient';
 
@@ -41,6 +44,8 @@ export type DesktopAPI = {
   offSconcreteProgress?: () => void;
 };
 
+/** The desktop bridge, or undefined in a browser build. Callers MUST feature-detect —
+ *  the whole S-Concrete flow is desktop-only. */
 export const desktopApi = (): DesktopAPI | undefined =>
   (window as Window & { electronAPI?: DesktopAPI }).electronAPI;
 
@@ -58,7 +63,7 @@ export function friendlyStep(line: string): string {
 }
 
 /** Linkage from a written .SCO's name stem back to its group + members. */
-type Link = { kind: 'uls' | 'crack' | 'single'; groupLabel: string; memberIds: string[]; cage?: string };
+type Link = { kind: 'uls' | 'crack' | 'single'; groupLabel?: string; memberIds: string[]; cage?: string };
 
 /** One face's bars as "3-#10" / "3-Ø32" (US or metric), or "—" when empty. */
 const faceLabel = (bars: { numBars: number; barSize: number }[]): string =>
@@ -82,8 +87,6 @@ export function matchResultsToGroup(results: SconcreteResult[], groupLabel: stri
   );
 }
 
-const TONE_RANK: Record<StatusTone, number> = { none: 0, ok: 1, warn: 2, ng: 3 };
-
 /** Roll a group's S-Concrete rows into one badge: worst status + governing DCR +
  *  total warning count. Null when the group has no results (not verified yet). */
 export function summarizeGroupResults(results: SconcreteResult[]):
@@ -91,17 +94,17 @@ export function summarizeGroupResults(results: SconcreteResult[]):
   if (!results.length) return null;
   let dcr: number | null = null;
   let warnCount = 0;
-  let worst = statusView(results[0]);
   for (const r of results) {
     const g = governingDcr(r);
     if (g.dcr != null) dcr = dcr == null ? g.dcr : Math.max(dcr, g.dcr);
     warnCount += r.warnings?.length ?? 0;
-    const sv = statusView(r);
-    if (TONE_RANK[sv.tone] > TONE_RANK[worst.tone]) worst = sv;
   }
+  const worst = worstStatusView(results)!;
   return { tone: worst.tone, text: worst.text, dcr, warnCount, count: results.length };
 }
 
+/** Everything the S-Concrete panel needs: batch state, config, and the actions that
+ *  drive a run. Returned by the hook so the UI holds no batch state of its own. */
 export interface SconcreteBatch {
   code: Project['code'];
   busy: 'etabs' | 'sco' | 'rerun' | null;
@@ -127,7 +130,7 @@ export interface SconcreteBatch {
   ranAt?: string;
   pushToEtabs: () => Promise<void>;
   runBatch: () => Promise<void>;
-  rerunExisting: () => Promise<void>;
+  rerunClean: () => Promise<void>;
   browse: (field: keyof SconcreteRunConfig) => Promise<void>;
   openFolder: () => Promise<void>;
   clearResults: () => void;
@@ -190,6 +193,25 @@ export function useSconcreteBatch(
     api.onSconcreteProgress((line) => { if (!line.startsWith('[watcher]')) setProgress(line); });
     return () => { api.offSconcreteProgress?.(); };
   }, []);
+
+  // Mirror the run onto the shell's status bar, so the bottom line says what the app is
+  // doing even when the Verify panel is closed or on another screen.
+  //
+  // INDETERMINATE and NOT pausable, both deliberately. The work is a spawned
+  // BatchReporter: there is no unit count to divide by, and nothing this process can
+  // say to make it hold. Publishing it as pausable would put a button on the bar that
+  // does nothing — see utils/activity.ts.
+  const barRef = useRef<ReturnType<typeof beginIndeterminate> | null>(null);
+  useEffect(() => {
+    if (busy && !barRef.current) {
+      barRef.current = beginIndeterminate(progress || 'Starting…');
+    } else if (busy && barRef.current) {
+      barRef.current.set(friendlyStep(progress || 'Working…'));
+    } else if (!busy && barRef.current) {
+      barRef.current.end(err ? `S-Concrete: ${err}` : msg || 'S-Concrete run finished');
+      barRef.current = null;
+    }
+  }, [busy, progress, err, msg]);
 
   /** Persist results to the project (or keep local when there's no onProjectChange). */
   function saveResults(next: SconcreteResult[] | null) {
@@ -265,6 +287,10 @@ export function useSconcreteBatch(
   /** Parse a run/rerun result into persisted results, or report why it produced nothing. */
   function applyResult(out: SconcreteRunResult, ranLabel: string, linkByStem?: Map<string, Link>) {
     if (out.scrsText) {
+      // The end of the workflow the whole app is built around — import, design, group,
+      // verify. Once per session: what matters is whether an install ever gets here,
+      // not how many times it does.
+      trackOnce('milestone.verified');
       saveResults(toScoResults(parseBatchResults(out.scrsText), linkByStem));
       setMsg(`${ranLabel} — ${out.scoCount} .SCO file(s).`);
     } else {
@@ -272,15 +298,19 @@ export function useSconcreteBatch(
     }
   }
 
-  async function runBatch() {
-    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('sco'); setProgress('Preparing…');
-    try {
+  /**
+   * Generate the run's .SCO files, their .SCRS linkage and the run label, and raise
+   * any group-level warnings. Shared by both buttons — a clean re-run regenerates
+   * from the CURRENT app design exactly as a normal batch does; the only difference
+   * is that it clears the folder first.
+   */
+  function generate(): { files: ScoFile[]; ranLabel: string; linkByStem: Map<string, Link> } {
       // One .SCO PER GROUP (envelope): the group's representative section/rebar
       // carrying every member's load cases. Falls back to one file per member
       // when no groups are defined.
       let files: ScoFile[];
       let ranLabel: string;
-      let linkByStem: Map<string, Link> | undefined;
+      let linkByStem: Map<string, Link>;
       if (groups.length) {
         const env = buildGroupEnvelopeScoFiles(groups, members, code, project);
         files = env;
@@ -305,11 +335,24 @@ export function useSconcreteBatch(
         const notes: string[] = [];
         if (mixed.length) notes.push(`mixed sections in ${mixed.join(', ')} — used the most common section per group`);
         if (mixedR.length) notes.push(`members have different rebar in ${mixedR.join(', ')} — the file used one member's cage; apply a group rebar to unify`);
+        const zoned = [...new Set(env.filter((f) => f.zoneSpacing != null).map((f) => f.groupLabel))];
+        if (zoned.length) notes.push(`zoned stirrups in ${zoned.join(', ')} — one file per spacing, each carrying that zone's load rows`);
         if (excludedIds.size) notes.push(`${excludedIds.size} unsupported member(s) skipped (e.g. circular columns)`);
         if (ec2NoSls) notes.push('EC2: no SLS crack combo set — no crack-width file was generated');
         if (notes.length) setWarn(notes.join('; '));
       } else {
         files = collectGroupScoFiles(groups, members, code, project);
+        // Link the per-member files back to their members too. Without this the
+        // only linkage was a `label === name` match, which a zone-split file
+        // ("B12_S4") never satisfies — so those results came back unattached to
+        // any member and never coloured the map or reached the member card.
+        linkByStem = new Map(files.map((f) => {
+          const m = members.find((mm) => mm.id === f.memberId);
+          return [
+            f.fileName.replace(/\.SCO$/i, ''),
+            { kind: 'single' as const, memberIds: m ? [m.id] : [], cage: cageLabel(m?.rebar) },
+          ];
+        }));
         ranLabel = `Ran ${files.length} member file(s)`;
       }
       if (!files.length) {
@@ -317,10 +360,29 @@ export function useSconcreteBatch(
           ? 'No S-Concrete-eligible members in the design groups. Add beams/rectangular columns to a group first.'
           : 'No beam or rectangular-column members to export.');
       }
+      return { files, ranLabel, linkByStem };
+  }
+
+  /** Generate + run, writing into the output folder as it stands. */
+  async function runBatch() {
+    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('sco'); setProgress('Preparing…');
+    // S-Concrete verification is the last step of the workflow and the one that depends
+    // most on the user's own machine — their install, their output folder, their
+    // permissions. Whether anyone reaches it, and what it does when they do, cannot be
+    // observed from here any other way.
+    const done = trackTiming('sconcrete.batch', {
+      mode: 'run', groups: groups.length, members: runCount, code,
+    });
+    try {
+      const { files, ranLabel, linkByStem } = generate();
       requirePaths();
-      applyResult(await runScoBatch(files, cfg), ranLabel, linkByStem);
+      const out = await runScoBatch(files, cfg);
+      done({ ok: true, files: files.length, scoCount: out.scoCount, hasScrs: !!out.scrsText });
+      applyResult(out, ranLabel, linkByStem);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      done({ ok: false, error: message });
+      setErr(message);
     } finally {
       setBusy(null);
       setProgress('');
@@ -328,17 +390,40 @@ export function useSconcreteBatch(
   }
 
   /**
-   * Re-run the batch on the .SCO files ALREADY in the output folder — no
-   * regeneration, so manual tweaks the user made (in S-Concrete or a text editor)
-   * are preserved — then read the fresh results back.
+   * CLEAN re-run: delete every S-Concrete artefact in the output folder (.SCO,
+   * .SCRS, Report_*.pdf), regenerate all of them from the current app design, and
+   * run the batch — the whole process from nothing.
+   *
+   * This is the button to use after renaming a group, deleting a member, or
+   * changing stirrup zoning, because BatchReporter reports on EVERY .SCO in the
+   * folder: a plain run writes the new files but leaves the old ones behind, and
+   * those come back in the .SCRS as results for members that no longer exist.
+   *
+   * It is destructive by design — hand-edits made to the .SCO files are discarded
+   * along with everything else, which is the trade for a folder that always matches
+   * what the app currently holds.
    */
-  async function rerunExisting() {
-    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('rerun');
+  async function rerunClean() {
+    setErr(null); setMsg(null); setWarn(null); saveResults(null); setBusy('rerun'); setProgress('Preparing…');
+    // Separate mode from `runBatch`: reaching for the destructive re-run repeatedly is
+    // itself the finding — it means a plain run is leaving stale files behind often
+    // enough that people have learned not to trust it.
+    const done = trackTiming('sconcrete.batch', {
+      mode: 'rerun-clean', groups: groups.length, members: runCount, code,
+    });
     try {
+      const { files, ranLabel, linkByStem } = generate();
       requirePaths();
-      applyResult(await rerunScoBatch(cfg), 'Re-ran the existing folder');
+      const out = await runScoBatch(files, cfg, { clean: true });
+      done({
+        ok: true, files: files.length, scoCount: out.scoCount,
+        hasScrs: !!out.scrsText, cleaned: out.cleanedCount ?? 0,
+      });
+      applyResult(out, `Cleared ${out.cleanedCount ?? 0} old file(s) · ${ranLabel}`, linkByStem);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      done({ ok: false, error: message });
+      setErr(message);
     } finally {
       setBusy(null);
       setProgress('');
@@ -370,7 +455,7 @@ export function useSconcreteBatch(
     isEc2, slsCombos, ec2NoSls,
     runCount, groupCount: groups.length,
     shownResults, resultSummary, ranAt: project.sconcreteRanAt,
-    pushToEtabs, runBatch, rerunExisting, browse, openFolder,
+    pushToEtabs, runBatch, rerunClean, browse, openFolder,
     clearResults: () => saveResults(null),
   };
 }

@@ -9,6 +9,11 @@
 
 import type { MaterialProps, BaseLoadCase, BaseDesignResults } from '../types/common';
 
+/**
+ * One member type's design engine. Generic over its own section / rebar / load / result
+ * shapes so a column engine is not forced through beam types — the registry erases the
+ * generics and callers get the concrete type back from the engine they asked for.
+ */
 export interface DesignEngine<
   TSection,
   TRebar,

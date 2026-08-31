@@ -264,6 +264,8 @@ export function creepCoefficient(
   return phi0 * betaC;                                                    // (B.1)
 }
 
+/** EN 1992-1-1 §7.3.4 crack-width result, with the intermediates the Calc Sheet prints
+ *  and `srEq` recording which sr,max equation governed. */
 export interface CrackWidthResult {
   wk: number;       // characteristic crack width (mm) — 0 when the section is uncracked
   sigma_s: number;  // steel stress under quasi-permanent moment (MPa)
@@ -396,6 +398,8 @@ function crackingMomentLayered(b: number, h: number, alpha_e: number, layers: St
   return fctm(fck) * Iu / (h - xu) / 1e6;                   // tension face at depth h
 }
 
+/** §7.3.3 side-face (skin) crack check on a deep beam — the separate check that decides
+ *  whether skin reinforcement is required, distinct from the main tension-face `wk`. */
 export interface SideFaceCrackResult {
   cracked: boolean;
   wk: number;          // side-face characteristic crack width (mm)
@@ -629,6 +633,22 @@ export function skinMinArea(
   return { AsMin: (kc * k * fct * Act) / sigmaS, kc, k, Act, sigmaS, yt };
 }
 
+/**
+ * Run every EN 1992-1-1 check for ONE load case and return the member's results.
+ *
+ * The engine's boundary: imperial in, imperial out, SI in between. Section, material and
+ * rebar arrive in the app's imperial storage units, are converted to SI immediately
+ * below, and every capacity is converted back before it is returned — so nothing outside
+ * this file has to know EC2 works in mm/MPa/kN.
+ *
+ * REMEMBER THERE IS NO φ HERE. The `phi_Mn_*` / `phi_Vn` fields on `DesignResults` are
+ * shared with the ACI engine, but what this function puts in them are γ-factored design
+ * resistances (M_Rd, V_Rd). Applying a second reduction anywhere downstream double-counts.
+ *
+ * Shear capacity is evaluated at the tie spacing of the zone the load's station sits in,
+ * while detailing limits use the worst zone — the two are deliberately different, and
+ * `calcBreakdownEC2.ts` splits them the same way.
+ */
 export function designMemberEC2(
   section: SectionDimensions,
   material: MaterialProps,
