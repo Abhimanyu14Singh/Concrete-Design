@@ -61,6 +61,32 @@ export function statusView(r: UtilResult): { text: string; tone: StatusTone; der
   return { text, tone, derived: tone !== 'none' };
 }
 
+/** Severity order, for rolling several results (a group's ULS + crack + per-zone
+ *  files, or every result covering one member) up into a single worst-case badge. */
+export const TONE_RANK: Record<StatusTone, number> = { none: 0, ok: 1, warn: 2, ng: 3 };
+
+/** The worst (highest-severity) status view across a set of results. Null when empty. */
+export function worstStatusView(results: UtilResult[]): { text: string; tone: StatusTone; derived: boolean } | null {
+  if (!results.length) return null;
+  let worst = statusView(results[0]);
+  for (let i = 1; i < results.length; i++) {
+    const sv = statusView(results[i]);
+    if (TONE_RANK[sv.tone] > TONE_RANK[worst.tone]) worst = sv;
+  }
+  return worst;
+}
+
+/**
+ * Has this result actually FAILED capacity (as opposed to merely carrying code
+ * warnings)? Only the `ng` tone counts — S-Concrete's EN 1992 reports say
+ * "Acceptable" for a pass and "Warning" for a pass that still raised messages, so
+ * a plain `status !== 'OK'` test marks every passing EN member overstressed.
+ * A utilisation over 1 still fails even when the report text disagrees.
+ */
+export function isOverstressed(r: UtilResult): boolean {
+  return statusView(r).tone === 'ng' || Math.max(r.nmUtil ?? 0, r.vtUtil ?? 0) > 1;
+}
+
 /** Roll a result set up into per-tone counts for a header summary ("3 NG · 1 near · 2 OK"). */
 export function summarize(results: UtilResult[]): Record<StatusTone, number> {
   return results.reduce<Record<StatusTone, number>>(

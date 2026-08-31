@@ -56,11 +56,12 @@ describe('steelLimits', () => {
     const rho_min = Math.max(3 * Math.sqrt(4000) / 60000, 200 / 60000);
     expect(As_min).toBeCloseTo(rho_min * 16 * d, 4);
   });
-  it('As_max uses εt = 0.004 limit (compression-controlled boundary)', () => {
+  it('As_max uses the §9.3.3.1 limit εt ≥ εty + 0.003', () => {
     const { As_max } = steelLimits(sec16x24, mat4k);
     const d = effectiveDepth(sec16x24, 8);
     const b1 = beta1(4000);
-    const expected = 0.85 * b1 * (4000 / 60000) * (0.003 / 0.007) * 16 * d;
+    const ety = 60000 / 29e6;                       // 0.0020690 at Grade 60
+    const expected = 0.85 * b1 * (4000 / 60000) * (0.003 / (0.006 + ety)) * 16 * d;
     expect(As_max).toBeCloseTo(expected, 3);
   });
   it('As_max is smaller at high f\'c because β₁ = 0.65 floor', () => {

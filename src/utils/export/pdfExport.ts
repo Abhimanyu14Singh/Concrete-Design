@@ -1,8 +1,39 @@
+/**
+ * The full design report PDF — cover, per-member sheets, section sketches, force
+ * envelopes and the step-by-step Calc Sheet.
+ *
+ * Drawn primitive-by-primitive with pdf-lib. There is no HTML-to-PDF step: the report
+ * has to be byte-identical in the browser and in Electron, and printing a live DOM gave
+ * neither that nor control over pagination. Everything below `C` (the palette) is the
+ * small drawing vocabulary the page builders share — `text`, `rect`, `line`, `circle`
+ * and the wrap/clip helpers — plus the layout code that stacks them.
+ *
+ * Three things to know before changing it:
+ *
+ *  • FONTS. DejaVu Sans is embedded as a Unicode TTF, so φ, ρ, ², ₙ and · all render
+ *    directly — do NOT transliterate them to ASCII. It is fetched lazily from the Vite
+ *    public dir; `setFontLoader` exists so Node tests can read it off disk instead.
+ *
+ *  • RESULTS ARE RE-RUN, NOT READ. Nothing trusts a cached DCR on the member; every
+ *    number in the report comes from a fresh `runDesign` through `memberResult`, which
+ *    memoises per (member, load case, code) so a member appearing on several pages is
+ *    only computed once. `_resultCache` and `_slsCombo` are module-level state owned by
+ *    `buildReportBytes` — it seeds and clears them around each report, so a second
+ *    export never inherits the first one's combo or results.
+ *
+ *  • OVERRIDES ARE DISPLAY-ONLY. `includeOverrides` changes what the report SHOWS
+ *    (review stamps, suppressed warnings, greened bars); it never changes a computed
+ *    value. Set it false and the same run prints the raw engine result.
+ *
+ * `buildReportBytes` is the real entry point and returns bytes — pure enough to test.
+ * `exportPDF` is the browser-download wrapper around it.
+ */
+
 import { formatBarLabel } from '../rebar';
 import { PDFDocument, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { Project, Member, DesignResults, LoadCase, DesignCode } from '../../types';
-import { runDesign } from '../../engines';
+import { effectiveLoad, runDesign } from '../../engines';
 import { coverFor, getBarDiam, zoneShearDemands } from '../concreteDesign';
 import { generateBreakdown, type CalcSection } from '../calcBreakdown';
 import { generateBreakdownEC2 } from '../calcBreakdownEC2';
@@ -38,6 +69,7 @@ export interface ReportOptions {
   includeOverrides?: boolean;
 }
 
+/** Everything on, nothing scoped — what the export dialog opens with. */
 export const DEFAULT_REPORT_OPTIONS: ReportOptions = {
   governingOnly: false,
   includeDiagrams: true,
@@ -60,6 +92,12 @@ interface UCtx {
   force_: (kips: number)    => string;   // force kips → "445.0" or "100.0"
   moment_:(kipft: number)   => string;   // moment kip-ft → "601.0" or "100.0"
 }
+/**
+ * The report's own unit context. Engine values are imperial throughout, so an EC2 report
+ * converts at the point of printing — this is the only place it happens, which is why
+ * each converter is spelled out rather than routed through `useUnits()` (a React hook,
+ * unavailable here) or `fmt`.
+ */
 function makeU(isEC2: boolean): UCtx {
   return isEC2 ? {
     dimSfx: ' mm',
@@ -96,9 +134,24 @@ function coverLabel(m: Member, u: UCtx): string {
 // buildReportBytes so the EC2 crack-width sheet + design results honour it
 // (mirrors the module-level _resultCache lifecycle).
 let _slsCombo: string | undefined;
+// The project's design preferences for the report being built, set by buildReportBytes
+// alongside _slsCombo and cleared with it. Module-level for the same reason: the page
+// builders are called through several layers of layout code that has no business
+// carrying design settings, and the report is built one at a time.
+let _prefs: { cotTheta?: number; ignoreTorsion?: boolean } = {};
 
+/**
+ * Calc Sheet sections for one member/load case, from the same generator the on-screen
+ * Calc Sheet uses — so the printed derivation and the panel can never drift apart.
+ * The ACI branch passes zoned shear demands when the member has stirrup zones, matching
+ * how the engine evaluates capacity at the demand's zone.
+ */
 function breakdownFor(m: Member, lc: LoadCase, code: DesignCode): CalcSection[] {
   const isEC2 = code === 'EN1992-1-1';
+  // The generators are called directly, not through runDesign, so the neglect-torsion
+  // rule has to be applied here or the printed derivation grows a torsion section the
+  // rest of the report does not have.
+  lc = effectiveLoad(lc, _prefs.ignoreTorsion);
   return isEC2
     ? generateBreakdownEC2(m.section, m.material, m.rebar, lc, m.span, resolveCrack(m, code, _slsCombo), _slsCombo)
     : generateBreakdown(
@@ -128,6 +181,7 @@ let _regularBytes: ArrayBuffer | null = null;
 let _boldBytes: ArrayBuffer | null = null;
 let _fontLoader: (() => Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }>) | null = null;
 
+/** Override font loading (e.g. a Node test reading the TTFs off disk). Clears the cache. */
 export function setFontLoader(fn: () => Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }>): void {
   _fontLoader = fn;
   _regularBytes = null;
@@ -149,7 +203,8 @@ async function getFontBytes(): Promise<{ regular: ArrayBuffer; bold: ArrayBuffer
   return { regular: _regularBytes!, bold: _boldBytes! };
 }
 
-// Colour palette
+// Colour palette — mirrors the app's status colours so a printed report and the screen
+// agree at a glance (green OK / amber near-capacity / red NG).
 const C = {
   navy:  rgb(0.04, 0.09, 0.24),
   blue:  rgb(0.11, 0.30, 0.85),
@@ -162,14 +217,18 @@ const C = {
   white: rgb(1, 1, 1),
 };
 
+/** DCR → bar colour. Amber from 0.9 so near-capacity reads as "look at this", not "fine". */
 function dcrColor(dcr: number) {
   return dcr > 1 ? C.red : dcr > 0.9 ? C.amber : C.green;
 }
 
+/** Member status → colour, matching the on-screen status chips. */
 function statusColor(status: string) {
   return status === 'NG' ? C.red : status === 'Warning' ? C.amber : C.green;
 }
 
+/** One page plus the fonts and metrics every draw helper needs. PDF origin is
+ *  BOTTOM-left, so y grows upward and layout code counts down from `h - margin`. */
 interface DrawCtx {
   page: PDFPage;
   font: PDFFont;
@@ -179,6 +238,8 @@ interface DrawCtx {
   margin: number;
 }
 
+/** Draw a string at (x, y). Goes through winAnsiSafe so a stray control character
+ *  from an imported ETABS label can't corrupt the text stream. */
 function text(ctx: DrawCtx, str: string, x: number, y: number, size = 9,
   color = C.dark, fontOverride?: PDFFont) {
   ctx.page.drawText(winAnsiSafe(String(str)), {
@@ -186,14 +247,18 @@ function text(ctx: DrawCtx, str: string, x: number, y: number, size = 9,
   });
 }
 
+/** Filled rectangle, no border — table shading and bar tracks. */
 function rect(ctx: DrawCtx, x: number, y: number, w: number, h: number, fill = C.light) {
   ctx.page.drawRectangle({ x, y, width: w, height: h, color: fill, borderWidth: 0 });
 }
 
+/** Straight rule between two points — table separators and chart axes. */
 function line(ctx: DrawCtx, x1: number, y1: number, x2: number, y2: number, thickness = 0.5, color = C.mid) {
   ctx.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color });
 }
 
+/** Worst DCR across every check INCLUDING crack width — this is the report's headline
+ *  number, so an SLS-governed member must not be ranked by its ULS checks alone. */
 function worstDCROf(r: DesignResults): number {
   return Math.max(r.DCR_flex_pos, r.DCR_flex_neg, r.DCR_shear, r.DCR_torsion,
     r.DCR_PM ?? 0, r.DCR_axial ?? 0,
@@ -206,11 +271,13 @@ function memberResult(m: Member, lc: LoadCase, code?: string): DesignResults {
   const key = `${m.id}|${lc.id}|${code ?? ''}`;
   const hit = _resultCache.get(key);
   if (hit) return hit;
-  const r = runDesign(m.section, m.material, m.rebar, lc, m.span ?? 20, code, resolveCrack(m, code ?? '', _slsCombo));
+  const r = runDesign(m.section, m.material, m.rebar, effectiveLoad(lc, _prefs.ignoreTorsion), m.span ?? 20, code,
+    resolveCrack(m, code ?? '', _slsCombo), _prefs.cotTheta, _prefs.ignoreTorsion);
   _resultCache.set(key, r);
   return r;
 }
 
+/** The member's governing result — worst DCR across ALL its load rows, never `loads[0]`. */
 function worstResult(m: Member, code?: string): DesignResults | null {
   let worst: DesignResults | null = null;
   for (const lc of m.loads) {
@@ -220,6 +287,7 @@ function worstResult(m: Member, code?: string): DesignResults | null {
   return worst;
 }
 
+/** Filled circle — rebar dots in the section sketch. `r` is the radius in points. */
 function circle(ctx: DrawCtx, x: number, y: number, r: number, fill = C.dark) {
   ctx.page.drawCircle({ x, y, size: r, color: fill });
 }
@@ -494,6 +562,7 @@ export async function buildReportBytes(
 ): Promise<Uint8Array> {
   _resultCache.clear();
   _slsCombo = project.slsCombo;
+  _prefs = { cotTheta: project.cotTheta, ignoreTorsion: project.ignoreTorsion };
   const opts = { ...DEFAULT_REPORT_OPTIONS, ...options };
   const members = opts.memberIds
     ? project.members.filter(m => opts.memberIds!.includes(m.id))

@@ -7,6 +7,8 @@ import type { RebarLayout, SectionDimensions, TieZone, DesignCode, BarGroup } fr
 import { getBarArea, getBarDiam, effectiveDepth } from '../../utils/concreteDesign';
 import { skinMinArea } from '../../engines/ec2/ec2Beam';
 
+/** The wizard's "typical reinforcement" inputs. Percentages are of b·d, NOT of the
+ *  gross section — a seeded cage is a starting point for design, not a design. */
 export interface SeedOptions {
   rhoTopPct: number;             // top steel, % of b·d (e.g. 0.4)
   rhoBotPct: number;             // bottom steel, % of b·d
@@ -25,6 +27,23 @@ const IN_TO_MM = 25.4;
 const IN2_TO_MM2 = 645.16;
 
 /**
+ * Maximum centre-to-centre spacing of ACI skin bars, in. §9.7.2.3.2 defers to
+ * §24.3.2, which is the bonded-bar crack-control rule:
+ *
+ *     s ≤ min( 15·(40000/fs) − 2.5·cc , 12·(40000/fs) ),   fs = ⅔·fy  (§24.3.2.1)
+ *
+ * At Grade 60 with 1.5 in cover this is 11.25 in, so the everyday case matches the
+ * flat 12 in this used to assume — but a Grade 80 job (fs = 53 333 → 9.0 in cap) or
+ * a 2.5 in cover (8.75 in) needs the bars closer, and the flat rule quietly
+ * under-detailed both. Floored at 3 in so an absurd cover can't demand a solid wall
+ * of steel.
+ */
+export function aciSkinSpacingMax(coverClear: number, fyPsi = 60000): number {
+  const fs = (2 / 3) * (fyPsi > 0 ? fyPsi : 60000);
+  return Math.max(3, Math.min(15 * (40000 / fs) - 2.5 * coverClear, 12 * (40000 / fs)));
+}
+
+/**
  * Code-based minimum side/skin reinforcement for a deep beam. Returns the side
  * bars PER FACE and bar size, or undefined when the section is too shallow to
  * require skin steel. (Beam convention — the section drawing, the crack engine,
@@ -32,7 +51,7 @@ const IN2_TO_MM2 = 645.16;
  * both-faces total since columns pool their side bars.)
  *
  *  - ACI 318 §9.7.2.3: required when h > 36 in, distributed over the lower h/2 of
- *    the web at ≤ 12 in spacing (geometric).
+ *    the web at the §24.3.2 spacing (see `aciSkinSpacingMax`) — NOT a flat 12 in.
  *  - EC2 §7.3.3(3)+§7.3.2(2): required when h > 1000 mm, and — crucially — sized to
  *    the minimum crack-control AREA As,min = kc·k·fct·Act/σs (not just a spacing
  *    rule). This is what governs a deep, lightly-loaded beam, and matches
@@ -44,14 +63,15 @@ export function minSkinReinforcement(
   section: SectionDimensions,
   code: DesignCode | string,
   barSize: number,
-  opts?: { fckMPa?: number; NEd_N?: number; wLimitFace?: number },
+  opts?: { fckMPa?: number; NEd_N?: number; wLimitFace?: number; fyPsi?: number },
 ): BarGroup | undefined {
   const isEC2 = code === 'EN1992-1-1';
   const thresholdIn = isEC2 ? 1000 / IN_TO_MM : 36;
   const h = section.h;
   if (h <= thresholdIn) return undefined;
   const cover = section.coverClear ?? 1.5;
-  const bySpacing = Math.max(1, Math.ceil(Math.max(0, h / 2 - cover) / (isEC2 ? 300 / IN_TO_MM : 12)));
+  const sMax = isEC2 ? 300 / IN_TO_MM : aciSkinSpacingMax(cover, opts?.fyPsi);
+  const bySpacing = Math.max(1, Math.ceil(Math.max(0, h / 2 - cover) / sMax));
   if (isEC2) {
     // Area-driven per EC2 (see doc): enough bars to meet As,min, ≥ the spacing floor.
     const b_mm = (section.bw ?? section.b) * IN_TO_MM;

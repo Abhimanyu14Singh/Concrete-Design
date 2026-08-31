@@ -7,6 +7,7 @@ import type {
   MaterialProps, SectionDimensions, RebarLayout, LoadCase,
   DesignResults, DesignWarning, ComboForces, BarGroup,
 } from '../types';
+import { biaxialCheck, DEFAULT_BIAXIAL_ALPHA } from './biaxial';
 import { beamAxialFlexure } from './axialFlexure';
 
 // ── Stirrup zones (thirds of the span) ───────────────────────────────────────
@@ -91,6 +92,7 @@ export function getBarArea(size: number): number {
   if (size < 0) { const d = -size / 25.4; return Math.PI * d * d / 4; }
   return BAR_AREAS[size] ?? 0;
 }
+/** Nominal bar diameter in INCHES. Negative barSize = metric Ø mm, converted here. */
 export function getBarDiam(size: number): number {
   if (size < 0) return -size / 25.4;
   return BAR_DIAMS[size] ?? 0;
@@ -187,6 +189,26 @@ export function beta1(fc: number): number {
 }
 
 /**
+ * φ for flexure per ACI 318-19 Table 21.2.2.
+ *
+ * TWO things this must get right, both of which have been wrong here before:
+ *
+ *  • `et` is the net tensile strain in the EXTREME layer of tension steel (at
+ *    dt), not at the centroid of the group (at d). §21.2.2 is explicit, and on a
+ *    two-layer cage the two differ by the layer spacing — enough to move φ.
+ *
+ *  • The transition band runs εty → εty + 0.003, so it MOVES WITH THE GRADE.
+ *    Hard-coding Grade 60's 0.002 → 0.005 mis-states φ for Grade 80/100, which
+ *    §20.2.2.4 permits for flexure (εty = 0.00276 / 0.00345, not 0.002).
+ */
+export function phiFlexure(et: number, fy: number, Es = 29_000_000): number {
+  const ety = fy / (Es > 0 ? Es : 29_000_000);
+  if (et >= ety + 0.003) return 0.9;
+  if (et <= ety) return 0.65;
+  return 0.65 + 0.25 * (et - ety) / 0.003;
+}
+
+/**
  * Effective depth: d = h − cc − d_stirrup − d_bar/2
  * barSize: actual bar designation (8 for #8). `face` selects the cover the bar
  * is measured from (bottom steel by default).
@@ -216,22 +238,134 @@ export function effectiveFlange(section: SectionDimensions, spanFt: number): num
 }
 
 /**
- * As_min and As_max per ACI 318-19 §9.6.1, for the given flexural tension face.
+ * As_min (§9.6.1.2) and As_max (§9.3.3.1) for the given flexural tension face.
  *
- * Both scale with d, so the face matters once a project sets per-face covers: the
- * limits for TOP (negative-moment) steel must use the top-face d. Defaulting to
+ * Both scale with depth, so the face matters once a project sets per-face covers: the
+ * limits for TOP (negative-moment) steel must use the top-face depth. Defaulting to
  * 'bot' for both faces over-stated As,min for top steel by the cover difference
  * and flagged correctly-detailed members as NG.
+ *
+ * BOTH clauses are written on d, the centroid of the tension group.
+ *
+ * §9.6.1.2 always was. §9.3.3.1 used to be evaluated here on dt, the EXTREME tension
+ * layer, which is the stricter reading of §2.2 ("net tensile strain in extreme layer
+ * of longitudinal tension reinforcement") — and it is still, in my reading, the
+ * literal one. It was changed to d on the project's instruction so the app agrees with
+ * S-CONCRETE, which measures the limit at the centroid.
+ *
+ * The evidence for what S-CONCRETE does is unambiguous: across `Examples/ACI` 3 and
+ * 5–8, ten faces, its reported As(max) back-solves to εt = εty + 0.003 measured at d,
+ * exactly. Single-layer faces agree either way (d = dt); multi-layer faces differed by
+ * the dt/d ratio, +1.8 % to +3.2 %, which is now gone.
+ *
+ * Using d is the more CONSERVATIVE of the two — d ≤ dt always, so the cap is lower and
+ * the over-reinforced warning fires slightly earlier. That is the safe direction for a
+ * limit, which is part of why the change is defensible even though §2.2 points the
+ * other way.
+ *
+ * §9.3.3.1 IS SCOPED TO BEAMS. Its opening words are "For nonprestressed beams with
+ * Pu < 0.10·f′c·Ag" — above that the member is a compression member and the
+ * tension-controlled strain limit simply does not govern it. `asMaxApplies` reports
+ * that test so a caller can tell "the cage exceeds the limit" from "the limit does not
+ * apply here"; `As_max` itself is always returned, because the Calc Sheet still shows
+ * the derivation and the member panel still shows the number.
+ *
+ * `Examples/ACI/Example 1` is the case: 12×28 carrying 1000 kips of compression
+ * against a 0.10·f′c·Ag threshold of 201.6 kips. S-Concrete reports As(max) = 9.05
+ * in² there against our beam-limit 7.22 — not because the formula differs but because
+ * the clause has stopped applying, and we were applying it anyway.
  */
-export function steelLimits(section: SectionDimensions, material: MaterialProps, face: CoverFace = 'bot') {
+export function steelLimits(
+  section: SectionDimensions,
+  material: MaterialProps,
+  face: CoverFace = 'bot',
+  /**
+   * The bars actually on this face. Both limits scale with d, and d is the
+   * centroid of the REAL cage — a two-layer group sits shallower than the
+   * single-#8-layer default. S-Concrete's As,min lands on the actual-d value to
+   * the digit (12×28 4-#8/8-#8: 1.13 in² at d = 24.375", not 1.18 at 25.375"),
+   * so the default here is a fallback for callers that have no layout, not the
+   * intended input.
+   */
+  bars?: BarGroup[],
+  sClear = 1.0,
+  /** Factored axial load (kips, POSITIVE = compression) — only used for the
+   *  §9.3.3.1 scope test. Omitted means 0, i.e. a plain beam. */
+  Nu = 0,
+) {
   const { fc, fy } = material;
+  const Es = material.Es > 0 ? material.Es : 29_000_000;
   const bw = section.bw ?? section.b;
-  const d  = effectiveDepth(section, 8, face);
+  const h  = section.h ?? 12;
+  const d  = bars?.length
+    ? effectiveDepthMulti(section, bars, sClear, face)
+    : effectiveDepth(section, 8, face);
   const rho_min = Math.max(3 * Math.sqrt(fc) / fy, 200 / fy);
   const As_min  = rho_min * bw * d;
-  // εt ≥ 0.004 limit (§9.3.3.1): c = 3d/7, As,max = 0.85·β₁·(f'c/fy)·(3/7)·bw·d
-  const As_max  = 0.85 * beta1(fc) * (fc / fy) * (0.003 / (0.003 + 0.004)) * bw * d;
-  return { As_min, As_max };
+  // §9.3.3.1 — a nonprestressed beam must reach εt ≥ εty + 0.003 in its tension
+  // reinforcement. Setting εt to that limit fixes c/d, hence a, hence As:
+  //   c = d·0.003/(0.003 + εty + 0.003)  →  As,max = 0.85·β₁·(f'c/fy)·(c/d)·bw·d
+  // εty comes from the grade, so the cap tightens as fy rises rather than sitting
+  // at a fixed strain.
+  const ety = fy / Es;
+  const As_max  = 0.85 * beta1(fc) * (fc / fy) * (0.003 / (0.006 + ety)) * bw * d;
+  // Compression only: axial TENSION leaves the member a beam, and the limit applies.
+  const asMaxApplies = Nu < 0.10 * fc * bw * (section.h ?? 12) / 1000;
+  return { As_min, As_max, asMaxApplies };
+}
+
+/**
+ * The §9.6.1 minimum-steel verdict for ONE flexural face, in one place.
+ *
+ * Exported because the Calc Sheet has to reach the same answer the engine reached.
+ * It used to re-derive §9.6.1.2 locally and stop there — printing the RAW minimum and
+ * a "⚠ Provided As_bot < As,min" note on beams the engine had already exempted under
+ * §9.6.1.3. Same beam, same load row, panel silent and sheet warning.
+ *
+ * §9.6.1.3: "If As provided at every section is at least one-third greater than As
+ * required by analysis, 9.6.1.2 need not be satisfied." The baseline is therefore the
+ * flexural requirement ALONE — `requiredAs` floors its result at As,min, and measuring
+ * the exemption against a floored number would compare As,min with itself and the
+ * exception would never apply.
+ *
+ * Expressed as a lowered threshold rather than a skipped check, which is the same test
+ * (`As < min(As_min, 4/3·As_req)` fires exactly when As is below the minimum AND not
+ * one-third clear of the demand) and leaves one number to report. S-Concrete reports
+ * the reduced figure too — 0.71 in² where the raw minimum is 0.875 — so a reader
+ * comparing the two tools sees the same kind of number.
+ */
+export function minSteelCheck(
+  section: SectionDimensions,
+  material: MaterialProps,
+  rebar: RebarLayout,
+  face: CoverFace,
+  /** The moment acting on THIS face, kip-ft. Zero means the face carries no tension,
+   *  and §9.6.1.1 asks for a minimum only where tension steel is required. */
+  Mu_kft: number,
+  span = 20,
+  sClear = 1.0,
+): { As_min: number; As_min_eff: number; As_req_raw: number; exempt: boolean } {
+  const isTop = face === 'top';
+  const bars = isTop ? rebar.topBars : rebar.botBars;
+  const { As_min } = steelLimits(section, material, face, bars, sClear);
+
+  // As required by analysis, unfloored. Hogging puts the flange in tension, so the
+  // compression block is the web alone; sagging gets the effective flange.
+  let As_req_raw = 0;
+  if (Mu_kft > 0) {
+    const { fc, fy } = material;
+    const bw = section.bw ?? section.b;
+    const d = bars?.length
+      ? effectiveDepthMulti(section, bars, sClear, face)
+      : effectiveDepth(section, 8, face);
+    const buse = isTop ? bw : effectiveFlange(section, span);
+    const Rn = (Mu_kft * 12000) / (0.9 * buse * d * d);
+    const rho = (0.85 * fc / fy) * (1 - Math.sqrt(Math.max(0, 1 - 2 * Rn / (0.85 * fc))));
+    As_req_raw = Math.max(0, rho) * buse * d;
+  }
+
+  const As_min_eff = As_req_raw > 0 ? Math.min(As_min, (4 / 3) * As_req_raw) : As_min;
+  return { As_min, As_min_eff, As_req_raw, exempt: As_min_eff < As_min - 1e-9 };
 }
 
 // ── Flexure (ACI §22.3) ───────────────────────────────────────────────────────
@@ -252,8 +386,12 @@ export function computeFlexure(
   Mn_pos: number;     Mn_neg: number;
   a_pos: number;      a_neg: number;
   phi_pos: number;    phi_neg: number;
+  /** Which derivation produced `a` — the Calc Sheet must print the one that ran. */
+  mode_pos: 'singly' | 'doubly' | 'flanged';
+  mode_neg: 'singly' | 'doubly' | 'flanged';
 } {
   const { fc, fy } = material;
+  const Es = material.Es > 0 ? material.Es : 29_000_000;
   const b1 = beta1(fc);
   const h  = section.h ?? 12;
   const beff = effectiveFlange(section, span);
@@ -268,27 +406,53 @@ export function computeFlexure(
     ? effectiveDepthMulti(section, topBars, layerClearSpacing, 'top')
     : effectiveDepth(section, topBarSize, 'top');
 
-  // d' for compression steel: distance from compression face to comp-steel centroid
+  // Depth to the EXTREME layer of tension steel (dt), which is what §21.2.2
+  // measures εt at. On a single-layer cage dt = d; on a two-layer cage it is
+  // deeper by the layer spacing, and using d there under-reads φ.
+  const dt_pos = botBars?.length
+    ? h - Math.min(...layerDepths(section, botBars, layerClearSpacing, 'bot').map(l => l.y))
+    : d_pos;
+  const dt_neg = topBars?.length
+    ? h - Math.min(...layerDepths(section, topBars, layerClearSpacing, 'top').map(l => l.y))
+    : d_neg;
+
+  // d' for compression steel: distance from the COMPRESSION FACE to the
+  // comp-steel centroid. The fallback must be that offset — not h − offset,
+  // which is the depth of the bar from the opposite face and put the "compression"
+  // steel near the tension fibre, silently disabling the doubly path.
   const d_prime_pos = topBars?.length
     ? layerCentroidOffset(section, topBars, layerClearSpacing, 'top')
-    : effectiveDepth(section, topBarSize, 'top');  // fallback (rarely used)
+    : coverFor(section, 'top') + getBarDiam(section.stirrupDia) + getBarDiam(topBarSize) / 2;
   const d_prime_neg = botBars?.length
     ? layerCentroidOffset(section, botBars, layerClearSpacing, 'bot')
     : coverFor(section, 'bot') + getBarDiam(section.stirrupDia) + getBarDiam(botBarSize) / 2;
 
   function calcMn(
-    As: number, d: number, bFlange: number,
+    As: number, d: number, dt: number, bFlange: number,
+    /**
+     * Is the flange on the COMPRESSION side at this section? Sagging puts it
+     * there; hogging puts it in tension, and the compression zone is then the
+     * plain rectangular web. Getting this wrong is not academic: the flange
+     * split ran for hogging with bFlange = bw, so Cf collapsed to zero while
+     * `a = a_web + hf` still added the flange depth — reporting a stress block a
+     * whole hf too deep and a lever arm a whole hf too short.
+     */
+    flangeInComp: boolean,
     As_prime = 0, d_prime = 0,
     compLayers?: { A: number; y: number }[],
-  ): { Mn: number; a: number; phi: number } {
-    if (As <= 0) return { Mn: 0, a: 0, phi: 0.9 };
+  ): { Mn: number; a: number; phi: number; mode: 'singly' | 'doubly' | 'flanged' } {
+    if (As <= 0) return { Mn: 0, a: 0, phi: 0.9, mode: 'singly' };
 
     const hf = section.hf ?? h;
+    const a_sr = (As * fy) / (0.85 * fc * bFlange);
+    // The compression zone only leaves the flange when the flange is the thing
+    // being compressed in the first place.
+    const flangeSplits = flangeInComp && a_sr > hf;
 
-    // Doubly-reinforced rectangular section (As' > 0, no T/L flange, comp steel in compression zone)
-    // First check via singly-reinforced c whether the "compression" steel is actually in compression.
-    if (As_prime > 0 && section.type !== 'T_beam' && section.type !== 'L_beam') {
-      const a_sr = (As * fy) / (0.85 * fc * bFlange);
+    // Doubly-reinforced rectangular compression zone (As' > 0, comp steel inside it).
+    // First check via the singly-reinforced c whether the "compression" steel really is
+    // in compression.
+    if (As_prime > 0 && !flangeSplits) {
       const c_sr = a_sr / b1;
       // Per-layer compression steel: each layer at its own depth with its own
       // strain-compatible stress (reduces to the lumped-centroid result for one layer)
@@ -296,66 +460,87 @@ export function computeFlexure(
         ? compLayers
         : [{ A: As_prime, y: d_prime }];
       if (c_sr > Math.min(...layers.map(l => l.y))) {
-        // At least one comp layer is inside the compression zone — iterate equilibrium
+        // At least one comp layer is inside the compression zone — solve equilibrium
         const Cs_of = (c: number) => layers.reduce((sum, l) => {
           const eps = 0.003 * (c - l.y) / c;
-          const fs = Math.min(Math.max(eps * 29_000_000, -fy), fy);
+          const fs = Math.min(Math.max(eps * Es, -fy), fy);
           // displace concrete only where the bar sits inside the stress block
           const disp = l.y < b1 * c ? 0.85 * fc : 0;
           return sum + l.A * (fs - disp);
         }, 0);
-        let a = (As * fy) / (0.85 * fc * bFlange);
-        for (let i = 0; i < 80; i++) {
-          const c = Math.max(a / b1, 1e-4);
-          const a_new = (As * fy - Cs_of(c)) / (0.85 * fc * bFlange);
-          if (Math.abs(a_new - a) < 1e-7) { a = a_new; break; }
-          a = 0.5 * (a + a_new); // damped update for stability
+        // Solve 0.85·f'c·b·a + Cs(c) = As·fy for c, by BISECTION.
+        //
+        // The natural-looking damped fixed point on `a` that used to sit here
+        // (a ← ½[a + (As·fy − Cs(a/β₁))/(0.85f'c·b)]) diverges as soon as the
+        // compression steel is comparable to the tension steel — hogging over a
+        // beam with a heavy bottom cage, say. Cs is then so sensitive to c that
+        // the map's slope exceeds 1, the loop oscillates, runs out of iterations
+        // and returns whatever the last average happened to be: on a 60/12×24
+        // T-beam with 6-#9 bottom it settled on a = 5.98" against a true 2.69".
+        //
+        // The residual is increasing in c (Cc grows linearly, every bar stress
+        // grows with c) apart from the small step down where a bar crosses out
+        // of the stress block, and it is bracketed for free: at c → 0 every bar
+        // is in tension so it is −(As + As')·fy, and at large c it is unbounded
+        // above. Bisection on that is unconditionally convergent.
+        const resid = (c: number) => 0.85 * fc * bFlange * b1 * c + Cs_of(c) - As * fy;
+        let lo = 1e-6, hi = Math.max(2 * h, 2 * c_sr) / b1;
+        if (resid(hi) < 0) {
+          lo = hi;                       // cannot equilibrate — take the deepest block
+        } else {
+          for (let i = 0; i < 100; i++) {
+            const mid = 0.5 * (lo + hi);
+            if (resid(mid) < 0) lo = mid; else hi = mid;
+          }
         }
-        a = Math.max(a, 0.001);
-        const c = a / b1;
-        const et = 0.003 * (d - c) / c;
-        const phi = et >= 0.005 ? 0.9 : et <= 0.002 ? 0.65 : 0.65 + (et - 0.002) * (250 / 3);
-        const Cc = 0.85 * fc * bFlange * a;
-        const Ms = layers.reduce((sum, l) => {
-          const eps = 0.003 * (c - l.y) / c;
-          const fs = Math.min(Math.max(eps * 29_000_000, -fy), fy);
-          const disp = l.y < b1 * c ? 0.85 * fc : 0;
-          return sum + l.A * (fs - disp) * (d - l.y);
-        }, 0);
-        const Mn = (Cc * (d - a / 2) + Ms) / 12000;
-        return { Mn, a, phi };
+        const c = Math.max(0.5 * (lo + hi), 1e-4);
+        const a = Math.max(b1 * c, 0.001);
+        // Comp steel can push `a` back OUT of the flange (net Cs negative, when the
+        // deeper comp layers sit below the axis and pull). The block would then be
+        // narrower than beff below the flange and this solve no longer describes it,
+        // so drop the compression-steel credit and keep the singly result, which is
+        // inside the flange by construction (a_sr ≤ hf to have reached here).
+        if (!(flangeInComp && a > hf)) {
+          const phi = phiFlexure(0.003 * (dt - c) / c, fy, Es);
+          const Cc = 0.85 * fc * bFlange * a;
+          const Ms = layers.reduce((sum, l) => {
+            const eps = 0.003 * (c - l.y) / c;
+            const fs = Math.min(Math.max(eps * Es, -fy), fy);
+            const disp = l.y < b1 * c ? 0.85 * fc : 0;
+            return sum + l.A * (fs - disp) * (d - l.y);
+          }, 0);
+          const Mn = (Cc * (d - a / 2) + Ms) / 12000;
+          return { Mn, a, phi, mode: 'doubly' };
+        }
       }
       // Comp steel in tension zone — fall through to singly-reinforced
     }
 
-    let a = (As * fy) / (0.85 * fc * bFlange);
-
-    if ((section.type === 'T_beam' || section.type === 'L_beam') && a > hf) {
+    if (flangeSplits) {
       // Flange + web compression split
       const Cf = 0.85 * fc * (bFlange - bw) * hf;
       const Cw = As * fy - Cf;
       const a_web = Cw / (0.85 * fc * bw);
-      a = a_web + hf;
+      const a = a_web + hf;
       const Mn_flange = Cf * (d - hf / 2) / 12000;
       const Mn_web    = Cw * (d - hf - a_web / 2) / 12000;
       const Mn = Mn_flange + Mn_web;
       const c = a / b1;
-      const et = 0.003 * (d - c) / c;
-      const phi = et >= 0.005 ? 0.9 : et <= 0.002 ? 0.65 : 0.65 + (et - 0.002) * (250 / 3);
-      return { Mn, a, phi };
+      return { Mn, a, phi: phiFlexure(0.003 * (dt - c) / c, fy, Es), mode: 'flanged' };
     }
 
-    const c  = a / b1;
-    const et = 0.003 * (d - c) / c;
-    const phi = et >= 0.005 ? 0.9 : et <= 0.002 ? 0.65 : 0.65 + (et - 0.002) * (250 / 3);
+    const a = a_sr;
+    const c = a / b1;
     const Mn = As * fy * (d - a / 2) / 12000;
-    return { Mn, a, phi };
+    return { Mn, a, phi: phiFlexure(0.003 * (dt - c) / c, fy, Es), mode: 'singly' };
   }
 
   const compLayersPos = topBars?.length ? layerDepths(section, topBars, layerClearSpacing, 'top') : undefined;
   const compLayersNeg = botBars?.length ? layerDepths(section, botBars, layerClearSpacing, 'bot') : undefined;
-  const pos = calcMn(As_bot, d_pos, beff, As_top, d_prime_pos, compLayersPos);
-  const neg = calcMn(As_top, d_neg, bw, As_bot, d_prime_neg, compLayersNeg); // negative moment: web width only
+  const isFlanged = section.type === 'T_beam' || section.type === 'L_beam';
+  // Sagging compresses the flange; hogging compresses the web only (bw).
+  const pos = calcMn(As_bot, d_pos, dt_pos, beff, isFlanged, As_top, d_prime_pos, compLayersPos);
+  const neg = calcMn(As_top, d_neg, dt_neg, bw, false, As_bot, d_prime_neg, compLayersNeg);
 
   return {
     Mn_pos: pos.Mn,      Mn_neg: neg.Mn,
@@ -363,6 +548,7 @@ export function computeFlexure(
     phi_Mn_neg: neg.phi * neg.Mn,
     a_pos: pos.a,        a_neg: neg.a,
     phi_pos: pos.phi,    phi_neg: neg.phi,
+    mode_pos: pos.mode,  mode_neg: neg.mode,
   };
 }
 
@@ -451,12 +637,20 @@ export function computeShear(
   if (hasMinStirrups) {
     const Vc_a = (2 * lambdaConcrete * Math.sqrt(fc) + Nu_term) * bw * d_shear / 1000;
     Vc = Math.max(Vc_a, Vc_b);
-    // Table 22.5.5.1 note: Vc ≤ 5λ√f'c·bw·d
-    const Vc_cap = 5 * lambdaConcrete * Math.sqrt(fc) * bw * d_shear / 1000;
-    if (Vc > Vc_cap) Vc = Vc_cap;
   } else {
     Vc = Vc_b;
   }
+  // Table 22.5.5.1's limit — Vc ≤ 5λ√f'c·bw·d — sits under the WHOLE table, so it
+  // binds expression (c) as well as (a) and (b). It used to be applied only inside
+  // the has-minimum-stirrups branch, which left the axial term free to run away on a
+  // member detailed without them: Nu/(6Ag) is capped at 0.05f'c, but 8λs·ρw^⅓√f'c +
+  // 0.05f'c clears 5√f'c on any well-reinforced web, and the error is unconservative.
+  //
+  // S-Concrete applies it: Example 1 (1000 kip compression, 12×28, f'c 6000) reports
+  // ØVcz = 85.0 kips, which is 0.75 × 5√6000·bw·d exactly — the uncapped value would
+  // have been 99.8.
+  const Vc_cap = 5 * lambdaConcrete * Math.sqrt(fc) * bw * d_shear / 1000;
+  if (Vc > Vc_cap) Vc = Vc_cap;
   // Enough axial tension drives both expressions negative — the concrete
   // contribution is then zero, not a negative capacity to be subtracted.
   if (Vc < 0) Vc = 0;
@@ -579,6 +773,15 @@ export function torsionCrushing(
   return { util, Tn_max, vu, tu, limit };
 }
 
+/**
+ * Torsion per ACI 318-19 §22.7 — cracking torque, the threshold below which torsion may
+ * be neglected (§22.7.4), and the design capacity φTn from the closed stirrups.
+ *
+ * Two details that matter to callers: capacity uses the CLOSED-stirrup spacing at the
+ * demand's own station (pass `spacingOverride` for a zoned member, exactly as
+ * `computeShear` does), and axial load feeds the §22.7.5.1 modifier — compression raises
+ * the cracking torque, so omitting Nu is the conservative default rather than a no-op.
+ */
 export function computeTorsion(
   section: SectionDimensions,
   material: MaterialProps,
@@ -672,6 +875,9 @@ export function designMember(
   rebar: RebarLayout,
   load: LoadCase,
   span = 20,
+  /** Bresler contour exponent for the biaxial check. Project setting; 1.0 = linear
+   *  and conservative. Ignored unless the load carries a minor-axis moment. */
+  biaxialAlpha: number = DEFAULT_BIAXIAL_ALPHA,
 ): DesignResults {
   const warnings: DesignWarning[] = [];
   const { fc, fy, fyt, lambdaConcrete } = material;
@@ -706,8 +912,8 @@ export function designMember(
 
   // Per-face limits: As,min/As,max scale with d, which differs top vs bottom once
   // the project sets per-face covers.
-  const { As_min, As_max } = steelLimits(section, material, 'bot');
-  const { As_min: As_min_top, As_max: As_max_top } = steelLimits(section, material, 'top');
+  const { As_min, As_max, asMaxApplies } = steelLimits(section, material, 'bot', rebar.botBars, sClear, load.Pu);
+  const { As_min: As_min_top, As_max: As_max_top } = steelLimits(section, material, 'top', rebar.topBars, sClear, load.Pu);
   const d = shear.d_shear;
   // Member-level detailing d — §9.6.3.1's trigger and §9.7.6.2.2's s_max describe
   // the MEMBER, so they must not swing with which face a given row puts in tension
@@ -729,25 +935,12 @@ export function designMember(
   // Minimum Av/s (ACI §9.6.3.3)
   const Av_min_per_s = Math.max(0.75 * Math.sqrt(fc) / fyt, 50 / fyt) * bw;
 
-  // §9.6.1.3 exception: if As ≥ (4/3)·As_req_raw the min-steel check is satisfied.
-  // Use raw (unfloored) As_req so the exception applies when Mu is tiny.
-  function rawAs(Mu_kft: number, isTop: boolean): number {
-    if (Mu_kft <= 0) return 0;
-    const Mu_lb_in = Mu_kft * 12000;
-    const faceBars = isTop ? rebar.topBars : rebar.botBars;
-    const face: CoverFace = isTop ? 'top' : 'bot';
-    const d_raw = faceBars?.length
-      ? effectiveDepthMulti(section, faceBars, sClear, face)
-      : effectiveDepth(section, 8, face);
-    const buse  = isTop ? bw : effectiveFlange(section, span);
-    const Rn = Mu_lb_in / (0.9 * buse * d_raw * d_raw);
-    const rho = (0.85 * fc / fy) * (1 - Math.sqrt(Math.max(0, 1 - 2 * Rn / (0.85 * fc))));
-    return Math.max(0, rho) * buse * d_raw;
-  }
-  const As_req_pos_raw = rawAs(load.Mu_pos, false);
-  const As_req_neg_raw = rawAs(load.Mu_neg, true);
-  const As_min_pos_eff = As_req_pos_raw > 0 ? Math.min(As_min, (4 / 3) * As_req_pos_raw) : As_min;
-  const As_min_neg_eff = As_req_neg_raw > 0 ? Math.min(As_min_top, (4 / 3) * As_req_neg_raw) : As_min_top;
+  // §9.6.1.2 + the §9.6.1.3 one-third exception, per face. Shared with the Calc Sheet
+  // via `minSteelCheck` so the two cannot print different verdicts for one beam.
+  const minPos = minSteelCheck(section, material, rebar, 'bot', load.Mu_pos, span, sClear);
+  const minNeg = minSteelCheck(section, material, rebar, 'top', load.Mu_neg, span, sClear);
+  const As_min_pos_eff = minPos.As_min_eff;
+  const As_min_neg_eff = minNeg.As_min_eff;
 
   // DCRs
   // ── Axial–flexure interaction (ACI §22.4) ──────────────────────────────────
@@ -769,21 +962,79 @@ export function designMember(
   const DCR_flex_neg = phi_Mn_neg > 0 ? load.Mu_neg / phi_Mn_neg : 0;
   const DCR_shear    = shear.phi_Vn   > 0 ? load.Vu     / shear.phi_Vn    : 0;
   const DCR_torsion  = torsion.phi_Tn > 0 ? load.Tu     / torsion.phi_Tn  : 0;
+  /**
+   * Combined shear + torsion on the LINKS — ACI §22.7.6.1, and the number S-Concrete
+   * headlines as "V & T Util".
+   *
+   * The same stirrup legs resist both actions, so the required areas add:
+   * (A_v + 2A_t)/s. Dividing that by what is provided is the same thing as adding the
+   * two utilisations, which is exactly what S-Concrete prints — it reproduces on all
+   * four reference examples, including the one that fails:
+   *
+   *   Ex 1  0.374 + 0     = 0.374     Ex 3  0.483 + 0     = 0.483
+   *   Ex 2  0.556 + 0     = 0.556     Ex 4  0.226 + 2.844 = 3.070
+   *
+   * Neither DCR_shear nor DCR_torsion sees the sum: each credits the FULL stirrup to
+   * its own action, so a beam carrying real shear and real torsion could pass both and
+   * still be short of links. EC2 has carried this as `VT_util` from the start; ACI had
+   * no equivalent.
+   *
+   * Gated on §22.7.1.1 — below φ·T_th torsion may be neglected outright, and adding a
+   * utilisation the code says to ignore would over-report. Above it, VT_util ≥
+   * DCR_shear always, so a shear-only member is never made to look worse.
+   */
+  const torsionDesignedFor = load.Tu > torsion.Tu_threshold;
+  const VT_util = torsionDesignedFor ? DCR_shear + DCR_torsion : DCR_shear;
   // Governing combined utilisation across both bending senses.
   const DCR_PM = pm ? Math.max(pm.pos.nmUtil, pm.neg.nmUtil) : undefined;
   const axialUtil = pm ? pm.pos.axialUtil : undefined;
 
+  // ── Biaxial bending (Bresler load contour) ─────────────────────────────────
+  // Only runs when a minor-axis moment is actually present: a uniaxially-loaded
+  // beam — which is nearly every beam in a normal model — must not acquire a
+  // second utilisation out of nowhere. See utils/biaxial.ts for the method and
+  // its assumptions.
+  const biax = biaxialCheck(section, material, rebar, load, span, biaxialAlpha);
+  const NM_util = biax?.util;
+
   // ── Warnings ────────────────────────────────────────────────────────────────
 
   // Steel limits ACI §9.3.3 / §9.6.1.2
-  if (As_bot > As_max)
+  // PER FACE, and only where the face is in flexural TENSION.
+  //
+  // Each face is compared against its OWN limit — `As_max` is built from botBars on the
+  // bottom depth, `As_max_top` from topBars on the top depth — so an asymmetric cage is
+  // judged correctly on both sides rather than against one shared number.
+  //
+  // NOT gated on the moment, unlike §9.6.1.2 above. As,max asks whether this cage would
+  // be compression-controlled IF this face were the tension face — a property of the
+  // section and its steel, not of one load row. S-Concrete reports it that way: on
+  // `Examples/ACI/Example 1` the top face carries no hogging at all, and its As'(min)
+  // is duly reported as 0.00, but its As'(max) is still a real 7.38 in². Gating this on
+  // Mu was tried and backed out on that evidence.
+  //
+  // The axial scope DOES apply: above 0.10·f′c·Ag the member is a compression member and
+  // §9.3.3.1 says nothing about it — see `steelLimits`.
+  if (asMaxApplies && As_bot > As_max)
     warnings.push({ code: 'ACI §9.3.3', message: `Bottom steel ${As_bot.toFixed(2)} in² > As_max ${As_max.toFixed(2)} in² — compression-controlled`, severity: 'error' });
-  if (As_top > As_max_top)
-    warnings.push({ code: 'ACI §9.3.3', message: `Top steel ${As_top.toFixed(2)} in² > As_max ${As_max_top.toFixed(2)} in²`, severity: 'error' });
+  if (asMaxApplies && As_top > As_max_top)
+    warnings.push({ code: 'ACI §9.3.3', message: `Top steel ${As_top.toFixed(2)} in² > As_max ${As_max_top.toFixed(2)} in² — compression-controlled`, severity: 'error' });
   if (As_bot < As_min_pos_eff && load.Mu_pos > 0)
     warnings.push({ code: 'ACI §9.6.1.2', message: `Bottom steel ${As_bot.toFixed(2)} in² is below As,min ${As_min_pos_eff.toFixed(2)} in²`, severity: 'error' });
   if (As_top < As_min_neg_eff && load.Mu_neg > 0)
     warnings.push({ code: 'ACI §9.6.1.2', message: `Top steel ${As_top.toFixed(2)} in² is below As,min ${As_min_neg_eff.toFixed(2)} in²`, severity: 'error' });
+
+  // Combined shear + torsion links (§22.7.6.1). Reported separately from DCR_shear and
+  // DCR_torsion because it is the only one of the three that sees the SUM, and a cage
+  // can clear both singly and still be short. Error-severity and fixable with more
+  // links — unlike §22.7.7.1 above it, which caps the concrete and needs a bigger web.
+  if (torsionDesignedFor && VT_util > 1)
+    warnings.push({
+      code: 'ACI §22.7.6.1',
+      message: `Combined shear + torsion links NG: V&T utilisation = ${VT_util.toFixed(2)} `
+        + `(shear ${DCR_shear.toFixed(2)} + torsion ${DCR_torsion.toFixed(2)}) — the same stirrup legs carry both, so the demands add`,
+      severity: 'error',
+    });
 
   // Capacity exceedances
   if (DCR_flex_pos > 1)
@@ -837,6 +1088,21 @@ export function designMember(
         severity: heavy ? 'error' : 'warning',
       });
   }
+
+  // Biaxial bending — the Bresler contour. Only present when a minor-axis moment
+  // was supplied, so this never fires on an ordinary uniaxially-loaded beam.
+  if (biax && biax.util > 1)
+    warnings.push({
+      code: 'ACI R22.4.2.1',
+      message: `Biaxial bending: (Mux/φMnx)^α + (Muy/φMny)^α = ${biax.util.toFixed(2)} > 1.0 — Mux ${biax.Mux.toFixed(0)}/${biax.phiMnx.toFixed(0)}, Muy ${biax.Muy.toFixed(0)}/${biax.phiMny.toFixed(0)} kip-ft (α = ${biax.alpha}, Bresler load contour)`,
+      severity: 'error',
+    });
+  else if (biax && biax.util > NEAR_CRUSHING)
+    warnings.push({
+      code: 'ACI R22.4.2.1',
+      message: `Biaxial bending at ${(100 * biax.util).toFixed(0)}% of the interaction contour (α = ${biax.alpha}) — resultant M ${biax.Mres.toFixed(0)} kip-ft at ${biax.theta.toFixed(0)}° from the major axis`,
+      severity: 'warning',
+    });
 
   // Cross-section limit for combined shear + torsion ACI §22.7.7.1. Distinct
   // from the §22.7.6 capacity check: this one cannot be fixed with more links.
@@ -899,18 +1165,23 @@ export function designMember(
     }
   }
 
-  // Multi-layer checks: ACI §25.2.2 vertical clear spacing ≥ max(1", db); fit check
+  // Multi-layer geometry: does the stack physically fit?
+  //
+  // THE §25.2.2 VERTICAL CLEAR-SPACING WARNING WAS REMOVED HERE, DELIBERATELY.
+  // It required `max(1", db)` between layers, which is §25.2.1's HORIZONTAL rule
+  // borrowed for the vertical direction. §25.2.2 asks only for "a clear spacing between
+  // layers of at least 1 in." — a flat inch, with no bar-diameter term — so the check was
+  // firing on a limit the clause does not set: every stacked #9 or larger detailed at the
+  // ordinary 1" gap came back flagged. S-CONCRETE agrees; its reports print
+  // "dz (min) 1.0 in" against #5 bars and accept dz = 1.0.
+  //
+  // `layerClearSpacing` remains a real input — it places the inner layers and therefore
+  // moves d — and the fit check below still refuses a stack the section cannot hold. It
+  // is only the spacing VERDICT that is gone. Restoring it means one push here against
+  // `sClear < 1.0`, plus a Calc Sheet row; do not reinstate the max(1", db) form.
   for (const [face, bars] of [['Bottom', rebar.botBars], ['Top', rebar.topBars]] as const) {
     const layers = bars.filter(g => g.numBars > 0);
     if (layers.length < 2) continue;
-    const dbMax = Math.max(...layers.map(g => getBarDiam(g.barSize)));
-    const sReq  = Math.max(1.0, dbMax);
-    if (sClear < sReq - 1e-9)
-      warnings.push({
-        code: 'ACI §25.2.2',
-        message: `${face} bars: layer clear spacing ${sClear}" < required max(1", db = ${dbMax.toFixed(2)}") = ${sReq.toFixed(2)}"`,
-        severity: 'warning',
-      });
     const stack = coverFor(section, face === 'Bottom' ? 'bot' : 'top') + getBarDiam(section.stirrupDia)
       + layers.reduce((s, g) => s + getBarDiam(g.barSize), 0) + sClear * (layers.length - 1);
     if (stack >= h / 2)
@@ -930,19 +1201,26 @@ export function designMember(
       severity: 'error',
     });
 
-  // Vs upper limit ACI §22.5.1.2
-  if (shear.VsCapped)
-    warnings.push({
-      code: 'ACI §22.5.1.2',
-      message: `Stirrup contribution capped at Vs,max = 8√f'c·bw·d = ${shear.Vs.toFixed(1)} kips — enlarge section instead of adding stirrups`,
-      severity: 'warning',
-    });
+  // NO WARNING FOR THE Vs CEILING (§22.5.1.2), DELIBERATELY.
+  //
+  // `shear.VsCapped` says the stirrup contribution has reached 8√f'c·bw·d, so more or
+  // tighter links buy no further capacity. That is a fact about the section, not a defect
+  // in the design: if φVn still covers Vu the beam is fine, and flagging it puts an amber
+  // chip on a passing member whose only sin is that its shear DCR has stopped moving.
+  // The condition is REPORTED instead — see the "Upper limit on the stirrup contribution"
+  // step in `calcBreakdown`, which prints Vs,max beside the raw Vs and says which one the
+  // capacity was taken from.
+  //
+  // The genuine failure keeps its warning: the §22.5.1.2 error above fires when Vu
+  // exceeds φVn,max, i.e. when the ceiling is not merely reached but breached. That one
+  // always accompanies a shear DCR over 1, and it is what tells the reader the answer is
+  // a bigger section rather than more links — Suggest reads it for exactly that.
 
   // Face/skin steel ACI §9.7.2.3
   if (h > 36 && (!rebar.sideBars || rebar.sideBars.length === 0))
     warnings.push({ code: 'ACI §9.7.2.3', message: `h = ${h}" > 36" — skin reinforcement required on each face (ACI §9.7.2.3)`, severity: 'warning' });
 
-  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, DCR_PM ?? 0, crushing.util);
+  const maxDCR = Math.max(DCR_flex_pos, DCR_flex_neg, DCR_shear, DCR_torsion, VT_util, DCR_PM ?? 0, NM_util ?? 0, crushing.util);
   // Status reflects ACTUAL issues, not raw utilization: NG when capacity is
   // exceeded (DCR > 1); Warning only when a real code message exists (error- or
   // warning-severity); otherwise OK — even at high (but passing) utilization.
@@ -966,11 +1244,12 @@ export function designMember(
       phi_Mnx: phi_Mn_pos,
       interaction: pm.pos.points,
     } : {}),
+    ...(biax ? { NM_util, biaxial: biax } : {}),
     Vc: shear.Vc, Vs: shear.Vs, phi_Vn: shear.phi_Vn, DCR_shear,
-    Tcr: torsion.Tcr, Tu_threshold: torsion.Tu_threshold, phi_Tn: torsion.phi_Tn, DCR_torsion,
+    Tcr: torsion.Tcr, Tu_threshold: torsion.Tu_threshold, phi_Tn: torsion.phi_Tn, DCR_torsion, VT_util,
     DCR_crushing: crushing.util, phi_Tn_max: crushing.Tn_max,
     // Report the effective bottom-face As,min (§9.6.1.3 exception applied)
-    As_req_pos, As_req_neg, As_min: As_min_pos_eff, As_min_top: As_min_neg_eff, As_max, Av_req, Av_min_per_s,
+    As_req_pos, As_req_neg, As_min: As_min_pos_eff, As_min_top: As_min_neg_eff, As_max, As_max_top, Av_req, Av_min_per_s,
     warnings, status,
   };
 }

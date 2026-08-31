@@ -61,7 +61,9 @@ describe('FileConnection', () => {
     expect(f.B1).toHaveLength(2);
     const grav = f.B1.find(c => c.combo === '1.2D+1.6L')!;
     expect(grav.stations).toHaveLength(3);
-    expect(grav.stations[0]).toEqual({ x: 0, V: 42, M: -110 });
+    // P is 0 when the sheet has no axial column — the path reads one when present,
+    // negated, because an ETABS-exported sheet is compression-negative.
+    expect(grav.stations[0]).toEqual({ x: 0, V: 42, M: -110, P: 0 });
   });
 
   it('rejects a workbook with no beams sheet', async () => {

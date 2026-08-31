@@ -86,43 +86,204 @@ describe('force transfer — every load/force lands in the right field', () => {
     return sectionalLoadRows(files[0].text);
   }
 
-  it('transfers Pu→Nf, Tu→Tf, Vu→Vfy and the governing |M|→Mfy for one load case', () => {
+  it('transfers Pu→Nf, Tu→Tf and Vu→Vfz — the shear that PAIRS with Mfy', () => {
     const rows = rowsFor(beam('b1', 'B1', [lc({ Mu_pos: 180, Mu_neg: -90, Vu: 45, Tu: 8, Pu: 25 })]));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual({ Nf: 25, Tf: 8, Vfz: 0, Mfy: 180, Vfy: 45, Mfz: 0 });
+    // The table pairs (Vfz, Mfy) and (Vfy, Mfz). A beam's major-axis moment goes to
+    // Mfy, so its shear MUST go to Vfz — putting it in Vfy gave S-Concrete major
+    // bending with no shear plus a minor-axis shear with no moment.
+    expect(rows[0]).toEqual({ Nf: -25, Tf: 8, Vfz: 45, Mfy: 180, Vfy: 0, Mfz: 0 });
   });
 
-  it('emits one row per load case, in order, each carrying its own forces', () => {
+  it('emits BOTH faces per load case: a sagging row and a signed hogging row', () => {
+    // max(|M+|, |M−|) collapsed the two into one positive number, so only one face
+    // was ever checked — a hogging moment was checked against the bottom steel.
+    const rows = rowsFor(beam('b1', 'B1', [lc({ Mu_pos: 180, Mu_neg: -90, Vu: 45, Tu: 8, Pu: 25 })]));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Mfy).toBe(180);    // sagging → +My, checks the bottom cage
+    expect(rows[1].Mfy).toBe(-90);    // hogging → −My, checks the top cage
+    expect(rows[1]).toMatchObject({ Nf: -25, Tf: 8, Vfz: 45 });  // same shear/torsion/axial
+  });
+
+  it('emits a sagging-only row when there is no hogging moment', () => {
+    const rows = rowsFor(beam('b', 'B', [lc({ Mu_pos: 120, Mu_neg: 0, Vu: 30 })]));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].Mfy).toBe(120);
+  });
+
+  it('emits one pair per load case, in order, each carrying its own forces', () => {
     const rows = rowsFor(beam('b1', 'B1', [
       lc({ label: 'D+L', Mu_pos: 120, Mu_neg: -60, Vu: 30, Tu: 5, Pu: 10 }),
       lc({ label: 'D+W', Mu_pos: 200, Mu_neg: -150, Vu: 55, Tu: 9, Pu: 0 }),
       lc({ label: 'D+E', Mu_pos: 90, Mu_neg: -260, Vu: 70, Tu: 0, Pu: -15 }),
     ]));
-    expect(rows).toHaveLength(3);
-    expect(rows[0]).toEqual({ Nf: 10, Tf: 5, Vfz: 0, Mfy: 120, Vfy: 30, Mfz: 0 });
-    expect(rows[1]).toEqual({ Nf: 0, Tf: 9, Vfz: 0, Mfy: 200, Vfy: 55, Mfz: 0 });
-    // hogging governs the 3rd combo (|-260| > 90); tension axial preserved
-    expect(rows[2]).toEqual({ Nf: -15, Tf: 0, Vfz: 0, Mfy: 260, Vfy: 70, Mfz: 0 });
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toEqual({ Nf: -10, Tf: 5, Vfz: 30, Mfy: 120, Vfy: 0, Mfz: 0 });
+    expect(rows[1]).toEqual({ Nf: -10, Tf: 5, Vfz: 30, Mfy: -60, Vfy: 0, Mfz: 0 });
+    expect(rows[2]).toEqual({ Nf: 0, Tf: 9, Vfz: 55, Mfy: 200, Vfy: 0, Mfz: 0 });
+    expect(rows[3]).toEqual({ Nf: 0, Tf: 9, Vfz: 55, Mfy: -150, Vfy: 0, Mfz: 0 });
+    // tension axial preserved; the heavy hogging keeps its own sign
+    // Pu = −15 is TENSION, so it leaves as Nf = +15.
+    expect(rows[4]).toEqual({ Nf: 15, Tf: 0, Vfz: 70, Mfy: 90, Vfy: 0, Mfz: 0 });
+    expect(rows[5]).toEqual({ Nf: 15, Tf: 0, Vfz: 70, Mfy: -260, Vfy: 0, Mfz: 0 });
   });
 
-  it('governing moment uses max(|Mu_pos|, |Mu_neg|)', () => {
-    expect(rowsFor(beam('b', 'B', [lc({ Mu_pos: 50, Mu_neg: -300, Vu: 20 })]))[0].Mfy).toBe(300);
-    expect(rowsFor(beam('b', 'B', [lc({ Mu_pos: 240, Mu_neg: -30, Vu: 20 })]))[0].Mfy).toBe(240);
+  it('keeps sagging and hogging on OPPOSITE signs, whichever is larger', () => {
+    expect(rowsFor(beam('b', 'B', [lc({ Mu_pos: 50, Mu_neg: -300, Vu: 20 })])).map(r => r.Mfy)).toEqual([50, -300]);
+    expect(rowsFor(beam('b', 'B', [lc({ Mu_pos: 240, Mu_neg: -30, Vu: 20 })])).map(r => r.Mfy)).toEqual([240, -30]);
   });
 
   it('is an ACTIVE transfer — changing a force changes the emitted .SCO', () => {
     const a = rowsFor(beam('b', 'B', [lc({ Mu_pos: 100, Vu: 45 })]))[0];
     const b = rowsFor(beam('b', 'B', [lc({ Mu_pos: 100, Vu: 99 })]))[0];
-    expect(a.Vfy).toBe(45);
-    expect(b.Vfy).toBe(99);
-    expect(a.Vfy).not.toBe(b.Vfy);
+    expect(a.Vfz).toBe(45);
+    expect(b.Vfz).toBe(99);
+    expect(a.Vfz).not.toBe(b.Vfz);
   });
 
-  it('writes fractional forces at the file precision (1 dp)', () => {
-    const rows = rowsFor(beam('b', 'B', [lc({ Mu_pos: 123.46, Vu: 45.27, Pu: 12.34 })]));
-    expect(rows[0].Mfy).toBeCloseTo(123.5, 5);  // f1 rounds to 1 decimal
-    expect(rows[0].Vfy).toBeCloseTo(45.3, 5);
-    expect(rows[0].Nf).toBeCloseTo(12.3, 5);
+  it('writes fractional forces at the 2026 row precision (3 dp)', () => {
+    // The legacy V7 writer rounded every force to 1 decimal; the 2026 row format
+    // keeps 3, so a 123.46 kip-ft demand is no longer quietly nudged to 123.5.
+    const rows = rowsFor(beam('b', 'B', [lc({ Mu_pos: 123.456789, Vu: 45.27, Pu: 12.34 })]));
+    expect(rows[0].Mfy).toBeCloseTo(123.457, 5);
+    expect(rows[0].Vfz).toBeCloseTo(45.27, 5);
+    expect(rows[0].Nf).toBeCloseTo(-12.34, 5);   // negated: compression-positive → compression-negative
+  });
+});
+
+describe('the ACI beam .SCO carries the app\'s actual beam', () => {
+  // Read a `Key\t value` field. The key must START a field (line start or after a
+  // tab) so it cannot match the tail of a longer field name.
+  function param(sco: string, key: string): string | null {
+    const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = sco.match(new RegExp(`(?:^|\\t)${esc}\\t ?([^\\t\\r\\n]*)`, 'm'));
+    return m ? m[1].trim() : null;
+  }
+  const scoFor = (m: Member): string => buildGroupScoFiles([m], 'ACI318-19')[0].text;
+
+  it('is a real S-Concrete 2026 ACI / imperial beam file', () => {
+    // Matched against Examples/SCRS/Level_3_B14X28_S12.SCO, saved by S-Concrete
+    // itself. The ACI beam file is the SAME 2026 format as the EN one, with
+    // Member Type 2 — not the legacy Version-7 / Member-Type-1 file we used to emit.
+    const t = scoFor(beam('b', 'B'));
+    expect(t.includes('Version\t2026.0')).toBe(true);
+    expect(param(t, 'Member Type')).toBe('2');
+    expect(param(t, 'Codes')).toBe('18');        // ACI 318
+    expect(param(t, 'Units')).toBe('0');         // imperial
+    expect(param(t, 'Bar Type')).toBe('2');      // US #-bars
+  });
+
+  it('writes the REAL top/bottom cage, not the column writer\'s literals', () => {
+    // The old writer built a column and swapped the member type, so every ACI beam
+    // carried a hardcoded 2+3 top / 2+2 bottom of one bar size, whatever was designed.
+    const m = beam('b', 'B');
+    m.rebar = {
+      topBars: [{ numBars: 3, barSize: 8 }],
+      botBars: [{ numBars: 4, barSize: 9 }],
+      ties: { barSize: 4, spacing: 6, legs: 4 },
+    };
+    const t = scoFor(m);
+    expect(param(t, 'Bm NT(1,1)')).toBe('3');
+    expect(param(t, 'Bm NB(1,1)')).toBe('4');
+    expect(param(t, 'Bm NT(2,1)')).toBe('0');    // curtain 2 unused (was a stray 3)
+    expect(param(t, 'Bm NB(2,1)')).toBe('0');    // (was a stray 2)
+    expect(param(t, 'Bm DT(1,1)')).toBe('7');    // #8 → bar-table index 7
+    expect(param(t, 'Bm DB(1,1)')).toBe('8');    // #9 → index 8, per FACE
+    expect(param(t, 'Bm NlegsZ')).toBe('4');     // 4-leg ties (was hardcoded 2)
+  });
+
+  it('honours the cage on skin bars instead of letting S-Concrete invent them', () => {
+    const bare = scoFor(beam('b', 'B'));
+    expect(param(bare, 'Bm ApplyFace')).toBe('0');      // no side bars → face steel OFF
+    expect(param(bare, 'Bm NbmFace')).toBe('0');
+
+    const m = beam('b', 'B');
+    m.section = { type: 'rectangular_beam', b: 14, h: 48, coverClear: 1.5, stirrupDia: 4 };
+    m.rebar = { ...m.rebar, sideBars: [{ numBars: 3, barSize: 5 }] };   // 3 PER FACE
+    const t = scoFor(m);
+    expect(param(t, 'Bm ApplyFace')).toBe('1');
+    expect(param(t, 'Bm NbmFace')).toBe('6');           // NbmFace counts both faces
+    expect(param(t, 'Bm DbmFace')).toBe('4');           // #5 → index 4
+    // Geometry closes on the real depth: 2·Z + (n−1)·S = h, as in the sample.
+    const S = +param(t, 'Bm SbmFace')!, Z = +param(t, 'Bm ZbmFace')!;
+    expect(2 * Z + 2 * S).toBeCloseTo(48, 3);
+  });
+
+  it('carries a T-beam flange and the per-face covers', () => {
+    const m = beam('b', 'B');
+    m.section = {
+      type: 'T_beam', b: 48, h: 24, bw: 14, hf: 6, coverClear: 1.5,
+      coverTop: 2, coverBottom: 1.75, coverSide: 1.5, stirrupDia: 4,
+    };
+    const t = scoFor(m);
+    expect(param(t, 'Bm b')).toBe('14');              // web
+    expect(param(t, 'Bm bf')).toBe('48');             // flange width (was collapsed to the web)
+    expect(param(t, 'Bm hf')).toBe('6');              // (was a hardcoded 7)
+    expect(param(t, 'Bm IgnoreFlange')).toBe('0');
+    expect(param(t, 'Bm Top')).toBe('2');
+    expect(param(t, 'Bm Bottom')).toBe('1.75');
+  });
+
+  it('keeps a metric-derived width instead of rounding it to whole inches', () => {
+    const m = beam('b', 'B');
+    m.section = { type: 'rectangular_beam', b: 11.811, h: 23.622, coverClear: 1.5, stirrupDia: 4 }; // 300×600
+    expect(param(scoFor(m), 'Bm b')).toBe('11.811');
+  });
+
+  it('a rectangular beam ignores the flange', () => {
+    const t = scoFor(beam('b', 'B'));
+    expect(param(t, 'Bm IgnoreFlange')).toBe('1');
+    expect(param(t, 'Bm hf')).toBe('0');
+  });
+});
+
+describe('zoned stirrups — one .SCO per spacing, each with its own rows', () => {
+  const zoned = (): Member => {
+    const m = beam('b', 'B', [
+      lc({ id: 'a', label: 'C1@0', Mu_neg: -200, Vu: 60, x: 0 }),
+      lc({ id: 'b', label: 'C1@10', Mu_pos: 150, Vu: 6, x: 10 }),
+      lc({ id: 'c', label: 'C1@20', Mu_neg: -190, Vu: -58, x: 20 }),
+    ]);
+    m.rebar = { ...m.rebar, ties: { barSize: 4, spacing: 4, legs: 2 },
+      tieZones: [{ spacing: 4 }, { spacing: 8 }, { spacing: 4 }] };
+    return m;
+  };
+
+  it('splits a 4/8/4 beam into an ends file and a mid file', () => {
+    const files = buildGroupScoFiles([zoned()], 'ACI318-19');
+    expect(files.map(f => f.fileName).sort()).toEqual(['B_ends.SCO', 'B_mid.SCO']);
+    expect(files.every(f => f.memberId === 'b')).toBe(true);   // both still link to the member
+  });
+
+  it('gives each file its OWN spacing and only the rows in that zone', () => {
+    const files = buildGroupScoFiles([zoned()], 'ACI318-19');
+    const byName = Object.fromEntries(files.map(f => [f.fileName, f.text]));
+    // End zones (x = 0 and x = 20) at 4"; mid (x = 10) at 8".
+    expect(byName['B_ends.SCO']).toContain('Bm Sstir\t 4');
+    expect(byName['B_mid.SCO']).toContain('Bm Sstir\t 8');
+    expect(sectionalLoadRows(byName['B_ends.SCO']).map(r => r.Vfz)).toEqual([60, 60, -58, -58]);
+    expect(sectionalLoadRows(byName['B_mid.SCO']).map(r => r.Vfz)).toEqual([6]);
+  });
+
+  it('does NOT split when the rows carry no station (the app falls back too)', () => {
+    const m = zoned();
+    m.loads = m.loads.map(l => ({ ...l, x: undefined }));
+    const files = buildGroupScoFiles([m], 'ACI318-19');
+    expect(files.map(f => f.fileName)).toEqual(['B.SCO']);
+  });
+
+  it('does NOT split when all three zones share one spacing', () => {
+    const m = zoned();
+    m.rebar = { ...m.rebar, tieZones: [{ spacing: 5 }, { spacing: 5 }, { spacing: 5 }] };
+    const files = buildGroupScoFiles([m], 'ACI318-19');
+    expect(files.map(f => f.fileName)).toEqual(['B.SCO']);
+  });
+
+  it('keeps every zone file when the member is collected across groups', () => {
+    // collectGroupScoFiles dedupes; keying on memberId alone dropped all but the
+    // first zone file.
+    const files = collectGroupScoFiles(
+      [group('g1', 'G1', ['b']), group('g2', 'G2', ['b'])], [zoned()], 'ACI318-19');
+    expect(files.map(f => f.fileName).sort()).toEqual(['B_ends.SCO', 'B_mid.SCO']);
   });
 });
 
@@ -159,7 +320,7 @@ describe('edge cases', () => {
     expect(rows).toHaveLength(12);
     expect(rows[0].Mfy).toBe(50);
     expect(rows[11].Mfy).toBe(160);
-    expect(rows[11].Vfy).toBe(21);
+    expect(rows[11].Vfz).toBe(21);
   });
 
   it('routes EC2 beams to the EC2 writer when the project is supplied', () => {

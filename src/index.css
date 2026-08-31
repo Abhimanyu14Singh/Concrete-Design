@@ -96,11 +96,52 @@ body {
   to   { transform: none; opacity: 1; }
 }
 
-/* E2: Print styles */
+/* Print styles.
+ *
+ * The first three rules are the OLD layout's ids (#app-header / #app-sidebar /
+ * #app-main). That layout is gone — the panel workspace is the shell now — so on its
+ * own this stylesheet hid nothing and "Print Preview" produced the entire application
+ * chrome: toolbar, rail, panel title bars and all. They are kept because App still
+ * renders #app-root and a build that reverts to the old shell should still print.
+ *
+ * The workspace rules below do the actual work: drop everything that is a CONTROL
+ * (top bar, rail, panel window buttons, gutters, drop indicators) and let the panels
+ * themselves flow down the page instead of being clipped to a fixed-height tile. */
 @media print {
   #app-header, #app-sidebar { display: none !important; }
   #app-main { overflow: visible !important; }
   body { background: white; }
+
+  /* Chrome that means nothing on paper. */
+  .sdash-topbar,
+  .demo-railstrip,
+  .demo-raildock,
+  .demo-railbackdrop,
+  .demo-gutter,
+  .demo-dropind,
+  .sdash-menu,
+  .sdash-menu-backdrop,
+  .demo-winbtn { display: none !important; }
+
+  /* The shell is a fixed-height flex layout with its own scrollers — on paper that
+     clips every panel to one screenful. Let it grow instead. */
+  .sdash-root.demo-shell,
+  .demo-body,
+  .demo-main,
+  .demo-workspace,
+  .demo-col,
+  .demo-tile,
+  .sdash-planwin,
+  .sdash-planwin-body {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    flex: none !important;
+  }
+  .demo-workspace { display: block !important; }
+  .demo-col { width: 100% !important; }
+  /* Keep a panel and its heading together rather than breaking mid-table. */
+  .sdash-planwin { break-inside: avoid; page-break-inside: avoid; border: 1px solid #d1d5db; margin: 0 0 10px; }
 }
 
 /* F2: Responsive layout */

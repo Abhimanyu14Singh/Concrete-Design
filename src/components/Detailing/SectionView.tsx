@@ -1,9 +1,25 @@
 import { formatBarLabel, barSizeStep, US_BAR_SIZES, METRIC_BAR_SIZES } from '../../utils/rebar';
+import { useState } from 'react';
 import type { ReactElement } from 'react';
 import type { SectionDimensions, RebarLayout, DesignResults, TieZone } from '../../types';
 import { coverFor, getBarDiam, getBarArea } from '../../utils/concreteDesign';
 import { useUnits } from '../../contexts/UnitsContext';
 import { BARS, DCR, FONT } from '../../theme';
+
+/**
+ * Smallest radius a bar may be drawn at, in px.
+ *
+ * A floor exists so a bar never vanishes on a thumbnail. 3px was too generous: it stops
+ * being a floor and becomes a DISTORTION as soon as the section is large enough that a
+ * bar's true radius falls under it. A #8 in a 16x24 draws at ~4.7px at panel size — well
+ * clear — but the same bar in a 40x60 is ~1.9px, and pinning it to 3 drew the cage about
+ * 60% oversized against its own concrete. That is why a beam looked like it grew thicker
+ * rebar when all that changed was its depth.
+ *
+ * 1.5px is still visible and only engages when the true size is genuinely sub-pixel, so
+ * the drawing stays to scale everywhere it can.
+ */
+const MIN_BAR_R = 1.5;
 
 interface Props {
   section: SectionDimensions;
@@ -24,6 +40,13 @@ interface Props {
   padT?: number;
   padB?: number;
   onRebarChange?: (r: RebarLayout) => void;
+  /** Makes the b and h dimensions click-to-edit. Absent, they stay plain labels — which
+   *  is what a thumbnail or a read-only view wants. */
+  onSectionChange?: (s: SectionDimensions) => void;
+  /** Which dimensions differ from the model as imported. Marked with a * and set bold, so
+   *  an overridden size is never mistaken for the analysed one. The host decides what
+   *  "changed" means — normally a comparison against the original member. */
+  editedDims?: { b?: boolean; h?: boolean };
   /** Small clickable ⚑ after the top/bottom bar label (L/3 curtailment flags). */
   topFlag?: { color: string; title?: string; onClick: () => void } | null;
   botFlag?: { color: string; title?: string; onClick: () => void } | null;
@@ -39,10 +62,10 @@ export default function SectionView({
   editBarSize = false,
   editStirrup = false,
   padL = 40, padR = 78, padT = 28, padB = 46,
-  onRebarChange,
+  onRebarChange, onSectionChange, editedDims,
   topFlag, botFlag, topFlag2,
 }: Props) {
-  const { fmt, fmtVal, label, units, toDisplay, fromDisplay } = useUnits();
+  const { fmt, fmtVal, label, units, barFamily, toDisplay, fromDisplay } = useUnits();
   // EC2/SI: bar/stirrup spacings should read as round multiples of 25 mm (not the
   // 301/102 mm artefacts of an inch-stored value). Snap a stored (inch) spacing so
   // it displays on the 25 mm grid; imperial is left untouched.
@@ -53,12 +76,12 @@ export default function SectionView({
   const pL = padL, pR = padR, pT = padT, pB = padB;
   const showLabels = barLabels ?? showDims;
 
-  // Bar designation in the ACTIVE unit family: a bar stored in the other family
-  // (e.g. a metric Ø16 left over from an EC2 design) is shown as its nearest US
-  // equivalent when the units are imperial, and vice-versa — so switching the
-  // design code re-labels the reinforcement instead of leaving it in the old units.
+  // Bar designation in the project's BAR FAMILY — not its display units, which
+  // are independent. Keying this on units re-labelled genuinely-converted metric
+  // bars back to #-sizes on any imperial-unit job, so the drawing disagreed with
+  // every other view. A stray cross-family bar still shows its nearest equivalent.
   function displayBar(barSize: number): string {
-    const wantMetric = units === 'si';
+    const wantMetric = barFamily === 'euro';
     if ((barSize < 0) === wantMetric) return formatBarLabel(barSize); // already in family
     const d = getBarDiam(barSize);
     const family = wantMetric ? METRIC_BAR_SIZES : US_BAR_SIZES;
@@ -96,12 +119,15 @@ export default function SectionView({
   const isT = section.type === 'T_beam' || section.type === 'L_beam';
   const interactive = !!onRebarChange;
 
-  /** Bar radius, shrunk when bars would overlap in the row. */
+  /** A bar's drawn radius at true scale, floored only so it stays visible. */
+  const barR = (barSize: number) => Math.max(MIN_BAR_R, (getBarDiam(barSize) / 2) * scale);
+
+  /** Bar radius, shrunk further when bars would overlap in the row. */
   function fitRadius(barSize: number, numBars: number, rowWidth: number): number {
-    const r = Math.max(3, (getBarDiam(barSize) / 2) * scale);
+    const r = barR(barSize);
     if (numBars <= 1) return r;
     const maxR = (rowWidth / (numBars - 1) - 2) / 2;
-    return Math.max(2.5, Math.min(r, maxR));
+    return Math.max(MIN_BAR_R, Math.min(r, maxR));
   }
 
   function barDots(bars: { numBars: number; barSize: number }[], row: 'top' | 'bot'): ReactElement[] {
@@ -275,11 +301,139 @@ export default function SectionView({
     const metric = (rebar.botBars[0]?.barSize ?? rebar.topBars[0]?.barSize ?? 5) < 0;
     onRebarChange({ ...rebar, sideBars: [{ numBars: 2, barSize: metric ? -12 : 5, spacing: skinSpacing(2) }] });
   }
+  const hasSkin = (rebar.sideBars?.[0]?.numBars ?? 0) > 0;
+  // Skin is EDITED wherever bar editing is (same family of affordance: step the
+  // count, the size, the spacing); it is merely NAMED everywhere else.
+  const editSkin = editBarSize && interactive;
+
+  /**
+   * Where the skin label goes: the RIGHT gutter, directly under the link block.
+   *
+   * It used to sit mid-height on the left, opposite the links — symmetric, but it put
+   * the face steel on the far side of the drawing from the transverse steel it is
+   * detailed with, and it had to dodge the rotated "h = …" dimension, which is anchored
+   * to the same edge. That dodge is what the old two-branch anchor was for, and it is
+   * gone: nothing else lives in the right gutter at mid-height except the links.
+   *
+   * So the cage now reads as one column — size @ spacing, legs, then skin — which is the
+   * order it is written in on a schedule.
+   */
+  const stirBlockY = oy + scaledH / 2 + (rebar.ties ? 28 : 4);
+  const skinAnchor = { x: ox + scaledW + 8, y: stirBlockY };
+
+  /** What a click does, as a tooltip rather than a printed hint line.
+   *
+   *  The "L+ / R−" and "size · s · legs · ⅓" lines under every label were teaching the
+   *  interaction in permanent ink — four extra rows of grey text on a drawing whose whole
+   *  job is to show a cage. The affordance is already there (underlined, coloured,
+   *  pointer cursor); what was missing was only WHICH button does what, and that belongs
+   *  on hover, where it costs nothing when you already know. */
+  const EDIT_TIP = 'Left-click to increase · right-click to decrease';
+  const EDIT_TIP_S = 'Left-click to tighten the spacing · right-click to open it up';
 
   // pointerEvents:'auto' re-enables hit-testing even when the token sits inside a
   // parent <text> that set pointer-events:none (e.g. the '＋layer' token on the
   // hint line) — otherwise the click passes through to the card and never fires.
   const editTspan = { cursor: 'pointer', userSelect: 'none' as const, pointerEvents: 'auto' as const } as React.CSSProperties;
+
+  // ── editable b / h ──────────────────────────────────────────────────────────
+  // Click the number on a dimension and type the size you want. This edits the SECTION,
+  // not the cage, so it is gated on its own callback rather than on onRebarChange — a
+  // host can offer bar editing without offering to resize the beam.
+  //
+  // The editor is a real <input> inside a <foreignObject>, not an HTML overlay: it then
+  // inherits the SVG's coordinate system and lands on the label at any zoom or panel
+  // size. An overlay would need the drawing's transform recomputed on every resize just
+  // to stay put.
+  const editDims = !!onSectionChange;
+  const [dimEdit, setDimEdit] = useState<{ which: 'b' | 'h'; value: string } | null>(null);
+
+  const openDim = (which: 'b' | 'h', inches: number) =>
+    setDimEdit({ which, value: String(+toDisplay(inches, 'length').toFixed(units === 'si' ? 0 : 2)) });
+
+  /** Typed in DISPLAY units, stored imperial — like every other input in the app. Type
+   *  600 on an SI job and the section becomes 600 mm, not 600 inches. */
+  const commitDim = () => {
+    if (!dimEdit || !onSectionChange) { setDimEdit(null); return; }
+    const shown = parseFloat(dimEdit.value);
+    const which = dimEdit.which;
+    setDimEdit(null);
+    if (!isFinite(shown) || shown <= 0) return;          // nonsense is a no-op, not a 0-deep beam
+    const inches = fromDisplay(shown, 'length');
+    if (which === 'h') {
+      if (Math.abs(inches - (section.h ?? 0)) < 1e-9) return;
+      onSectionChange({ ...section, h: inches });
+      return;
+    }
+    // On a T or L the dimensioned width is the WEB; `b` is the flange. Writing `b` here
+    // would silently widen the flange while the drawing showed the web change.
+    const key = isT ? 'bw' : 'b';
+    const cur = isT ? (section.bw ?? section.b) : section.b;
+    if (Math.abs(inches - cur) < 1e-9) return;
+    onSectionChange({ ...section, [key]: inches });
+  };
+
+  /** "h = 24.0 in", clickable to edit, with a * when overridden.
+   *
+   *  The click lands on the WHOLE label, not only on the number. Dimension text is 10px
+   *  and the h label is rotated, so its number is an 11px-wide target — accurate enough
+   *  for a script and not for a hand. Underlining stays on the number alone, because
+   *  that is the part being set; the label around it just widens the hit area. */
+  const dimLabel = (kind: 'b' | 'h', text: string, value: number) => {
+    const changed = kind === 'h' ? editedDims?.h : editedDims?.b;
+    const weight = changed ? 700 : 400;
+    return (
+      <>
+        {editDims && <title>Click to set the {kind === 'h' ? 'depth' : 'width'}</title>}
+        <tspan style={{ fontWeight: weight }}>{text}{changed ? '*' : ''} = </tspan>
+        <tspan
+          style={{ fontWeight: weight }}
+          textDecoration={editDims ? 'underline' : undefined}
+        >{fmt(value, 'length', 1)}</tspan>
+      </>
+    );
+  };
+
+  /** Props that turn a dimension's <text> into the click target. */
+  const dimHit = (kind: 'b' | 'h', value: number) => (editDims ? {
+    style: editTspan,
+    onClick: (e: React.MouseEvent) => { e.stopPropagation(); openDim(kind, value); },
+  } : {});
+
+  /** The inline editor. Rendered unrotated even for h — a 90°-rotated text field is
+   *  unusable — and parked just outside the dimension it belongs to. */
+  const dimEditor = () => {
+    if (!dimEdit) return null;
+    const W = 76, H = 22;
+    const x = dimEdit.which === 'h' ? Math.max(0, ox - 20 - W) : ox + scaledW / 2 - W / 2;
+    const y = dimEdit.which === 'h' ? oy + scaledH / 2 - H / 2 : oy + scaledH + 18;
+    return (
+      <foreignObject x={x} y={y} width={W} height={H} style={{ overflow: 'visible' }}>
+        <input
+          autoFocus
+          type="number"
+          step="any"
+          value={dimEdit.value}
+          onChange={e => setDimEdit(d => (d ? { ...d, value: e.target.value } : d))}
+          onBlur={commitDim}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commitDim();
+            // Escape must abandon, not commit — blur would otherwise write the value the
+            // user just decided against.
+            else if (e.key === 'Escape') setDimEdit(null);
+            e.stopPropagation();
+          }}
+          onClick={e => e.stopPropagation()}
+          style={{
+            width: '100%', height: '100%', boxSizing: 'border-box',
+            font: `600 11px ${FONT.mono}`, textAlign: 'center', color: '#111827',
+            border: `1px solid ${DCR.pass}`, borderRadius: 4, outline: 'none', padding: '0 4px',
+            background: '#fff',
+          }}
+        />
+      </foreignObject>
+    );
+  };
   const noHit = { pointerEvents: 'none' } as React.CSSProperties;
 
   /** Editable face label. Each reinforcement layer is drawn on its OWN line so the
@@ -328,6 +482,7 @@ export default function SectionView({
 
     const labelText = (
       <text x={x} y={y0} fontSize="10" fill={fill} fontFamily={FONT.mono}>
+        <title>{EDIT_TIP}</title>
         {active.map(({ g, li }, i) => (
           <tspan key={li} x={x} dy={i === 0 ? 0 : FACE_LINE_H}>
             <tspan style={editTspan} textDecoration="underline"
@@ -361,6 +516,7 @@ export default function SectionView({
     );
     return (
       <text x={x} y={y} fontSize={rebar.tieZones ? 8.5 : 10} fill={BARS.tie} fontFamily={FONT.mono}>
+        <title>{EDIT_TIP_S}</title>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpTie('size', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('size', -1); }}
@@ -387,6 +543,7 @@ export default function SectionView({
     if (!t) return null;
     return (
       <text x={x} y={y} fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}>
+        <title>{EDIT_TIP}</title>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpTie('legs', 1); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpTie('legs', -1); }}
@@ -396,21 +553,29 @@ export default function SectionView({
     );
   }
 
-  /** Editable skin / face reinforcement: "X-#Y @ Z" (bars per side · size · spacing),
-   *  each token click-editable; when absent, a "＋ skin" affordance to add it.
+  /** Skin / face reinforcement: "X-#Y @ Z" (bars per face · size · spacing).
+   *  With bar editing on each token steps (left-click up, right-click down) and a
+   *  "＋ skin" affordance stands in when there is none; otherwise it is a plain label,
+   *  because the side bars are DRAWN either way and a cage with skin should not read
+   *  the same as one without.
    *  `anchor='end'` right-aligns to `x` and wraps onto two lines (count-size / @ spacing)
    *  so it can live in the LEFT gutter beside the side bars without clipping. */
-  function editableSkinLabel(x: number, y: number, anchor: 'start' | 'end' = 'start'): ReactElement {
+  function skinLabel(x: number, y: number, anchor: 'start' | 'end' = 'start'): ReactElement | null {
     const s = rebar.sideBars?.[0];
     if (!s || s.numBars <= 0) {
+      if (!editSkin) return null;
       return (
         <text x={x} y={y} textAnchor={anchor} fontSize="10" fill={BARS.side} fontFamily={FONT.mono}>
+          <title>Add skin / face reinforcement</title>
           <tspan style={{ ...editTspan, fontWeight: 700 }} textDecoration="underline"
             onClick={e => { e.stopPropagation(); addSkin(); }}>＋ skin</tspan>
         </text>
       );
     }
-    const countSize = (
+    // No stored c/c ⇒ the bars are drawn evenly over the clear web, so report THAT
+    // spacing rather than a nominal default the drawing does not use.
+    const spacingTxt = fmt(snapSpacingIn(s.spacing ?? skinSpacing(s.numBars)), 'length', 0);
+    const countSize = editSkin ? (
       <>
         <tspan style={editTspan} textDecoration="underline"
           onClick={e => { e.stopPropagation(); bumpSide('count', 1); }}
@@ -422,12 +587,16 @@ export default function SectionView({
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('size', -1); }}
         >{displayBar(s.barSize)}</tspan>
       </>
+    ) : (
+      <tspan style={noHit}>{s.numBars}-{displayBar(s.barSize)}</tspan>
     );
-    const spacingTok = (
+    const spacingTok = editSkin ? (
       <tspan style={editTspan} textDecoration="underline"
         onClick={e => { e.stopPropagation(); bumpSide('spacing', -1); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); bumpSide('spacing', 1); }}
-      >{fmt(snapSpacingIn(s.spacing ?? 12), 'length', 0)}</tspan>
+      >{spacingTxt}</tspan>
+    ) : (
+      <tspan style={noHit}>{spacingTxt}</tspan>
     );
     if (anchor === 'end') {
       return (
@@ -444,8 +613,8 @@ export default function SectionView({
     );
   }
 
-  const topBarR = Math.max(3, (getBarDiam(rebar.topBars[0]?.barSize ?? 8) / 2) * scale);
-  const botBarR = Math.max(3, (getBarDiam(rebar.botBars[0]?.barSize ?? 8) / 2) * scale);
+  const topBarR = barR(rebar.topBars[0]?.barSize ?? 8);
+  const botBarR = barR(rebar.botBars[0]?.barSize ?? 8);
   const topLabelY = oy + stOffT + topBarR;
   const botLabelY = oy + scaledH - stOffB - botBarR;
 
@@ -460,13 +629,26 @@ export default function SectionView({
   const lastTop = rebar.topBars[rebar.topBars.length - 1];
   const lastBot = rebar.botBars[rebar.botBars.length - 1];
   const yTopInner = oy + stOffT + layerDrop(rebar.topBars)
-    + Math.max(3, (getBarDiam(lastTop?.barSize ?? 8) / 2) * scale);
+    + barR(lastTop?.barSize ?? 8);
   const yBotInner = oy + scaledH - stOffB - layerDrop(rebar.botBars)
-    - Math.max(3, (getBarDiam(lastBot?.barSize ?? 8) / 2) * scale);
+    - barR(lastBot?.barSize ?? 8);
 
   // Circular columns: pool ALL bar groups onto the ring (matches engine layout)
+  //
+  // ── The drawing's ground (--sv-bg) ──────────────────────────────────────────
+  // The slate fill is right where this view is a TILE among others — a card in a grid, a
+  // thumbnail — because it separates the drawing from whatever surrounds it. It is wrong
+  // where the view IS the surface: given a whole panel it becomes a grey rounded
+  // rectangle sitting on the host's own background, and every dimension and bar label
+  // inside it then reads as text on a second colour rather than text on the page. Worse
+  // on a failing group, where the host paints a red status tint and the drawing keeps a
+  // slate hole in the middle of it.
+  //
+  // So the ground is a variable with today's value as the fallback: nothing moves where
+  // it is unset, and a host that owns its background sets --sv-bg: transparent and gets
+  // one continuous surface.
   return (
-    <svg width={width} height={height} style={{ background: '#f8fafc', borderRadius: 8 }}>
+    <svg width={width} height={height} style={{ background: 'var(--sv-bg, #f8fafc)', borderRadius: 8 }}>
       <defs>
         <marker id="sv-arr" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto">
           <path d="M0,0 L5,2.5 L0,5 z" fill="#9ca3af" />
@@ -517,7 +699,7 @@ export default function SectionView({
           {barDots(rebar.topBars, 'top')}
           {barDots(rebar.botBars, 'bot')}
           {rebar.sideBars?.flatMap((grp, gi) => {
-            const r = Math.max(2.5, (getBarDiam(grp.barSize) / 2) * scale);
+            const r = barR(grp.barSize);
             // Columns: pairs at evenly spaced heights between face layers (engine convention)
             const rows = grp.numBars;
             return Array.from({ length: rows }, (_, i) => {
@@ -542,8 +724,9 @@ export default function SectionView({
           <line x1={ox} y1={oy + scaledH + 14} x2={ox + scaledW} y2={oy + scaledH + 14}
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox + scaledW / 2} y={oy + scaledH + 27} textAnchor="middle"
-            fontSize="10" fill="#374151" fontFamily={FONT.mono}>
-            {isT ? `bw = ${fmt(bw, 'length', 1)}` : `b = ${fmt(secW, 'length', 1)}`}
+            fontSize="10" fill="#374151" fontFamily={FONT.mono}
+            {...dimHit('b', isT ? bw : secW)}>
+            {dimLabel('b', isT ? 'bw' : 'b', isT ? bw : secW)}
           </text>
 
           {/* Height dim */}
@@ -551,9 +734,11 @@ export default function SectionView({
             stroke="#9ca3af" strokeWidth="1" markerEnd="url(#sv-arr)" markerStart="url(#sv-arrl)" />
           <text x={ox - 26} y={oy + scaledH / 2} textAnchor="middle"
             fontSize="10" fill="#374151" fontFamily={FONT.mono}
-            transform={`rotate(-90,${ox - 26},${oy + scaledH / 2})`}>
-            h = {fmt(secH, 'length', 1)}
+            transform={`rotate(-90,${ox - 26},${oy + scaledH / 2})`}
+            {...dimHit('h', secH)}>
+            {dimLabel('h', 'h', secH)}
           </text>
+          {dimEditor()}
         </>
       )}
 
@@ -571,11 +756,12 @@ export default function SectionView({
             )}
           <text x={ox + scaledW + 8} y={topLabelY + 16 + Math.max(0, rebar.topBars.filter(g => g.numBars > 0).length - 1) * FACE_LINE_H}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-            {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'top'}
+            {interactive ? '' : 'top'}
             {editBarSize && interactive && (
               <tspan style={editTspan} fill="#7c3aed" textDecoration="underline"
                 onClick={e => { e.stopPropagation(); addLayer('top'); }}
-                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('top'); }}>＋layer</tspan>
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('top'); }}>
+                <title>Add a top layer · right-click to remove one</title>＋layer</tspan>
             )}
           </text>
 
@@ -591,17 +777,20 @@ export default function SectionView({
             )}
           <text x={ox + scaledW + 8} y={botLabelY + 16}
             fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-            {interactive ? (editBarSize ? 'L+ / R− ' : 'L+1 / R−1') : 'bot'}
+            {interactive ? '' : 'bot'}
             {editBarSize && interactive && (
               <tspan style={editTspan} fill="#7c3aed" textDecoration="underline"
                 onClick={e => { e.stopPropagation(); addLayer('bot'); }}
-                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('bot'); }}>＋layer</tspan>
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); removeLayer('bot'); }}>
+                <title>Add a bottom layer · right-click to remove one</title>＋layer</tspan>
             )}
           </text>
-          {/* Side bar label (columns) */}
-          {/* Editable skin / face reinforcement (beams, edit mode): "X-#Y @ Z" per side,
-              or a "＋ skin" affordance when absent. */}
-          {editStirrup && editableSkinLabel(ox - 8, oy + scaledH / 2 - 6, 'end')}
+          {/* Skin / face reinforcement — "X-#Y @ Z" per face, editable where bar editing
+              is on (plus "＋ skin" when there is none), a plain label otherwise. Sits
+              under the link block in the right gutter, so the transverse steel and the
+              face steel read as one column. Needs the gutter the bar labels already
+              need, so it is gated on padR rather than padL. */}
+          {(editSkin || hasSkin) && pR >= 56 && skinLabel(skinAnchor.x, skinAnchor.y, 'start')}
           {showDims && result && (() => {
             const asBot = rebar.botBars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
             const reqBot = result.As_req_pos;
@@ -626,22 +815,32 @@ export default function SectionView({
               {/* size @ spacing (·⅓) on one line; editable "N legs" underneath. */}
               {editableStirrupLabel(ox + scaledW + 8, oy + scaledH / 2 + 4)}
               {editableLegsLabel(ox + scaledW + 8, oy + scaledH / 2 + 16)}
-              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 27}
-                fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-                size · s · legs · ⅓
-              </text>
             </>
           ) : (
             <>
+              {/* Zoned links read as all THREE span-third spacings, not just ties.spacing.
+                  This is a correctness label, not a cosmetic one: with rebar.tieZones the
+                  engine reads shear capacity at the spacing of the zone each demand sits
+                  in, so a beam detailed 4/12/4 has a φVn that STEPS — 175.8 kip at the
+                  ends, 93.5 through the middle third. Printing only ties.spacing showed
+                  the tightest of the three as though it ran the whole span, which is the
+                  cage the DCR was NOT computed from, and makes a passing beam look
+                  over-detailed and a failing middle zone look inexplicable.
+                  Per-value units are dropped in zoned mode ("4/12/4 in") so three numbers
+                  fit where one did. */}
               <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 4}
-                fontSize="10" fill={BARS.tie} fontFamily={FONT.mono}
+                fontSize={rebar.tieZones ? 8.5 : 10} fill={BARS.tie} fontFamily={FONT.mono}
                 {...labelEvents('stir')}>
-                {displayBar(rebar.ties.barSize)}@{fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
+                {displayBar(rebar.ties.barSize)}@{rebar.tieZones
+                  ? `${rebar.tieZones.map(z => fmtVal(z.spacing, 'length', 0)).join('/')} ${label('length')}`
+                  : fmt(rebar.ties.spacing, 'length', 1)}{rebar.ties.legs > 2 ? ` ×${rebar.ties.legs}L` : ''}
               </text>
-              <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
-                fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
-                {interactive ? 'L−s / R+s' : 'stir'}
-              </text>
+              {!interactive && (
+                <text x={ox + scaledW + 8} y={oy + scaledH / 2 + 16}
+                  fontSize="8" fill="#9ca3af" fontFamily={FONT.mono} style={{ pointerEvents: 'none' }}>
+                  stir
+                </text>
+              )}
             </>
           ))}
         </>

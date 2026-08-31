@@ -102,13 +102,22 @@ const DEFAULT_MATERIAL: MaterialProps = {
   fc: 4000, fy: 60000, fyt: 60000, Es: 29000000, lambdaConcrete: 1.0,
 };
 
+/** ETABS material names round-trip through several tables and can differ by case
+ *  or stray whitespace ("C30 " vs "c30"). An exact-equality join drops those to
+ *  the 4000 psi default silently, which reads as an inconsistent grade across a
+ *  model — so normalise both sides before matching. */
+const normName = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
+
 function materialFor(
   sectionName: string,
   sections: EtabsSectionInfo[],
   materials: EtabsMaterialInfo[],
 ): MaterialProps {
   const sec = sections.find(s => s.name === sectionName);
-  const conc = sec ? materials.find(m => m.name === sec.material) : undefined;
+  const key = normName(sec?.material);
+  // Only a material that actually carries a strength counts as a match; a name
+  // hit with fc = 0 must fall through to the default rather than import zero.
+  const conc = key ? materials.find(m => normName(m.name) === key && (m.fc ?? 0) > 0) : undefined;
   const rebarMat = materials.find(m => m.fy && !m.fc);
   return {
     ...DEFAULT_MATERIAL,
@@ -197,10 +206,20 @@ interface RawEtabsJson {
   frameSections?: unknown[];
 }
 
+/**
+ * The registered ETABS ModelAdapter.
+ *
+ * Detection only — `importProject` deliberately throws. An ETABS import needs choices no
+ * one-shot file parse can make (which stories, which combos, which force source, what
+ * units, what seed reinforcement), so the real path is the multi-step wizard driving an
+ * `EtabsConnection`. This class exists so a dropped ETABS JSON file is RECOGNISED and
+ * the user is pointed at that wizard, rather than falling through to "unknown format".
+ */
 export class EtabsAdapter implements ModelAdapter {
   readonly name = 'ETABS';
   readonly description = 'ETABS model JSON (frames, sections, forces) or tables export';
 
+  /** Structural sniff for ETABS model JSON: a frames array and a frameSections array. */
   canImport(data: unknown): boolean {
     if (typeof data === 'string') {
       try { data = JSON.parse(data); } catch { return false; }

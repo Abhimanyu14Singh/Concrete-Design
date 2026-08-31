@@ -5,7 +5,7 @@
  * envelope DCR summary.
  */
 import { useMemo } from 'react';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, ReferenceLine, ResponsiveContainer } from 'recharts';
 import type { Member, DesignResults, ComboForces, LoadCase, DesignCode } from '../../types';
 import { getBarDiam } from '../../utils/concreteDesign';
 import { formatBarLabel } from '../../utils/rebar';
@@ -30,15 +30,26 @@ const CARD_W = 340;
 const dcrColor = (v?: number | null) =>
   v == null ? INK.muted : v >= 1 ? STATUS.fail : v >= 0.9 ? STATUS.warn : STATUS.ok;
 
+/**
+ * Per-station envelope of M or V across all combos — signed, and kept identical to
+ * ModelMapView's copy of the same function (see the note there for why rectifying drew
+ * two diagrams that do not exist). This card is opened FROM the plan, so its sparklines
+ * and the plan's overlay are two views of one series and must not disagree about sign.
+ */
 function stationEnvelope(stationForces: ComboForces[], type: 'M' | 'V') {
-  const byX = new Map<number, number>();
+  const byX = new Map<number, { lo: number; hi: number }>();
   for (const cf of stationForces) {
     for (const s of cf.stations) {
-      const val = Math.abs(type === 'M' ? s.M : s.V);
-      byX.set(s.x, Math.max(byX.get(s.x) ?? 0, val));
+      const val = type === 'M' ? s.M : s.V;
+      const rec = byX.get(s.x) ?? { lo: 0, hi: 0 };
+      rec.lo = Math.min(rec.lo, val);
+      rec.hi = Math.max(rec.hi, val);
+      byX.set(s.x, rec);
     }
   }
-  return [...byX.entries()].sort((a, b) => a[0] - b[0]).map(([x, v]) => ({ x, v }));
+  return [...byX.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([x, r]) => ({ x, v: -r.lo > r.hi ? r.lo : r.hi }));
 }
 
 /** Build "2-#8 + 3-#6" style rebar string from layers. */
@@ -146,6 +157,10 @@ function Sparkline({ data, color }: { data: { x: number; v: number }[]; color: s
   return (
     <ResponsiveContainer width={140} height={34}>
       <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        {/* Now that the series is signed, the chart auto-scales to [min, max] and zero
+            sits somewhere in the middle. Without an axis to read it against, a line that
+            crosses from hogging to sagging looks like a line that merely dips. */}
+        <ReferenceLine y={0} stroke="#cbd5e1" strokeWidth={1} />
         <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
       </LineChart>
     </ResponsiveContainer>

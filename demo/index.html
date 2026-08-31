@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/dist/bundle.css" />
+    <!-- inline, so a demo with no favicon does not log a 404 on every load -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='4' y='3' width='16' height='18' rx='2' fill='%232563eb'/></svg>" />
+    <title>S-Dash — Beam Designer</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/dist/bundle.js"></script>
+    <script>
+      // Live reload, dev only. Harmless if the server is not the one in server.mjs.
+      try { new EventSource('/__reload').onmessage = function () { location.reload() } } catch (e) {}
+    </script>
+  </body>
+</html>

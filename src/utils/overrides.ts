@@ -42,6 +42,19 @@ export function warningOverrideKey(code: string, message: string): OverrideKey |
   // Flexure — EC2 §6.1 / §5.5 / §9.2.1, ACI §22.3 / §9.3.3 / §9.6.1
   if (/§6\.1/.test(code) || /§5\.5/.test(code) || /§9\.2\.1/.test(code)
       || /§22\.3/.test(code) || /§9\.3\.3/.test(code) || /§9\.6\.1/.test(code)) {
+    // WHICH FACE, and the face is not always named the same way.
+    //
+    // Capacity messages say "Positive/Negative flexure NG", so the original
+    // /negative/ test read them correctly. The STEEL-LIMIT messages — ACI §9.6.1.2
+    // As,min and §9.3.3 As,max, EC2 §9.2.1.1 — name the face instead: "Top steel …",
+    // "Bottom steel …". Neither contains the word "negative", so every top-steel
+    // warning in both engines was filed under DCR_flex_pos. An engineer reviewing
+    // SAGGING silently cleared a hogging-steel warning, and one reviewing HOGGING
+    // could not clear it at all.
+    //
+    // Tested before /negative/ because "Top steel" has to win on its own wording.
+    if (/^\s*top steel/i.test(message)) return 'DCR_flex_neg';
+    if (/^\s*bottom steel/i.test(message)) return 'DCR_flex_pos';
     return /negative/i.test(message) ? 'DCR_flex_neg' : 'DCR_flex_pos';
   }
   return null;

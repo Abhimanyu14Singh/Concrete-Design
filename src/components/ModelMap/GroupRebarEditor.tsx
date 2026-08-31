@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import type { DesignGroup, RebarLayout, BarGroup, Member, Project, TieZone } from '../../types';
 import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import type { BarFamily } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { suggestGroupRebar, isSuggestError, type SuggestFloors } from '../../utils/suggestRebar';
 import { useUnits } from '../../contexts/UnitsContext';
@@ -20,11 +21,20 @@ interface Props {
   onApply: (groupId: string, rebar: RebarLayout, memberIds: string[]) => void;
   code: Project['code'];
   targetDCR: number;
+  /** Project design settings the suggester must size against. Without them it would
+   *  design links for a torsion the project neglects, or search at a different strut
+   *  angle than the member panel checks with. */
+  cotTheta?: number;
+  ignoreTorsion?: boolean;
+  /** The project's SLS quasi-permanent combo. Without it the suggester sizes the EC2
+   *  crack check against `qpFactor × Mu` while the member panel uses the real Mqp from
+   *  this combo — two different demands for the same cage. */
+  slsCombo?: string;
 }
 
-function defaultRebar(units: 'imperial' | 'si'): RebarLayout {
+function defaultRebar(family: BarFamily): RebarLayout {
   // spacing stored internally in INCHES (engine convention). 150 mm ≈ 5.91 in.
-  return units === 'si'
+  return family === 'euro'
     ? { topBars: [{ numBars: 2, barSize: -16 }], botBars: [{ numBars: 2, barSize: -16 }], ties: { barSize: -8, spacing: 150 / 25.4, legs: 2 } }
     : { topBars: [{ numBars: 2, barSize: 5 }], botBars: [{ numBars: 2, barSize: 5 }], ties: { barSize: 3, spacing: 6, legs: 2 } };
 }
@@ -53,9 +63,10 @@ function NumberField({ value, min, max, onChange, style }: {
   );
 }
 
-function BarGroupRow({ bg, onChange, label, units }: {
-  bg: BarGroup; onChange: (b: BarGroup) => void; label: string; units: 'imperial' | 'si';
+function BarGroupRow({ bg, onChange, label }: {
+  bg: BarGroup; onChange: (b: BarGroup) => void; label: string;
 }) {
+  const { barFamily } = useUnits();
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
       <span style={{ fontSize: 11, color: INK.secondary, width: 60, flexShrink: 0 }}>{label}</span>
@@ -65,7 +76,7 @@ function BarGroupRow({ bg, onChange, label, units }: {
       <span style={{ fontSize: 11, color: INK.muted }}>×</span>
       <Dropdown
         value={bg.barSize}
-        options={barSizeOptions(units, bg.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+        options={barSizeOptions(barFamily, bg.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
         onChange={v => onChange({ ...bg, barSize: parseInt(v) })}
         style={{ padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12 }}
       />
@@ -73,41 +84,52 @@ function BarGroupRow({ bg, onChange, label, units }: {
   );
 }
 
-export default function GroupRebarEditor({ group, members, onApply, code, targetDCR }: Props) {
-  const { units, toDisplay, fromDisplay } = useUnits();
+export default function GroupRebarEditor({ group, members, onApply, code, targetDCR, cotTheta, ignoreTorsion, slsCombo }: Props) {
+  const { units, barFamily, toDisplay, fromDisplay } = useUnits();
   // Spacing is stored in inches; the editor shows it in the active unit system.
   const spacingMax = units === 'si' ? 600 : 24;  // 600 mm ≈ 24 in
-  const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(units));
-  const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [rebar, setRebar] = useState<RebarLayout>(group.rebar ?? defaultRebar(barFamily));
+  const [suggestNote, setSuggestNote] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
 
   // Re-seed only when the SELECTED group changes — keying on group.rebar too
   // would clobber an in-progress edit every time the parent re-renders (which
   // is why bar-size changes appeared to "not stick").
   useEffect(() => {
-    const r = group.rebar ?? defaultRebar(units);
+    const r = group.rebar ?? defaultRebar(barFamily);
     // If the stored rebar was created in the other unit system (e.g. imperial #5
     // bars showing in an SI project), reset to the correct-system default.
     const hasMismatch = units === 'si'
       ? r.topBars.some(b => b.barSize > 0) || r.botBars.some(b => b.barSize > 0) || !!(r.ties && r.ties.barSize > 0)
       : r.topBars.some(b => b.barSize < 0) || r.botBars.some(b => b.barSize < 0) || !!(r.ties && r.ties.barSize < 0);
-    setRebar(hasMismatch ? defaultRebar(units) : r);
+    setRebar(hasMismatch ? defaultRebar(barFamily) : r);
     setSuggestNote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group.id]);
 
   function runSuggest(floors?: SuggestFloors) {
-    const r = suggestGroupRebar(members, code, targetDCR, floors);
+    const r = suggestGroupRebar(members, code, targetDCR, floors, barFamily, cotTheta, ignoreTorsion, slsCombo);
     if (isSuggestError(r)) {
       setSuggestNote({ kind: 'err', text: r.error });
       return;
     }
     setRebar(r.rebar);
     const summary = `Flex ${r.worstDCRFlex.toFixed(2)} · Shear ${r.worstDCRShear.toFixed(2)}`;
-    setSuggestNote({
-      kind: 'ok',
-      text: `${summary} at target ${targetDCR.toFixed(2)} — review, then Apply.`,
-    });
+    // An over-reinforced cage is shown on purpose — it is the only one that carries the
+    // moment — but the DCR beside it is a STRENGTH ratio and says nothing about
+    // ductility, so on its own it reads like a pass. The warning is what stops that.
+    const caveats: string[] = [];
+    if (r.belowTarget) {
+      caveats.push(`this is the RICHEST cage the section can hold and it still does not `
+        + `reach the target — no arrangement of bars fixes it, the section has to grow`);
+    }
+    if (r.overReinforced) {
+      caveats.push(`it EXCEEDS ρmax (over-reinforced) — it carries the moment by crushing `
+        + `the concrete before the steel yields, which is not code-compliant`);
+    }
+    setSuggestNote(caveats.length
+      ? { kind: 'warn', text: `${summary} — ${caveats.join('; and ')}. Shown so the shortfall can be measured.` }
+      : { kind: 'ok', text: `${summary} at target ${targetDCR.toFixed(2)} — review, then Apply.` });
   }
 
   function updateTop(i: number, bg: BarGroup) {
@@ -166,9 +188,12 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
       {suggestNote && (
         <div style={{
           fontSize: 10, marginBottom: 8, padding: '4px 8px', borderRadius: 5,
-          background: suggestNote.kind === 'ok' ? '#f5f3ff' : STATUS.failBg,
-          color: suggestNote.kind === 'ok' ? '#6d28d9' : STATUS.fail,
-          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe' : STATUS.failBorder}`,
+          background: suggestNote.kind === 'ok' ? '#f5f3ff'
+            : suggestNote.kind === 'warn' ? STATUS.warnBg : STATUS.failBg,
+          color: suggestNote.kind === 'ok' ? '#6d28d9'
+            : suggestNote.kind === 'warn' ? STATUS.warn : STATUS.fail,
+          border: `1px solid ${suggestNote.kind === 'ok' ? '#ddd6fe'
+            : suggestNote.kind === 'warn' ? STATUS.warnBorder : STATUS.failBorder}`,
         }}>
           {suggestNote.text}
         </div>
@@ -182,7 +207,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         </div>
         {rebar.topBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} units={units} />
+            <BarGroupRow bg={bg} onChange={bg => updateTop(i, bg)} label={`Layer ${i + 1}`} />
             {rebar.topBars.length > 1 && (
               <button onClick={() => removeLayer('top', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
             )}
@@ -199,7 +224,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         </div>
         {rebar.botBars.map((bg, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} units={units} />
+            <BarGroupRow bg={bg} onChange={bg => updateBot(i, bg)} label={`Layer ${i + 1}`} />
             {rebar.botBars.length > 1 && (
               <button onClick={() => removeLayer('bot', i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
             )}
@@ -232,7 +257,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
           <div>
             {rebar.sideBars.map((bg, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <BarGroupRow bg={bg} onChange={bg => setRebar(r => ({ ...r, sideBars: r.sideBars!.map((b, j) => j === i ? bg : b) }))} label={`Row ${i + 1}`} units={units} />
+                <BarGroupRow bg={bg} onChange={bg => setRebar(r => ({ ...r, sideBars: r.sideBars!.map((b, j) => j === i ? bg : b) }))} label={`Row ${i + 1}`} />
                 {rebar.sideBars!.length > 1 && (
                   <button onClick={() => setRebar(r => ({ ...r, sideBars: r.sideBars!.filter((_, j) => j !== i) }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14 }}>×</button>
                 )}
@@ -254,7 +279,7 @@ export default function GroupRebarEditor({ group, members, onApply, code, target
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Dropdown
             value={ties.barSize}
-            options={barSizeOptions(units, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 8 : -s <= 20)).map(s => ({ value: s, label: formatBarLabel(s) }))}
+            options={barSizeOptions(barFamily, ties.barSize).filter(s => s === ties.barSize || (s > 0 ? s <= 8 : -s <= 20)).map(s => ({ value: s, label: formatBarLabel(s) }))}
             onChange={v => setRebar(r => ({ ...r, ties: { ...(r.ties ?? ties), barSize: parseInt(v) } }))}
             style={{ padding: '3px 6px', border: `1px solid ${BORDER.strong}`, borderRadius: 4, fontSize: 12 }}
           />

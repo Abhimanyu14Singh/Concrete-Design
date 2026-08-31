@@ -109,15 +109,22 @@ export interface DcrBand { max: number; color: string; label: string }
  *  via dcrColor(). */
 export const MAP_DCR_COLORS = [STATUS.ok, '#84cc16', STATUS.warn, STATUS.fail] as const;
 
-/** Build the four DCR bands from three ascending cut-points [t1, t2, t3]. The
- *  Map legend is user-editable, so the fills and legend both derive from this. */
-export function dcrBandsFrom(t: readonly [number, number, number]): DcrBand[] {
+/** Build the four DCR bands from three ascending cut-points [t1, t2, t3], and
+ *  optionally from four overriding colours. The Map legend is user-editable in BOTH
+ *  dimensions — where the cut-points sit and what colour each band is — so the fills
+ *  and the legend both derive from this one function and can never disagree.
+ *  `colors` falls back per-index, so a partial array still yields four bands. */
+export function dcrBandsFrom(
+  t: readonly [number, number, number],
+  colors?: readonly string[],
+): DcrBand[] {
   const f = (v: number) => v.toFixed(2);
+  const c = (i: number) => colors?.[i] || MAP_DCR_COLORS[i];
   return [
-    { max: t[0], color: MAP_DCR_COLORS[0], label: `< ${f(t[0])}` },
-    { max: t[1], color: MAP_DCR_COLORS[1], label: `${f(t[0])}–${f(t[1])}` },
-    { max: t[2], color: MAP_DCR_COLORS[2], label: `${f(t[1])}–${f(t[2])}` },
-    { max: Infinity, color: MAP_DCR_COLORS[3], label: `≥ ${f(t[2])}` },
+    { max: t[0], color: c(0), label: `< ${f(t[0])}` },
+    { max: t[1], color: c(1), label: `${f(t[0])}–${f(t[1])}` },
+    { max: t[2], color: c(2), label: `${f(t[1])}–${f(t[2])}` },
+    { max: Infinity, color: c(3), label: `≥ ${f(t[2])}` },
   ];
 }
 
@@ -143,13 +150,11 @@ export const DIAGRAM = { moment: '#7c3aed', shear: '#0891b2' } as const;
 // ── Engineering-domain conventions ────────────────────────────────────────────
 export const CODE_ACCENT: Record<string, string> = {
   'ACI318-19': ACCENT.primary,
-  'ACI318-14': ACCENT.primary,
   'EN1992-1-1': '#7c3aed',
 };
 
 export const CODE_BG: Record<string, string> = {
   'ACI318-19': ACCENT.softBg,
-  'ACI318-14': ACCENT.softBg,
   'EN1992-1-1': '#f5f3ff',
 };
 
@@ -203,3 +208,29 @@ export const MONO_NUM: CSSProperties = {
   fontFamily: FONT.mono,
   fontVariantNumeric: 'tabular-nums',
 };
+
+// ── Stacking order ────────────────────────────────────────────────────────────
+/**
+ * One scale for everything that escapes the layout by portalling to `<body>`.
+ *
+ * Anything portalled lands in the ROOT stacking context, so these numbers are
+ * compared against each other directly and a locally-chosen value is a bet against
+ * every other portal in the app. That bet was lost once already: the Suggest dialog
+ * picked `10000` as "higher than anything", `Dropdown` had `9999`, and so the three
+ * bar-size lists INSIDE that dialog rendered underneath its own backdrop — visibly
+ * nothing happened when you clicked one.
+ *
+ * The ordering that matters: a POPOVER opened from inside a MODAL has to sit above
+ * that modal, because it is a child of it in every sense but the DOM's. So popovers
+ * outrank modals, and nothing is served by a portal picking its own number.
+ */
+export const Z = {
+  /** Docked chrome that overlaps the page but is part of it. */
+  chrome: 1000,
+  /** Full-screen backdrop + card: settings, Suggest, the report. */
+  modal: 10000,
+  /** Menus, dropdown lists, context menus, tooltips — including inside a modal. */
+  popover: 11000,
+  /** A drag ghost follows the cursor and must clear even an open menu. */
+  drag: 12000,
+} as const;

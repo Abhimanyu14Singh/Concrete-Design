@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   fitTransform, zoomViewBox, project3, fitProjected, clampPitch,
-  DEFAULT_CAMERA, type ViewBox, type Camera,
+  boundingSphere, stableProjection, screenBounds, viewBoxForBounds,
+  normalizeWheelDelta, wheelZoomFactor, dampCamera, shortestAngle, VIEW_PRESETS,
+  DEFAULT_CAMERA, type ViewBox, type Camera, type Point3,
 } from '../mapViewport';
 
 const base: ViewBox = { x: 0, y: 0, w: 1000, h: 800 };
@@ -180,5 +182,184 @@ describe('fitProjected', () => {
   it('stays finite with no points and on a degenerate canvas', () => {
     expect(Number.isFinite(fitProjected([], 800, 600)({ u: 0, v: 0 }).sx)).toBe(true);
     expect(Number.isFinite(fitProjected(pts, 30, 20)({ u: 100, v: 50 }).sy)).toBe(true);
+  });
+});
+
+// ── Rotation-stable 3D framing ───────────────────────────────────────────────
+
+describe('boundingSphere', () => {
+  it('centres on the centroid and reaches the furthest point', () => {
+    const s = boundingSphere([
+      { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, { x: 10, y: 10, z: 0 }, { x: 0, y: 10, z: 0 },
+    ]);
+    expect(s.cx).toBeCloseTo(5, 6);
+    expect(s.cy).toBeCloseTo(5, 6);
+    expect(s.r).toBeCloseTo(Math.hypot(5, 5), 6);
+  });
+
+  it('accounts for height, not just plan extent', () => {
+    const flat = boundingSphere([{ x: -5, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }]);
+    const tall = boundingSphere([{ x: -5, y: 0, z: -20 }, { x: 5, y: 0, z: 20 }]);
+    expect(tall.r).toBeGreaterThan(flat.r);
+  });
+
+  it('never returns a zero radius — a single point would divide by zero downstream', () => {
+    expect(boundingSphere([{ x: 3, y: 3, z: 3 }]).r).toBeGreaterThan(0);
+    expect(boundingSphere([]).r).toBeGreaterThan(0);
+  });
+});
+
+describe('stableProjection — the fix for the jarring orbit', () => {
+  // A deliberately lopsided model: a wide, shallow floor plate with columns.
+  const model: Point3[] = [
+    { x: 0, y: 0, z: 0 }, { x: 200, y: 0, z: 0 }, { x: 200, y: 90, z: 0 }, { x: 0, y: 90, z: 0 },
+    { x: 0, y: 0, z: 40 }, { x: 200, y: 0, z: 40 }, { x: 200, y: 90, z: 40 }, { x: 0, y: 90, z: 40 },
+  ];
+  const sphere = boundingSphere(model);
+  const map = stableProjection(sphere, 800, 600);
+  const cams: Camera[] = [
+    { yaw: 0, pitch: 0.4 }, { yaw: 0.8, pitch: 0.4 }, { yaw: 2.1, pitch: 0.9 },
+    { yaw: -1.3, pitch: 0.2 }, { yaw: 4.7, pitch: 1.4 },
+  ];
+
+  it('THE regression: the scale is identical at every camera angle', () => {
+    // The old fitProjected refitted the projected bounding BOX every render, so
+    // each of these cameras produced a different scale — the model pumped in and
+    // out while the user dragged. Two points that stay in the projection plane
+    // (same z, rotated only in yaw) must keep an identical separation whenever
+    // the pitch matches, whatever the yaw.
+    const scaleAt = (cam: Camera) => {
+      // A pure-z pair foreshortens by cos(pitch) alone, isolating the scale.
+      const a = map({ x: 0, y: 0, z: 0 }, cam);
+      const b = map({ x: 0, y: 0, z: 100 }, cam);
+      return Math.hypot(b.sx - a.sx, b.sy - a.sy) / Math.cos(cam.pitch);
+    };
+    const ref = scaleAt(cams[0]);
+    for (const c of cams) expect(scaleAt(c)).toBeCloseTo(ref, 9);
+  });
+
+  it('never lets the model overflow the canvas, at any angle', () => {
+    const cap = Math.min(800 - 80, 600 - 80);   // the padded usable square
+    for (const cam of cams) {
+      const p = model.map(q => map(q, cam));
+      const w = Math.max(...p.map(q => q.sx)) - Math.min(...p.map(q => q.sx));
+      const h = Math.max(...p.map(q => q.sy)) - Math.min(...p.map(q => q.sy));
+      expect(w).toBeLessThanOrEqual(cap + 1e-6);
+      expect(h).toBeLessThanOrEqual(cap + 1e-6);
+    }
+  });
+
+  it('pins the model centre to the canvas centre — it cannot drift mid-orbit', () => {
+    for (const cam of cams) {
+      const c = map({ x: sphere.cx, y: sphere.cy, z: sphere.cz }, cam);
+      expect(c.sx).toBeCloseTo(400, 6);
+      expect(c.sy).toBeCloseTo(300, 6);
+    }
+  });
+
+  it('stays finite on a degenerate canvas', () => {
+    const q = stableProjection(sphere, 20, 10)(model[2], DEFAULT_CAMERA);
+    expect(Number.isFinite(q.sx) && Number.isFinite(q.sy)).toBe(true);
+  });
+});
+
+describe('screenBounds / viewBoxForBounds', () => {
+  it('bounds a point set and ignores non-finite strays', () => {
+    expect(screenBounds([{ sx: 10, sy: 20 }, { sx: 50, sy: 5 }, { sx: NaN, sy: 0 }]))
+      .toEqual({ minX: 10, maxX: 50, minY: 5, maxY: 20 });
+    expect(screenBounds([])).toBeNull();
+  });
+
+  it('frames the bounds at the canvas aspect ratio, centred', () => {
+    const vb = viewBoxForBounds({ minX: 100, maxX: 300, minY: 100, maxY: 200 }, 800, 400, 0);
+    expect(vb.w / vb.h).toBeCloseTo(2, 6);            // canvas is 2:1
+    expect(vb.x + vb.w / 2).toBeCloseTo(200, 6);      // centred on the bounds
+    expect(vb.y + vb.h / 2).toBeCloseTo(150, 6);
+  });
+
+  it('never crops — the bounds always fit inside the viewBox', () => {
+    const b = { minX: 0, maxX: 500, minY: 0, maxY: 40 };
+    const vb = viewBoxForBounds(b, 600, 600);
+    expect(vb.x).toBeLessThanOrEqual(b.minX);
+    expect(vb.y).toBeLessThanOrEqual(b.minY);
+    expect(vb.x + vb.w).toBeGreaterThanOrEqual(b.maxX);
+    expect(vb.y + vb.h).toBeGreaterThanOrEqual(b.maxY);
+  });
+});
+
+describe('wheel input', () => {
+  it('normalises line and page deltas to pixels', () => {
+    expect(normalizeWheelDelta(3, 0)).toBe(3);
+    expect(normalizeWheelDelta(3, 1)).toBe(48);
+    expect(normalizeWheelDelta(1, 2)).toBe(320);   // clamped
+  });
+
+  it('clamps a violent flick so the view cannot teleport', () => {
+    expect(normalizeWheelDelta(100000, 0)).toBe(320);
+    expect(normalizeWheelDelta(-100000, 0)).toBe(-320);
+    expect(normalizeWheelDelta(NaN, 0)).toBe(0);
+  });
+
+  it('zoom is proportional to how far the wheel actually moved', () => {
+    // The old fixed 1.15/0.87 step ignored magnitude: a feather-light trackpad
+    // glide jumped exactly as far as a full mouse notch, which is what made
+    // zooming feel steppy and overshoot on a laptop.
+    const small = wheelZoomFactor(normalizeWheelDelta(4, 0));
+    const big = wheelZoomFactor(normalizeWheelDelta(120, 0));
+    expect(big).toBeGreaterThan(small);
+    expect(small).toBeLessThan(1.02);   // barely moves
+  });
+
+  it('round-trips exactly — zoom out then back in lands where it started', () => {
+    const d = normalizeWheelDelta(120, 0);
+    expect(wheelZoomFactor(d) * wheelZoomFactor(-d)).toBeCloseTo(1, 12);
+  });
+
+  it('is scale-invariant: twice the delta squares the ratio', () => {
+    const f = wheelZoomFactor(normalizeWheelDelta(100, 0));
+    expect(wheelZoomFactor(normalizeWheelDelta(200, 0))).toBeCloseTo(f * f, 12);
+  });
+});
+
+describe('camera damping', () => {
+  it('shortestAngle takes the short way around the circle', () => {
+    expect(shortestAngle(0.1, 6.2)).toBeCloseTo(6.2 - 0.1 - 2 * Math.PI, 9);
+    expect(shortestAngle(0, Math.PI / 2)).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it('a yaw that wraps past 2π eases backwards, not all the way round', () => {
+    const stepped = dampCamera({ yaw: 0.05, pitch: 0.5 }, { yaw: 6.25, pitch: 0.5 }, 0.5);
+    expect(stepped.yaw).toBeLessThan(0.05);
+  });
+
+  it('converges and then returns the target itself, so the loop can stop', () => {
+    const target: Camera = { yaw: 1.2, pitch: 0.7 };
+    let c: Camera = { yaw: 0, pitch: 0.2 };
+    for (let i = 0; i < 60; i++) c = dampCamera(c, target, 0.32);
+    expect(c).toBe(target);   // same reference ⇒ React bails out of re-rendering
+  });
+
+  it('moves a fraction of the way per call — that is what smooths a drag', () => {
+    expect(dampCamera({ yaw: 0, pitch: 0.5 }, { yaw: 1, pitch: 0.5 }, 0.25).yaw)
+      .toBeCloseTo(0.25, 9);
+  });
+});
+
+describe('VIEW_PRESETS', () => {
+  it('every preset is a legal (non-degenerate) camera', () => {
+    for (const [name, cam] of Object.entries(VIEW_PRESETS)) {
+      expect(clampPitch(cam.pitch), name).toBeCloseTo(cam.pitch, 9);
+    }
+  });
+
+  it('top looks down and front looks along the horizon', () => {
+    const up: Point3 = { x: 0, y: 0, z: 10 };
+    // Looking down, height barely registers; from the front it is the whole story.
+    expect(Math.abs(project3(up, VIEW_PRESETS.top).v))
+      .toBeLessThan(Math.abs(project3(up, VIEW_PRESETS.front).v));
+  });
+
+  it('right is a quarter turn from front', () => {
+    expect(VIEW_PRESETS.right.yaw - VIEW_PRESETS.front.yaw).toBeCloseTo(Math.PI / 2, 9);
   });
 });

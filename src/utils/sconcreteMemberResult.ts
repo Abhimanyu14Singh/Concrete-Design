@@ -8,7 +8,9 @@
  * result (EC2 beam groups) or a single combined result (ACI / columns).
  */
 import type { SconcreteResult } from '../types';
+import { governingDcr, isOverstressed, worstStatusView, type StatusTone } from './sco/resultStatus';
 
+/** One member's S-Concrete verification, reduced to what the results card shows. */
 export interface MemberScoSummary {
   /** All persisted results that cover this member. */
   results: SconcreteResult[];
@@ -16,15 +18,17 @@ export interface MemberScoSummary {
   groupLabel?: string;
   /** Worst pass/fail across the covering results. */
   status: 'OK' | 'NG';
-  /** N-M and V&T utilisation from the strength (ULS / single) result. */
+  /** Worst display status across the covering results — carries S-Concrete's own
+   *  wording ("Acceptable" / "Warning" / "Borderline"), so a member that PASSED
+   *  with code messages reads as a warning instead of an outright fail. */
+  statusText: string;
+  tone: StatusTone;
+  /** N-M and V&T utilisation from the governing strength (ULS / single) result. */
   nmUtil: number | null;
   vtUtil: number | null;
   /** Crack-width pass/fail from a dedicated crack result, when present. */
   crackStatus: 'OK' | 'NG' | null;
 }
-
-const isNg = (r: SconcreteResult): boolean =>
-  (r.status != null && r.status !== 'OK') || Math.max(r.nmUtil ?? 0, r.vtUtil ?? 0) > 1;
 
 /** Summarise the S-Concrete result(s) covering `memberId`, or null if none. */
 export function memberScoSummary(
@@ -32,15 +36,23 @@ export function memberScoSummary(
 ): MemberScoSummary | null {
   const results = (all ?? []).filter((r) => r.memberIds.includes(memberId));
   if (!results.length) return null;
-  const strength = results.find((r) => r.kind === 'uls' || r.kind === 'single') ?? results[0];
+  // A member can be covered by SEVERAL strength files — one per stirrup zone —
+  // so take the worst, not the first. (`[0]` reported whichever zone happened to
+  // be written first, which is rarely the governing one.)
+  const strengths = results.filter((r) => r.kind === 'uls' || r.kind === 'single');
+  const strength = (strengths.length ? strengths : results)
+    .reduce((a, b) => ((governingDcr(b).dcr ?? -1) > (governingDcr(a).dcr ?? -1) ? b : a));
   const crack = results.find((r) => r.kind === 'crack');
+  const worst = worstStatusView(results)!;
   return {
     results,
     groupLabel: strength.groupLabel,
-    status: results.some(isNg) ? 'NG' : 'OK',
+    status: results.some(isOverstressed) ? 'NG' : 'OK',
+    statusText: worst.text,
+    tone: worst.tone,
     nmUtil: strength.nmUtil,
     vtUtil: strength.vtUtil,
-    crackStatus: crack ? (isNg(crack) ? 'NG' : 'OK') : null,
+    crackStatus: crack ? (isOverstressed(crack) ? 'NG' : 'OK') : null,
   };
 }
 

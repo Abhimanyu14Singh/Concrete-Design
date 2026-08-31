@@ -34,6 +34,46 @@ describe('memberScoSummary', () => {
   it('flags NG when a util exceeds 1 even if the status text says OK', () => {
     expect(memberScoSummary([r({ status: 'OK', nmUtil: 1.05 })], 'm1')!.status).toBe('NG');
   });
+
+  it('reads S-Concrete EN status words instead of testing for the literal "OK"', () => {
+    // The EN reports never say "OK": a pass is "Acceptable", a pass carrying code
+    // messages is "Warning", and only "Borderline" (util ≥ 1) is a real fail. A
+    // `status !== 'OK'` test marked every passing EN member overstressed.
+    const ok = memberScoSummary([r({ status: 'Acceptable', nmUtil: 0.7, vtUtil: 0.6 })], 'm1')!;
+    expect(ok.status).toBe('OK');
+    expect(ok.tone).toBe('ok');
+    expect(ok.statusText).toBe('OK');
+
+    const warn = memberScoSummary([r({ status: 'Warning', nmUtil: 0.7, vtUtil: 0.6 })], 'm1')!;
+    expect(warn.status).toBe('OK');        // passed capacity…
+    expect(warn.tone).toBe('warn');        // …but the card still shows it amber
+    expect(warn.statusText).toBe('Warning');
+
+    const ng = memberScoSummary([r({ status: 'Borderline', nmUtil: 1.05, vtUtil: 0.6 })], 'm1')!;
+    expect(ng.status).toBe('NG');
+    expect(ng.tone).toBe('ng');
+  });
+
+  it('takes the WORST tone and the WORST strength row across covering results', () => {
+    // A zoned beam produces one strength file per stirrup spacing; `[0]` reported
+    // whichever was written first rather than the governing one.
+    const s = memberScoSummary([
+      r({ kind: 'single', name: 'B_S8', status: 'Acceptable', nmUtil: 0.4, vtUtil: 0.5 }),
+      r({ kind: 'single', name: 'B_S4', status: 'Warning', nmUtil: 0.9, vtUtil: 0.95 }),
+    ], 'm1')!;
+    expect(s.nmUtil).toBe(0.9);
+    expect(s.vtUtil).toBe(0.95);
+    expect(s.tone).toBe('warn');
+    expect(s.status).toBe('OK');
+  });
+
+  it('does not call an "Acceptable" crack result NG', () => {
+    const uls = r({ kind: 'uls', status: 'Acceptable', nmUtil: 0.8, vtUtil: 0.5 });
+    const crack = r({ kind: 'crack', status: 'Acceptable', nmUtil: 0.2, vtUtil: null });
+    const s = memberScoSummary([uls, crack], 'm1')!;
+    expect(s.crackStatus).toBe('OK');
+    expect(s.status).toBe('OK');
+  });
 });
 
 describe('scoAgreesWithApp', () => {

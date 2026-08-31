@@ -6,7 +6,12 @@ import { zoneShearDemands } from '../../adapters/etabs';
 import { resolveCrack } from '../../utils/resolveCrack';
 import type { CalcSection } from '../../utils/calcBreakdown';
 import { useUnits } from '../../contexts/UnitsContext';
-import { ACCENT, BORDER, INK, MONO_NUM, STATUS, SURFACE, TRACK } from '../../theme';
+import { Icon } from '../common/Icon';
+import { PMChart, BiaxialChart } from './InteractionChart';
+import { beamAxialFlexure } from '../../utils/axialFlexure';
+import { biaxialCheck } from '../../utils/biaxial';
+import { computeFlexure, getBarArea } from '../../utils/concreteDesign';
+import { ACCENT, BORDER, ICON, INK, MONO_NUM, STATUS, SURFACE, TRACK } from '../../theme';
 
 interface Props {
   member: Member;
@@ -38,6 +43,22 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(sections.map(s => s.title))
   );
+  // Which chart the header icon opened, if any.
+  const [chartFor, setChartFor] = useState<'pm' | 'biaxial' | null>(null);
+
+  // Chart inputs, from the SAME routines the sheet's numbers came from — so the
+  // picture and the utilisation printed beside it cannot drift apart.
+  const areaOf = (g?: { numBars: number; barSize: number }[]) =>
+    (g ?? []).reduce((t, x) => t + x.numBars * getBarArea(x.barSize), 0);
+  const flex0 = computeFlexure(
+    member.section, member.material, areaOf(member.rebar.topBars), areaOf(member.rebar.botBars),
+    member.span ?? 20, member.rebar.topBars?.[0]?.barSize ?? 8, member.rebar.botBars?.[0]?.barSize ?? 8,
+    member.rebar.topBars, member.rebar.botBars, member.rebar.layerClearSpacing ?? 1.0,
+  );
+  const pmForChart = load.Pu !== 0
+    ? beamAxialFlexure(member.section, member.material, member.rebar, member.span ?? 20, 'pos', flex0.phi_Mn_pos, load.Pu, load.Mu_pos)
+    : undefined;
+  const biaxForChart = biaxialCheck(member.section, member.material, member.rebar, load, member.span ?? 20);
 
   function toggleSection(title: string) {
     setExpandedSections(prev => {
@@ -133,7 +154,26 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
                   alignItems: 'center', justifyContent: 'space-between', color: INK.strong,
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{section.title}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong, display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  {section.title}
+                  {/* The chart hook. A span, not a button, because this sits INSIDE the
+                      header button and nesting buttons is invalid HTML — the click is
+                      stopped from reaching the collapse toggle instead. */}
+                  {section.chart && (
+                    <span
+                      role="button" tabIndex={0} aria-label={section.chart.label} title={section.chart.label}
+                      onClick={e => { e.stopPropagation(); setChartFor(section.chart!.kind); }}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); setChartFor(section.chart!.kind); } }}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', cursor: 'pointer',
+                        color: ACCENT.primary, border: `1px solid ${ACCENT.primary}`,
+                        borderRadius: 5, padding: '1px 5px', background: 'white',
+                      }}
+                    >
+                      <Icon name="pmInteraction" size={ICON.sm} />
+                    </span>
+                  )}
+                </span>
                 <span style={{ fontSize: 12, color: INK.secondary }}>
                   {expandedSections.has(section.title) ? '▲' : '▼'} {section.steps.length} steps
                 </span>
@@ -209,6 +249,56 @@ export default function CalcBreakdownModal({ member, loadId, code = 'ACI318-19',
           </p>
         </div>
       </div>
+
+      {/* Chart overlay — above the sheet, dismissed by its own backdrop. Kept out
+          of the sheet's flow so the printed breakdown is unchanged by whether a
+          chart happens to be open. */}
+      {chartFor && (
+        <div
+          onClick={e => { e.stopPropagation(); setChartFor(null); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(15,23,42,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'white', borderRadius: 14, padding: 16,
+            boxShadow: '0 24px 64px rgba(15,23,42,0.35)', maxWidth: '95vw', maxHeight: '92vh', overflow: 'auto',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>
+                {chartFor === 'pm' ? 'P–M interaction' : 'P–M–M interaction contour'}
+              </span>
+              <span style={{ fontSize: 11, color: INK.muted }}>{member.label} · {load.label}</span>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setChartFor(null)}
+                style={{ background: 'white', border: `1px solid ${BORDER.strong}`, borderRadius: 8, padding: '4px 10px', fontSize: 12, cursor: 'pointer', color: INK.base, fontWeight: 600 }}>
+                ✕ Close
+              </button>
+            </div>
+            {chartFor === 'pm' && pmForChart && (
+              <PMChart
+                points={pmForChart.points}
+                Pu={load.Pu} Mu={load.Mu_pos}
+                phiPnAtRay={pmForChart.phiPnAtRay} phiMnAtRay={pmForChart.phiMnAtRay}
+                util={pmForChart.nmUtil}
+              />
+            )}
+            {chartFor === 'biaxial' && biaxForChart && (
+              <BiaxialChart
+                Mux={biaxForChart.Mux} Muy={biaxForChart.Muy}
+                phiMnx={biaxForChart.phiMnx} phiMny={biaxForChart.phiMny}
+                alpha={biaxForChart.alpha} util={biaxForChart.util}
+              />
+            )}
+            <p style={{ fontSize: 10, color: INK.muted, margin: '8px 4px 0', maxWidth: 520 }}>
+              {chartFor === 'pm'
+                ? 'The φ-surface is the one the check walked — the dashed ray is the radial scaling to it, and the marker is the applied (Mu, Pu).'
+                : 'Bresler load contour between the two uniaxial capacities at this Pu. Not an inclined-neutral-axis section analysis; see the sheet note.'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

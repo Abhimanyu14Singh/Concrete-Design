@@ -1,7 +1,28 @@
 /**
- * Step-by-step Eurocode 2 (EN 1992-1-1) calculation sheet.
- * Mirrors the CalcSection/CalcStep shapes from calcBreakdown.ts so the
- * CalcBreakdownModal renders both codes identically. All values shown in SI.
+ * The Eurocode 2 (EN 1992-1-1) Calc Sheet — the EC2 twin of `calcBreakdown.ts`.
+ *
+ * Emits the same `CalcSection` / `CalcStep` shapes, so one modal and one PDF renderer
+ * handle both codes. Everything is printed in SI: the engine stores imperial internally,
+ * and this file converts at the top (the `*_TO_*` constants) and never converts back.
+ *
+ * Same standing hazard as the ACI sheet — it RE-DERIVES what the engine computed, so the
+ * two can drift apart. Two rules keep them together:
+ *
+ *  • CALL THE ENGINE'S OWN FUNCTIONS. `mRd`, `vRdc`, `vRds`, `vRdMax`, `tRd`,
+ *    `crackWidth`, `fctm`, `ecm` and the rest are imported from `ec2Beam.ts`, not
+ *    reimplemented. If a capacity appears on this sheet, it came out of the same
+ *    function that produced the DCR beside it.
+ *
+ *  • SPLIT THE TIE SPACING THE WAY THE ENGINE DOES. Capacity for a load row uses the
+ *    spacing of the zone that row's station sits in; detailing limits (s_max, ρw) use
+ *    the worst/widest zone member-wide. This sheet once printed worst-zone capacities
+ *    for every row while the engine reported the row's own zone — the stamped
+ *    calculation then contradicted the DCR next to it, and neither could be defended.
+ *
+ * REMEMBER EC2 HAS NO φ. `mRd` / `vRd` are γ-factored design resistances already; the
+ * sheet must never show a second reduction applied to them.
+ *
+ * `cotTheta` and the crack params must be the same values `designMemberEC2` was given.
  */
 
 import type { MaterialProps, SectionDimensions, RebarLayout, LoadCase, CrackControlParams } from '../types';
@@ -11,10 +32,20 @@ import { coverFor, getBarArea, getBarDiam, tieSpacingAtX, zoneIndexAtX } from '.
 import { lambdaEta, fctm, mRd, vRdc, vRds, vRdMax, tRd, crackWidth, sideFaceCrackWidth, ecm, creepCoefficient, layerCentroidMm } from '../engines/ec2/ec2Beam';
 import { formatBarLabel } from './rebar';
 
+// Imperial (engine storage) → SI (display). The sheet converts once, on the way in.
 const IN_TO_MM = 25.4, PSI_TO_MPA = 0.00689476, KIP_TO_KN = 4.44822, KIPFT_TO_KNM = 1.35582, IN2_TO_MM2 = 645.16;
 
+/** Fixed-decimal formatter for sheet text. */
 function f(n: number, dec = 1): string { return n.toFixed(dec); }
 
+/**
+ * Build the full EC2 Calc Sheet for ONE member and ONE load case.
+ *
+ * `slsComboName` is printed on the crack-width section so the sheet records WHICH
+ * serviceability combination the quasi-permanent moments came from — an SLS check
+ * without its combo named is unreviewable. `crackIn` is merged over the defaults
+ * because projects saved before a field existed carry partial objects.
+ */
 export function generateBreakdownEC2(
   section: SectionDimensions,
   material: MaterialProps,

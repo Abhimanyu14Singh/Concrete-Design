@@ -48,7 +48,10 @@ function makeProject(): Project {
       topBars: [{ numBars: 2, barSize: 8 }],
       botBars: [{ numBars: 4, barSize: 8 }, { numBars: 2, barSize: 8 }], // 2 layers
       ties: { barSize: 4, spacing: 6, legs: 4 },
-      layerClearSpacing: 0.5, // forces a §25.2.2 warning (contains ≤/" chars)
+      // A tight, two-layer cage. It used to be here to force a §25.2.2 warning (whose
+      // message carries ≤ and " — the characters this smoke test is about); that check
+      // has been removed, and the beam's remaining warnings still carry them.
+      layerClearSpacing: 0.5,
     },
     loads: [{ id: 'lc1', label: '1.2D+1.6L', Mu_pos: 200, Mu_neg: 80, Vu: 60, Tu: 5, Pu: 0 }],
     span: 24,

@@ -30,10 +30,12 @@ export function governingFace(d: MemberDemand): 'top' | 'bot' {
   return d.MuNeg > d.MuPos ? 'top' : 'bot';
 }
 
+/** Unit suffix for a metric. 'governing' is a normalised ratio and has none. */
 export function metricUnitFor(metric: DemandMetric): string {
   return metric === 'Vu' ? 'kips' : metric === 'governing' ? '' : 'kip-ft';
 }
 
+/** Axis / legend label for a metric, unit included. */
 export function metricLabelFor(metric: DemandMetric): string {
   return metric === 'Mu_pos' ? 'M⁺ (kip-ft)' : metric === 'Mu_neg' ? 'M⁻ (kip-ft)' : metric === 'Vu' ? 'Shear (kips)' : 'Governing demand';
 }
@@ -78,6 +80,17 @@ export function signedMomentEnvelope(sf: ComboForces[]): { maxPos: number; maxNe
   return { maxPos, maxNeg, maxV };
 }
 
+/**
+ * Reduce every beam to the single demand triple (M⁺, M⁻, V) that grouping clusters on.
+ *
+ * Demands are taken as the MAX ACROSS ALL LOAD ROWS, never a representative row —
+ * different rows govern different checks, and clustering on one row silently groups
+ * beams whose real envelopes are nothing alike. Load cases are the primary source
+ * (import has already enveloped them); station forces are the fallback for members whose
+ * load cases are empty.
+ *
+ * Non-beam members are dropped — grouping is a beam feature.
+ */
 export function extractDemands(members: Member[]): MemberDemand[] {
   // Raw demands per member
   const raw = members
@@ -241,6 +254,8 @@ export interface AutoGroupBin {
   worstVu: number;
 }
 
+/** One family's proposed grouping — the bins, the breaks between them, and how well the
+ *  split fits (`gvf`), so the UI can show the user whether the suggestion is any good. */
 export interface AutoGroupSuggestion {
   familyKey: string;
   /** e.g. "14×24" for readability */
@@ -257,6 +272,7 @@ export interface AutoGroupSuggestion {
   rawFamilyKey?: string;
 }
 
+/** Human-readable family label, e.g. "14×24" from the encoded family key. */
 export function familyLabel(fk: string): string {
   if (fk === ALL_BEAMS_FAMILY_KEY) return 'All beams';
   const dim = fk.split('|')[0]; // e.g. "14x24"
@@ -336,8 +352,25 @@ export function allocateGroupBudget(
   return alloc;
 }
 
+/** Sentinel family key for "ignore section families, cluster every beam together". */
 export const ALL_BEAMS_FAMILY_KEY = '__all__';
 
+/**
+ * Propose design groups by clustering beams on their demand.
+ *
+ * Beams are pooled by section family first, because a group has to be BUILDABLE — one
+ * cage, one section — so a group spanning two section sizes is meaningless however
+ * similar the demands are. `groupAllBeams` deliberately overrides that for models where
+ * the user intends to re-section anyway.
+ *
+ * Within a pool, Jenks natural breaks minimise within-group variance (quantile is the
+ * fallback when the pool is too small or degenerate for Jenks to be meaningful). `gvf`
+ * reports how well the result fits so the UI can be honest about a weak split.
+ *
+ * `splitByFace` separates sagging- from hogging-governed beams before clustering:
+ * two beams with the same governing magnitude can need opposite cages, and a group
+ * mixing them is detailed wrong for both.
+ */
 export function suggestGroups(
   members: Member[],
   kPerFamily: number | 'auto' = 'auto',
@@ -467,10 +500,13 @@ export function suggestGroups(
 
 const STEEL_LB_PER_FT_IN2 = 3.4; // 1 in² × 1 ft length ≈ 3.4 lb (490 lb/ft³ × 1/144)
 
+/** Weight of a bar run: steel area × length. */
 export function memberSteelWeightLb(As_in2: number, lengthFt: number): number {
   return As_in2 * lengthFt * STEEL_LB_PER_FT_IN2;
 }
 
+/** Per-member slack: how much steel sits above what the target DCR needs. An ESTIMATE
+ *  for prioritising effort, not a take-off — see `computeSavings` for what it ignores. */
 export interface MemberSavings {
   memberId: string;
   label: string;
@@ -487,6 +523,7 @@ export interface MemberSavings {
   totalSlackLb: number;    // lb
 }
 
+/** Savings rolled up per member, per group, and for the project. */
 export interface SavingsSummary {
   perMember: MemberSavings[];
   perGroup: Record<string, number>;  // groupId → lb saved
@@ -494,10 +531,13 @@ export interface SavingsSummary {
   totalTons: number;
 }
 
+/** Total steel area of a face's bar groups (in²). */
 function rebarAs(bars: RebarLayout['topBars']): number {
   return bars.reduce((s, g) => s + g.numBars * getBarArea(g.barSize), 0);
 }
 
+/** Provided shear steel per unit length, Av/s (in²/in), read at the END zone — the
+ *  tightest spacing, which is where stirrup weight is concentrated. */
 function stirrupAvProvPerIn(rebar: RebarLayout): number {
   // Governing zone = end zone (zone 0) which usually governs; fallback to ties.
   const barSize = rebar.ties?.barSize ?? 4;
@@ -507,6 +547,18 @@ function stirrupAvProvPerIn(rebar: RebarLayout): number {
   return s > 0 ? legs * Ab / s : 0;
 }
 
+/**
+ * Estimate the steel currently sitting idle: for each beam, the difference between the
+ * cage provided and the cage a `targetDCR` design would need.
+ *
+ * This is a PRIORITISATION TOOL, not a take-off. It scales provided steel by the DCR
+ * ratio, which ignores code minimums, detailing rules, development and anchorage, bar
+ * availability, and the fact that a group's cage is set by its worst member. Real
+ * quantities come from `takeoff.ts`. Treat the output as "where is there room to look",
+ * never as tonnage that can be removed.
+ *
+ * Length is taken from the ETABS endpoints when present, falling back to `span`.
+ */
 export function computeSavings(
   members: Member[],
   resultsById: Record<string, DesignResults>,

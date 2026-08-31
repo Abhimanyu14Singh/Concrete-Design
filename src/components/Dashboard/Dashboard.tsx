@@ -3,7 +3,7 @@ import type { Project, Member, DesignCode, RebarLayout } from '../../types';
 import { useUnits } from '../../contexts/UnitsContext';
 import { dcrColor as themeDcrColor, dcrBg as themeDcrBg, ACCENT, BORDER, INK, LABEL_STYLE, MONO_NUM, STATUS, SURFACE, TYPE , ICON } from '../../theme';
 import { Icon } from '../common/Icon';
-import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { barSizeOptions, defaultBarSizes, formatBarLabel } from '../../utils/rebar';
 import { isSkinWarning, applyMinSkinReinforcement } from '../../utils/skinReinforcement';
 import { summarize, DCRChip, DCRInlineCell, GroupDcrSummary, type MemberSummary } from './dashboardShared';
 import MemberEditor from '../SectionInput/MemberEditor';
@@ -30,13 +30,13 @@ type Selection =
 const dcrColor = themeDcrColor;
 const dcrBg = themeDcrBg;
 
-const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'ACI318-14', 'EN1992-1-1'];
+const DESIGN_CODES: DesignCode[] = ['ACI318-19', 'EN1992-1-1'];
 
 export default function Dashboard({ project, onSelectMember, onProjectUpdate, collapsedGroups, setCollapsedGroups }: Props) {
-  const { units, setUnits, fmtVal, label } = useUnits();
+  const { setUnits, barFamily, fmtVal, label } = useUnits();
   const [editingMeta, setEditingMeta] = useState(false);
   const [skinNumBars, setSkinNumBars] = useState(2);
-  const [skinBarSize, setSkinBarSize] = useState(units === 'si' ? -16 : 5);
+  const [skinBarSize, setSkinBarSize] = useState(() => defaultBarSizes(barFamily).skin);
   const [selection, setSelection] = useState<Selection>({ kind: 'member', id: project.members[0]?.id ?? '' });
   const [meta, setMeta] = useState({ name: project.name, engineer: project.engineer, date: project.date, code: project.code as DesignCode, description: project.description });
   const [issuesOpen, setIssuesOpen] = useState(true);
@@ -84,6 +84,12 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
 
   const selectedMemberId = selection.kind === 'member' ? selection.id : null;
   const selectedMember = selectedMemberId ? (project.members.find(m => m.id === selectedMemberId) ?? null) : null;
+  // The member's own group carries the per-L/3 cages the engineer set on the group card.
+  // They are a GROUP property, so the member view can only show them by looking the group
+  // up — without this the elevation and the stepped moment capacity both silently fall
+  // back to the single mark-end cage and never react to a curtailment edit.
+  const selectedMemberGroup = selectedMemberId
+    ? designGroups.find(g => g.memberIds.includes(selectedMemberId)) : undefined;
   const selectedGroupId = selection.kind === 'group' ? selection.id : null;
   const ungroupedEntry = ungrouped.length
     ? { id: '__ungrouped', label: 'Ungrouped', color: INK.muted, rebar: undefined as RebarLayout | undefined, members: ungrouped }
@@ -435,7 +441,10 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
                 </div>
                 {/* Right: live DCR / diagrams */}
                 <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '12px 14px' }}>
-                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} cotTheta={project.cotTheta} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate} />
+                  <MemberResults member={selectedMember} code={project.code} slsCombo={project.slsCombo} cotTheta={project.cotTheta} engineer={project.engineer} sconcreteResults={project.sconcreteResults} sconcreteRanAt={project.sconcreteRanAt} onRebarChange={handleMemberUpdate}
+                    midThirdTopBars={selectedMemberGroup?.midThirdTopBars}
+                    oppositeTopBars={selectedMemberGroup?.oppositeTopBars}
+                    endThirdBotBars={selectedMemberGroup?.endThirdBotBars} />
                 </div>
               </div>
             </>
@@ -546,7 +555,7 @@ export default function Dashboard({ project, onSelectMember, onProjectUpdate, co
               Bar size
               <Dropdown
                 value={skinBarSize}
-                options={barSizeOptions(units, skinBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                options={barSizeOptions(barFamily, skinBarSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
                 onChange={v => setSkinBarSize(+v)}
                 style={inp}
               />
@@ -719,6 +728,8 @@ function GroupPanel({
           onApply={onApplyRebar}
           code={project.code}
           targetDCR={project.targetDCR ?? 0.9}
+          cotTheta={project.cotTheta}
+          ignoreTorsion={project.ignoreTorsion}
         />
       </div>
 

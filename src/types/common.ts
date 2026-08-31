@@ -3,7 +3,7 @@
  * Nothing in here is member-type-specific.
  */
 
-export type DesignCode = 'ACI318-19' | 'ACI318-14' | 'EN1992-1-1';
+export type DesignCode = 'ACI318-19' | 'EN1992-1-1';
 export type ExposureClass = 'W0' | 'W1' | 'W2' | 'S0' | 'S1' | 'S2' | 'S3';
 
 export interface MaterialProps {

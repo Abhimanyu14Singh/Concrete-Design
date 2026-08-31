@@ -2,7 +2,7 @@
 
 A structural reinforced concrete design web application built with **React + TypeScript + Vite** — beams and columns.
 
-Supports **ACI 318-19**, **ACI 318-14**, and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
+Supports **ACI 318-19** and **EN 1992-1-1 (Eurocode 2)** with step-by-step calculation sheets, DCR dashboards, section detailing views, and a plugin-ready engine architecture.
 
 > **Important:** All calculations must be independently verified by a licensed engineer before use in any real project.
 
@@ -21,7 +21,6 @@ S-Concrete provides a complete concrete design workflow — from geometry and ma
 | Code | Flexure | Shear | Torsion | Detailing | Crack Width |
 |------|---------|-------|---------|-----------|-------------|
 | ACI 318-19 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
-| ACI 318-14 | §22.2 | §22.5 | §22.7 | §9.6–9.7 | — |
 | EN 1992-1-1 (EC2) | §6.1 M_Rd | §6.2 V_Rd,c/s/max | §6.3 T_Rd | §9.2 | §7.3.4 |
 
 **ACI 318-19 beam design**
@@ -70,7 +69,7 @@ A slim, always-visible **Import → Design → Verify** ribbon sits directly und
 The **design code selector lives in this ribbon** (it moved out of the header), because the chosen code drives the generated `.SCO` handed to S-Concrete. Selecting **EN 1992-1-1** also switches the display to SI units.
 
 ### Design Code Selector
-Switch between ACI 318-19, ACI 318-14, and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the workflow ribbon without losing project data.
+Switch between ACI 318-19 and EN 1992-1-1 (Eurocode 2, UK National Annex with α_cc = 0.85) from the workflow ribbon without losing project data.
 
 ### Member Results — Progressive Disclosure
 The per-member results view groups its 15–20 DCR rows into collapsible **per-check sections** so it reads as a short summary rather than a wall of numbers. The governing (highest-DCR) check is expanded by default; the rest collapse to a header plus a colour-coded DCR chip that you can click to expand:
@@ -103,7 +102,9 @@ Per-face crack width limits, quasi-permanent moment ratio M_qp/Mu, and kt factor
 Minimum skin (side / face) reinforcement is handled automatically:
 
 - **On import**, beams that require it are given the code-minimum skin reinforcement per **EC2 §7.3.3** (when EC2 is active) or **ACI §9.7.2.3** (deep-beam side-face bars) so imported members start compliant.
+- **✨ Suggest sizes it too** — a deep group comes back with a face reinforcement that the engine accepts, not just a strength cage plus a standing warning (see *One-Click Rebar Suggestion*).
 - A **Dashboard button** applies the minimum skin reinforcement to any beams still flagged for it, in one click. Skin bars drive the EC2 side-face crack-width check and are also editable per member under **"Side Bars"**.
+- ACI bar spacing follows **§24.3.2** (`s ≤ min(15(40000/f_s) − 2.5c_c, 12(40000/f_s))`, `f_s = ⅔f_y`), not a flat 12″ — so a Grade 80 job or a deep cover gets the bars it actually needs.
 
 ### DCR Dashboard
 Bar charts showing Demand/Capacity Ratios for all members and load cases. Status indicators: OK / Warning / NG.
@@ -165,7 +166,12 @@ The **✨ Suggest** button in the group rebar editor picks the lightest *practic
 
 - Longitudinal: #5–#9 bars, ≥ 2 bars/layer, max 2 layers (outer ≥ inner), with a width-fit check (clear spacing ≥ max(1″, db) inside cover + stirrup). The top and bottom faces always share **one common bar size** (the smallest size where both faces have a feasible layout); only the bar counts and layer arrangement may differ between faces. During per-member verification a face is bumped within the common size first, stepping up to the next common size — and recomputing both faces — only when a size is exhausted.
 - Stirrups: #4 or #5, 2 then 4 legs, spacings {4, 6, 8, 10, 12} in, zoned end/mid/end with the mid zone one increment more relaxed.
+- **Torsion is designed for, on the lever that moves it.** Shear and torsion climb different ladders out of the same catalogue: `φV_s ∝ legs·A_b/s`, but `φT_n = φ·2A_o·(A_t/s)·f_yt` is **flat in leg count**. The cheapest way to pass shear is usually to add a leg — which leaves `A_t/s` untouched and torsion exactly where it was, so a spandrel used to come back with flexure and shear on target and `DCR_T = 1.37`. Torsion now gets its own monotone ladder (the distinct per-leg rates), searched for the smallest that carries it; the shear search then runs over the rungs at or above that floor. `DCR_torsion` is not monotone along the rate order — a 4-leg #4@12 outranks a 2-leg #5@6 on rate but is weaker in torsion — which is why it cannot simply join the shear predicate.
+- **Project settings reach the search.** `cotTheta` and **neglect torsion** are passed through to `runDesign`, so the cage is sized against the same checks the member panel runs — a project that neglects torsion no longer gets links it never needed.
+- **§22.7.7.1 combined shear + torsion crushing** is a section limit ("more stirrups will not help", as the engine puts it), so Suggest names the member and refuses rather than returning a cage that opens NG.
+- **Spacing is a detailing answer, not only a capacity one.** The ladder is ordered on steel *rate* (legs·A_b/s), and a wide spacing with a fat bar carries the same rate as a close spacing with a thin one — so the lightest passing rung was routinely illegal: **§9.7.6.2.2** caps `s` at `d/2` (`d/4` under heavy shear, where exceeding it is an **error**, not a warning) and **§9.7.6.3.3** at `P_h/8` once torsion is designed for; EC2 **§9.2.2** `s_max = 0.75d` and `ρ_w,min` are the same shape of rule. All of them judge the **loosest** zone, so the relaxed middle third is usually what trips them. The search now runs under a spacing cap that ratchets down until the engine stops reporting a violation, and if no practical spacing can satisfy a hard limit it says so (quoting the code's own message) instead of handing back a cage that opens NG.
 - Candidate areas come from the engine's worst As_req/Av_req across all members and load cases; the winning layout is **re-verified per-member with `runDesign`** (up to 5 retries bumping to the next candidate) so strain-compatibility effects can't sneak a failing layout through.
+- **Skin / face reinforcement** on a deep group (ACI h > 36″, EC2 h > 1000 mm) is part of the answer, not an afterthought: seeded from the code minimum for the **deepest** member in the group — depth triggers the rule, and the deepest member is often not the moment governor — using each member's real f_ck, worst axial N_Ed and the project's own face crack limit, then **verified through the engine and escalated** (count first, then bar size) until no member raises a skin warning. A candidate that would break §8.2 clear spacing is never accepted, and if the ladder runs out the code minimum stands with the engine's warning rather than a wall of face steel that still cracks.
 - The result prefills the editor form for review — nothing is applied until you click **Apply**.
 
 The map geometry (`project.modelMap`) is captured during ETABS import — all beam frames, not just the ones filtered into design members — and is saved with the project file. Group membership resolves live from `project.members` so newly imported members appear in their groups immediately without a re-sync.
@@ -293,7 +299,7 @@ npm run electron:dev   # Electron against an already-running dev server
 ```
 src/
   engines/
-    aci/                    # ACI 318-19 / 318-14 beam design engine
+    aci/                    # ACI 318-19 beam design engine
     ec2/
       ec2Beam.ts            # Eurocode 2 beam design engine
     dispatcher.ts           # Routes calculations to the correct engine
@@ -360,5 +366,4 @@ The Windows CI build (`.github/workflows/build-windows.yml`) publishes the sidec
 ## Design Codes Supported
 
 - **ACI 318-19** — Building Code Requirements for Structural Concrete (beams, columns)
-- **ACI 318-14** — Previous edition (same clause structure)
 - **EN 1992-1-1:2004 (Eurocode 2)** — Design of Concrete Structures, Part 1-1 (beams, columns)

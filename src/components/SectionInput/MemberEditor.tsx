@@ -3,7 +3,7 @@ import type { Member, SectionType, BarGroup } from '../../types';
 import LoadCaseTable from './LoadCaseTable';
 import { useUnits } from '../../contexts/UnitsContext';
 import type { Quantity } from '../../utils/units';
-import { barSizeOptions, formatBarLabel } from '../../utils/rebar';
+import { barSizeOptions, defaultBarSizes, formatBarLabel } from '../../utils/rebar';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import { getBarArea } from '../../utils/concreteDesign';
 import CodeBadge from '../common/CodeBadge';
@@ -28,9 +28,9 @@ interface InputRowProps {
 }
 function InputRow({ label, value, onChange, unit = '', type = 'number', min, step }: InputRowProps) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 'var(--me-row-pad, 4px) 0', flexWrap: 'wrap', minWidth: 0 }}>
       <label style={{ fontSize: 11, color: INK.secondary, minWidth: 80, flexShrink: 0 }}>{label}</label>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 80 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 80, maxWidth: 'var(--me-field-max, none)' }}>
         <input
           type={type} value={value} min={min} step={step}
           onChange={e => onChange(e.target.value)}
@@ -83,21 +83,40 @@ function SelectRow({ label, value, options, onChange }: SelectRowProps) {
   const hasValue = options.some(o => String(o.value) === String(value));
   const opts = hasValue ? options : [{ value, label: String(value) }, ...options];
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap', minWidth: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 'var(--me-row-pad, 4px) 0', flexWrap: 'wrap', minWidth: 0 }}>
       <label style={{ fontSize: 11, color: INK.secondary, minWidth: 80, flexShrink: 0 }}>{label}</label>
       <Dropdown
         value={value} options={opts} onChange={onChange}
-        style={{ flex: 1, minWidth: 80, padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', outline: 'none' }}
+        style={{ flex: 1, minWidth: 80, maxWidth: 'var(--me-field-max, none)', padding: '4px 8px', border: `1px solid ${BORDER.strong}`, borderRadius: 6, fontSize: 12, color: INK.strong, background: 'white', outline: 'none' }}
       />
     </div>
   );
 }
 
+// Spacing comes from CSS custom properties with the existing values as FALLBACKS, so
+// this file renders byte-identically wherever nothing sets them — the Member tab is
+// untouched. A host that needs the form denser (a panel, rather than a full page) sets
+// the four variables on any ancestor. Inline styles can read var(); they cannot read a
+// stylesheet, which is why this is a variable and not a class.
+//
+//   --me-card-pad   padding inside a card
+//   --me-card-gap   space between cards
+//   --me-head-gap   space under a card heading
+//   --me-row-pad    vertical padding on one label+field row
+//   --me-field-max  cap on field width, so a 2-digit number is not 550px wide
+//   --me-cols       column-width for the card stack; `auto` (the default) is one column
+//   --me-col-gap    gutter between those columns
 const cardStyle: React.CSSProperties = {
-  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10, padding: '14px 16px', marginBottom: 12,
+  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
+  padding: 'var(--me-card-pad, 14px 16px)', marginBottom: 'var(--me-card-gap, 12px)',
+  // Only bites when a host has put the form into columns (--me-cols): a card is a unit
+  // of meaning, and a "Section Dimensions" heading stranded at the foot of one column
+  // with its fields in the next is worse than an uneven column. No effect in the
+  // single-column default, where there is nothing to break across.
+  breakInside: 'avoid',
 };
 const headingStyle: React.CSSProperties = {
-  ...LABEL_STYLE, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6,
+  ...LABEL_STYLE, marginBottom: 'var(--me-head-gap, 10px)', display: 'flex', alignItems: 'center', gap: 6,
 };
 
 /** Card heading — icon inherits the label's colour, so nothing extra to style. */
@@ -114,13 +133,12 @@ interface Props {
 }
 
 export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: Props) {
-  const { units, fmt } = useUnits();
+  const { units, barFamily, fmt } = useUnits();
   const [m, setM] = useState<Member>(member);
   const [showLoads, setShowLoads] = useState(false);
 
   // Unit-aware default bar sizes (negative = metric Ø mm, positive = US #).
-  const dLong = units === 'si' ? -16 : 8;   // longitudinal
-  const dStir = units === 'si' ? -10 : 4;   // stirrups / ties
+  const { long: dLong, stirrup: dStir } = defaultBarSizes(barFamily);
 
   function update(patch: Partial<Member>) {
     const updated = { ...m, ...patch };
@@ -151,7 +169,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
   }
 
   return (
-    <div style={{ fontSize: 14 }}>
+    <div style={{ fontSize: 13 }}>
       {showLoads && (
         <LoadCaseTable
           loads={m.loads}
@@ -179,7 +197,22 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
       </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-      <div style={{ flex: '1 1 300px', minWidth: 280 }}>
+      {/* The card stack. One column by default — `columns: auto` is the initial value, so
+          the Member tab renders exactly as it always has. A host with width to spare sets
+          --me-cols to a COLUMN WIDTH and the same cards flow into as many columns as fit,
+          collapsing back to one as it narrows, with no breakpoint to maintain.
+
+          Multi-column rather than grid on purpose. Grid lays out in rows, so a row is as
+          tall as its tallest card and every shorter card in it leaves dead space
+          underneath — which is the white space this is meant to remove, moved rather than
+          removed. Multi-column balances by height instead, packing short cards under
+          short ones. It works here because this box's height is auto inside a scrolling
+          parent; in a fixed-height container the same rule would overflow sideways. */}
+      <div style={{
+        flex: '1 1 300px', minWidth: 280,
+        columns: 'var(--me-cols, auto)',
+        columnGap: 'var(--me-col-gap, normal)',
+      }}>
 
       {/* General */}
       <div style={cardStyle}>
@@ -237,7 +270,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
           ))}
         </div>
         <SelectRow label="Stirrup size" value={m.section.stirrupDia ?? dStir}
-          options={barSizeOptions(units, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
+          options={barSizeOptions(barFamily, m.section.stirrupDia ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
           onChange={v => sec({ stirrupDia: +v })} />
       </div>
 
@@ -258,7 +291,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
                 </div>
                 <div style={{ flex: '1 1 110px', minWidth: 110 }}>
                   <SelectRow label="Size" value={g.barSize}
-                    options={barSizeOptions(units, g.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
+                    options={barSizeOptions(barFamily, g.barSize).map(s => ({ value: s, label: formatBarLabel(s) }))}
                     onChange={v => setFaceLayer(face, i, { barSize: +v })} />
                 </div>
                 {m.rebar[face].length > 1 && (
@@ -281,7 +314,7 @@ export default function MemberEditor({ member, onUpdate, code = 'ACI318-19' }: P
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 140px', minWidth: 140 }}>
             <SelectRow label="Size" value={m.rebar.ties?.barSize ?? dStir}
-              options={barSizeOptions(units, m.rebar.ties?.barSize ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
+              options={barSizeOptions(barFamily, m.rebar.ties?.barSize ?? dStir).map(s => ({ value: s, label: formatBarLabel(s) }))}
               onChange={v => ties({ barSize: +v })} />
           </div>
           {!m.rebar.tieZones && (

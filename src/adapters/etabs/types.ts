@@ -15,6 +15,7 @@
 
 // ── Top-level model container ─────────────────────────────────────────────────
 
+/** A whole ETABS model as JSON. `frameForces` is absent until the model has been run. */
 export interface EtabsModel {
   projectInfo: EtabsProjectInfo;
   materials: EtabsMaterial[];
@@ -27,6 +28,7 @@ export interface EtabsModel {
 
 // ── Project metadata ──────────────────────────────────────────────────────────
 
+/** Title-block metadata. Only `projectName` and `code` are relied on. */
 export interface EtabsProjectInfo {
   projectName: string;
   clientName?: string;
@@ -39,6 +41,8 @@ export interface EtabsProjectInfo {
 
 export type EtabsMaterialType = 'Concrete' | 'Rebar' | 'Steel';
 
+/** A material definition. Which strength field is meaningful depends on `type` —
+ *  `fc` for Concrete, `fy` for Rebar — and either may be missing. */
 export interface EtabsMaterial {
   name: string;
   type: EtabsMaterialType;
@@ -56,6 +60,8 @@ export type EtabsSectionShape =
   | 'T'             // T-beams
   | 'L';            // L-beams
 
+/** A section property. Which dimension fields are populated depends on `shape`, so read
+ *  them through the shape rather than assuming t3/t2 are always there. */
 export interface EtabsFrameSection {
   name: string;
   material: string;     // references EtabsMaterial.name
@@ -76,6 +82,8 @@ export interface EtabsFrameSection {
 
 export type EtabsFrameType = 'Beam' | 'Column' | 'Brace';
 
+/** A line element. `type` decides whether it becomes a designed member or map-only
+ *  geometry — this app designs Beams and draws Columns/Braces for context. */
 export interface EtabsFrame {
   name: string;
   type: EtabsFrameType;
@@ -91,12 +99,15 @@ export interface EtabsFrame {
 
 export type EtabsLoadPatternType = 'Dead' | 'Live' | 'Wind' | 'Seismic' | 'Snow' | 'Other';
 
+/** A base load pattern (Dead, Live, …) before combination. */
 export interface EtabsLoadPattern {
   name: string;
   type: EtabsLoadPatternType;
   selfWeightMultiplier: number;
 }
 
+/** A design combination. `Envelope` combos already carry min/max at each station, so
+ *  they must not be re-enveloped downstream. */
 export interface EtabsLoadCombination {
   name: string;
   type: 'LinearAdd' | 'Envelope';
@@ -110,7 +121,10 @@ export interface EtabsFrameForces {
   frameName: string;
   loadCombo: string;    // references EtabsLoadCombination.name
   station: number;      // distance from start joint (in)
-  P: number;            // Axial force (kips), positive = compression
+  /** Axial force (kips) AS ETABS REPORTS IT — compression NEGATIVE. The table
+   *  connection flips it when building `StationForce`, because the app's own
+   *  `LoadCase.Pu` is compression-POSITIVE. */
+  P: number;
   V2: number;           // Shear in local 2-direction (kips)
   V3: number;           // Shear in local 3-direction (kips)
   T: number;            // Torsion (kip-in)

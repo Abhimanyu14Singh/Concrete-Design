@@ -48,7 +48,7 @@ describe('unit conversions', () => {
 describe('capacityLabels', () => {
   it('ACI uses φ notation', () => {
     expect(capacityLabels('ACI318-19').Mn).toBe('φMn');
-    expect(capacityLabels('ACI318-14').Vn).toBe('φVn');
+    expect(capacityLabels('ACI318-19').Vn).toBe('φVn');
   });
   it('EC2 uses Rd notation', () => {
     const l = capacityLabels('EN1992-1-1');

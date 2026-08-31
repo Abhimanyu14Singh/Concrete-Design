@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Project, Member, ModelMap, DesignGroup, DesignCode, ProjectSettings } from './types';
 import { defaultProject } from './utils/sampleData';
+import { buildDemoProject } from './utils/demoProject';
+import { logActivity } from './utils/activity';
+import { track, trackOnce, setUsageContext } from './utils/usage';
 import {
   applyProjectSettings, coversFromSettings, loadStandards, materialFromSettings,
   saveStandards, settingsFromProject,
@@ -9,17 +12,21 @@ import { runDesign } from './engines';
 import { resolveCrack } from './utils/resolveCrack';
 import { effectiveStatus } from './utils/overrides';
 import { saveProject, openProject } from './utils/electronBridge';
-import { exportExcel, exportDcrList } from './utils/export/excelExport';
-import { buildSchedulePDF, buildDcrListPDF } from './utils/export/schedulePdfExport';
-import { exportGroupScheduleExcel } from './utils/export/groupScheduleExcel';
-import ReportModal from './components/ReportModal';
 import Dashboard from './components/Dashboard/Dashboard';
 import HelpView from './components/Help/HelpView';
 import MemberResults from './components/Results/MemberResults';
 import MemberEditor from './components/SectionInput/MemberEditor';
 import EtabsImportWizard from './components/EtabsImport/EtabsImportWizard';
+// The panel workspace IS the shell now: Plan, Groups, Section, Calc, Loads, Force,
+// Elevation, Editor, Group Dashboard and S-Concrete, each dockable, floatable and
+// detachable into its own window. App keeps what only App can do — the project object,
+// disk, the ETABS wizard — and hands the workspace the project plus those actions.
+import WorkspaceView from './workspace/WorkspaceView.jsx';
+import './workspace/ui.css';
+import './workspace/shell.css';
 import ModelMapView from './components/ModelMap/ModelMapView';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import WelcomeScreen from './components/Welcome/WelcomeScreen';
 import ProjectSettingsDialog from './components/Settings/ProjectSettingsDialog';
 import Dropdown from './components/common/Dropdown';
 import { Icon } from './components/common/Icon';
@@ -73,18 +80,79 @@ export default function App() {
     const s = localStorage.getItem('sc-zoom');
     return s ? parseFloat(s) : 1.0;
   });
-  // Project standards dialog: 'setup' on a first run (no way out — the project
-  // needs standards), 'settings' whenever the header gear is used.
-  const [settingsMode, setSettingsMode] = useState<'setup' | 'settings' | null>(
-    () => (loadStandards() ? null : 'setup'),
-  );
-  const [showExport, setShowExport] = useState(false);
-  const [showReport, setShowReport] = useState(false);
+  /**
+   * The launch gate. Every start shows the welcome screen until a model is chosen
+   * — imported from ETABS, opened from disk, or the demo taken deliberately. It is
+   * session state, not persisted: "where is this model coming from" is a question
+   * worth asking each time, and answering it is one click.
+   */
+  const [launched, setLaunched] = useState(false);
+  // Project standards dialog: 'settings' whenever the header gear is used, and
+  // 'setup' once — but only AFTER a model is in, so the dialog can pre-fill from
+  // what was imported instead of asking for materials against a blank project.
+  const [settingsMode, setSettingsMode] = useState<'setup' | 'settings' | null>(null);
+  /** Pass the gate, and ask for standards on the way through if none are stored. */
+  const enterWorkspace = useCallback(() => {
+    setLaunched(true);
+    if (!loadStandards()) setSettingsMode('setup');
+  }, []);
+
+  /**
+   * "Explore the demo model" — load the built-in two-storey frame, then pass the gate.
+   *
+   * It is a real model, not the two-beam seed the app boots on: 34 beams over two
+   * levels, columns, slabs, a core wall and grid lines, with design groups and station
+   * forces, assembled by `buildDemoProject` through the same adapter path an ETABS
+   * import walks. That matters because the panels this button exists to show — Model,
+   * Groups, the group dashboard — have nothing to draw without a modelMap and groups,
+   * which is exactly what the seed project lacks and why this used to open on an empty
+   * plan.
+   *
+   * Standards stored from an earlier session are re-applied, same as on a normal start.
+   * The per-section grades (4000 / 5000 psi) survive that: `applyProjectSettings` keeps
+   * imported materials whenever a modelMap is present and the override is off.
+   */
+  const handleUseDemo = useCallback(async () => {
+    // The launch gate is the app's first fork, and which way people go is the first
+    // thing worth knowing: an install where everyone takes the demo and nobody ever
+    // reaches an import is a very different problem from one where nobody gets past it.
+    track('launch.choice', { choice: 'demo' });
+    try {
+      const demo = await buildDemoProject();
+      const stored = loadStandards();
+      const next = stored
+        ? applyProjectSettings({ ...demo, code: stored.code }, stored.settings)
+        : demo;
+      setProjectRaw(next);
+      // A fresh model is a fresh history, and it is not the file the last one lived in.
+      historyRef.current = [next];
+      historyIndexRef.current = 0;
+      setActiveMemberId(next.members[0].id);
+      setFilePath(null);
+      setIsDirty(false);
+      setTab('map');
+      logActivity(`Demo model loaded — ${next.members.length} beams, `
+        + `${next.designGroups?.length ?? 0} groups, ${next.modelMap?.stories.length ?? 0} storeys`);
+    } catch (err) {
+      logActivity(`Could not build the demo model: ${(err as Error).message}`, 'error');
+    }
+    enterWorkspace();
+  }, [enterWorkspace]);
   const [helpTarget, setHelpTarget] = useState<{ tab?: string; section?: string } | null>(null);
-  const { units, setUnits, fmt } = useUnits();
+  const { units, setUnits, setBarFamily, fmt } = useUnits();
 
   // B5: dirty indicator
   const [isDirty, setIsDirty] = useState(false);
+  /**
+   * The file this project is currently associated with, or null for one that has never
+   * been written. It is what separates Save from Save As: with a path, Ctrl+S overwrites
+   * silently; without one it has to ask, which is a Save As by another name.
+   *
+   * Always null in a browser — a page is handed file CONTENT, never a path it could
+   * write back to — so there both commands download, and this stays null on purpose
+   * rather than pretending to a location the page does not have.
+   */
+  const [filePath, setFilePath] = useState<string | null>(null);
 
   // B4: undo/redo history
   const historyRef = useRef<Project[]>([defaultProject]);
@@ -141,21 +209,48 @@ export default function App() {
   }
 
   // ── File handlers ──────────────────────────────────────────────────────────
-  const handleSave = useCallback(async () => {
+  /**
+   * Write the project. `asNew` forces the picker; otherwise it goes straight to the
+   * file this project came from, and only asks when there isn't one yet.
+   */
+  const saveWith = useCallback(async (asNew: boolean) => {
     try {
-      const saved = await saveProject(project);
+      const { saved, filePath: written } = await saveProject(project, asNew ? null : filePath);
+      track('project.save', { asNew, saved, members: project.members.length });
       // Only clear the dirty flag when the file was actually written
       // (not when the user cancelled the save dialog).
-      if (saved) setIsDirty(false);
+      if (!saved) return;
+      if (written) setFilePath(written);
+      setIsDirty(false);
     } catch (e) {
-      alert(`Could not save the project:\n${(e as Error).message}`);
+      track('project.save', { asNew, saved: false, error: (e as Error).message }, 'error');
+      alert(`Could not save the project:
+${(e as Error).message}`);
     }
-  }, [project]);
+  }, [project, filePath]);
+
+  const handleSave = useCallback(() => saveWith(false), [saveWith]);
+  const handleSaveAs = useCallback(() => saveWith(true), [saveWith]);
 
   const handleOpen = useCallback(async () => {
     try {
-      const loaded = await openProject();
-      if (!loaded) return; // cancelled
+      const opened = await openProject();
+      if (!opened) { track('project.open', { opened: false }); return false; } // cancelled
+      const loaded = opened.project;
+      // The file's own FILE_VERSION is recorded separately, by deserializeProject —
+      // it is stripped before the project reaches here.
+      track('project.open', {
+        opened: true,
+        code: loaded.code,
+        members: loaded.members.length,
+        groups: loaded.designGroups?.length ?? 0,
+        hasModelMap: !!loaded.modelMap,
+        hasSettings: !!loaded.settings,
+      });
+      // Adopt the file as this session's save target, so the next Ctrl+S writes back to
+      // it instead of asking again. Undefined in a browser, which correctly leaves the
+      // project pathless.
+      setFilePath(opened.filePath ?? null);
       setProjectRaw(loaded);
       historyRef.current = [loaded];
       historyIndexRef.current = 0;
@@ -166,16 +261,47 @@ export default function App() {
       // the screens read in the units it was designed in.
       if (loaded.settings) {
         setUnits(loaded.settings.units);
+        setBarFamily(loaded.settings.barFamily);
         setZoom(loaded.settings.displayScale);
         localStorage.setItem('sc-zoom', String(loaded.settings.displayScale));
       }
+      // A saved project carries its own standards, so this never needs the setup
+      // dialog — but it does pass the launch gate.
+      setLaunched(true);
+      return true;
     } catch (e) {
       alert(`Could not open the project file:\n${(e as Error).message}`);
+      return false;
     }
-  }, [setUnits]);
+  }, [setUnits, setBarFamily]);
 
-  function handleNewProject() {
-    if (!confirm('Start a new project? Unsaved changes will be lost.')) return;
+  /**
+   * File → New Project. Returns to the LAUNCH SCREEN, not to a workspace holding the
+   * sample beams.
+   *
+   * "New project" is the same question the app asks on a cold start — where is this
+   * model coming from: ETABS, a saved file, or the demo? Dropping straight into the
+   * workspace answered it silently with "the demo", which is the one option an engineer
+   * starting real work never wants, and left them deleting sample beams to begin.
+   *
+   * The project is still reset behind the gate so whichever route they pick starts
+   * clean, and the STANDARDS carry forward — a new project should not silently revert to
+   * stock ACI defaults once the engineer has set their own. That is why this does not
+   * re-open the setup dialog: `enterWorkspace` asks for standards only when none are
+   * stored, so a first run still gets the dialog and a later New Project does not.
+   */
+  const handleNewProject = useCallback(() => {
+    // Only ask when there is something to lose. A prompt that fires whether or not any
+    // work would be destroyed carries no information, and the habit it trains — click
+    // through it — is exactly what loses the one that mattered.
+    //
+    // Gating on `isDirty` is only safe because this is a useCallback that CLOSES OVER a
+    // current one, and because it is in the Electron-menu effect's dependencies below.
+    // As a plain function it was registered once with whatever `isDirty` happened to be
+    // at the time, and a stale `false` there would skip the prompt and take unsaved work
+    // with it. That it did not already misfire was luck: `handleSave` depends on
+    // `project`, so the effect re-ran on every edit and re-registered this by accident.
+    if (isDirty && !confirm('Start a new project? Unsaved changes will be lost.')) return;
     // Native confirm() can steal keyboard focus from the window in Electron
     window.focus();
     // Carry the office standards forward — a new project should not silently
@@ -190,12 +316,43 @@ export default function App() {
     setActiveMemberId(fresh.members[0].id);
     setTab('dashboard');
     setIsDirty(false);
-  }
+    // A fresh project is not the file the last one lived in — forgetting the path is
+    // what stops the first Ctrl+S from silently overwriting the project just closed.
+    setFilePath(null);
+    // Back through the launch gate, with nothing left open over it: a modal from the
+    // project just closed, floating above the welcome screen, belongs to a model that no
+    // longer exists.
+    setShowEtabsImport(false);
+    setSettingsMode(null);
+    setLaunched(false);
+  }, [isDirty]);
 
   function changeZoom(z: number) {
     setZoom(z);
     localStorage.setItem('sc-zoom', String(z));
   }
+
+  // ── Usage log ──────────────────────────────────────────────────────────────
+  // COUNTS AND CODES ONLY. Model size and design code are what make a report legible
+  // ("EC2, 900 members" is a different app from "ACI, 12"); names and geometry are the
+  // client's and never leave. Emitted only when one of them changes — see usage.ts.
+  useEffect(() => {
+    setUsageContext({
+      code: project.code,
+      members: project.members.length,
+      groups: project.designGroups?.length ?? 0,
+      stories: project.modelMap?.stories.length ?? 0,
+      frames: project.modelMap?.frames.length ?? 0,
+      units,
+      zoom,
+    });
+  }, [project.code, project.members.length, project.designGroups?.length,
+      project.modelMap?.stories.length, project.modelMap?.frames.length, units, zoom]);
+
+  // Which screen, and how long they stayed. The dwell time between two `view` events is
+  // the whole point: a Member panel opened and left inside two seconds, over and over,
+  // is someone hunting for something they are not finding.
+  useEffect(() => { track('view', { tab }); }, [tab]);
 
   // ── Project standards ──────────────────────────────────────────────────────
   // Projects saved before the setup dialog existed have no `settings`; derive a
@@ -216,15 +373,21 @@ export default function App() {
   function handleSettingsSave(next: { name: string; code: DesignCode; settings: ProjectSettings }) {
     setProject(p => applyProjectSettings({ ...p, name: next.name, code: next.code }, next.settings));
     setUnits(next.settings.units);
+    setBarFamily(next.settings.barFamily);
     changeZoom(next.settings.displayScale);
     saveStandards(next.code, next.settings);
     setSettingsMode(null);
   }
 
   // ── B4: Undo/Redo ──────────────────────────────────────────────────────────
+  // Undo is the app's clearest confession that something did not do what was expected —
+  // an edit surprised someone, or a control was harder to aim than it looked. A run of
+  // them in one place is worth more than any satisfaction survey, so the depth goes with
+  // it: three in a row is a different story from one.
   function undo() {
-    if (historyIndexRef.current <= 0) return;
+    if (historyIndexRef.current <= 0) { track('edit.undo', { at: 0, blocked: true }); return; }
     historyIndexRef.current--;
+    track('edit.undo', { at: historyIndexRef.current, tab });
     const prev = historyRef.current[historyIndexRef.current];
     setProjectRaw(prev);
     setIsDirty(historyIndexRef.current > 0);
@@ -233,6 +396,7 @@ export default function App() {
   function redo() {
     if (historyIndexRef.current >= historyRef.current.length - 1) return;
     historyIndexRef.current++;
+    track('edit.redo', { at: historyIndexRef.current, tab });
     const next = historyRef.current[historyIndexRef.current];
     setProjectRaw(next);
     setIsDirty(true);
@@ -258,7 +422,13 @@ export default function App() {
       // a second dialog. Ctrl+N uses confirm() not a dialog, so it's safe to
       // keep in both environments.
       const inElectron = !!window.electronAPI;
-      if (e.key === 's' && !inElectron) { e.preventDefault(); handleSave(); }
+      // Shift+S first: with Shift held the browser reports 'S', so a lowercase-only
+      // test would miss Save As and then fall through to Save — silently overwriting
+      // the very file the user was trying to branch away from.
+      if (e.key.toLowerCase() === 's' && !inElectron) {
+        e.preventDefault();
+        (e.shiftKey ? handleSaveAs : handleSave)();
+      }
       if (e.key === 'o' && !inElectron) { e.preventDefault(); handleOpen(); }
       if (e.key === 'n') { e.preventDefault(); handleNewProject(); }
       if (e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
@@ -266,34 +436,37 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [project, activeMemberId, tab, handleSave, handleOpen]);
+  }, [project, activeMemberId, tab, handleSave, handleSaveAs, handleOpen]);
 
   // ── Electron menu → renderer events ───────────────────────────────────────
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
     api.onTriggerSave(handleSave);
+    // Optional — a renderer running against an older preload simply has no Save As
+    // accelerator rather than throwing on startup.
+    api.onTriggerSaveAs?.(handleSaveAs);
     api.onTriggerOpen(handleOpen);
     api.onNewProject(handleNewProject);
     return () => {
       api.offTriggerSave();
+      api.offTriggerSaveAs?.();
       api.offTriggerOpen();
       api.offNewProject();
     };
-  }, [handleSave, handleOpen]);
+  }, [handleSave, handleSaveAs, handleOpen, handleNewProject]);
 
   // ── Click outside to close popovers ───────────────────────────────────────
   useEffect(() => {
-    if (!showExport && !membersOpen) return;
+    if (!membersOpen) return;
     function close(e: MouseEvent) {
       if (!(e.target as Element).closest('[data-popover]')) {
-        setShowExport(false);
         setMembersOpen(false);
       }
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
-  }, [showExport, membersOpen]);
+  }, [membersOpen]);
 
   // ── A1: Split-pane drag ───────────────────────────────────────────────────
   function onSplitMouseDown(e: React.MouseEvent) {
@@ -317,16 +490,38 @@ export default function App() {
   }, []);
 
   // ── ETABS import ───────────────────────────────────────────────────────────
-  const [showEtabsImport, setShowEtabsImport] = useState(false);
+  /**
+   * The ETABS wizard, and HOW it was opened.
+   *
+   *   'com'  — from the launch gate's "Import from the running ETABS model". That
+   *            button IS the source question, so the wizard connects on open and goes
+   *            straight to Filter rather than asking the same thing again.
+   *   'ask'  — from the File menu or the workspace, where nothing has been chosen yet
+   *            and the source picker is the first ask, not a second one.
+   */
+  const [showEtabsImport, setShowEtabsImport] = useState<false | 'ask' | 'com'>(false);
+
+  // File → Import from ETABS…, from the NATIVE menu — the only route to it in the
+  // desktop app now that the in-page menu bar is the browser's fallback. Its own effect
+  // beside the state it sets, rather than in the menu block above, which runs before
+  // this line and so cannot reach the setter.
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onImportEtabs) return;
+    api.onImportEtabs(() => setShowEtabsImport('ask'));
+    return () => api.offImportEtabs?.();
+  }, []);
 
   // Open the Help tab, closing any open dialog first so the guide is visible.
   // Two entry points funnel here: a panel's "?" (HelpLink → window `open-help`
   // event, carries a doc section) and the native Help menu (Electron IPC, carries
   // a sub-tab). HelpView reads `target` to pick the sub-tab / scroll to a section.
   const openHelpTarget = useCallback((t: { tab?: string; section?: string }) => {
-    setShowEtabsImport(false); setShowReport(false); setShowExport(false);
-    setHelpTarget(t);
-    setTab('help');
+    setShowEtabsImport(false);
+    // A NEW object every time, deliberately: asking for the same tab twice in a row must
+    // re-open the modal, and the workspace syncs on this prop's identity. There is no
+    // 'help' TAB any more - the workspace is the only shell, and it owns the modal.
+    setHelpTarget({ ...t });
   }, []);
 
   useEffect(() => {
@@ -356,6 +551,22 @@ export default function App() {
     applyUnits?: 'imperial' | 'si',
   ) {
     if (applyUnits) setUnits(applyUnits);
+    // The end of the import funnel — the event every `wizard.*` before it is measured
+    // against. Reaching it at all is the number that matters; the split between members
+    // and groups says whether auto-grouping did anything useful.
+    track('import.complete', {
+      members: members.length,
+      groups: groups.length,
+      frames: modelMap?.frames.length ?? 0,
+      stories: modelMap?.stories.length ?? 0,
+      code: applyCode ?? project.code,
+      units: applyUnits,
+      hasSls: !!slsCombo,
+    });
+    trackOnce('milestone.imported');
+    // The model is in — leave the launch gate. Standards are asked for now rather
+    // than before, so the dialog pre-fills from what was just imported.
+    enterWorkspace();
     setProject(p => {
       // Fresh import: the imported members/groups fully REPLACE whatever was in
       // the project (the default sample members and any prior import). This is
@@ -561,472 +772,50 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" style={{ display: 'flex', height: '100vh', background: SURFACE.app, fontFamily: FONT.ui, overflow: 'hidden' }}>
+    <div id="app-root" style={{ height: '100vh', overflow: 'hidden', fontFamily: FONT.ui }}>
+      {/* The launch gate. The workspace is not rendered until a model has been
+          chosen; the modals below stay mounted either way, because the ETABS
+          wizard is opened FROM this screen. */}
+      {!launched && (
+        <WelcomeScreen
+          onImportEtabs={() => { track('launch.choice', { choice: 'import' }); setShowEtabsImport('com'); }}
+          onOpenProject={() => { track('launch.choice', { choice: 'open' }); return handleOpen(); }}
+          onUseDemo={handleUseDemo}
+        />
+      )}
+      {launched && <WorkspaceView
+        project={project}
+        setProject={setProject}
+        onSettingsSave={handleSettingsSave}
+        onSaveProject={handleSave}
+        onSaveProjectAs={handleSaveAs}
+        onOpenProject={handleOpen}
+        onNewProject={handleNewProject}
+        onImportEtabs={() => setShowEtabsImport('ask')}
+        helpTarget={helpTarget}
+      />}
+
+      {/* App-owned modals. They outlive any one panel, and two of them (the ETABS
+          wizard and the first-run setup) can rewrite the whole project — so they stay
+          here rather than inside a workspace that is only ever a view of it. */}
       {showEtabsImport && (
         <EtabsImportWizard
           code={project.code}
+          autoSource={showEtabsImport === 'ask' ? undefined : showEtabsImport}
           onClose={() => setShowEtabsImport(false)}
           onImport={handleEtabsImport}
         />
       )}
-      {showReport && (
-        <ReportModal project={project} onClose={() => setShowReport(false)} />
-      )}
-      {settingsMode && (
+      {settingsMode === 'setup' && (
         <ProjectSettingsDialog
-          mode={settingsMode}
+          mode="setup"
           projectName={project.name}
           code={project.code}
           settings={activeSettings}
-          // First-run setup is deliberately un-cancellable: the project has no
-          // standards yet, and every check downstream depends on them.
-          onCancel={settingsMode === 'settings' ? () => setSettingsMode(null) : undefined}
+          imported={!!project.modelMap}
           onSave={handleSettingsSave}
         />
       )}
-      {/* Members pull-down overlay — opened from the header "Members" button; a
-          floating panel (not a docked column) so no view loses canvas width. */}
-      {membersOpen && (
-        <aside id="app-sidebar" data-popover="" style={{ position: 'fixed', top: 52, left: 12, bottom: 12, width: 288, zIndex: 300, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 12, boxShadow: '0 16px 40px rgba(15,23,42,0.20)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Heading */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: `1px solid ${BORDER.default}` }}>
-          <span style={{ fontWeight: 700, fontSize: 13, color: INK.strong }}>Members</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={addMember} style={{ color: ACCENT.primary, fontSize: 18, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Add member">+</button>
-            <button onClick={() => setMembersOpen(false)} style={{ color: INK.muted, fontSize: 15, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }} title="Close">✕</button>
-          </div>
-        </div>
-
-        {/* Members list — grouped sections */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {buildSidebarSections().map(section => {
-            const collapsed = section.groupId ? collapsedGroups.has(section.groupId) : false;
-            const ngCount = section.members.filter(m => badgeById[m.id] === 'NG').length;
-            const warnCount = section.members.filter(m => badgeById[m.id] === 'warn').length;
-            return (
-              <div key={section.groupId ?? '__ungrouped'}>
-                {/* Section header */}
-                <div
-                  onClick={() => section.groupId && toggleGroupCollapse(section.groupId)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 5px 10px',
-                    background: SURFACE.subtle, borderTop: '1px solid #f3f4f6',
-                    cursor: section.groupId ? 'pointer' : 'default',
-                  }}
-                >
-                  {section.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: section.color, flexShrink: 0 }} />}
-                  {section.groupId && editingGroupId === section.groupId ? (
-                    <input
-                      autoFocus value={editGroupLabel}
-                      onChange={e => setEditGroupLabel(e.target.value)}
-                      onBlur={renameGroupCommit}
-                      onKeyDown={e => { if (e.key === 'Enter') renameGroupCommit(); if (e.key === 'Escape') setEditingGroupId(null); }}
-                      onClick={e => e.stopPropagation()}
-                      style={{ flex: 1, fontSize: 11, fontWeight: 700, border: `1px solid ${ACCENT.primary}`, borderRadius: 3, padding: '1px 4px', minWidth: 0 }}
-                    />
-                  ) : (
-                    <span
-                      onDoubleClick={e => { e.stopPropagation(); const g = (project.designGroups ?? []).find(g => g.id === section.groupId); if (g) renameGroupStart(g); }}
-                      style={{ flex: 1, fontSize: 11, fontWeight: 700, color: INK.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      title={section.groupId ? 'Double-click to rename' : undefined}
-                    >
-                      {section.label}
-                    </span>
-                  )}
-                  {ngCount > 0 && <span title={`${ngCount} inadequate`} style={{ fontSize: 10, fontWeight: 700, color: STATUS.fail, background: STATUS.failBg, borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{ngCount} NG</span>}
-                  {warnCount > 0 && <span title={`${warnCount} near capacity`} style={{ fontSize: 10, fontWeight: 700, color: STATUS.warn, background: STATUS.warnBg, borderRadius: 4, padding: '0 4px', flexShrink: 0 }}>{warnCount}⚠</span>}
-                  <span style={{ fontSize: 10, color: INK.muted, flexShrink: 0 }}>{section.members.length}</span>
-                  {section.groupId && <span style={{ fontSize: 10, color: INK.muted }}>{collapsed ? '▸' : '▾'}</span>}
-                </div>
-                {/* Member rows */}
-                {!collapsed && section.members.map(m => (
-                  <div
-                    key={m.id}
-                    draggable
-                    onDragStart={() => onDragStart(m.id)}
-                    onDragOver={e => onDragOver(e, m.id)}
-                    onDrop={() => onDrop(m.id)}
-                    onDragEnd={() => { setDragSrcId(null); setDragOverId(null); }}
-                    style={{
-                      display: 'flex', alignItems: 'center',
-                      borderTop: dragOverId === m.id && dragSrcId !== m.id ? `2px solid ${ACCENT.primary}` : '2px solid transparent',
-                      opacity: dragSrcId === m.id ? 0.5 : 1,
-                      paddingLeft: section.groupId ? 8 : 0,
-                    }}
-                  >
-                    <span style={{ fontSize: 14, color: BORDER.strong, cursor: 'grab', padding: '0 4px 0 4px', flexShrink: 0 }}>⠿</span>
-                    <button
-                      onClick={() => handleSelectMember(m.id)}
-                      style={{
-                        flex: 1, textAlign: 'left', padding: '6px 6px', display: 'flex', alignItems: 'center', gap: 5,
-                        background: activeMemberId === m.id ? ACCENT.softBg : 'none',
-                        borderRight: `3px solid ${activeMemberId === m.id ? ACCENT.primary : 'transparent'}`,
-                        border: 'none', borderLeft: 'none', borderTop: 'none', borderBottom: 'none',
-                        cursor: 'pointer', minWidth: 0,
-                      }}
-                    >
-                      <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: MEMBER_COLOR[m.memberType] ?? MEMBER_COLOR.beam }}>{m.id}</span>
-                      <span style={{ fontSize: 11, color: INK.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {m.label}
-                      </span>
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); duplicateMember(m.id); }}
-                      title="Duplicate member"
-                      style={{ display: 'flex', color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
-                    ><Icon name="duplicate" size={ICON.sm} title="Duplicate member" /></button>
-                    <button
-                      onClick={e => { e.stopPropagation(); deleteMember(m.id); }}
-                      title="Delete member"
-                      style={{ display: 'flex', color: INK.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '0 6px 0 2px', flexShrink: 0 }}
-                      onMouseEnter={e => { e.currentTarget.style.color = STATUS.fail; }}
-                      onMouseLeave={e => { e.currentTarget.style.color = INK.muted; }}
-                    ><Icon name="delete" size={ICON.sm} title="Delete member" /></button>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Legend footer */}
-        <div style={{ padding: '10px 14px', borderTop: `1px solid ${BORDER.default}` }}>
-          {[['Beam', MEMBER_COLOR.beam]].map(([t, c]) => (
-            <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
-              <span style={{ fontSize: 10, color: INK.muted }}>{t}</span>
-            </div>
-          ))}
-        </div>
-        </aside>
-      )}
-
-      {/* Main area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Top bar */}
-        <header id="app-header" style={{ background: 'white', borderBottom: `1px solid ${BORDER.default}`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-          {/* Brand */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 2 }}>
-            <div style={{ width: 28, height: 28, background: ACCENT.primary, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', flexShrink: 0 }}>
-              SD
-            </div>
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: INK.strong, lineHeight: 1.15 }}>S-Dashboard</div>
-              <div style={{ color: INK.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{project.code}</div>
-            </div>
-          </div>
-
-          {/* Members pull-down toggle (replaces the old docked member column) */}
-          <div data-popover="" style={{ position: 'relative' }}>
-            <button
-              onClick={() => { setMembersOpen(v => !v); setShowExport(false); }}
-              // Icon-only: the tighter padding matches the undo/redo buttons, and
-              // aria-label carries the name the visible text used to provide.
-              style={{ ...hdrBtn, padding: '5px 8px', background: membersOpen ? ACCENT.softBg : 'white', color: membersOpen ? ACCENT.primary : INK.base }}
-              title="Show the member list"
-              aria-label="Members"
-            >
-              <Icon name="members" />
-            </button>
-          </div>
-
-          <div style={{ width: 1, height: 20, background: BORDER.default }} />
-
-          {/* View tabs */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {([
-              ['map', 'Viewer', 'viewer'],
-              ['dashboard', 'Dashboard', 'dashboard'],
-              ['member', 'Member', 'member'],
-              ['help', 'Help', 'help'],
-            ] as [Tab, string, IconName][]).map(([key, label, icon]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                style={{
-                  padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  background: tab === key ? ACCENT.primary : 'transparent',
-                  // the icon inherits this, so the active tab's glyph turns white too
-                  color: tab === key ? 'white' : INK.secondary,
-                }}
-              >
-                <Icon name={icon} />
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ flex: 1 }} />
-
-          {/* Member selector */}
-          {tab === 'member' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: INK.secondary }}>Member:</span>
-              <Dropdown
-                value={activeMemberId}
-                options={project.members.map(m => ({ value: m.id, label: `${m.id} — ${m.label}` }))}
-                onChange={setActiveMemberId}
-                style={{ background: 'white', border: `1px solid ${BORDER.strong}`, borderRadius: 6, padding: '4px 8px', fontSize: 12, color: INK.strong }}
-              />
-            </div>
-          )}
-
-          {/* Separator */}
-          <div style={{ width: 1, height: 20, background: BORDER.default }} />
-
-          {/* B5: Dirty indicator */}
-          <span style={{
-            fontSize: 11, color: isDirty ? STATUS.fail : INK.muted, fontWeight: 600, minWidth: 70,
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-          }}>
-            <Icon name={isDirty ? 'unsaved' : 'saved'} size={ICON.sm} />
-            {isDirty ? 'Unsaved' : 'Saved'}
-          </span>
-
-          {/* B4: Undo/Redo */}
-          <button onClick={undo} style={{ ...hdrBtn, padding: '5px 8px' }} title="Undo (Ctrl+Z)">
-            <Icon name="undo" title="Undo" />
-          </button>
-          <button onClick={redo} style={{ ...hdrBtn, padding: '5px 8px' }} title="Redo (Ctrl+Y)">
-            <Icon name="redo" title="Redo" />
-          </button>
-
-          <div style={{ width: 1, height: 20, background: BORDER.default }} />
-
-          {/* File actions (New / Open / Save) live in the native File menu and the
-              Ctrl+N/O/S shortcuts — no header buttons. */}
-          <button
-            onClick={() => setShowEtabsImport(true)}
-            style={{ ...hdrBtn, borderColor: ACCENT.primary, color: ACCENT.primary }}
-            title="Import beams from an ETABS model (CSI API or tables file)"
-          >
-            <Icon name="etabsImport" />
-            ETABS
-          </button>
-
-          {/* E1: Export dropdown */}
-          <div data-popover="" style={{ position: 'relative' }}>
-            <button
-              onClick={() => { setShowExport(v => !v); setMembersOpen(false); }}
-              style={{ ...hdrBtn, background: showExport ? ACCENT.softBg : 'white', color: showExport ? ACCENT.primary : INK.base }}
-            >
-              <Icon name="export" />
-              Export
-            </button>
-            {showExport && (
-              <div style={{
-                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
-                background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 10,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.1)', padding: '6px', minWidth: 160,
-              }}>
-                <button
-                  onClick={() => { setShowReport(true); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  PDF Report…
-                </button>
-                <button
-                  onClick={() => { exportExcel(project); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Excel Summary
-                </button>
-                <button
-                  onClick={() => { exportDcrList(project); setShowExport(false); }}
-                  title="One row per member: governing DCR + per-mode DCRs (flexure / shear / torsion / crack / P-M) and status"
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(Spreadsheet)</span>
-                </button>
-                <button
-                  onClick={async () => {
-                    setShowExport(false);
-                    const bytes = await buildDcrListPDF(project);
-                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${(project.name ?? 'dcr').replace(/\s+/g, '_')}_DCR_schedule.pdf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  title="A few-page PDF: one row per member with per-mode + governing DCR and status (reviewed members show 'Reviewed', not NG)"
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Member DCR List <span style={{ fontSize: 10, color: INK.muted }}>(PDF)</span>
-                </button>
-                <button
-                  onClick={async () => {
-                    setShowExport(false);
-                    const bytes = await buildSchedulePDF(project, { mode: 'group' });
-                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_group_schedule.pdf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Group Schedule PDF
-                </button>
-                <button
-                  onClick={() => { exportGroupScheduleExcel(project); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Group Schedule (Spreadsheet)
-                </button>
-                <button
-                  onClick={async () => {
-                    setShowExport(false);
-                    const bytes = await buildSchedulePDF(project, { mode: 'beam' });
-                    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_beam_schedule.pdf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Beam Schedule PDF <span style={{ fontSize: 10, color: INK.muted }}>(full)</span>
-                </button>
-                <button
-                  onClick={() => { window.print(); setShowExport(false); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: INK.base, borderRadius: 6, fontWeight: 600 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  Print Preview
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Project settings — the standards set in the setup dialog */}
-          <button
-            onClick={() => { setSettingsMode('settings'); setShowExport(false); setMembersOpen(false); }}
-            style={{ ...hdrBtn, background: settingsMode ? ACCENT.softBg : 'white', color: settingsMode ? ACCENT.primary : INK.base }}
-            title="Project settings — code, units, materials, cover, moduli, display scale"
-          >
-            <Icon name="settings" title="Project settings" />
-          </button>
-
-          {/* Project info */}
-          <div style={{ fontSize: 11, color: INK.secondary }}>{project.name}</div>
-        </header>
-
-        {/* Content */}
-        <main id="app-main" style={{ flex: 1, overflowY: tab === 'map' ? 'hidden' : 'auto', overflowX: 'hidden' }}>
-          <div style={{
-            transform: `scale(${zoom})`,
-            transformOrigin: 'top left',
-            width: `${100 / zoom}%`,
-            minHeight: `${100 / zoom}%`,
-            // map tab needs a definite height so the canvas can fill it
-            height: tab === 'map' ? `${100 / zoom}%` : undefined,
-            padding: tab === 'map' ? 0 : 16,
-          }}>
-            {tab === 'dashboard' && (
-              <Dashboard
-                project={project}
-                onSelectMember={handleSelectMember}
-                onProjectUpdate={setProject}
-                collapsedGroups={collapsedGroups}
-                setCollapsedGroups={setCollapsedGroups}
-              />
-            )}
-            {tab === 'map' && (
-              <div style={{ height: '100%', display: 'flex' }}>
-                <ErrorBoundary area="the model map">
-                  <ModelMapView
-                    project={project}
-                    onProjectChange={setProject}
-                    onOpenEtabsImport={() => setShowEtabsImport(true)}
-                    onPickMember={id => { setActiveMemberId(id); setTab('member'); }}
-                    onDeleteMember={id => deleteMember(id)}
-                    onDeleteMembers={ids => deleteMembers(ids)}
-                  />
-                </ErrorBoundary>
-              </div>
-            )}
-            {tab === 'member' && (
-              <div id="app-split" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
-                {/* Left: Input editor */}
-                <div style={{ width: splitPos, flexShrink: 0, minWidth: 0, paddingRight: 8 }}>
-                  <div style={{ marginBottom: 10 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: INK.strong }}>Input</h2>
-                    <p style={{ fontSize: 11, color: INK.secondary, margin: '2px 0 0' }}>Edit geometry, materials, reinforcement, loads</p>
-                  </div>
-                  <MemberEditor
-                    key={activeMember.id}
-                    member={activeMember}
-                    onUpdate={handleUpdateMember}
-                    code={project.code}
-                  />
-                </div>
-
-                {/* A1: Drag divider */}
-                <div
-                  onMouseDown={onSplitMouseDown}
-                  style={{
-                    width: 8, flexShrink: 0, cursor: 'col-resize',
-                    background: 'transparent', position: 'relative',
-                    alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >
-                  <div style={{ width: 3, borderRadius: 2, height: '40px', background: BORDER.strong }} />
-                </div>
-
-                {/* Right: Results */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ marginBottom: 10 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: INK.strong }}>{activeMember.label}</h2>
-                    <p style={{ fontSize: 11, color: INK.secondary, margin: '2px 0 0' }}>
-                      {activeMember.section.type.replace(/_/g, ' ')} &bull; {sectionLabel(activeMember)} &bull;
-                      f'c = {fmt(activeMember.material.fc, 'stress')} &bull; fy = {fmt(activeMember.material.fy / 1000, 'stressKsi')}
-                    </p>
-                  </div>
-                  <ErrorBoundary key={activeMember.id} area="the results view">
-                    <MemberResults
-                      member={activeMember}
-                      code={project.code}
-                      slsCombo={project.slsCombo}
-                      cotTheta={project.cotTheta}
-                      ignoreTorsion={project.ignoreTorsion}
-                      engineer={project.engineer}
-                      sconcreteResults={project.sconcreteResults}
-                      sconcreteRanAt={project.sconcreteRanAt}
-                      onRebarChange={handleUpdateMember}
-                      midThirdTopBars={activeGroup?.midThirdTopBars}
-                      oppositeTopBars={activeGroup?.oppositeTopBars}
-                      endThirdBotBars={activeGroup?.endThirdBotBars}
-                    />
-                  </ErrorBoundary>
-                </div>
-              </div>
-            )}
-            {tab === 'help' && <HelpView target={helpTarget} />}
-          </div>
-        </main>
-      </div>
     </div>
   );
 }

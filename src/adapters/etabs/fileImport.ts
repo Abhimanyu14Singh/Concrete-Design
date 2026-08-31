@@ -20,10 +20,14 @@ import { matchesFilter } from './connection';
 
 type Row = Record<string, unknown>;
 
+/** Normalise a header or sheet name for matching: lowercase, alphanumerics only. ETABS
+ *  exports vary in spacing, punctuation and case between versions, so nothing is matched
+ *  literally — "X1 (ft)", "x1", and "X-1" all normalise to the same key. */
 function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+/** Re-key every row by its normalised header, so lookups can use the canonical names. */
 function rekey(rows: Row[]): Row[] {
   return rows.map(r => {
     const o: Row = {};
@@ -59,9 +63,18 @@ function findNamedSheet(wb: XLSX.WorkBook, substr: string, required: string[]): 
   return null;
 }
 
+/** Cell → number, treating blank/missing as 0. */
 const num = (v: unknown): number => (v == null || v === '' ? 0 : Number(v));
+/** Cell → string, treating blank/missing as "". */
 const str = (v: unknown): string => (v == null ? '' : String(v));
 
+/**
+ * Read-only EtabsConnection backed by an exported tables workbook.
+ *
+ * The whole workbook is parsed once in `connect()` and held in memory; every later
+ * getter just filters those arrays. This is the transport that works everywhere —
+ * browser included — and it implements none of the optional write half.
+ */
 export class FileConnection implements EtabsConnection {
   readonly kind = 'file' as const;
 
@@ -78,6 +91,8 @@ export class FileConnection implements EtabsConnection {
     this.modelName = fileName;
   }
 
+  /** Parse the workbook. Only the Beams sheet is mandatory — a model with no Sections,
+   *  Materials or Forces sheet still imports, with defaults filled in downstream. */
   async connect(): Promise<EtabsConnectInfo> {
     const wb = XLSX.read(this.data, { type: 'array' });
 
@@ -135,11 +150,17 @@ export class FileConnection implements EtabsConnection {
       const V = num(r.v ?? r.v2);
       const M = num(r.m ?? r.m3);
       const x = num(r.station);
+      // Axial, when the sheet carries it. NEGATED for the same reason the live table
+      // connection negates: a sheet exported from ETABS reports axial
+      // compression-NEGATIVE, and `LoadCase.Pu` is compression-POSITIVE. A sheet
+      // WITHOUT the column yields 0, which is what this path did for every row before
+      // — so a file import silently designed every member as axially unloaded.
+      const P = -num(r.p ?? r.axial) || 0;   // `|| 0` so a missing column is 0, not −0
       let byCombo = this.forces.get(frame);
       if (!byCombo) this.forces.set(frame, (byCombo = new Map()));
       let cf = byCombo.get(combo);
       if (!cf) byCombo.set(combo, (cf = { combo, stations: [] }));
-      cf.stations.push({ x, V, M });
+      cf.stations.push({ x, V, M, P });
     }
     for (const byCombo of this.forces.values())
       for (const cf of byCombo.values()) cf.stations.sort((a, b) => a.x - b.x);

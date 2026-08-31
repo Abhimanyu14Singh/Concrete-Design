@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Member, DesignResults, RebarLayout, DesignCode, OverrideKey, MemberOverride, SconcreteResult, BarGroup } from '../../types';
 import { memberScoSummary, scoAgreesWithApp } from '../../utils/sconcreteMemberResult';
+import type { StatusTone } from '../../utils/sco/resultStatus';
 import { DEFAULT_CRACK_PARAMS } from '../../types';
 import {
   OVERRIDE_KEY_LABEL, failingKeys, isOverridden, effectiveStatus,
@@ -14,7 +15,7 @@ import { capacityLabels } from '../../utils/units';
 import { formatBarLabel } from '../../utils/rebar';
 import { useUnits } from '../../contexts/UnitsContext';
 import SectionView from '../Detailing/SectionView';
-import ElevationView from '../Detailing/ElevationView';
+import ElevationView, { type ElevationRegion } from '../Detailing/ElevationView';
 import ForceDiagram from '../Detailing/ForceDiagram';
 import CalcBreakdownModal from './CalcBreakdownModal';
 import CodeBadge from '../common/CodeBadge';
@@ -24,6 +25,7 @@ import { ACCENT, BORDER, DCR, ICON, INK, LABEL_STYLE, MEMBER_COLOR, MONO_NUM, ST
 import { Icon } from '../common/Icon';
 import type { IconName } from '../common/Icon';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
+import { track } from '../../utils/usage';
 
 interface Props {
   member: Member;
@@ -106,6 +108,14 @@ function dcrStyle(dcr: number): React.CSSProperties {
 const fmtUtil = (v: number | null): string => (v == null ? '—' : v.toFixed(2));
 const utilColor = (v: number | null): string => (v == null ? INK.muted : themeDcrColor(v));
 
+/** Colour + glyph per S-Concrete status tone for the verification card. */
+const SCO_TONE: Record<StatusTone, { fg: string; bg: string; mark: string }> = {
+  ok: { fg: STATUS.ok, bg: STATUS.okBg, mark: '✓' },
+  warn: { fg: STATUS.warn, bg: STATUS.warnBg, mark: '⚠' },
+  ng: { fg: STATUS.fail, bg: STATUS.failBg, mark: '✗' },
+  none: { fg: INK.muted, bg: SURFACE.subtle, mark: '·' },
+};
+
 export default function MemberResults({ member, code = 'ACI318-19', slsCombo, cotTheta, ignoreTorsion, engineer, sconcreteResults, sconcreteRanAt, onRebarChange, midThirdTopBars, oppositeTopBars, endThirdBotBars }: Props) {
   const [activeLoad, setActiveLoad] = useState(''); // '' = auto (governing-overall case)
   const [showCalc, setShowCalc] = useState(false);
@@ -136,6 +146,33 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   const load = member.loads.find(l => l.id === (activeLoad || govOverallId)) ?? member.loads[0];
   const result: DesignResults = allRowResults.find(a => a.id === load.id)?.r
     ?? runDesign(member.section, member.material, member.rebar, load, member.span, code, crackP, cotTheta, ignoreTorsion);
+
+  /**
+   * Per-L/3 cages for the elevation drawing — the same three regions the group card's
+   * L/3 pop-out and the workspace Elevation panel draw (see `regionsFor` in
+   * workspace/design.js, which this mirrors).
+   *
+   * Only built when the member's group actually carries an explicit region cage. Without
+   * one there is nothing per-third to show that the single-cage drawing doesn't already
+   * say, and claiming the taller per-third layout for every beam would restyle the panel
+   * for members that have no curtailment set.
+   *
+   * Top governs at the supports and is curtailed through mid-span; bottom governs at
+   * mid-span and is curtailed toward the supports — hence `endBot` on BOTH end regions
+   * and the full `botBars` in the middle.
+   */
+  const elevRegions = useMemo(() => {
+    if (!midThirdTopBars?.length && !oppositeTopBars?.length && !endThirdBotBars?.length) return undefined;
+    const { topBars, botBars } = member.rebar;
+    const endBot = endThirdBotBars?.length ? endThirdBotBars : botBars;
+    const midTop = midThirdTopBars?.length ? midThirdTopBars : topBars;
+    const oppTop = oppositeTopBars?.length ? oppositeTopBars : topBars;
+    return [
+      { title: 'Mark End', top: topBars, bot: endBot },
+      { title: 'Middle ⅓', top: midTop,  bot: botBars },
+      { title: 'Opp. End', top: oppTop,  bot: endBot },
+    ] as [ElevationRegion, ElevationRegion, ElevationRegion];
+  }, [member.rebar, midThirdTopBars, oppositeTopBars, endThirdBotBars]);
 
   // Governing display result: load-independent capacities (φMn, φVn, φTn, Vc, Vs,
   // Tcr, As_min/max) are kept from the active case; DCRs, required steel, crack
@@ -185,9 +222,13 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
         Shear: govResult.DCR_shear,
         // Torsion checks are suppressed entirely when the project neglects torsion.
         ...(ignoreTorsion ? {} : { Torsion: govResult.DCR_torsion }),
-        // EC2 combined shear+torsion link check (S-CONCRETE "V&T Util") — only
-        // meaningful, and only shown, when torsion is applied (and not neglected).
-        ...(code === 'EN1992-1-1' && anyTorsion && !ignoreTorsion ? { 'Shear + Torsion Links': govResult.VT_util ?? 0 } : {}),
+        // Combined shear+torsion link check (S-CONCRETE "V&T Util") — only meaningful,
+        // and only shown, when torsion is applied (and not neglected). BOTH codes: EC2
+        // has carried it from the start, ACI gained it once the reference examples showed
+        // S-Concrete headlines the same number under §22.7.6.1. Gating it on EC2 left
+        // the ACI value driving rowMax and every dashboard while being invisible on the
+        // one screen that explains it.
+        ...(anyTorsion && !ignoreTorsion ? { 'Shear + Torsion Links': govResult.VT_util ?? 0 } : {}),
         ...(code === 'EN1992-1-1' ? { 'Crack Width §7.3.4': crackDcr } : {}),
       };
   const maxSecDcr = Math.max(...Object.values(secDcr), 0);
@@ -287,11 +328,34 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
   const shownWarnings = visibleWarnings(govResult.warnings, overrides);
   const reviewable = failingKeys(govResult);
 
+  /**
+   * Marking a failing member "Reviewed" is the app being overruled, and it is the most
+   * informative thing a user can do: a check that is overridden again and again is one
+   * the engine is being too conservative about, or is explaining badly enough that
+   * engineers do not believe it. WHICH checks were failing and how far past 1.0 they
+   * were is the whole signal — the engineer's note is free text they wrote about a real
+   * job, and it stays on their machine.
+   */
   function applyOverride(ov: MemberOverride) {
+    // The worst of the checks actually being waived. How far past 1.0 it was separates
+    // "0.02 over, engineering judgement" from "the engine and the engineer disagree".
+    const worst = reviewable.reduce((max, k) => {
+      const v = (govResult as unknown as Record<string, unknown>)[k];
+      return typeof v === 'number' && v > max ? v : max;
+    }, 0);
+    track('override.apply', {
+      keys: reviewable,
+      code,
+      status: govResult.status,
+      worstDcr: Math.round(worst * 100) / 100,
+      hasNote: !!ov.note,
+      warnings: govResult.warnings.length,
+    });
     onRebarChange?.({ ...member, overrides: { all: ov } });
     setShowReviewForm(false);
   }
   function clearOverride(key: OverrideKey) {
+    track('override.clear', { key, code });
     const next = { ...(member.overrides ?? {}) };
     delete next[key];
     onRebarChange?.({ ...member, overrides: Object.keys(next).length ? next : undefined });
@@ -372,13 +436,16 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
           alongside the app's own governing DCR (closes the design ↔ verify loop). */}
       {(scoSummary || scoEligible) && (
         <div style={{ marginBottom: 10, border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 12px',
-          background: scoSummary ? (scoSummary.status === 'OK' ? STATUS.okBg : STATUS.failBg) : SURFACE.subtle }}>
+          background: scoSummary ? SCO_TONE[scoSummary.tone].bg : SURFACE.subtle }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={LABEL_STYLE}>S-Concrete verification</span>
             {scoSummary ? (
               <>
-                <span style={{ fontSize: 11, fontWeight: 700, color: scoSummary.status === 'OK' ? STATUS.ok : STATUS.fail }}>
-                  {scoSummary.status === 'OK' ? '✓ OK' : '✗ Overstressed'}
+                {/* S-Concrete's OWN wording — its EN reports say "Acceptable" for a
+                    pass and "Warning" for a pass that still raised code messages, so
+                    only a real overstress reads red here. */}
+                <span style={{ fontSize: 11, fontWeight: 700, color: SCO_TONE[scoSummary.tone].fg }}>
+                  {SCO_TONE[scoSummary.tone].mark} {scoSummary.statusText}
                 </span>
                 {scoSummary.groupLabel && <span style={{ fontSize: 10, color: INK.secondary }}>group “{scoSummary.groupLabel}”</span>}
                 {sconcreteRanAt && <span style={{ marginLeft: 'auto', fontSize: 10, color: INK.muted }}>ran {new Date(sconcreteRanAt).toLocaleString()}</span>}
@@ -475,7 +542,9 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
                 ))}
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <ElevationView member={member} width={520} height={member.rebar.tieZones ? 200 : 170} zoom={elevZoom} />
+                <ElevationView member={member} width={520}
+                  height={elevRegions ? 260 : member.rebar.tieZones ? 200 : 170}
+                  zoom={elevZoom} regions={elevRegions} />
               </div>
             </div>
           )}
@@ -509,10 +578,26 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
             tip="Minimum bottom steel area to carry Mu+. The engine uses this to flag under-reinforced sections." />
           <KV k="As req−" v={fmt(govResult.As_req_neg, 'area')}
             tip="Minimum top steel area to carry Mu−." />
-          <KV k="As min" v={fmt(result.As_min, 'area')}
-            tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 minimum: max(0.26·fctm/fyk, 0.0013)·bt·d' : 'ACI §9.6.1 minimum: max(3√f\'c/fy, 200/fy)·bw·d'} />
-          <KV k="As max" v={fmt(result.As_max, 'area')}
-            tip={code === 'EN1992-1-1' ? 'EC2 §9.2.1.1 maximum: 0.04·Ac' : 'ACI §9.3.3.1 maximum: 0.04·Ag'} />
+          {/* PER FACE. The engine judges each face against its own limit, built on that
+              face's own depth, so showing one number left the other warning quoting a
+              figure that appeared nowhere on screen. EC2's limits are section-wide, so
+              the pair collapses to one row there. */}
+          <KV k={code === 'EN1992-1-1' ? 'As min' : 'As min bot'} v={fmt(result.As_min, 'area')}
+            tip={code === 'EN1992-1-1'
+              ? 'EC2 §9.2.1.1 minimum: max(0.26·fctm/fyk, 0.0013)·bt·d'
+              : 'ACI §9.6.1.2 minimum for the BOTTOM face, on the bottom-steel centroid d. Reduced where §9.6.1.3 applies — As provided at least one third greater than As required by analysis.'} />
+          {code !== 'EN1992-1-1' && result.As_min_top !== undefined && (
+            <KV k="As min top" v={fmt(result.As_min_top, 'area')}
+              tip="ACI §9.6.1.2 minimum for the TOP face, on the top-steel centroid. Differs from the bottom whenever the two faces sit at different depths." />
+          )}
+          <KV k={code === 'EN1992-1-1' ? 'As max' : 'As max bot'} v={fmt(result.As_max, 'area')}
+            tip={code === 'EN1992-1-1'
+              ? 'EC2 §9.2.1.1 maximum: 0.04·Ac'
+              : 'ACI §9.3.3.1 maximum for the BOTTOM face — the steel at which εt reaches εty + 0.003, the tension-controlled boundary. Not applied while Pu ≥ 0.10·f′c·Ag, where the member is a compression member.'} />
+          {code !== 'EN1992-1-1' && result.As_max_top !== undefined && (
+            <KV k="As max top" v={fmt(result.As_max_top, 'area')}
+              tip="ACI §9.3.3.1 maximum for the TOP face, on the top-steel centroid. This is the number a Top-steel over-reinforced warning quotes." />
+          )}
           <KV k="ρ bot" v={`${flexSteelRatioPct(member, 'bot').toFixed(3)}%`}
             tip="Bottom steel ratio ρ = As,bot / (bw · d). Effective depth d measured to centroid of tension steel." />
           <KV k="ρ top" v={`${flexSteelRatioPct(member, 'top').toFixed(3)}%`}
@@ -596,11 +681,15 @@ export default function MemberResults({ member, code = 'ACI318-19', slsCombo, co
           </CheckSection>
           )}
 
-          {code === 'EN1992-1-1' && anyTorsion && !ignoreTorsion && (govResult.VT_util ?? 0) > 0 && (
+          {anyTorsion && !ignoreTorsion && (govResult.VT_util ?? 0) > 0 && (
             <CheckSection title="Shear + Torsion Links" icon="shear" dcr={govResult.VT_util} onJumpToGoverning={jumpToGov} defaultOpen={isGov('Shear + Torsion Links')}>
               <KV k="  DCR" v={(govResult.VT_util ?? 0).toFixed(3)} dcr={govResult.VT_util}
-                tip="Combined shear + torsion transverse-steel utilisation (§6.3.1/§6.3.2). The outer stirrup legs carry the shear demand AND the torsion demand, which add — this is what S-CONCRETE reports as “V & T Util”. Governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening link spacing, adding legs, or using a steeper strut angle cot θ."
-                formula="V&T util = V_Ed/(n·z·f_ywd·cotθ)/(A_sw,leg/s) + T_Ed/(2·A_k·f_ywd·cotθ)/(A_sw,leg/s)" />
+                tip={code === 'EN1992-1-1'
+                  ? 'Combined shear + torsion transverse-steel utilisation (§6.3.1/§6.3.2). The outer stirrup legs carry the shear demand AND the torsion demand, which add — this is what S-CONCRETE reports as “V & T Util”. Governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening link spacing, adding legs, or using a steeper strut angle cot θ.'
+                  : 'Combined shear + torsion transverse-steel utilisation (ACI §22.7.6.1). The same stirrup legs carry the shear demand AND the torsion demand, so the required areas add: (A_v + 2A_t)/s. This is what S-CONCRETE reports as “V & T Util”, and it governs the links even when Shear and Torsion each read < 1.0. Reduce by tightening the spacing or adding legs. Not shown below φ·T_th, where §22.7.1.1 permits torsion to be neglected.'}
+                formula={code === 'EN1992-1-1'
+                  ? 'V&T util = V_Ed/(n·z·f_ywd·cotθ)/(A_sw,leg/s) + T_Ed/(2·A_k·f_ywd·cotθ)/(A_sw,leg/s)'
+                  : 'V&T util = Vu/φVn + Tu/φTn  (the (A_v + 2A_t)/s demand over what the links provide)'} />
             </CheckSection>
           )}
 

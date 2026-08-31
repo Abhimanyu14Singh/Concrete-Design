@@ -12,6 +12,14 @@ import {
 } from './scheduleData';
 import { analyzeGroupCurtailment } from '../curtailment';
 
+/**
+ * Build the group-schedule workbook. Pure (no file I/O) so it can be unit-tested.
+ *
+ * Region cages are resolved exactly as the schedule PDF resolves them — group cage over
+ * member cage, explicit region overrides where set, and the curtailment analysis as the
+ * bottom-steel fallback. The two exports have to agree cell-for-cell; if you change the
+ * rule here, change `buildGroupRows` in schedulePdfExport.ts with it.
+ */
 export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
   const isEC2 = project.code === 'EN1992-1-1';
   const memberById = new Map(project.members.map(m => [m.id, m]));
@@ -75,6 +83,7 @@ export function buildGroupScheduleWorkbook(project: Project): XLSX.WorkBook {
   return wb;
 }
 
+/** Build and download the group schedule as .xlsx. */
 export function exportGroupScheduleExcel(project: Project): void {
   const wb = buildGroupScheduleWorkbook(project);
   XLSX.writeFile(wb, `${(project.name ?? 'schedule').replace(/\s+/g, '_')}_group_schedule.xlsx`);

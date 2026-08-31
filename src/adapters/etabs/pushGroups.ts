@@ -5,6 +5,8 @@
  */
 import type { PushGroupResult } from './connection';
 
+/** The slice of a design group this module needs — structural, so a plain object works
+ *  in tests without constructing a full DesignGroup. */
 export interface PushableGroup {
   label: string;
   memberIds: string[];

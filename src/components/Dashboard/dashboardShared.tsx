@@ -47,7 +47,17 @@ export function modeDCRs(r: DesignResults, code: DesignCode) {
   return {
     flexPos: r.DCR_flex_pos,
     flexNeg: r.DCR_flex_neg,
-    shear: r.DCR_shear,
+    // Fold the combined shear+torsion link utilisation into the shear bucket, exactly
+    // as summarize() does. The two were inconsistent: the Dashboard tab folded it and
+    // the Group Dashboard did not, so the same beam could read a different V in the two
+    // places — and a VT-governed beam had no column accounting for its DCR at all.
+    shear: Math.max(r.DCR_shear, r.VT_util ?? 0),
+    // Torsion is its OWN mode and needs its own column. It is counted in worstOf() —
+    // which is what the DCR column reports — so leaving it out of this list made a
+    // torsion-governed beam unreadable: M⁺/M⁻/V all ≤ 0.6 beside a DCR of 1.59, with
+    // nothing on the row to explain the number. That is 43 of the 174 beams in the
+    // demo model, so it is the common case, not an edge one.
+    torsion: r.DCR_torsion,
     // Crack DCR straight from the engine (wk / actual w_limit per face).
     wk: code === 'EN1992-1-1' ? (r.DCR_crack ?? 0) : undefined,
   };
@@ -57,11 +67,22 @@ interface DCRChipProps {
   label: string;
   value: number | undefined;
   isWk?: boolean;
+  /**
+   * Draw the mode name above the value.
+   *
+   * On by default, because most places a chip appears it is loose — a row of them on a
+   * group card, a summary line — and the value alone would not say which mode it is.
+   * A chip in a TABLE has already been named by its column heading, and repeating that
+   * on every row costs a line of height per beam to restate the header. Pass false
+   * there; the label survives as the value's tooltip, which is what the heading cannot
+   * do once it has scrolled away.
+   */
+  showLabel?: boolean;
 }
 
 // Chips use the shared dcrColor thresholds (amber above NEAR_CAPACITY = 0.9),
 // so a member reads the same colour here as on the map and in the results.
-export function DCRChip({ label, value, isWk }: DCRChipProps) {
+export function DCRChip({ label, value, isWk, showLabel = true }: DCRChipProps) {
   let display: string;
   let bg: string;
   if (value === undefined) {
@@ -75,12 +96,18 @@ export function DCRChip({ label, value, isWk }: DCRChipProps) {
     bg = dcrColor(value);
   }
   return (
-    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-      <span style={{ fontSize: 10, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>
-      <span style={{
-        padding: '2px 5px', borderRadius: 3, fontSize: 11, fontWeight: 700,
-        background: bg, color: 'white', ...MONO_NUM, lineHeight: 1.3,
-      }}>{display}</span>
+    // Unlabelled, the pill aligns LEFT rather than centring: it is then a column of
+    // numbers under a heading, and the heading (and the DCR column beside it) start at
+    // the cell's left edge. Centred, every value sat a few px off its own column title.
+    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: showLabel ? 'center' : 'flex-start', gap: 1 }}>
+      {showLabel && <span style={{ fontSize: 10, color: INK.muted, fontWeight: 600, lineHeight: 1 }}>{label}</span>}
+      <span
+        title={showLabel ? undefined : label}
+        style={{
+          padding: '2px 5px', borderRadius: 3, fontSize: 11, fontWeight: 700,
+          background: bg, color: 'white', ...MONO_NUM, lineHeight: 1.3,
+        }}
+      >{display}</span>
     </span>
   );
 }

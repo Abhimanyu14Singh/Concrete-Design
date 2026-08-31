@@ -6,6 +6,7 @@
 //
 //   {"id":1,"method":"connect","params":{"dll":"optional path"}}
 //   {"id":2,"method":"getTable","params":{"key":"Beam Object Connectivity"}}
+//   {"id":3,"method":"listTables"}   -> every table key THIS build offers
 //   {"id":3,"method":"disconnect"}   {"id":4,"method":"ping"}
 //
 // Responses: {"id":n,"result":...} or {"id":n,"error":"message"}.
@@ -20,14 +21,33 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+// WHY EVERYTHING HERE IS REFLECTION: linking ETABSv1.dll at compile time would pin the
+// app to one ETABS version and make the whole build fail on any machine without ETABS
+// installed. Loading it at runtime by path means one binary works against whatever
+// version the engineer has (v20+), and a machine with no ETABS still runs the app —
+// `connect` simply returns a clear error.
+//
+// The cost is that every OAPI call is a MethodInfo lookup. Two consequences shape the
+// code below: members must be invoked through the c* INTERFACE types (CSI implements
+// them explicitly, so they are not public on the concrete classes), and CSI renames and
+// re-signatures methods between versions — hence `OapiMethod`, which accepts several
+// candidate names, and `FillDefaults`, which pads trailing optional parameters.
+//
+// The process is a long-lived, SINGLE-THREADED request loop: one JSON line in, one JSON
+// line out, state held in the statics below between calls. Errors are returned as
+// `{"id":n,"error":...}`, never thrown out of the loop — a crash here would take the
+// connection down mid-import.
 internal static class Program
 {
+    // The live connection, held between requests. All null until `connect` succeeds.
     private static object? _dbTables;
     private static MethodInfo? _getTableMethod;
     private static object? _sapModel;
     private static Type? _iSapInterface;
     private static Type? _iDbTablesInterface;
 
+    /// Request loop: read a JSON line, dispatch on `method`, write exactly one JSON line
+    /// back. Runs until stdin closes, which is how the Electron main process shuts it down.
     private static int Main()
     {
         string? line;
@@ -51,11 +71,24 @@ internal static class Program
                                         p?["key"]?.GetValue<string>()
                                             ?? throw new ArgumentException("getTable requires params.key"),
                                         p?["group"]?.GetValue<string>() ?? ""),
+                    "listTables" => ListTables(),
                     "selectCombos" => SelectCombos(p?["combos"]?.AsArray()),
                     "setGroupAssign" => SetGroupAssign(
                                         p?["groupName"]?.GetValue<string>()
                                             ?? throw new ArgumentException("setGroupAssign requires params.groupName"),
                                         p?["frameNames"]?.AsArray()),
+                    // ── section write-back ───────────────────────────────────
+                    // Dimensions arrive in the model's PRESENT units; the app
+                    // converts, because SetPresentUnits would unlock the model
+                    // (see the note above SelectCombos) and the caller may not
+                    // want that yet.
+                    "defineFrameSections" => DefineFrameSections(p?["sections"]?.AsArray()),
+                    "assignSections"      => AssignSections(p?["assignments"]?.AsArray()),
+                    "setRebarBeam"        => SetRebarBeam(p?["beams"]?.AsArray()),
+                    "saveModelAs"         => SaveModelAs(
+                                        p?["path"]?.GetValue<string>()
+                                            ?? throw new ArgumentException("saveModelAs requires params.path")),
+                    "runAnalysis"         => RunAnalysis(),
                     "disconnect" => Disconnect(),
                     _ => throw new ArgumentException($"Unknown method: {method}"),
                 };
@@ -70,6 +103,8 @@ internal static class Program
         return 0;
     }
 
+    /// Write one response line to stdout and flush. The protocol is line-delimited, so
+    /// the JSON must never be indented and nothing else may be written to stdout.
     private static void Reply(JsonObject obj)
     {
         Console.WriteLine(obj.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
@@ -78,6 +113,9 @@ internal static class Program
 
     // ── connect ───────────────────────────────────────────────────────────
 
+    /// Locate ETABSv1.dll, in falling order of explicitness: caller override → the
+    /// ETABS_DLL environment variable → newest "ETABS *" under the standard install root.
+    /// Throws with an actionable message when nothing is found; the app shows it verbatim.
     private static string FindDll(string? overridePath)
     {
         if (!string.IsNullOrEmpty(overridePath))
@@ -105,6 +143,10 @@ internal static class Program
             "to the full DLL path if ETABS is installed elsewhere.");
     }
 
+    /// Attach to the RUNNING ETABS instance and cache the interface handles the other
+    /// methods use. Attaches to an existing process rather than starting one: the whole
+    /// workflow is "the engineer has their model open", and launching a second instance
+    /// would attach to an empty model.
     private static JsonNode Connect(string? dllOverride)
     {
         var dll = FindDll(dllOverride);
@@ -271,6 +313,297 @@ internal static class Program
         };
     }
 
+    // ── section write-back ───────────────────────────────────────────────────
+    //
+    // The half of the round trip that changes the MODEL rather than labelling it:
+    // define a frame-section property per resized design group, put that group's
+    // frames on it, save the file under a new name and re-run. Same reflection
+    // discipline as everything above — the CSI API is reached through the c*
+    // interfaces so this compiles without an ETABS reference and tolerates the
+    // signature drift between versions.
+    //
+    // EVERY ONE OF THESE UNLOCKS THE MODEL, which discards existing analysis
+    // results. That is inherent to editing a section — ETABS will not let you
+    // change a definition on a locked model — and it is why runAnalysis exists as
+    // its own call rather than being assumed: the caller decides when the results
+    // are worth the wait.
+    //
+    // Not verified against a live ETABS from this checkout. The reflection follows
+    // the documented v1 signatures and the same shape as SetGroupAssign (which IS
+    // exercised), but the first real run is the test that matters — see the
+    // validation boundary in README.md.
+
+    /** Unlock the model so definitions can be written. Best effort: a model that is
+     *  already unlocked has nothing to do, and a build without the method should not
+     *  fail the whole push. */
+    private static void Unlock(Type iSap, object sap)
+    {
+        try { iSap.GetMethod("SetModelIsLocked", new[] { typeof(bool) })?.Invoke(sap, new object[] { false }); }
+        catch { /* best effort */ }
+    }
+
+    /** A cSapModel property object (PropFrame, PropMaterial, FrameObj, File, Analyze). */
+    private static object SapPart(string name)
+    {
+        if (_sapModel is not object sap || _iSapInterface is not Type iSap)
+            throw new InvalidOperationException("Not connected — call connect first.");
+        return iSap.GetProperty(name)?.GetValue(sap)
+            ?? throw new InvalidOperationException($"cSapModel.{name} not found");
+    }
+
+    /** Fill the tail of an OAPI argument list with its documented defaults: colour −1
+     *  (auto), notes/GUID empty, enums 0 (= the "Object"/default member), bools false. */
+    private static void FillDefaults(ParameterInfo[] pars, object?[] args, int from)
+    {
+        for (int k = from; k < pars.Length; k++)
+        {
+            var pt = pars[k].ParameterType; if (pt.IsByRef) pt = pt.GetElementType()!;
+            args[k] = pt == typeof(string) ? ""
+                    : pt == typeof(int) ? -1
+                    : pt == typeof(bool) ? (object)false
+                    : pt.IsEnum ? Enum.ToObject(pt, 0)
+                    : pt.IsValueType ? Activator.CreateInstance(pt)!
+                    : null!;
+        }
+    }
+
+    /**
+     * Make sure a concrete material called `name` exists, creating it at f'c when it
+     * does not. Returns the name that should be handed to SetRectangle.
+     *
+     * Best effort BY DESIGN: a model almost always already defines the grade its beams
+     * use, and the caller passes that name. Inventing a material is the fallback for a
+     * grade the model has never seen, and if the OAPI rejects our defaults it is better
+     * to define the section against an existing material than to abort the push — the
+     * geometry is the thing the engineer asked to change.
+     */
+    private static string EnsureConcreteMaterial(string name, double? fc)
+    {
+        var propMat = SapPart("PropMaterial");
+        // Already defined? GetMaterial returns 0 for a known name.
+        try
+        {
+            var get = OapiMethod(propMat, "GetMaterial");
+            var gp = get.GetParameters();
+            var gargs = new object?[gp.Length];
+            gargs[0] = name;
+            FillDefaults(gp, gargs, 1);
+            if (get.Invoke(propMat, gargs) is int grc && grc == 0) return name;
+        }
+        catch { /* fall through and try to define it */ }
+
+        try
+        {
+            var set = OapiMethod(propMat, "SetMaterial");
+            var sp = set.GetParameters();
+            var sargs = new object?[sp.Length];
+            sargs[0] = name;
+            // eMatType.Concrete == 2 in the v1 API.
+            if (sp.Length > 1)
+            {
+                var pt = sp[1].ParameterType; if (pt.IsByRef) pt = pt.GetElementType()!;
+                sargs[1] = pt.IsEnum ? Enum.ToObject(pt, 2) : (object)2;
+            }
+            FillDefaults(sp, sargs, 2);
+            set.Invoke(propMat, sargs);
+
+            if (fc is double f && f > 0)
+            {
+                // SetOConcrete_1(Name, Fc, IsLightweight, FcsFactor, SSType, SSHysType,
+                //                StrainAtFc, StrainUltimate, FinalSlope, Temp)
+                var oc = OapiMethod(propMat, "SetOConcrete_1", "SetOConcrete");
+                var op = oc.GetParameters();
+                var oargs = new object?[op.Length];
+                oargs[0] = name;
+                if (op.Length > 1) oargs[1] = f;
+                FillDefaults(op, oargs, 2);
+                // Sensible stress-strain defaults where the slots are doubles.
+                if (op.Length > 6 && op[6].ParameterType == typeof(double)) oargs[6] = 0.0022;
+                if (op.Length > 7 && op[7].ParameterType == typeof(double)) oargs[7] = 0.0052;
+                oc.Invoke(propMat, oargs);
+            }
+        }
+        catch { /* leave the name as-is; SetRectangle will report if it is unusable */ }
+        return name;
+    }
+
+    /**
+     * PropFrame.SetRectangle(Name, MatProp, T3, T2, …).
+     *
+     * T3 IS THE DEPTH AND T2 IS THE WIDTH. Transposing them is the single easiest way to
+     * push a model that looks plausible and is wrong in every beam, so the JSON names the
+     * two explicitly ("depth"/"width") rather than passing a positional pair.
+     */
+    private static JsonNode DefineFrameSections(JsonArray? sectionsNode)
+    {
+        if (_sapModel is not object sap || _iSapInterface is not Type iSap)
+            throw new InvalidOperationException("Not connected — call connect first.");
+        Unlock(iSap, sap);
+
+        var propFrame = SapPart("PropFrame");
+        var setRect = OapiMethod(propFrame, "SetRectangle");
+        var pars = setRect.GetParameters();
+
+        int defined = 0;
+        var failures = new JsonArray();
+        foreach (var node in sectionsNode ?? new JsonArray())
+        {
+            var s = node?.AsObject();
+            var name = s?["name"]?.GetValue<string>() ?? "";
+            if (name.Length == 0) continue;
+            try
+            {
+                var matProp = EnsureConcreteMaterial(
+                    s?["matProp"]?.GetValue<string>() ?? $"{name}-CONC",
+                    s?["fc"]?.GetValue<double>());
+                var args = new object?[pars.Length];
+                args[0] = name;
+                if (pars.Length > 1) args[1] = matProp;
+                if (pars.Length > 2) args[2] = s?["depth"]?.GetValue<double>() ?? 0;   // T3
+                if (pars.Length > 3) args[3] = s?["width"]?.GetValue<double>() ?? 0;   // T2
+                FillDefaults(pars, args, 4);
+                var ret = setRect.Invoke(propFrame, args);
+                if (ret is int rc && rc == 0) defined++;
+                else failures.Add((JsonNode)JsonValue.Create($"{name}: SetRectangle returned {ret}"));
+            }
+            catch (Exception ex)
+            {
+                var inner = (ex as TargetInvocationException)?.InnerException?.Message ?? ex.Message;
+                failures.Add((JsonNode)JsonValue.Create($"{name}: {inner}"));
+            }
+        }
+        return new JsonObject { ["defined"] = defined, ["failures"] = failures };
+    }
+
+    /** FrameObj.SetSection(Name, PropName, ItemType) — put frames on a property. */
+    private static JsonNode AssignSections(JsonArray? assignmentsNode)
+    {
+        if (_sapModel is not object sap || _iSapInterface is not Type iSap)
+            throw new InvalidOperationException("Not connected — call connect first.");
+        Unlock(iSap, sap);
+
+        var frameObj = SapPart("FrameObj");
+        var setSection = OapiMethod(frameObj, "SetSection");
+        var pars = setSection.GetParameters();
+
+        int assigned = 0, total = 0;
+        var failures = new JsonArray();
+        foreach (var node in assignmentsNode ?? new JsonArray())
+        {
+            var a = node?.AsObject();
+            var propName = a?["name"]?.GetValue<string>() ?? "";
+            foreach (var fnNode in a?["frameNames"]?.AsArray() ?? new JsonArray())
+            {
+                var fn = fnNode?.GetValue<string>() ?? "";
+                if (fn.Length == 0) continue;
+                total++;
+                try
+                {
+                    var args = new object?[pars.Length];
+                    args[0] = fn;
+                    if (pars.Length > 1) args[1] = propName;
+                    FillDefaults(pars, args, 2);
+                    var ret = setSection.Invoke(frameObj, args);
+                    if (ret is int rc && rc == 0) assigned++;
+                    else failures.Add((JsonNode)JsonValue.Create($"{fn} → {propName}: returned {ret}"));
+                }
+                catch (Exception ex)
+                {
+                    var inner = (ex as TargetInvocationException)?.InnerException?.Message ?? ex.Message;
+                    failures.Add((JsonNode)JsonValue.Create($"{fn} → {propName}: {inner}"));
+                }
+            }
+        }
+        return new JsonObject { ["assigned"] = assigned, ["total"] = total, ["failures"] = failures };
+    }
+
+    /**
+     * PropFrame.SetRebarBeam(Name, MatPropLong, MatPropConfine, CoverTop, CoverBot,
+     *                        TopLeftArea, TopRightArea, BotLeftArea, BotRightArea).
+     *
+     * Optional: it carries the designed cage into the model so ETABS' own beam design
+     * sees the steel this app chose, instead of re-sizing it. Areas are END areas — ETABS
+     * has no notion of the app's per-third curtailment, so the ENVELOPE goes in and the
+     * detail stays in the app's schedule.
+     */
+    private static JsonNode SetRebarBeam(JsonArray? beamsNode)
+    {
+        if (_sapModel is not object sap || _iSapInterface is not Type iSap)
+            throw new InvalidOperationException("Not connected — call connect first.");
+        Unlock(iSap, sap);
+
+        var propFrame = SapPart("PropFrame");
+        var setRebar = OapiMethod(propFrame, "SetRebarBeam");
+        var pars = setRebar.GetParameters();
+
+        int set = 0;
+        var failures = new JsonArray();
+        foreach (var node in beamsNode ?? new JsonArray())
+        {
+            var b = node?.AsObject();
+            var name = b?["name"]?.GetValue<string>() ?? "";
+            if (name.Length == 0) continue;
+            try
+            {
+                var args = new object?[pars.Length];
+                var d = new object?[]
+                {
+                    name,
+                    b?["matLong"]?.GetValue<string>() ?? "",
+                    b?["matConfine"]?.GetValue<string>() ?? "",
+                    b?["coverTop"]?.GetValue<double>() ?? 0,
+                    b?["coverBot"]?.GetValue<double>() ?? 0,
+                    b?["topLeftArea"]?.GetValue<double>() ?? 0,
+                    b?["topRightArea"]?.GetValue<double>() ?? 0,
+                    b?["botLeftArea"]?.GetValue<double>() ?? 0,
+                    b?["botRightArea"]?.GetValue<double>() ?? 0,
+                };
+                for (int k = 0; k < pars.Length; k++) args[k] = k < d.Length ? d[k] : null;
+                FillDefaults(pars, args, Math.Min(d.Length, pars.Length));
+                var ret = setRebar.Invoke(propFrame, args);
+                if (ret is int rc && rc == 0) set++;
+                else failures.Add((JsonNode)JsonValue.Create($"{name}: SetRebarBeam returned {ret}"));
+            }
+            catch (Exception ex)
+            {
+                var inner = (ex as TargetInvocationException)?.InnerException?.Message ?? ex.Message;
+                failures.Add((JsonNode)JsonValue.Create($"{name}: {inner}"));
+            }
+        }
+        return new JsonObject { ["set"] = set, ["failures"] = failures };
+    }
+
+    /** File.Save(path) — SaveAs when the path differs from the open model's. */
+    private static JsonNode SaveModelAs(string path)
+    {
+        var file = SapPart("File");
+        var save = OapiMethod(file, "Save");
+        var pars = save.GetParameters();
+        var args = new object?[pars.Length];
+        if (pars.Length > 0) args[0] = path;
+        FillDefaults(pars, args, 1);
+        var ret = save.Invoke(file, args);
+        if (ret is int rc && rc != 0)
+            throw new InvalidOperationException($"File.Save returned {rc} for {path}");
+        return new JsonObject { ["path"] = path };
+    }
+
+    /** Analyze.RunAnalysis() — the model must be saved first; ETABS refuses otherwise. */
+    private static JsonNode RunAnalysis()
+    {
+        var analyze = SapPart("Analyze");
+        var run = OapiMethod(analyze, "RunAnalysis");
+        var pars = run.GetParameters();
+        var args = new object?[pars.Length];
+        FillDefaults(pars, args, 0);
+        var ret = run.Invoke(analyze, args);
+        if (ret is int rc && rc != 0)
+            throw new InvalidOperationException($"Analyze.RunAnalysis returned {rc}");
+        return new JsonObject { ["ran"] = true };
+    }
+
+    /// Drop the cached handles. Does NOT close ETABS — the app attached to the
+    /// engineer's own session, so shutting it down would destroy their work.
     private static JsonNode Disconnect()
     {
         _dbTables = null;
@@ -370,8 +703,67 @@ internal static class Program
         return JsonValue.Create(-1);
     }
 
+    // ── listTables ───────────────────────────────────────────
+
+    /// Every display table THIS ETABS build offers, with the exact keys it wants.
+    ///
+    /// Exists because a wrong table key is indistinguishable from an empty model:
+    /// GetTableForDisplayArray returns a non-zero code and no rows, and the app used to
+    /// see only the absent rows. The area (wall/slab) layer is the case that prompted it
+    /// — columns and beams import fine from "Column/Beam Object Connectivity", so when
+    /// areas come back empty the question is whether "Area Object Connectivity" is what
+    /// this build calls that table. This answers it rather than guessing at spellings.
+    ///
+    /// `IsImportable` is reported as ETABS gives it; the app only reads, but it is the
+    /// cheapest way to tell a real table from a report-only one.
+    private static JsonNode ListTables()
+    {
+        var db = _dbTables ?? throw new InvalidOperationException("Not connected — call connect first.");
+        var iDb = _iDbTablesInterface ?? throw new InvalidOperationException("Not connected — call connect first.");
+
+        // int GetAvailableTables(ref int NumberTables, ref string[] TableKey,
+        //   ref string[] TableName, ref int[] ImportType)
+        var mi = iDb.GetMethod("GetAvailableTables")
+            ?? throw new InvalidOperationException("cDatabaseTables.GetAvailableTables not found");
+
+        var args = new object?[]
+        {
+            0,                     // NumberTables (out)
+            Array.Empty<string>(), // TableKey (out)
+            Array.Empty<string>(), // TableName (out)
+            Array.Empty<int>(),    // ImportType (out)
+        };
+        var ret = (int)(mi.Invoke(db, args) ?? -1);
+
+        var count = args[0] is int n ? n : 0;
+        var keys = args[1] as string[] ?? Array.Empty<string>();
+        var names = args[2] as string[] ?? Array.Empty<string>();
+        var types = args[3] as int[] ?? Array.Empty<int>();
+
+        var list = new JsonArray();
+        for (var i = 0; i < count && i < keys.Length; i++)
+        {
+            list.Add(new JsonObject
+            {
+                ["key"] = keys[i],
+                ["name"] = i < names.Length ? names[i] : "",
+                ["importType"] = i < types.Length ? types[i] : -1,
+            });
+        }
+        return new JsonObject { ["tables"] = list, ["count"] = count, ["ret"] = ret };
+    }
+
     // ── getTable ──────────────────────────────────────────────────────────
 
+    /// Read one ETABS display table as {fields, rows}, optionally scoped to a group.
+    ///
+    /// Columnar on purpose: a table of station forces runs to tens of thousands of rows,
+    /// and repeating the field names per row would multiply the JSON crossing the pipe.
+    /// The renderer widens it back out (see `ComConnection.fetchTable`).
+    ///
+    /// Values come back as STRINGS in the model's present display units — no conversion
+    /// happens here. `getUnits` reports what those units are and the app converts, so
+    /// that all unit handling lives in one testable place instead of in the sidecar.
     private static JsonNode GetTable(string key, string group)
     {
         var db = _dbTables ?? throw new InvalidOperationException("Not connected — call connect first.");

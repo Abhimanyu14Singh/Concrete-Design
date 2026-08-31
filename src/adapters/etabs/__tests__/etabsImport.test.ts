@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { MockConnection } from '../mock';
 import { envelopeLoadCase, stationLoadCases, zoneShearDemands, buildMembers, autoGroup } from '../index';
-import { seedRebar, pickBars, minSkinReinforcement } from '../rebarSeed';
+import { seedRebar, pickBars, minSkinReinforcement, aciSkinSpacingMax } from '../rebarSeed';
 import { zonedShearCheck, getBarArea, effectiveDepth } from '../../../utils/concreteDesign';
 import { zonedShearCheckEC2 } from '../../../engines/ec2/ec2Beam';
 import { runDesign } from '../../../engines';
@@ -192,8 +192,21 @@ describe('pickBars / seedRebar', () => {
       imposeSkinReinf: true, skinBarSize: 5,
     }, 'ACI318-19');
     expect(rebar.sideBars?.[0].barSize).toBe(5);
-    // Per face now (beam convention): region = h/2 − cover = 22.5" at ≤ 12" → 2.
+    // Per face (beam convention): region = h/2 − cover = 22.5", and §24.3.2 allows
+    // 11.25" at Grade 60 / 1.5" cover → 2.
     expect(rebar.sideBars![0].numBars).toBe(2);
+  });
+
+  it('spaces ACI skin bars per §24.3.2, not a flat 12 in', () => {
+    // fs = ⅔fy; s ≤ min(15(40000/fs) − 2.5cc, 12(40000/fs)).
+    expect(aciSkinSpacingMax(1.5, 60000)).toBeCloseTo(11.25, 6);   // Grade 60, 1.5" cover
+    expect(aciSkinSpacingMax(2.5, 60000)).toBeCloseTo(8.75, 6);    // deeper cover ⇒ closer bars
+    expect(aciSkinSpacingMax(1.5, 80000)).toBeCloseTo(7.5, 6);     // Grade 80 ⇒ closer still
+    // …and that feeds the bar count: the same 48" section needs a third bar per
+    // face at Grade 80, which the old flat-12" rule missed entirely.
+    const deep: SectionDimensions = { ...SECTION, h: 48 };
+    expect(minSkinReinforcement(deep, 'ACI318-19', 5, { fyPsi: 60000 })!.numBars).toBe(2);
+    expect(minSkinReinforcement(deep, 'ACI318-19', 5, { fyPsi: 80000 })!.numBars).toBe(3);
   });
 
   it('EC2 threshold (h > 1000 mm ≈ 39.4 in) differs from ACI', () => {
@@ -358,5 +371,38 @@ describe('zonedShearCheckEC2', () => {
     const rTight = runDesign(SECTION, material, tight, load, 20, 'EN1992-1-1');
     // A loose middle zone must NOT show a lower headline DCR than uniform-tight links.
     expect(rWide.DCR_shear).toBeGreaterThan(rTight.DCR_shear);
+  });
+});
+
+describe('concrete grade lands on the imported member', () => {
+  const beams = [{
+    name: 'B1', story: 'L2', section: 'B300X600',
+    pt1: { x: 0, y: 0, z: 12 }, pt2: { x: 20, y: 0, z: 12 },
+    groups: [], lengthFt: 20,
+  }];
+  const sections = [{ name: 'B300X600', material: 'C30', shape: 'Rectangular' as const, depth: 24, width: 12 }];
+  const build = (mats: { name: string; fc?: number; fy?: number }[]) =>
+    buildMembers(beams, sections, mats, {}, { rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4], stirrupBarSize: 4, stirrupLegs: 2 })[0];
+
+  it('uses the section\'s own concrete grade, not the 4000 psi default', () => {
+    expect(build([{ name: 'C30', fc: 4351 }, { name: 'B500', fy: 72500 }]).material.fc).toBe(4351);
+  });
+
+  it('tolerates case and whitespace differences in the material name', () => {
+    // ETABS round-trips these names through several tables; an exact-equality
+    // join silently dropped near-misses to 4000 psi, which reads as a grade
+    // that varies member to member for no visible reason.
+    expect(build([{ name: ' c30 ', fc: 4351 }]).material.fc).toBe(4351);
+  });
+
+  it('falls back to the default when the named material carries no strength', () => {
+    // A name hit with fc = 0 must not import as zero concrete strength.
+    expect(build([{ name: 'C30', fc: 0 }]).material.fc).toBe(4000);
+  });
+
+  it('falls back to the default when the section names no material at all', () => {
+    const noMat = [{ name: 'B300X600', material: '', shape: 'Rectangular' as const, depth: 24, width: 12 }];
+    const m = buildMembers(beams, noMat, [{ name: 'C30', fc: 4351 }], {}, { rhoTopPct: 0.4, rhoBotPct: 0.6, stirrupSpacings: [4, 8, 4], stirrupBarSize: 4, stirrupLegs: 2 })[0];
+    expect(m.material.fc).toBe(4000); // must NOT borrow an unrelated grade
   });
 });

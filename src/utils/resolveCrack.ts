@@ -1,3 +1,12 @@
+/**
+ * Where the crack-width check gets its serviceability moments from.
+ *
+ * EC2 §7.3 crack control is an SLS check, so it must NOT be fed the ULS moments the rest
+ * of the design runs on. There are three sources, in falling order of trust, and this
+ * module is the single place that picks between them so the engine, the Calc Sheet and
+ * the results panel can never disagree about which one was used.
+ */
+
 import type { Member, CrackControlParams, ComboForces } from '../types';
 import { DEFAULT_CRACK_PARAMS } from '../types';
 import { signedMomentEnvelope } from './autoGroup';

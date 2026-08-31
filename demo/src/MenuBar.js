@@ -1,0 +1,86 @@
+import { useRef, useState } from 'react'
+import Menu from './Menu.js'
+
+// File · View · Help — the app's application menu, in the page.
+//
+// The product's lives in `electron/main.cjs` as a native `Menu.buildFromTemplate`, which
+// is right for a desktop app and invisible in a browser. The demo is served over
+// http://127.0.0.1 and that is where it is read, so the same three menus are rendered
+// here instead — same labels, same order, same accelerators, so muscle memory carries.
+//
+// It reuses the demo's own `Menu` component, the one the right-click menus use. That is
+// not thrift: it means a menu item is one shape everywhere (label · disabled · sep · on),
+// which is the same shape that survives the popout bus, and it means the menus already
+// share the shell's styling and dismissal behaviour rather than growing a second set.
+//
+// Items that cannot mean anything here are DISABLED with a reason on hover, never hidden.
+// A menu that quietly drops "Save Project" teaches that the app has no such thing; one
+// that greys it out and says "the demo's model is data.js" tells the truth about both.
+
+const ACCEL = { new: 'Ctrl+N', open: 'Ctrl+O', save: 'Ctrl+S', help: 'F1' }
+
+export default function MenuBar({ onNewProject, onOpenHelp, onReset }) {
+  const [open, setOpen] = useState(null)          // {label, x, y, items}
+  const barRef = useRef(null)
+
+  // Anchored under the button that opened it, not at the cursor: a menu BAR drops from
+  // its own label. Measured at click time because the bar moves with the window.
+  const openAt = (label, el, items) => {
+    const r = el.getBoundingClientRect()
+    setOpen({ label, x: r.left, y: r.bottom + 2, items })
+  }
+
+  const MENUS = {
+    File: () => [
+      { label: `New Project        ${ACCEL.new}`, on: onNewProject },
+      { label: `Open Project…      ${ACCEL.open}`, disabled: true },
+      { label: `Save Project       ${ACCEL.save}`, disabled: true },
+      { sep: true },
+      { label: 'Reset the workspace', on: onReset },
+    ],
+    View: () => [
+      { label: 'Reload', on: () => window.location.reload() },
+      { sep: true },
+      {
+        label: 'Toggle Full Screen',
+        on: () => {
+          const d = document
+          if (d.fullscreenElement) d.exitFullscreen?.()
+          else d.documentElement.requestFullscreen?.()
+        },
+      },
+    ],
+    Help: () => [
+      { label: `Doc Resources        ${ACCEL.help}`, on: () => onOpenHelp('guide') },
+      { label: 'Your First Model', on: () => onOpenHelp('start') },
+      { label: 'Keyboard Shortcuts', on: () => onOpenHelp('keys') },
+      { label: 'FAQ & Troubleshooting', on: () => onOpenHelp('faq') },
+      { sep: true },
+      { label: 'About S-Dashboard', on: () => onOpenHelp('about') },
+    ],
+  }
+
+  return (
+    <div className="demo-menubar" ref={barRef}>
+      {Object.keys(MENUS).map(label => (
+        <button
+          key={label}
+          className={'demo-menubtn' + (open && open.label === label ? ' on' : '')}
+          // Pointer-down, not click: a menu bar opens on press, and the shell's own
+          // mousedown-to-dismiss would otherwise close this in the same gesture.
+          onPointerDown={e => {
+            e.stopPropagation()
+            if (open && open.label === label) { setOpen(null); return }
+            openAt(label, e.currentTarget, MENUS[label]())
+          }}
+          // Hovering across the bar with one open switches menus, the way every menu bar
+          // behaves. Without it you have to close and re-open to read the next one.
+          onPointerEnter={e => { if (open && open.label !== label) openAt(label, e.currentTarget, MENUS[label]()) }}
+        >
+          {label}
+        </button>
+      ))}
+      {open && <Menu menu={open} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}

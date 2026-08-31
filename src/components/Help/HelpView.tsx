@@ -1,9 +1,10 @@
 /**
- * HelpView — the "Help" tab. Four sub-tabs:
+ * HelpView — the "Help" tab. Five sub-tabs:
  *   • Doc Resources — the full in-app user guide (how everything works).
  *   • Your first model — a step-by-step first run.
  *   • Keyboard shortcuts — the real shortcuts wired in App.tsx.
  *   • FAQ & troubleshooting — the common gotchas.
+ *   • Diagnostics — what the usage log records, and the switch to stop it.
  *
  * Panels elsewhere can deep-link in via <HelpLink section="…" /> (see HelpLink.tsx),
  * which dispatches an `open-help` event; App switches to this tab and passes the
@@ -16,6 +17,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { INK, SURFACE, BORDER, ACCENT, STATUS, MONO_NUM, LABEL_STYLE, ICON } from '../../theme';
 import { Icon } from '../common/Icon';
 import type { IconName } from '../common/Icon';
+import type { UsageState } from '../../utils/electronBridge';
 
 // ── Prose primitives ──────────────────────────────────────────────────────────
 const P = ({ children }: { children: ReactNode }) => (
@@ -79,7 +81,7 @@ const IconLabel = ({ name, children }: { name: IconName; children?: ReactNode })
   </span>
 );
 
-/** Where a control actually lives, e.g. <Path>Viewer › Design › Suggest</Path>.
+/** Where a control actually lives, e.g. <Path>File › Import from ETABS…</Path>.
  *  Engineers ask "where is it" far more often than "what is it called". */
 const Path = ({ children }: { children: ReactNode }) => (
   <span style={{ ...MONO_NUM, fontSize: 11.5, background: ACCENT.softBg, border: `1px solid ${ACCENT.softBorder}`, color: ACCENT.primaryHover, borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap' }}>{children}</span>
@@ -116,20 +118,20 @@ const SECTIONS: Section[] = [
           rows={[
             [<><Tag bg={ACCENT.softBg} fg={ACCENT.primary}>1 · Import</Tag></>,
               'Pull beams, with their analysis forces, out of ETABS.',
-              <Path>Header › ETABS</Path>],
+              <Path>File › Import from ETABS…</Path>],
             [<><Tag bg={ACCENT.softBg} fg={ACCENT.primary}>2 · Design</Tag></>,
               'Put similar members in a group; give the group one reinforcement cage.',
-              <Path>Viewer › Design</Path>],
+              <Path>Groups panel</Path>],
             [<><Tag bg={ACCENT.softBg} fg={ACCENT.primary}>3 · Verify</Tag></>,
               'Write an .SCO per group, run the S-Concrete batch, read results back.',
-              <Path>Viewer › Verify</Path>],
+              <Path>S-Concrete panel</Path>],
           ]}
         />
         <P>Results — pass/fail, demand-capacity ratios, warnings — are read back onto the model, so the plan itself shows what still needs attention.</P>
         <Table
           head={['', 'Supported']}
           rows={[
-            ['Codes', <><Code>ACI 318-19</Code>, <Code>ACI 318-14</Code>, <Code>EN 1992-1-1</Code> (Eurocode 2)</>],
+            ['Codes', <><Code>ACI 318-19</Code>, <Code>EN 1992-1-1</Code> (Eurocode 2)</>],
             ['Members', 'Beams — rectangular, T and L sections'],
             ['Units', 'Imperial (in · psi · kips) or SI (mm · MPa · kN)'],
           ]}
@@ -142,32 +144,57 @@ const SECTIONS: Section[] = [
     title: 'How the screen is organized',
     node: (
       <>
-        <P>A header strip across the top, and one of four views below it.</P>
-        <H3>The four views</H3>
+        <P>One workspace of <B>panels</B>. A menu bar and a row of panel chips across the
+        top, the panels themselves tiled below, and a status strip along the bottom.
+        There are no tabs to switch between — you open the panels you need and put them
+        where you want them.</P>
+        <H3>The panels</H3>
         <Table
-          head={['Tab', 'What it is', 'Use it to']}
+          head={['Panel', 'What it is', 'Use it to']}
           rows={[
-            [<B>Viewer</B>, 'The model in 2D plan or rotatable 3D, coloured by any metric.',
-              'Group members, design cages, run the S-Concrete batch. Most of the work happens here.'],
-            [<B>Dashboard</B>, 'Every member in one table, grouped by design group.',
-              'Scan the whole job for hot spots; apply skin reinforcement in bulk.'],
-            [<B>Member</B>, 'One member in full: inputs left, code results and section drawing right.',
-              'Check or hand-edit a single member and read its calc sheet.'],
-            [<B>Help</B>, 'This guide.', 'Look things up.'],
+            [<B>Model</B>, 'The frame in 2D plan or rotatable 3D, coloured by any metric.',
+              'Select and group members, read DCRs off the plan, filter what is drawn.'],
+            [<B>Groups</B>, 'The design groups, and the auto-grouping proposals.',
+              'Make groups from a selection, or let Auto-group cluster them for you.'],
+            [<B>Group Dashboard</B>, 'Every group with its governing DCR, and the beams inside it.',
+              'Size a whole group’s cage, run ✨ Suggest, push resized sections back to ETABS.'],
+            [<B>Section</B>, 'The cage drawing for the selected member or group.',
+              'Read the bar layout; edit it directly in group mode.'],
+            [<B>Editor</B>, 'One member’s inputs — geometry, materials, cover, bars, links.',
+              'Hand-edit a single member.'],
+            [<B>Calc Sheet</B>, 'The step-by-step derivation for the selected load row.',
+              'See exactly which clause produced a number.'],
+            [<B>Loads</B>, 'Every load row on the member.', 'Find which row governs which check.'],
+            [<B>Force Diagram</B>, 'M and V envelopes along the span.', 'See where the demand peaks.'],
+            [<B>Elevation</B>, 'The member along its length with its curtailment zones.', 'Check where bars stop.'],
+            [<B>S-Concrete</B>, 'The verification batch and its results.', 'Write .SCO files, run S-Concrete, read results back.'],
           ]}
         />
-        <H3>The header</H3>
+        <Callout>Every panel can be <B>detached into its own window</B> — the ↗ button on
+        its header, or drag the header out of the workspace. Detached panels are real
+        windows: put the Model on a second monitor and keep designing on the first. Drag
+        one window’s panel into another to combine them, or <B>Merge into ▾</B> to move
+        the lot. The main window still owns the project, so everything stays in step.</Callout>
+        <H3>The menu bar and header</H3>
         <Table
           head={['Control', 'Does']}
           rows={[
-            [<IconLabel name="members">Members</IconLabel>, 'Member list — slides out over the view; click a member to open it.'],
-            [<B>Saved / Unsaved</B>, 'Whether the project has unwritten changes.'],
-            [<span style={{ display: 'inline-flex', gap: 6 }}><Icon name="undo" size={ICON.sm} /><Icon name="redo" size={ICON.sm} /></span>, 'Undo / redo the last edit.'],
-            [<B>ETABS</B>, 'Open the import wizard — the start of every job.'],
-            [<B>Export</B>, 'PDF report, spreadsheets, rebar schedules. See Saving & exporting.'],
+            [<B>File</B>, <>New / Open / <B>Save</B> / <B>Save As…</B> / <B>Import from ETABS…</B> / Reset the workspace.</>],
+            [<B>View</B>, 'Reload and full screen.'],
+            [<B>Preferences</B>, 'Appearance and the standard colour set.'],
+            [<B>Help</B>, 'This guide, the first-run walkthrough, shortcuts, FAQ and About.'],
+            [<IconLabel name="members">Groups &amp; members</IconLabel>, 'The rail — slides out over the workspace; click a member to select it everywhere.'],
+            [<B>Panel chips</B>, 'The row of icons in the middle. Click one to open or focus that panel.'],
+            [<IconLabel name="export">Export</IconLabel>, 'PDF report, spreadsheets, rebar schedules. See Saving & exporting.'],
             [<IconLabel name="settings">Settings</IconLabel>, <>Project settings — design code, units, default materials, cot θ, torsion, display scale.</>],
           ]}
         />
+        <H3>The status strip</H3>
+        <P>A hairline progress bar along the bottom, with a counter and a <B>Pause</B>
+        switch while a long job runs. The <Code>⋯</Code> button on the right opens the
+        <B> run log</B> — what has run this session and how it ended, newest first. It
+        carries a red dot when something failed, so an error that scrolled past is still
+        findable.</P>
         <H3>Project settings</H3>
         <P>Everything that applies to the <em>whole</em> project lives in one dialog, opened from the settings icon beside <B>Export</B>. On a brand-new project it opens by itself as <B>"Set up your project"</B>.</P>
         <Table
@@ -190,21 +217,47 @@ const SECTIONS: Section[] = [
     title: '1 · Import from ETABS',
     node: (
       <>
-        <P><Path>Header › ETABS</Path> opens the import wizard. Connect to a running ETABS model through the CSI API, or read an exported tables file. Four steps: <B>Connect</B> → <B>Filter</B> → <B>Rebar Defaults</B> → <B>Review &amp; Import</B>.</P>
+        <P><Path>File › Import from ETABS…</Path> opens the import wizard. Connect to a running ETABS model through the CSI API, or read an exported tables file. Four steps: <B>Connect</B> → <B>Filter</B> → <B>Rebar Defaults</B> → <B>Review &amp; Import</B>.</P>
         <H3>Units — read them, then override if needed</H3>
-        <P>The wizard detects the model's units and shows a live <B>"Reads as"</B> sample of an imported value so you can confirm they look sensible. Detection trusts ETABS's <em>present-units</em> setting first (what the tables are actually formatted in), then the model's saved units. If a value looks wrong (e.g. a 300&nbsp;mm beam reading as 0.3&nbsp;in, or material strengths in the thousands), override <B>Force</B>, <B>Length</B>, and <B>Material</B> units directly in the panel — the sample updates as you change them, and a red warning appears when the numbers look implausible.</P>
-        <H3>Force source — Design vs Analysis</H3>
-        <P>Beam forces can come from two different ETABS tables, and they are <em>not</em> the same number:</P>
+        <P>The Filter step states the model's units outright — <B>ETABS model units: Force
+        … Length … Material f′c / fy …</B> — so you can compare them against ETABS on the
+        other screen without guessing. It says whether those came from ETABS's own
+        <em> present-units</em> setting or were assumed. Below that, a live <B>"Reads as"</B>
+        sample shows a real section and material as the app has interpreted them.</P>
+        <P>If a value looks wrong (a 300&nbsp;mm beam reading as 0.3&nbsp;in, say), override
+        <B> Force</B>, <B>Length</B> and <B>Material</B> directly — the sample updates as you
+        change them. A warning appears when the numbers look implausible, and it names the
+        sections or materials that tripped it: if only a few of many are odd, the units are
+        probably fine and those are stray entries in the model.</P>
+        <H3>What gets imported — the four filters</H3>
+        <P>Four dropdowns narrow the import. Leaving one empty means <em>all</em>.</P>
         <UL>
-          <LI><B>Design forces</B> (default) — values at the design stations / face of support.</LI>
-          <LI><B>Element (Analysis) forces</B> — the raw per-combination analysis forces, i.e. what the ETABS frame-force display shows.</LI>
+          <LI><B>Stories</B> and <B>Beam sections</B> and <B>ETABS groups</B> — sections and
+          groups are additive: a member matching <em>either</em> comes in.</LI>
+          <LI><B>Material</B> — an <em>additional</em> filter, applied on top. This is how you
+          leave steel framing behind on a mixed model: pick the concrete materials, or press
+          <B> Concrete only</B>, which ticks every material that reports an f′c. A section whose
+          material ETABS did not report is kept rather than silently dropped.</LI>
         </UL>
-        <P>If the moments/shears you see in the app don't match what you read in ETABS, switch the <B>Force source</B> to <B>Element</B>. The app envelopes only the combinations you select, so a higher value in ETABS usually means a combination you didn't import.</P>
+        <Callout>Forces always come from the ETABS <B>Element (analysis)</B> table — the same
+        numbers the frame-force display shows. There used to be a choice between that and the
+        concrete <em>Design Forces</em> table, which reports at design stations and so reads
+        differently at supports; that mismatch was the single most common surprise after an
+        import, so there is now one answer instead of a question.</Callout>
         <H3>What comes in</H3>
         <UL>
           <LI>The <B>model map</B> — the frame connectivity used to draw the 2D/3D plan.</LI>
           <LI><B>Members</B> — beams, with their section, material, and the envelope of the load combinations you chose (plus station forces along the span, used for crack checks).</LI>
         </UL>
+        <H3>No ETABS? Take the demo model</H3>
+        <P><B>Explore the demo model</B> on the opening screen loads a built-in two-storey
+        frame — 34 beams over two levels in two section sizes, with columns, slabs, a core
+        wall and grid lines, already grouped by storey and section and carrying station
+        forces along every span. It arrives on the wizard's default starting cage, so most
+        members pass and a few do not: enough to try grouping, <B>Suggest</B>, the Calc
+        Sheet and the exports end to end without a licence or a model. The same frame is
+        available inside the wizard as the <B>Sample model (demo)</B> source if you want to
+        walk the import steps themselves.</P>
       </>
     ),
   },
@@ -243,10 +296,10 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'map',
-    title: 'The Viewer',
+    title: 'The Model view',
     node: (
       <>
-        <P>The <B>Viewer</B> draws the model in <B>2D plan</B> or a rotatable <B>3D</B> view — the <Code>3D</Code> button beside the filter icon switches between them. It is where steps 2 and 3 happen.</P>
+        <P>The <B>Model</B> panel draws the frame in <B>2D plan</B> or a rotatable <B>3D</B> view — the <Code>3D</Code> button beside the filter icon switches between them. It is where steps 2 and 3 happen.</P>
         <H3>The panel on the right</H3>
         <P>One bar, always visible, with three workflow tabs and two analyses:</P>
         <Table
@@ -298,7 +351,7 @@ const SECTIONS: Section[] = [
         <H3>Making groups</H3>
         <UL>
           <LI>Select frames on the plan and create a group from the selection, or</LI>
-          <LI>Open <B>Auto-group</B> from inside <Path>Viewer › Design</Path> to cluster members by size and demand automatically, then accept the clusters. It drills in over the group list — <Code>← Back to groups</Code> returns.</LI>
+          <LI>Open <B>Auto-group</B> from inside <Path>Groups panel</Path> to cluster members by size and demand automatically, then accept the clusters. It drills in over the group list — <Code>← Back to groups</Code> returns.</LI>
         </UL>
         <H3>The reinforcement editor</H3>
         <P>Click a group to open its editor (the slide-out column). Set the cage — <B>top</B> and <B>bottom</B> bars (each as one or more layers), <B>skin</B> bars per face, and <B>stirrups</B> (size, spacing, legs, optional zoned spacing over the thirds of the span). Then press <Code>Apply to N members</Code> to write the cage onto every member in the group. The map DCR colors and warnings refresh immediately.</P>
@@ -330,7 +383,7 @@ const SECTIONS: Section[] = [
     title: '3 · Verify with S-Concrete',
     node: (
       <>
-        <P>Designing in the app is fast but approximate; <B>S-Concrete</B> is the authoritative check. <Path>Viewer › Verify</Path> writes an <B>.SCO</B> file per group from your current cage, runs the S-Concrete batch, and reads the results back.</P>
+        <P>Designing in the app is fast but approximate; <B>S-Concrete</B> is the authoritative check. <Path>S-Concrete panel</Path> writes an <B>.SCO</B> file per group from your current cage, runs the S-Concrete batch, and reads the results back.</P>
         <UL>
           <LI><B>Batch · N groups</B> — build the .SCO files and run them. For EC2 beams this emits a <B>ULS</B> file (strength) and a separate <B>SLS crack</B> file, because crack-width is a serviceability check evaluated under the quasi-permanent loads — it must not run against factored ULS forces.</LI>
           <LI><B>Re-run existing folder</B> — re-run the .SCO files already on disk (keeps hand-edits; does <em>not</em> pick up app changes made since).</LI>
@@ -361,7 +414,7 @@ const SECTIONS: Section[] = [
         />
         <Callout>Each check reports the <B>governing</B> DCR — the worst across every load row, not the first row. Two checks can be governed by different load cases; expanding a check jumps the loads and calc sheet to the case that governs <em>that</em> check.</Callout>
         <H3>ACI vs EC2</H3>
-        <P>Switch the <B>Design code</B> in project settings between <Code>ACI 318-19</Code>, <Code>ACI 318-14</Code> and <Code>EN 1992-1-1</Code>. The engine, the clause references, the warnings and the .SCO handed to S-Concrete all change with it. Choosing EC2 also switches display to SI.</P>
+        <P>Switch the <B>Design code</B> in project settings between <Code>ACI 318-19</Code> and <Code>EN 1992-1-1</Code>. The engine, the clause references, the warnings and the .SCO handed to S-Concrete all change with it. Choosing EC2 also switches display to SI.</P>
       </>
     ),
   },
@@ -370,7 +423,7 @@ const SECTIONS: Section[] = [
     title: 'Units',
     node: (
       <>
-        <P>The app works in <B>imperial</B> (in · psi · kips · kip-ft) or <B>SI</B> (mm · MPa · kN · kN·m). Switch it in project settings — <Path>Header › settings icon</Path>.</P>
+        <P>The app works in <B>imperial</B> (in · psi · kips · kip-ft) or <B>SI</B> (mm · MPa · kN · kN·m). Switch it in project settings — <Path>Project settings</Path>.</P>
         <Callout>Everything is stored internally in one canonical unit set and converted only for display, so <B>switching units never changes the design</B> — only how numbers are shown. The one place units do affect data is the ETABS wizard, where you override the units of the <em>incoming</em> file field-by-field.</Callout>
       </>
     ),
@@ -473,28 +526,28 @@ function StartPage() {
     <div style={{ maxWidth: 760 }}>
       <PageTitle icon="quickstart" title="Your first model" sub="Eight steps from an ETABS model to a verified, documented design." />
       <Step n={1} title="Set the design code and units">
-        <Path>Header › settings icon</Path> — pick the <B>Design code</B> (ACI 318-19/-14 or EN 1992-1-1), units, and default materials. On a new project this dialog opens by itself as <B>"Set up your project"</B>. Do this first: changing the code re-runs every check. EC2 switches display to SI automatically.
+        <Path>Project settings</Path> — pick the <B>Design code</B> (ACI 318-19/-14 or EN 1992-1-1), units, and default materials. On a new project this dialog opens by itself as <B>"Set up your project"</B>. Do this first: changing the code re-runs every check. EC2 switches display to SI automatically.
       </Step>
       <Step n={2} title="Import your model">
-        <Path>Header › ETABS</Path> — connect to a running model or read a tables file. Confirm the <B>units</B> against the "Reads as" sample (override Force/Length/Material if a value looks wrong), choose the <B>Force source</B> (Design vs Element), and select the load combinations to envelope.
+        <Path>File › Import from ETABS…</Path> — connect to a running model or read a tables file. Confirm the <B>units</B> against the "Reads as" sample (override Force/Length/Material if a value looks wrong), use the <B>Material</B> filter to leave any steel framing behind, and select the load combinations to envelope.
       </Step>
       <Step n={3} title="Look the model over">
-        On the <B>Dashboard</B> you get every member with its DCR. In the <B>Viewer</B>, set <B>Colour by → DCR</B> to see hot spots. Click any member to open it in the <B>Member</B> view and check its inputs before you detail anything.
+        The <B>Group Dashboard</B> lists every group with its governing DCR. In the <B>Model</B> panel, set <B>Colour by → DCR</B> to see hot spots. Click any member to select it — the Editor, Section, Loads and Calc Sheet panels all follow the selection — and check its inputs before you detail anything.
       </Step>
       <Step n={4} title="Group similar members">
-        <Path>Viewer › Design</Path> — select similar frames on the plan and make a group, or open <B>Auto-group</B> and accept the clusters. Each group shares one cage.
+        <Path>Groups panel</Path> — select similar frames in the Model panel and press <B>Group selection</B>, or open <B>Auto-group</B> and accept the clusters. Each group shares one cage.
       </Step>
       <Step n={5} title="Reinforce each group">
         Click a group to open its rebar editor. Press <B>Suggest</B> for a practical cage (or set bars by hand), <B>review</B> it, then <Code>Apply to N members</Code>. <B>Suggest all groups</B> does the lot. The plan recolours immediately.
       </Step>
       <Step n={6} title="Verify in S-Concrete (desktop)">
-        <Path>Viewer › Verify</Path> — press <B>Batch · N groups</B>. The app writes an .SCO per group, runs S-Concrete, and reads Status / DCR / warnings back onto the plan. Needs the Windows desktop app.
+        <Path>S-Concrete panel</Path> — press <B>Batch · N groups</B>. The app writes an .SCO per group, runs S-Concrete, and reads Status / DCR / warnings back onto the plan. Needs the Windows desktop app.
       </Step>
       <Step n={7} title="Chase the reds">
         Anything red failed. Open it, read the warning, give the group a bigger cage or a bigger section, re-Suggest, re-run the batch. Repeat until nothing is red.
       </Step>
       <Step n={8} title="Export the deliverables">
-        <Path>Header › Export</Path> — PDF report, Excel summary, member DCR list, or group rebar schedule. <Kbd>Ctrl</Kbd><Kbd>S</Kbd> keeps the whole project in one <Code>.scdb</Code> file.
+        <Path>Export</Path> — PDF report, Excel summary, member DCR list, or group rebar schedule. <Kbd>Ctrl</Kbd><Kbd>S</Kbd> keeps the whole project in one <Code>.scdb</Code> file; <Kbd>Ctrl</Kbd><Kbd>⇧</Kbd><Kbd>S</Kbd> saves it under a new name.
       </Step>
       <Callout tone="ok">No ETABS handy? The app opens with a small sample project, so you can practise steps 3–8 (Dashboard → Group → Suggest → Export) without importing anything.</Callout>
     </div>
@@ -517,7 +570,8 @@ function KeysPage() {
       <div style={{ marginBottom: 18 }}>
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>N</Kbd></>} action="New project" />
         <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>O</Kbd></>} action="Open a project file" />
-        <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>S</Kbd></>} action="Save the project" />
+        <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>S</Kbd></>} action={<>Save — writes back to the file the project came from, without asking</>} />
+        <KeyRow keys={<><Kbd>Ctrl</Kbd><Kbd>⇧</Kbd><Kbd>S</Kbd></>} action={<>Save As… — always asks, and adopts the new file</>} />
       </div>
 
       <div style={{ ...LABEL_STYLE, margin: '0 0 6px' }}>Editing</div>
@@ -534,7 +588,7 @@ function KeysPage() {
         <KeyRow keys={<Kbd>F1</Kbd>} action={<>Open this guide — <B>desktop app only</B> (also under the Help menu)</>} />
       </div>
 
-      <Callout>In the <B>desktop app</B>, <Kbd>Ctrl</Kbd><Kbd>N</Kbd> / <Kbd>Ctrl</Kbd><Kbd>O</Kbd> / <Kbd>Ctrl</Kbd><Kbd>S</Kbd> come from the native File menu and use the OS file dialogs. In a browser they are handled in-page: Save downloads the <Code>.scdb</Code>, Open shows a file picker.</Callout>
+      <Callout>In the <B>desktop app</B>, <Kbd>Ctrl</Kbd><Kbd>N</Kbd> / <Kbd>Ctrl</Kbd><Kbd>O</Kbd> / <Kbd>Ctrl</Kbd><Kbd>S</Kbd> / <Kbd>Ctrl</Kbd><Kbd>⇧</Kbd><Kbd>S</Kbd> come from the native File menu and use the OS file dialogs. In a <B>browser</B> a page cannot write back to a file it was given, so Save and Save As both download the <Code>.scdb</Code> and the distinction between them disappears.</Callout>
     </div>
   );
 }
@@ -552,7 +606,7 @@ function FaqPage() {
     <div style={{ maxWidth: 760 }}>
       <PageTitle icon="faq" title="FAQ & troubleshooting" sub="The questions that come up most often." />
       <QA q="The moments/shears I imported don't match ETABS.">
-        Two reasons. First, the <B>Force source</B>: switch it to <B>Element (Analysis)</B> in the wizard to match the ETABS frame-force display (the default <em>Design</em> forces are taken at design stations). Second, the app envelopes only the <B>combinations you selected</B> — a higher value in ETABS usually means a combo you didn't import.
+        The app envelopes only the <B>combinations you selected</B>, so a higher value in ETABS usually means a combination you did not import. Forces themselves come from the ETABS <B>Element (analysis)</B> table, which is what the frame-force display shows, so the two should otherwise agree station for station.
       </QA>
       <QA q="Material strengths or dimensions look absurdly large or small.">
         The model's units were mis-detected. In the ETABS wizard, override <B>Force / Length / Material</B> units and watch the <B>"Reads as"</B> sample until a known value looks right (e.g. a 300&nbsp;mm beam should read 300&nbsp;mm, not 0.3&nbsp;in).
@@ -573,7 +627,7 @@ function FaqPage() {
         That's by design — a <B>group shares one cage</B>, sized to its worst member, so every member in it is safe. Edit a member on its own in the Member view if it needs a different cage (but re-applying the group overwrites it).
       </QA>
       <QA q="Where did Import / Design / Verify go? I don't see a workflow ribbon.">
-        There isn't one. <B>Import</B> is the <Code>ETABS</Code> button in the header; <B>Design</B> and <B>Verify</B> are tabs on the right-hand panel of the <B>Viewer</B>, alongside <B>Dashboard</B>. The <B>Design code</B> that used to sit in the ribbon now lives in project settings, opened from the settings icon beside <Code>Export</Code>.
+        There isn't one, and there are no tabs either. <B>Import</B> is <Code>File › Import from ETABS…</Code>; <B>Design</B> happens in the <B>Groups</B> and <B>Group Dashboard</B> panels; <B>Verify</B> is the <B>S-Concrete</B> panel. Open any of them from the row of panel chips in the header. The <B>Design code</B> lives in project settings, on the gear beside <Code>Export</Code>.
       </QA>
       <QA q="I opened Dashboard or Verify and now I can't get back to Design.">
         You can — the <B>Design · Dashboard · Verify</B> bar stays visible in all three, so click straight between them. <B>Savings</B> and <B>Takeoff</B> sit beside them as icon toggles; clicking the lit one again returns you to Design.
@@ -585,12 +639,140 @@ function FaqPage() {
   );
 }
 
+// ── Diagnostics ─────────────────────────────────────────────────────────────────
+
+/**
+ * What the app records about its own use, said plainly, with the switch next to it.
+ *
+ * This page is the honesty half of the usage log. Recording is on by default because a
+ * log nobody knew to turn on is a log that is empty on the day it is needed — but "on by
+ * default" only stays defensible if the user can see exactly what is kept, see that it
+ * never leaves the machine, read it themselves in a text editor, and switch it off in one
+ * click. All four are here. Nothing on this page sends anything anywhere; Export writes a
+ * file the user then chooses what to do with.
+ */
+function DiagnosticsPage() {
+  const [state, setState] = useState<UsageState | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+
+  useEffect(() => { void api?.usageState?.().then(setState).catch(() => {}); }, [api]);
+
+  if (!api?.usageState) {
+    return (
+      <div style={{ maxWidth: 760 }}>
+        <PageTitle icon="inspect" title="Diagnostics" sub="Usage recording — desktop app only." />
+        <Callout>
+          The usage log is part of the installed desktop app. In a browser there is nothing
+          to record and nothing is written.
+        </Callout>
+      </div>
+    );
+  }
+
+  const on = state?.consent !== false;
+  const mb = state ? (state.bytes / 1048576).toFixed(2) : '0.00';
+
+  const setConsent = (next: boolean) => {
+    void api.usageSetConsent?.(next).then(setState).catch(() => {});
+  };
+  const doExport = () => {
+    setNote(null);
+    void api.usageExport?.().then(r => {
+      if (r?.canceled) return;
+      setNote(r?.ok
+        ? `Written — ${r.lines ?? 0} records, ${((r.bytes ?? 0) / 1024).toFixed(0)} kB. Attach it to an e-mail.`
+        : `Could not export: ${r?.error ?? 'unknown error'}`);
+    }).catch(() => setNote('Could not export the usage data.'));
+  };
+
+  return (
+    <div style={{ maxWidth: 760 }}>
+      <PageTitle icon="inspect" title="Diagnostics"
+        sub="What this app records about its own use — and how to send it to us." />
+
+      <Callout tone="ok">
+        <B>Nothing here goes to the internet.</B> The app has no analytics service and makes
+        no network calls. Records are written to a file on this machine, and they reach us
+        only if you export them and send the file yourself.
+      </Callout>
+
+      <H3>What is recorded</H3>
+      <UL>
+        <LI>Which screens and dialogs you opened, and how long you spent on each.</LI>
+        <LI>Import steps: how many storeys, sections and combinations you selected, how
+          many beams matched, and any error the wizard showed.</LI>
+        <LI>Counts and sizes — number of members, groups, load rows, how long a design
+          sweep or an S-Concrete batch took.</LI>
+        <LI>Design outcomes as <B>totals only</B> — how many members pass, are near
+          capacity, or are over; the worst DCR; which check governs how many members; and
+          why a Suggest sweep could not size a cage (e.g. <Code>flexure-ladder</Code>).</LI>
+        <LI>Errors and crashes, with the code location they came from.</LI>
+        <LI>Your app version, Windows version, screen size and design code.</LI>
+      </UL>
+
+      <H3>What is never recorded</H3>
+      <UL>
+        <LI><B>No project data</B> — no geometry, sections, materials, forces, or the
+          results of any individual member.</LI>
+        <LI><B>No names</B> — not the project, the members, the groups, the sections or
+          the ETABS model. Where the app's own status messages list group names, the list
+          is replaced by a count before it is recorded.</LI>
+        <LI><B>No file paths</B> — a path names a client, so paths are reduced to their
+          kind (<Code>&lt;path.edb&gt;</Code>) before they are written.</LI>
+        <LI><B>No review notes</B> — what you write when marking a member Reviewed is
+          yours, and stays on this machine.</LI>
+        <LI>No user name, e-mail, machine name or IP address.</LI>
+      </UL>
+
+      <H3>Status</H3>
+      <Table
+        head={['', '']}
+        rows={[
+          ['Recording', on ? <Tag bg={STATUS.okBg} fg={STATUS.ok}>on</Tag>
+            : <Tag bg={STATUS.failBg} fg={STATUS.fail}>off</Tag>],
+          ['This session', `${state?.events ?? 0} records`],
+          ['On disk', `${state?.files ?? 0} file(s), ${mb} MB`],
+          ['Kept for', `${state?.retentionDays ?? 30} days, then deleted automatically`],
+          ['Install ID', <Code>{state?.installId?.slice(0, 8) ?? '—'}</Code>],
+          ['Sessions', String(state?.sessions ?? 0)],
+        ]}
+      />
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '16px 0 8px' }}>
+        <button onClick={doExport} style={diagBtn(true)}>Export usage data…</button>
+        <button onClick={() => void api.usageOpenFolder?.()} style={diagBtn(false)}>
+          Open the folder
+        </button>
+        <button onClick={() => setConsent(!on)} style={diagBtn(false)}>
+          {on ? 'Turn recording off' : 'Turn recording on'}
+        </button>
+      </div>
+      {note && <P>{note}</P>}
+
+      <Callout>
+        The exported file is plain text, one record per line — open it in Notepad and read
+        it before you send it. To erase everything recorded so far, turn recording off and
+        delete the files in that folder.
+      </Callout>
+    </div>
+  );
+}
+
+const diagBtn = (primary: boolean): CSSProperties => ({
+  padding: '7px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+  border: `1px solid ${primary ? ACCENT.primary : BORDER.strong}`,
+  background: primary ? ACCENT.primary : 'white',
+  color: primary ? 'white' : INK.base,
+});
+
 // ── Container ───────────────────────────────────────────────────────────────────
 const HELP_TABS = [
   { key: 'guide', label: 'Doc Resources', icon: 'docs' },
   { key: 'start', label: 'Your first model', icon: 'quickstart' },
   { key: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard' },
   { key: 'faq', label: 'FAQ & troubleshooting', icon: 'faq' },
+  { key: 'diagnostics', label: 'Diagnostics', icon: 'inspect' },
 ] as const satisfies readonly { key: string; label: string; icon: IconName }[];
 type HelpTab = typeof HELP_TABS[number]['key'];
 
@@ -641,6 +823,7 @@ export default function HelpView({ target }: { target?: { tab?: string; section?
       {helpTab === 'start' && <StartPage />}
       {helpTab === 'keys' && <KeysPage />}
       {helpTab === 'faq' && <FaqPage />}
+      {helpTab === 'diagnostics' && <DiagnosticsPage />}
     </div>
   );
 }

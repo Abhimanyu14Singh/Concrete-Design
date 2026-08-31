@@ -37,6 +37,7 @@ export function stirrupZoneStr(rebar: RebarLayout, zone: 0 | 1 | 2, isEC2: boole
   return `${formatBarLabel(t.barSize)}-${conv(spacing)}-${t.legs}L`;
 }
 
+/** Section size for a schedule row — "16.00"×24.00"" (US) or "400×600" mm (EC2). */
 export function scheduleSectionLabel(m: Member | undefined, isEC2: boolean): string {
   if (!m) return '—';
   const s = m.section;

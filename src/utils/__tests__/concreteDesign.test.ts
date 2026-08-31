@@ -522,22 +522,38 @@ describe('effectiveDepthMulti / layerCentroidOffset', () => {
     expect(r2.phi_Mn_pos).toBeGreaterThan(0.85 * r1.phi_Mn_pos); // small reduction, not a collapse
   });
 
-  it('ACI §25.2.2 warning fires when layer clear spacing < max(1", db)', () => {
+  it('raises NO §25.2.2 verdict on the layer gap, however tight it is', () => {
+    // The vertical clear-spacing WARNING was removed. It required max(1", db) between
+    // layers — §25.2.1's horizontal rule borrowed for the vertical direction — where
+    // §25.2.2 asks only for "a clear spacing between layers of at least 1 in."
+    // S-CONCRETE prints "dz (min) 1.0 in" and accepts 1.0 against #5s, agreeing.
     const layered: RebarLayout = {
       topBars: [{ numBars: 2, barSize: 8 }],
       botBars: [{ numBars: 3, barSize: 9 }, { numBars: 2, barSize: 9 }],
       ties: { barSize: 4, spacing: 6, legs: 2 },
       layerClearSpacing: 0.5,
     };
-    const r = designMember(rect16x24, mat4k, layered, stdLoad);
-    expect(r.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(true);
-    const ok = designMember(rect16x24, mat4k, { ...layered, layerClearSpacing: 1.2 }, stdLoad);
-    expect(ok.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(false);
+    for (const dz of [0.25, 0.5, 1.0, 1.2, 2.0]) {
+      const r = designMember(rect16x24, mat4k, { ...layered, layerClearSpacing: dz }, stdLoad);
+      expect(r.warnings.some(w => w.code === 'ACI §25.2.2'), `dz = ${dz}`).toBe(false);
+    }
   });
 
-  it('no §25.2.2 warning for single-layer beams; doubly-reinforced path gives higher phi_Mn_pos than singly-reinforced', () => {
+  it('still refuses a stack the section cannot physically hold', () => {
+    // The GEOM fit check is NOT the spacing verdict and stays: four layers of #9 with a
+    // 3" gap occupy more than half the depth, and no clause removal makes that fit.
+    const tall: RebarLayout = {
+      topBars: [{ numBars: 2, barSize: 8 }],
+      botBars: Array.from({ length: 4 }, () => ({ numBars: 3, barSize: 9 })),
+      ties: { barSize: 4, spacing: 6, legs: 2 },
+      layerClearSpacing: 3.0,
+    };
+    const r = designMember(rect16x24, mat4k, tall, stdLoad);
+    expect(r.warnings.some(w => w.code === 'GEOM')).toBe(true);
+  });
+
+  it('doubly-reinforced path gives higher phi_Mn_pos than singly-reinforced', () => {
     const r = designMember(rect16x24, mat4k, rebar3_8, stdLoad);
-    expect(r.warnings.some(w => w.code === 'ACI §25.2.2')).toBe(false);
     // rebar3_8: As_top=3*0.79=2.37, As_bot=4*0.79=3.16 — compression steel helps
     const rSingly = computeFlexure(rect16x24, mat4k, 0, 4 * getBarArea(8));
     expect(r.phi_Mn_pos).toBeGreaterThanOrEqual(rSingly.phi_Mn_pos);
@@ -642,12 +658,17 @@ describe('S-CONCRETE back-check #2 (multi-layer beam)', () => {
     expect(r.phi_Mn_pos).toBeLessThan(308);
   });
 
-  it('As,max = 5.97 in² (0.85β₁ formula, §9.3.3.1)', () => {
-    const { As_max } = steelLimits(sect, mat);
-    // steelLimits uses d for a #8 bar single layer (21.5"); S-C uses d=20.625
-    const As_max_at_d = 0.85 * 0.8 * (5000 / 60000) * (3 / 7) * 12 * 20.625;
-    expect(As_max_at_d).toBeCloseTo(5.97, 1);
-    expect(As_max).toBeGreaterThan(5.9); // engine value at its own d
+  it('As,max = 5.21 in² per §9.3.3.1, measured at the centroid d', () => {
+    // Two-layer cage: d = 20.625" (centroid), dt = 21.5625" (outer layer). §9.3.3.1
+    // caps εt at εty + 0.003 = 0.00507; the depth it is measured at was changed from
+    // dt to d so the app agrees with S-CONCRETE (see `steelLimits`), which drops this
+    // from 5.45 to 5.21. The 5.97 previously quoted for this section came from a note
+    // rather than a capture and is not treated as evidence.
+    const { As_max } = steelLimits(sect, mat, 'bot', botBars, 1.0);
+    const ety = 60000 / 29e6;
+    expect(As_max).toBeCloseTo(0.85 * 0.8 * (5000 / 60000) * (0.003 / (0.006 + ety)) * 12 * 20.625, 2);
+    expect(As_max).toBeCloseTo(5.21, 1);
+    expect(As).toBeLessThan(As_max);            // the reference cage still passes
   });
 
   it('shear util = 0.511 and moment util ≈ 0.147; status OK; no warnings', () => {

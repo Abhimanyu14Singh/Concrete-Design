@@ -2,7 +2,7 @@
  * GroupPanel — list of DesignGroups with create/rename/assign/dissolve actions.
  * Also highlights group members on the map when a group is selected.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import type { DesignGroup, MapFrame, Member, DesignResults } from '../../types';
 import { flexSteelRatioPct } from '../../utils/autoGroup';
 import { GROUP_PALETTE as PALETTE, groupColor } from './groupColors';
@@ -56,11 +56,29 @@ export default function GroupPanel({
     return dcrs.length ? Math.max(...dcrs) : undefined;
   }
 
+  /**
+   * The frame selection this panel pushed itself when a group row was clicked.
+   *
+   * Clicking a group selects its frames — that is how the map highlights the group,
+   * and it has to stay. What does NOT have to stay is the "Selected frames" list
+   * below reading that selection back: picking a 20-beam group made twenty rows of
+   * the group's own membership unfold, each with a Remove button, pushing the group
+   * list itself off screen. Those chips exist for a selection made ON THE MAP
+   * ("these frames — put them in / take them out"); a group's own members are not
+   * news, and the row you just clicked already says how many there are.
+   *
+   * Compared by CONTENT, not identity: the set makes a round trip through the host
+   * (the panel workspace re-wraps it as an array), so what comes back is never the
+   * object that went out.
+   */
+  const groupEchoRef = useRef<string[] | null>(null);
+
   function selectGroup(g: DesignGroup) {
     onActiveGroupChange(activeGroupId === g.id ? null : g.id);
     const frameNames = new Set(
       g.memberIds.map(id => framesByMember.get(id)?.frameName).filter(Boolean) as string[]
     );
+    groupEchoRef.current = [...frameNames];
     onSelectionChange(frameNames);
   }
 
@@ -150,6 +168,13 @@ export default function GroupPanel({
     })
     .filter(Boolean) as { frameName: string; memberId: string }[];
 
+  // True while the current selection is still the one clicking a group produced — see
+  // `groupEchoRef`. Any other selection (a map click, a rubber band, a filter) differs
+  // in content and brings the chips straight back.
+  const isGroupEcho = groupEchoRef.current !== null
+    && groupEchoRef.current.length === selected.size
+    && groupEchoRef.current.every(name => selected.has(name));
+
   function removeMemberFromGroup(gId: string, memberId: string) {
     onGroupsChange(groups.map(g => g.id === gId
       ? { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
@@ -197,7 +222,11 @@ export default function GroupPanel({
         <button
           onClick={createGroupFromSelection}
           disabled={selected.size === 0}
-          style={{ ...actionBtn, flex: '1 1 100%', justifyContent: 'center', background: selected.size ? ACCENT.primary : BORDER.default, color: selected.size ? 'white' : INK.muted, border: 'none', cursor: selected.size ? 'pointer' : 'default', fontWeight: 600 }}
+          // `1 1 100%` gives the primary action its own row — right in the app's narrow
+          // right-hand tab, where four buttons abreast would each be ~50px of truncated
+          // label. A host with a wider panel overrides --gp-primary-flex to bring it onto
+          // one line with the rest; the row already wraps, so nothing new can overflow.
+          style={{ ...actionBtn, flex: 'var(--gp-primary-flex, 1 1 100%)', justifyContent: 'center', background: selected.size ? ACCENT.primary : BORDER.default, color: selected.size ? 'white' : INK.muted, border: 'none', cursor: selected.size ? 'pointer' : 'default', fontWeight: 600 }}
         >
           <Icon name="groupSelection" size={ICON.sm} />
           Group selection ({selected.size})
@@ -255,8 +284,9 @@ export default function GroupPanel({
         )}
       </div>
 
-      {/* Selection chips — per-frame add/remove buttons */}
-      {selectionChips.length > 0 && activeGroupId && (
+      {/* Selection chips — per-frame add/remove for a selection made on the MAP.
+          Never for the echo of clicking a group row (see `groupEchoRef`). */}
+      {selectionChips.length > 0 && activeGroupId && !isGroupEcho && (
         <div style={{ padding: '6px 12px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: INK.muted, marginBottom: 4, textTransform: 'uppercase' }}>
             Selected frames
@@ -379,7 +409,7 @@ export default function GroupPanel({
               {/* Dissolve */}
               <button
                 onClick={e => { e.stopPropagation(); dissolveGroup(g.id); }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 14, padding: '0 2px' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: INK.muted, fontSize: 13, padding: '0 2px' }}
                 title="Dissolve group (keep beams)"
               >×</button>
             </div>

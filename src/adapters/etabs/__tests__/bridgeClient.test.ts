@@ -141,7 +141,9 @@ function describeMapping(name: string, makeConn: () => BridgeConnection | ComCon
       expect(max.stations).toHaveLength(2);
       expect(max.stations[0].V).toBeCloseTo(100 * 0.2248089, 4);              // kN → kip
       expect(max.stations[1].M).toBeCloseTo(350 * 0.2248089 * 3.280839895, 3); // kN·m → kip-ft
-      expect(max.stations[0].P).toBeCloseTo(10 * 0.2248089, 4);
+      // NEGATED: the row's P = +10 kN is TENSION in ETABS (compression-negative),
+      // and LoadCase.Pu is compression-positive, so it arrives as −10 kN in kips.
+      expect(max.stations[0].P).toBeCloseTo(-10 * 0.2248089, 4);
       expect(max.stations[0].T).toBeCloseTo(5 * 0.2248089 * 3.280839895, 4);
       expect(max.stations[1].x).toBeCloseTo(3 * 3.280839895, 4);
       expect(out['no-such']).toEqual([]);
@@ -299,5 +301,42 @@ describe('ComConnection: units come from the present-units enum (authoritative f
     const conn = new ComConnection();
     const info = await conn.connect();
     expect(info.units).toBe('kn-m');
+  });
+});
+
+describe('concrete grade resolution (section → material join)', () => {
+  // ETABS names the material column "MatProp" in the Summary table and
+  // "Material" in the Concrete Rectangular table. A section that resolves via
+  // the Summary fallback must still find its concrete grade — otherwise it
+  // silently inherits the 4000 psi default and the grade reads inconsistently
+  // across a model where only some sections take that path.
+  it('reads the material name from the Summary table\'s MatProp column', async () => {
+    mockHttp({
+      ...TABLES,
+      'Frame Section Property Definitions - Concrete Rectangular': [],
+      'Frame Section Property Definitions - Summary': [
+        { Name: 'B300X600', MatProp: 'C30', Area: 0.18, I33: 0.0054 },
+      ],
+    });
+    const conn = new BridgeConnection();
+    await conn.connect();
+    await conn.getBeams({});
+    const s = (await conn.getFrameSections()).find(x => x.name === 'B300X600')!;
+    expect(s.material).toBe('C30');
+  });
+
+  it('still reads a plain "Material" column when a build emits that instead', async () => {
+    mockHttp({
+      ...TABLES,
+      'Frame Section Property Definitions - Concrete Rectangular': [],
+      'Frame Section Property Definitions - Summary': [
+        { Name: 'B300X600', Material: 'C30', Area: 0.18, I33: 0.0054 },
+      ],
+    });
+    const conn = new BridgeConnection();
+    await conn.connect();
+    await conn.getBeams({});
+    const s = (await conn.getFrameSections()).find(x => x.name === 'B300X600')!;
+    expect(s.material).toBe('C30');
   });
 });

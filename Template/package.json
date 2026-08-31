@@ -1,0 +1,19 @@
+{
+  "name": "sdash-ui-starter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Panel-and-popout UI starter: floating panels that can become real OS windows.",
+  "scripts": {
+    "build": "esbuild src/index.jsx --bundle --outfile=dist/bundle.js --loader:.js=jsx --jsx=automatic --minify --keep-names --define:process.env.NODE_ENV=\\\"production\\\"",
+    "dev": "esbuild src/index.jsx --bundle --outfile=dist/bundle.js --loader:.js=jsx --jsx=automatic --sourcemap --watch",
+    "start": "npm run build && electron electron/main.js"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "electron": "^29.0.0"
+  }
+}

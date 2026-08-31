@@ -7,12 +7,14 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { MapFrame, DesignGroup, AutoGroupBin } from '../../types';
 import { dcrToColor } from '../EtabsImport/dcrColors';
 import { rampStops } from './colorRamp';
+import { DEFAULT_ELEMENT_STYLES, withAlpha, type ElementStyles } from './elementStyle';
 import { frameColorFor, buildGroupColorMap, buildAutoGroupColorMap, buildGroupIndexMap, type ColorMode } from './frameColor';
 import {
-  fitTransform, zoomViewBox, project3, fitProjected, clampPitch,
-  DEFAULT_CAMERA, type Camera,
+  fitTransform, zoomViewBox, clampPitch, boundingSphere, stableProjection,
+  screenBounds, viewBoxForBounds, normalizeWheelDelta, wheelZoomFactor,
+  dampCamera, VIEW_PRESETS, DEFAULT_CAMERA, type Camera, type ViewPreset,
 } from '../../utils/mapViewport';
-import { ACCENT, BORDER, DEFAULT_DCR_THRESHOLDS, INK, MAP_DCR_BANDS, MAP_GRAY, MONO_NUM, STATUS, TRACK, type DcrBand } from '../../theme';
+import { ACCENT, BORDER, DEFAULT_DCR_THRESHOLDS, INK, MAP_DCR_BANDS, MAP_DCR_COLORS, MAP_GRAY, MONO_NUM, STATUS, TRACK, type DcrBand } from '../../theme';
 
 export type { ColorMode };
 export type DiagramMode = 'off' | 'moment' | 'shear';
@@ -25,7 +27,7 @@ export interface FrameInfo {
   /** Worst per-mode DCR across ALL load rows (M⁺ / M⁻ / V / crack) — not a single
    *  representative row, so the dashboard chips never understate a mode that
    *  governs on a different station than the overall-governing row. */
-  modeDcr?: { flexPos: number; flexNeg: number; shear: number; wk: number };
+  modeDcr?: { flexPos: number; flexNeg: number; shear: number; torsion?: number; wk: number };
   top: string;
   bot: string;
   stirrups: string;
@@ -41,6 +43,12 @@ const DIAGRAM_MAX_PX = 18; // max perpendicular offset for diagram in SVG user-s
 // a mark end is known. 0.22 keeps it clearly biased toward that end without sitting
 // on the beam-column joint, where tags from several beams would collide.
 const MARK_TAG_FRAC = 0.22;
+
+/** Shared look for the small navigation buttons floating over the canvas. */
+const navBtn: React.CSSProperties = {
+  background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 6,
+  padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: INK.base, lineHeight: 1.2,
+};
 
 interface Props {
   frames: MapFrame[];
@@ -73,6 +81,10 @@ interface Props {
   metricLabel?: string;
   /** Persisted S-Concrete pass/fail per member (for 'sconcrete' color mode). */
   scoStatusById?: Record<string, 'OK' | 'NG'>;
+  /** Worst S-Concrete utilisation per member — max(N-M, V&T) — for the 'sconcreteDcr'
+   *  colour mode. Absent from the map means "not run", which is drawn grey rather than
+   *  green: no result is a different statement from a passing one. */
+  scoDcrById?: Record<string, number>;
   /** Auto-group overlay bins for 'autoGroup' color mode. */
   autoGroupOverlay?: AutoGroupBin[];
   /** Member ids to hide from the canvas. */
@@ -93,6 +105,17 @@ interface Props {
   lineWeightScale?: number;
   /** memberId → section width (in), for proportional line weight. */
   widthById?: Record<string, number>;
+  /**
+   * Members to draw HEAVY — a transient "these ones" pointer from somewhere else in the
+   * panel (today: the bar the pointer is on in the distribution histogram).
+   *
+   * Weight rather than colour, and rather than `focusFrames`' halftone. Colour is already
+   * spoken for — it is the answer to the question the map is being asked — and dimming
+   * everything else re-reads the whole floor on every pixel of pointer movement. A
+   * thicker line adds emphasis without taking any away, so the model stays legible while
+   * you sweep across a histogram looking for where a cluster of beams actually is.
+   */
+  emphasisMembers?: Set<string>;
   /** memberId → categorical color for the 'concGrade' / 'steelGrade' modes. */
   gradeColorMap?: Map<string, string>;
   /** The (user-edited) DCR colour bands driving fills + legend. Defaults to MAP_DCR_BANDS. */
@@ -101,11 +124,17 @@ interface Props {
   dcrThresholds?: [number, number, number];
   /** Persist a new set of cut-points from the editable legend. */
   onDcrThresholdsChange?: (t: [number, number, number]) => void;
+  /** The 4 editable band COLOURS behind `dcrBands` (for the legend's swatches). */
+  dcrColors?: readonly string[];
+  /** Persist a new set of band colours from the editable legend. */
+  onDcrColorsChange?: (c: string[]) => void;
   /** Optional imported geometry layers (walls / grids / openings), drawn behind
    *  the frames. Each is opt-in via the matching show* flag. */
   walls?: { id: string; story: string; points: { x: number; y: number; z?: number }[]; kind?: 'wall' | 'slab'; memberId?: string }[];
   grids?: { id: string; label: string; p1: { x: number; y: number; z?: number }; p2: { x: number; y: number; z?: number }; story?: string }[];
   openings?: { id: string; story: string; points: { x: number; y: number; z?: number }[]; memberId?: string }[];
+  /** Colour / opacity / fill per element kind, from Preferences. */
+  elementStyles?: ElementStyles;
   /** Vertical frames (columns / braces) drawn as CONTEXT only — never selectable,
    *  never designed. In plan they collapse to a point, so they only draw in 3D. */
   columns?: { id: string; story: string; sectionName?: string; pt1: { x: number; y: number; z: number }; pt2: { x: number; y: number; z: number } }[];
@@ -124,13 +153,16 @@ export default function MapCanvas({
   onBeamInspect, onBeamContextMenu,
   width = 640, height = 480,
   diagramMode = 'off', diagramDataById = {}, markEndById = {},
-  metricById = {}, metricRange, metricLabel, scoStatusById = {},
+  metricById = {}, metricRange, metricLabel, scoStatusById = {}, scoDcrById = {},
   autoGroupOverlay = [], hiddenMemberIds = new Set(), hiddenStories = new Set(),
   inspectMode = false, inspectedMemberId = null,
   showErrors = false, errorMemberIds = new Set(),
-  focusFrames, lineWeightScale = 0, widthById = {}, gradeColorMap,
-  dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange,
+  focusFrames, lineWeightScale = 0, widthById = {}, emphasisMembers, gradeColorMap,
+  dcrBands = MAP_DCR_BANDS, dcrThresholds, onDcrThresholdsChange, dcrColors, onDcrColorsChange,
   walls = [], grids = [], openings = [], columns = [],
+  // How each element KIND is drawn — the user's Preferences. Defaulted here rather than
+  // required, so every existing caller keeps the map's original appearance.
+  elementStyles = DEFAULT_ELEMENT_STYLES,
   showWalls = false, showGrids = false, showOpenings = false, showColumns = false,
   view3d = false,
 }: Props) {
@@ -139,15 +171,23 @@ export default function MapCanvas({
   // (survives hover-out) until another beam is clicked or the plan is cleared.
   const [pinned, setPinned] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: width, h: height });
-  // 3D camera. Orbiting is a drag on empty canvas (see onMouseDown), which is why
-  // it lives here rather than in the parent — the parent only owns the on/off flag.
+  // 3D camera. `cam` is what renders; `camTarget` is where the drag has put it.
+  // A rAF loop eases one toward the other (see the damping effect below), which
+  // is what turns a stream of raw mouse deltas into a smooth orbit.
   const [cam, setCam] = useState<Camera>(DEFAULT_CAMERA);
+  const [camTarget, setCamTarget] = useState<Camera>(DEFAULT_CAMERA);
   const orbitStart = useRef<{ mx: number; my: number; yaw: number; pitch: number } | null>(null);
+  const [isOrbiting, setIsOrbiting] = useState(false);
   const [lasso, setLasso] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef<{ mx: number; my: number; vx: number; vy: number } | null>(null);
   const lassoBgOnly = useRef(false);
   const svgRef = useRef<SVGSVGElement>(null);
+  /** Space-bar held → temporary pan tool, the Figma/Photoshop convention. */
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  /** Set on a right-drag so the context menu is suppressed for that gesture only. */
+  const rightDragged = useRef(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const visibleFrames = frames.filter(f =>
     (story === 'All' || f.story === story) &&
@@ -190,25 +230,28 @@ export default function MapCanvas({
   // goes through P(), so switching to 3D changes only where a point lands — not
   // how anything behaves. In plan, z is ignored and P is exactly the old tx/ty.
   const zOf = (p: { z?: number }): number => p.z ?? 0;
-  const proj3 = view3d
-    ? fitProjected(
-        [
-          ...visibleFrames.flatMap(f => [project3(f.pt1, cam), project3(f.pt2, cam)]),
-          ...(showWalls ? visibleWalls.flatMap(w => w.points.map(q => project3({ x: q.x, y: q.y, z: zOf(q) }, cam))) : []),
-          ...(showOpenings ? visibleOpenings.flatMap(o => o.points.map(q => project3({ x: q.x, y: q.y, z: zOf(q) }, cam))) : []),
-          ...(showColumns ? visibleColumns.flatMap(c => [project3(c.pt1, cam), project3(c.pt2, cam)]) : []),
-          ...(showGrids ? visibleGrids.flatMap(g => [
-            project3({ x: g.p1.x, y: g.p1.y, z: zOf(g.p1) }, cam),
-            project3({ x: g.p2.x, y: g.p2.y, z: zOf(g.p2) }, cam),
-          ]) : []),
-        ],
-        width, height,
-      )
-    : null;
+
+  /**
+   * The 3D fit is built from the model's bounding SPHERE and is therefore
+   * CAMERA-INDEPENDENT: it does not appear in the dependency list below, and
+   * orbiting cannot change it.
+   *
+   * This is the fix for the jarring feel. The old code refitted the projected
+   * bounding BOX on every render, so each mouse-move during an orbit produced a
+   * new scale and a new centre — the model pumped in and out and slid around
+   * under the cursor while you dragged. Framing a sphere removes the coupling
+   * entirely: an orthographic projection of a sphere is the same circle at every
+   * angle, so rotation now only reorients.
+   */
+  // Computed straight through rather than memoized: it is one O(n) pass over the
+  // same points the bounds above already walk, and any cache key cheap enough to
+  // be worth it would have to be recomputed from those points anyway.
+  const sphere3 = view3d ? boundingSphere(pts.map(p => ({ x: p.x, y: p.y, z: zOf(p) }))) : null;
+  const proj3 = sphere3 ? stableProjection(sphere3, width, height) : null;
   /** Model point → SVG coordinates, for whichever view is active. */
   const P = (p: { x: number; y: number; z?: number }): [number, number] => {
     if (!proj3) return [tx(p.x), ty(p.y)];
-    const { sx, sy } = proj3(project3({ x: p.x, y: p.y, z: zOf(p) }, cam));
+    const { sx, sy } = proj3({ x: p.x, y: p.y, z: zOf(p) }, cam);
     return [sx, sy];
   };
 
@@ -220,33 +263,74 @@ export default function MapCanvas({
   const fMinY = fpts.length ? Math.min(...fpts.map(p => p.y)) : minY;
   const fMaxY = fpts.length ? Math.max(...fpts.map(p => p.y)) : maxY;
 
+  /**
+   * Frame everything on screen.
+   *
+   * In plan the fit transform already sizes the model to the canvas, so the fit
+   * IS the untransformed viewBox. In 3D the projection deliberately frames the
+   * bounding SPHERE — loose, but rotation-proof — so fitting means reframing the
+   * viewBox onto what the current camera actually projects. Doing it here rather
+   * than inside the projection is the whole trick: the tight framing happens when
+   * asked for, and never mid-drag.
+   */
+  const fitView = useCallback(() => {
+    if (!proj3) { setViewBox({ x: 0, y: 0, w: width, h: height }); return; }
+    const b = screenBounds(pts.map(p => proj3({ x: p.x, y: p.y, z: zOf(p) }, cam)));
+    setViewBox(b ? viewBoxForBounds(b, width, height) : { x: 0, y: 0, w: width, h: height });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj3, cam, width, height, pts.length]);
+
+  // Re-frame when the MODEL, the CANVAS or the VIEW MODE changes — and only then.
+  //
+  // `cam` and `fitView` are deliberately absent from the dependency list. In 3D
+  // the tight framing has to be computed from the camera, but re-running it
+  // whenever the camera moves is precisely the behaviour being removed here: it
+  // would rescale the model on every frame of an orbit. Fitting is an action, not
+  // a continuous reaction, so this closes over whatever camera is current at the
+  // moment the model or the mode changed.
   useEffect(() => {
-    setViewBox({ x: 0, y: 0, w: width, h: height });
-  }, [frames, width, height]);
+    fitView();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frames, width, height, view3d]);
 
   // Shared coloring: group / auto-group lookups + the per-frame color for the mode.
   const groupColorMap = buildGroupColorMap(designGroups);
   const autoGroupColorMap = buildAutoGroupColorMap(autoGroupOverlay);
   const groupIndexMap = buildGroupIndexMap(designGroups);
   const frameColor = (f: MapFrame): string =>
-    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, dcrBands });
+    frameColorFor(f, { colorMode, dcrById, groupColorMap, autoGroupColorMap, metricById, metricRange, gradeColorMap, scoStatusById, scoDcrById, dcrBands, beamColor: elementStyles.beam.color });
 
-  // Proportional line weight (feature ④): scale a beam's stroke by its width. At
-  // lineWeightScale 0 this collapses to the constant 3px (today's look); higher
-  // values spread strokes across ~2–10px in proportion to width, so wider beams
-  // read as heavier lines. Halos add a fixed offset so they track the line.
+  // Everything drawn inside the SVG is in user space, which the zoom viewBox
+  // magnifies — a 3-unit stroke is 3px at fit and 30px at 10×. Line weight is a
+  // SCREEN property, so convert px → user units by the current zoom factor and the
+  // pen stays the same width however far you scroll in. (viewBox.w === width at fit.)
+  const pxToUser = width ? viewBox.w / width : 1;
+  const uu = (px: number) => px * pxToUser;
+
+  // Line weight (feature ④): the slider IS the pen width, from a hairline to a
+  // heavy line. Beam width only modulates it — the widest beam draws 1.25× the
+  // narrowest — so the slider always dominates and the low end is genuinely thin.
+  // Halos add a fixed screen offset so they track the line at every zoom.
+  const LW_MIN_PX = 0.75;   // slider 0 — hairline
+  const LW_MAX_PX = 5;      // slider 1 — heavy
   const wVals = Object.values(widthById);
   const minW = wVals.length ? Math.min(...wVals) : 0;
   const maxW = wVals.length ? Math.max(...wVals) : 1;
+  // Emphasis MULTIPLIES the pen rather than adding a fixed number of pixels: at the
+  // hairline end of the slider a +3px bump would be a four-fold jump and at the heavy end
+  // barely visible, so a constant would mean something different at every setting.
+  // Floored as well, because 2.4 × a 0.75px hairline is still a hairline.
+  const EMPH_MUL = 2.4, EMPH_MIN_PX = 3.5;
   const strokeFor = (memberId: string | undefined, hov: boolean): number => {
-    const base = 3;
+    const pen = LW_MIN_PX + lineWeightScale * (LW_MAX_PX - LW_MIN_PX);
     const w = memberId ? widthById[memberId] : undefined;
-    let px = base;
-    if (lineWeightScale > 0 && w !== undefined && maxW > minW) {
-      const t = (w - minW) / (maxW - minW);              // 0..1 across the width range
-      px = base + lineWeightScale * (2 + t * 6 - base);  // blend base → 2..8px band
+    let px = pen;
+    if (w !== undefined && maxW > minW) {
+      const t = (w - minW) / (maxW - minW);   // 0..1 across the width range
+      px = pen * (0.75 + 0.5 * t);            // 0.75× narrowest → 1.25× widest
     }
-    return px + (hov ? 2 : 0);
+    if (memberId && emphasisMembers?.has(memberId)) px = Math.max(EMPH_MIN_PX, px * EMPH_MUL);
+    return uu(px + (hov ? 1.5 : 0));
   };
 
   const mouseToSvg = useCallback((clientX: number, clientY: number) => {
@@ -283,7 +367,12 @@ export default function MapCanvas({
     };
     const handler = (e: WheelEvent) => {
       e.preventDefault();
-      const factor = e.deltaY > 0 ? 1.15 : 0.87;
+      // Proportional to how far the wheel/trackpad actually moved, and
+      // exponential so the feel is scale-invariant and out-then-back-in returns
+      // to where it started. A browser reports a trackpad PINCH as a wheel event
+      // with ctrlKey set — the same zoom, just a finer delta, so it needs no
+      // special case beyond not being swallowed by a modifier check.
+      const factor = wheelZoomFactor(normalizeWheelDelta(e.deltaY, e.deltaMode));
       // Accumulate ticks that arrive within the same frame; anchor on the latest.
       pending = { clientX: e.clientX, clientY: e.clientY, factor: (pending?.factor ?? 1) * factor };
       if (!raf) raf = requestAnimationFrame(apply);
@@ -292,52 +381,116 @@ export default function MapCanvas({
     return () => { svg.removeEventListener('wheel', handler); if (raf) cancelAnimationFrame(raf); };
   }, [mouseToSvg, width]);
 
-  function onMouseDown(e: React.MouseEvent) {
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
-      setIsPanning(true);
-      panStart.current = { mx: e.clientX, my: e.clientY, vx: viewBox.x, vy: viewBox.y };
+  // ── Camera damping ─────────────────────────────────────────────────────────
+  // A pointer-move fires far more often than the screen refreshes, and each one
+  // used to setCam() and re-render every element on the canvas. Now moves only
+  // update a target ref; this loop eases the rendered camera toward it once per
+  // frame and stops as soon as it arrives. That does two jobs at once: it caps
+  // React to one re-render per frame, and it smooths the raw pointer deltas so
+  // the orbit glides instead of stepping.
+  // Runs a fixed burst of frames after every target change rather than testing
+  // for convergence: dampCamera snaps to the target once inside its epsilon, and
+  // returns that same object, so the tail frames hand React an identical value
+  // and it bails out of re-rendering. A drag simply restarts the burst.
+  useEffect(() => {
+    let raf = 0, frames = 0;
+    const step = () => {
+      setCam(prev => dampCamera(prev, camTarget, 0.32));
+      if (++frames < 30) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [camTarget]);
+
+  /** Point the camera at a named standard view (keyboard 1–4, or the buttons). */
+  const setPreset = useCallback((v: ViewPreset) => setCamTarget({ ...VIEW_PRESETS[v] }), []);
+
+  // ── Pointer input ──────────────────────────────────────────────────────────
+  // Bindings follow what CAD/BIM and web 3D viewers have converged on:
+  //   left-drag           orbit (3D) / box-select (2D)
+  //   middle-drag         pan            — universal
+  //   right-drag          pan            — for laptops with no middle button
+  //   space + left-drag   pan            — Figma/Photoshop hand tool
+  //   alt + left-drag     pan            — kept from the previous binding
+  //   shift + left-drag   box-select in 3D, so selection survives the orbit default
+  //   wheel / pinch       zoom to cursor
+  function beginPan(e: React.PointerEvent) {
+    setIsPanning(true);
+    panStart.current = { mx: e.clientX, my: e.clientY, vx: viewBox.x, vy: viewBox.y };
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onPointerDown(e: React.PointerEvent) {
+    if (e.pointerType === 'mouse' && e.button === 2) { rightDragged.current = false; beginPan(e); return; }
+    if (e.button === 1 || (e.button === 0 && (e.altKey || spaceHeld))) { beginPan(e); return; }
+    if (e.button !== 0) return;
+
+    const pt = mouseToSvg(e.clientX, e.clientY);
+    if (!pt) return;
+    const tag = (e.target as Element).tagName.toLowerCase();
+    const onBackground = tag === 'svg' || tag === 'rect' || tag === 'pattern';
+    // In 3D a bare background drag orbits — the gesture people expect from a 3D
+    // view. Shift keeps the 2D behaviour (box-select), so nothing is lost;
+    // dragging a member still selects it, because that isn't background.
+    if (view3d && onBackground && !e.shiftKey) {
+      orbitStart.current = { mx: e.clientX, my: e.clientY, yaw: camTarget.yaw, pitch: camTarget.pitch };
+      setIsOrbiting(true);
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
       e.preventDefault();
       return;
     }
-    if (e.button === 0 && !e.altKey) {
-      const pt = mouseToSvg(e.clientX, e.clientY);
-      if (!pt) return;
-      const tag = (e.target as Element).tagName.toLowerCase();
-      const onBackground = tag === 'svg' || tag === 'rect' || tag === 'pattern';
-      // In 3D a bare background drag orbits the camera — the gesture people expect
-      // from a 3D view. Shift keeps the 2D behaviour (lasso-select), so nothing is
-      // lost; dragging a member still selects it, because that isn't background.
-      if (view3d && onBackground && !e.shiftKey) {
-        orbitStart.current = { mx: e.clientX, my: e.clientY, yaw: cam.yaw, pitch: cam.pitch };
-        e.preventDefault();
-        return;
-      }
-      lassoBgOnly.current = onBackground;
-      setLasso({ sx: pt.x, sy: pt.y, ex: pt.x, ey: pt.y });
-    }
+    lassoBgOnly.current = onBackground;
+    setLasso({ sx: pt.x, sy: pt.y, ex: pt.x, ey: pt.y });
   }
 
-  function onMouseMove(e: React.MouseEvent) {
-    // Capture the pan origin locally: the setViewBox updater below runs
-    // asynchronously, and the native window mouseup listener can null
-    // panStart.current before it flushes — dereferencing the ref inside the
-    // updater then throws "Cannot read properties of null (reading 'vx')".
+  // Pan is rAF-coalesced for the same reason the camera is: one viewBox commit
+  // per frame instead of one per pointer event.
+  const panRaf = useRef(0);
+  const panPending = useRef<{ dx: number; dy: number } | null>(null);
+
+  function onPointerMove(e: React.PointerEvent) {
     const os = orbitStart.current;
     if (os) {
-      // ~0.9° of yaw per px across, and pitch clamped so the model can't invert.
-      setCam({
-        yaw: os.yaw + (e.clientX - os.mx) * 0.008,
-        pitch: clampPitch(os.pitch + (e.clientY - os.my) * 0.006),
+      // Sensitivity is expressed as a fraction of the canvas, so a drag across
+      // the view turns the model by the same amount whatever the panel size —
+      // the old fixed px constants made a docked panel feel twitchy and a
+      // maximised one sluggish.
+      const rect = svgRef.current?.getBoundingClientRect();
+      const w = rect?.width || width, h = rect?.height || height;
+      let dx = (e.clientX - os.mx) / w, dy = (e.clientY - os.my) / h;
+      // Shift constrains to the dominant axis — the standard way to get a clean
+      // turntable spin or a pure tilt.
+      if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      setCamTarget({
+        yaw: os.yaw + dx * 2 * Math.PI,          // one full turn per canvas width
+        pitch: clampPitch(os.pitch + dy * Math.PI), // half a turn per canvas height
       });
       return;
     }
     const ps = panStart.current;
     if (isPanning && ps) {
+      if (e.pointerType === 'mouse' && e.buttons & 2) rightDragged.current = true;
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect || !rect.width) return;
-      const dx = ((e.clientX - ps.mx) / rect.width) * viewBox.w;
-      const dy = ((e.clientY - ps.my) / rect.height) * viewBox.h;
-      setViewBox(vb => ({ ...vb, x: ps.vx - dx, y: ps.vy - dy }));
+      panPending.current = {
+        dx: ((e.clientX - ps.mx) / rect.width) * viewBox.w,
+        dy: ((e.clientY - ps.my) / rect.height) * viewBox.h,
+      };
+      if (!panRaf.current) {
+        panRaf.current = requestAnimationFrame(() => {
+          panRaf.current = 0;
+          const d = panPending.current;
+          const s = panStart.current;
+          if (!d || !s) return;
+          // THE VIEW FOLLOWS THE DRAG. Dragging left moves the viewport left, so the
+          // model appears to move right — the opposite of the "grab the paper" panning
+          // most maps use, and deliberate. Written as `+` for that reason: the obvious
+          // `-` is the grab-the-paper convention and reads as the correction, so anyone
+          // tidying this later needs to know the sign is the requirement, not a slip.
+          setViewBox(vb => ({ ...vb, x: s.vx + d.dx, y: s.vy + d.dy }));
+        });
+      }
       return;
     }
     if (lasso) {
@@ -347,8 +500,9 @@ export default function MapCanvas({
     }
   }
 
-  function onMouseUp(e: React.MouseEvent) {
-    if (orbitStart.current) { orbitStart.current = null; return; }
+  function onPointerUp(e: React.PointerEvent) {
+    (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
+    if (orbitStart.current) { orbitStart.current = null; setIsOrbiting(false); return; }
     if (isPanning) {
       setIsPanning(false);
       panStart.current = null;
@@ -380,27 +534,50 @@ export default function MapCanvas({
   }
 
   useEffect(() => {
-    const onWinMouseUp = () => {
+    const onWinPointerUp = () => {
       if (isPanning) { setIsPanning(false); panStart.current = null; }
       // Releasing outside the canvas must end an orbit too, or the camera keeps
       // tracking the mouse after the button is up.
       orbitStart.current = null;
+      setIsOrbiting(false);
       setLasso(l => (l ? null : l));
     };
+    /** Shortcuts are ignored while the user is typing into a field. */
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      const tag = el?.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable === true;
+    };
     const onWinKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onSelectionChange(new Set()); setPinned(null); }
+      if (typing(e.target)) return;
+      if (e.key === 'Escape') { onSelectionChange(new Set()); setPinned(null); return; }
+      if (e.code === 'Space' && !spaceHeld) { setSpaceHeld(true); e.preventDefault(); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // View shortcuts. F for fit is near-universal; the digits follow the
+      // numeric-view convention CAD tools use for standard orientations.
+      if (e.key === 'f' || e.key === 'F') { fitView(); return; }
+      if (!view3d) return;
+      const preset: Record<string, ViewPreset> = { '1': 'top', '2': 'front', '3': 'right', '4': 'iso', '0': 'iso' };
+      if (preset[e.key]) setPreset(preset[e.key]);
     };
-    window.addEventListener('mouseup', onWinMouseUp);
+    const onWinKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false);
+    };
+    // Losing focus mid-gesture must not leave the hand tool stuck on.
+    const onBlur = () => setSpaceHeld(false);
+    window.addEventListener('pointerup', onWinPointerUp);
+    window.addEventListener('pointercancel', onWinPointerUp);
     window.addEventListener('keydown', onWinKeyDown);
+    window.addEventListener('keyup', onWinKeyUp);
+    window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('mouseup', onWinMouseUp);
+      window.removeEventListener('pointerup', onWinPointerUp);
+      window.removeEventListener('pointercancel', onWinPointerUp);
       window.removeEventListener('keydown', onWinKeyDown);
+      window.removeEventListener('keyup', onWinKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
-  }, [isPanning, onSelectionChange]);
-
-  function fitView() {
-    setViewBox({ x: 0, y: 0, w: width, h: height });
-  }
+  }, [isPanning, onSelectionChange, spaceHeld, view3d, fitView, setPreset]);
 
   const hovered = hover ? visibleFrames.find(f => f.frameName === hover) : null;
   // The summary card follows the hovered beam, and when nothing is hovered it
@@ -411,10 +588,10 @@ export default function MapCanvas({
   const cardPinned = !hovered && !!pinnedFrame; // showing the pinned card (not a hover)
 
   // Group-tag labels are drawn in SVG user space, which magnifies with the zoom
-  // viewBox. Counter-scale them by the zoom factor so each number stays a roughly
-  // constant screen size: as you zoom in, members spread apart but the numbers do
-  // not grow, so the dense clusters stop overlapping. (viewBox.w === width at fit.)
-  const tagScale = viewBox.w / width;
+  // viewBox — the same problem the line weight has, so they share one factor. Each
+  // number stays a roughly constant screen size: as you zoom in, members spread
+  // apart but the numbers do not grow, so the dense clusters stop overlapping.
+  const tagScale = pxToUser;
 
   // ── V/M diagram overlay ────────────────────────────────────────────────────
   // For each visible linked frame with diagram data, render a filled polygon
@@ -422,12 +599,15 @@ export default function MapCanvas({
   const diagramPolygons = (() => {
     if (diagramMode === 'off') return null;
 
-    // Global max for normalization
+    // Global max for normalization — of the MAGNITUDE, because the series is signed.
+    // Taking the raw max would normalise against the largest sagging moment and let every
+    // hogging value (all negative) scale off it, so a beam whose worst demand is hogging
+    // would draw a tiny lobe on a plan where a smaller sagging beam drew a full-size one.
     let globalMax = 0;
     for (const f of visibleFrames) {
       if (!f.memberId) continue;
       const data = diagramDataById[f.memberId];
-      if (data) for (const pt of data) globalMax = Math.max(globalMax, pt.v);
+      if (data) for (const pt of data) globalMax = Math.max(globalMax, Math.abs(pt.v));
     }
     if (globalMax === 0) return null;
 
@@ -486,11 +666,21 @@ export default function MapCanvas({
   // in wall hatch reads as a wall, which is exactly how it was reported.)
   const wallLayer = visibleWalls.map(w => {
     const isSlab = w.kind === 'slab';
+    const st = isSlab ? elementStyles.floor : elementStyles.wall;
+    // `outline` is a real choice, not "invisible": the edge still draws, which is what
+    // someone wants when the wash is fighting the framing on a dense plan.
+    const fill = st.fill === 'outline' ? 'none'
+      : st.fill === 'hatch' ? (isSlab ? 'url(#floorhatch)' : 'url(#wallhatch)')
+        : withAlpha(st.color, st.opacity);
     return (
       <polygon key={w.id}
         points={w.points.map(p => { const [a, b] = P(p); return `${a},${b}`; }).join(' ')}
-        fill={isSlab ? 'rgba(148,163,184,0.16)' : 'url(#wallhatch)'}
-        stroke="#94a3b8" strokeWidth={isSlab ? 0.8 : 1.4}
+        fill={fill}
+        // The hatch pattern carries its own alpha, so the whole polygon is faded
+        // instead — otherwise a hatched floor at 16% would be twice as pale as a solid
+        // one at the same setting.
+        opacity={st.fill === 'hatch' ? st.opacity : 1}
+        stroke={st.color} strokeWidth={isSlab ? 0.8 : 1.4}
         strokeOpacity={isSlab ? 0.7 : 1}
         style={{ pointerEvents: 'none' }} />
     );
@@ -504,8 +694,8 @@ export default function MapCanvas({
     const [x2, y2] = P(c.pt2);
     return (
       <line key={`col-${c.id}`} x1={x1} y1={y1} x2={x2} y2={y2}
-        stroke="#94a3b8" strokeWidth={2.5} strokeLinecap="round"
-        opacity={0.65} style={{ pointerEvents: 'none' }} />
+        stroke={elementStyles.column.color} strokeWidth={2.5} strokeLinecap="round"
+        opacity={elementStyles.column.opacity} style={{ pointerEvents: 'none' }} />
     );
   }) : [];
 
@@ -564,12 +754,31 @@ export default function MapCanvas({
         ref={svgRef}
         width={width} height={height}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-        style={{ background: '#f8fafc', borderRadius: 10, border: `1px solid ${BORDER.default}`, cursor: isPanning ? 'grabbing' : lasso ? 'crosshair' : inspectMode ? 'zoom-in' : 'default', display: 'block' }}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
+        style={{
+          background: '#f8fafc', borderRadius: 10, border: `1px solid ${BORDER.default}`, display: 'block',
+          // The cursor is the only feedback for which tool a modifier has armed,
+          // so it has to track the same precedence the handlers use.
+          cursor: isPanning || isOrbiting ? 'grabbing'
+            : spaceHeld ? 'grab'
+              : lasso ? 'crosshair'
+                  : inspectMode ? 'zoom-in'
+                    : view3d ? 'grab' : 'default',
+          // Claim the gestures from the browser: without this a touch/precision
+          // trackpad drag scrolls the page instead of orbiting, and the browser's
+          // own pinch fights the wheel handler.
+          touchAction: 'none',
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onDoubleClick={e => {
+          const tag = (e.target as Element).tagName.toLowerCase();
+          if (tag === 'svg' || tag === 'rect' || tag === 'pattern') fitView();
+        }}
         onContextMenu={e => {
           e.preventDefault();
+          // A right-DRAG is a pan; only a right-CLICK opens the beam menu.
+          if (rightDragged.current) { rightDragged.current = false; return; }
           // Find which frame was right-clicked via data attribute
           const el = (e.target as Element).closest('[data-framename]');
           const frameName = el?.getAttribute('data-framename');
@@ -582,10 +791,16 @@ export default function MapCanvas({
           <pattern id="mmgrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#eef2f7" strokeWidth="1" />
           </pattern>
-          {/* Wall poché — the hatch belongs to walls (cut material), not slabs. */}
+          {/* Poché. One pattern per area kind, because each carries its OWN colour from
+              Preferences — a single shared pattern would paint a re-coloured wall in the
+              floor's hue the moment the two differed. */}
           <pattern id="wallhatch" width="6" height="6" patternUnits="userSpaceOnUse">
-            <rect width="6" height="6" fill="rgba(148,163,184,0.20)" />
-            <path d="M0,6 l6,-6" stroke="#64748b" strokeWidth="1" />
+            <rect width="6" height="6" fill={withAlpha(elementStyles.wall.color, 0.20)} />
+            <path d="M0,6 l6,-6" stroke={elementStyles.wall.color} strokeWidth="1" />
+          </pattern>
+          <pattern id="floorhatch" width="6" height="6" patternUnits="userSpaceOnUse">
+            <rect width="6" height="6" fill={withAlpha(elementStyles.floor.color, 0.20)} />
+            <path d="M0,6 l6,-6" stroke={elementStyles.floor.color} strokeWidth="1" />
           </pattern>
         </defs>
         <rect width={width} height={height} fill="url(#mmgrid)" rx="10" />
@@ -609,7 +824,9 @@ export default function MapCanvas({
           const flagged = showErrors && !!f.memberId && errorMemberIds.has(f.memberId);
           // Feature ①: when a group is active, halftone every frame not in it.
           const dimmed = !!focusFrames && focusFrames.size > 0 && !focusFrames.has(f.frameName);
-          const baseOpacity = dimmed ? 0.12 : (linked ? 1 : 0.6);
+          // The preference multiplies the map's own emphasis rather than replacing it:
+          // an unlinked frame and a halftoned one still read as such at any setting.
+          const baseOpacity = (dimmed ? 0.12 : (linked ? 1 : 0.6)) * elementStyles.beam.opacity;
           // A (near-)vertical member — a column — projects to a single point in
           // plan; draw it as a square marker instead of a zero-length line.
           const isColumn = Math.hypot(f.pt2.x - f.pt1.x, f.pt2.y - f.pt1.y) < 0.5;
@@ -652,9 +869,9 @@ export default function MapCanvas({
                 </>
               ) : (
                 <>
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(12, strokeFor(f.memberId, isHov) + 8)} />
-                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={strokeFor(f.memberId, isHov) + 4} opacity={0.45} strokeLinecap="round" />}
-                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={strokeFor(f.memberId, isHov) + 6} opacity={0.35} strokeLinecap="round" />}
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(uu(12), strokeFor(f.memberId, isHov) + uu(8))} />
+                  {flagged && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={STATUS.fail} strokeWidth={strokeFor(f.memberId, isHov) + uu(4)} opacity={0.45} strokeLinecap="round" />}
+                  {isSel && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#2563eb" strokeWidth={strokeFor(f.memberId, isHov) + uu(6)} opacity={0.35} strokeLinecap="round" />}
                   <line x1={x1} y1={y1} x2={x2} y2={y2}
                     stroke={color}
                     strokeWidth={strokeFor(f.memberId, isHov)}
@@ -701,9 +918,49 @@ export default function MapCanvas({
         })()}
       </svg>
 
-      {/* Toolbar overlay */}
-      <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
-        <button onClick={fitView} style={{ background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 6, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: INK.base }} title="Fit to view">⊡ Fit</button>
+      {/* Toolbar overlay — fit, the standard views, and the controls cheat-sheet */}
+      <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4, alignItems: 'flex-start' }}>
+        <button onClick={fitView} style={navBtn} title="Fit to view  (F, or double-click empty space)">⊡ Fit</button>
+        {view3d && ([
+          ['top', 'Top', '1'], ['front', 'Front', '2'], ['right', 'Right', '3'], ['iso', 'Iso', '4'],
+        ] as [ViewPreset, string, string][]).map(([v, label, key]) => (
+          <button key={v} onClick={() => setPreset(v)} style={navBtn} title={`${label} view  (${key})`}>{label}</button>
+        ))}
+        <button
+          onClick={() => setShowHelp(h => !h)}
+          style={{ ...navBtn, color: showHelp ? ACCENT.primary : INK.muted, borderColor: showHelp ? ACCENT.primary : BORDER.default }}
+          title="Navigation controls"
+          aria-pressed={showHelp}
+        >?</button>
+        {showHelp && (
+          <div style={{
+            position: 'absolute', top: 30, left: 0, zIndex: 20, background: 'white',
+            border: `1px solid ${BORDER.default}`, borderRadius: 8, padding: '8px 10px',
+            boxShadow: '0 6px 20px rgba(15,23,42,0.14)', fontSize: 10, color: INK.base,
+            lineHeight: 1.75, whiteSpace: 'nowrap',
+          }}>
+            {([
+              // Shift STARTS a box-select; held once an orbit is already running
+              // it locks the turn to one axis. Two different moments, so they are
+              // worded to say which.
+              ...(view3d
+                ? [['Drag empty space', 'Orbit'], ['Shift while orbiting', 'Lock to one axis'], ['Shift + drag', 'Box-select']]
+                : [['Drag empty space', 'Box-select']]),
+              ['Middle / right drag', 'Pan'],
+              ['Space + drag', 'Pan'],
+              ['Scroll / pinch', 'Zoom to cursor'],
+              ['Double-click empty', 'Fit'],
+              ['F', 'Fit'],
+              ...(view3d ? [['1 / 2 / 3 / 4', 'Top / Front / Right / Iso']] : []),
+              ['Esc', 'Clear selection'],
+            ] as [string, string][]).map(([k, v]) => (
+              <div key={`${k}-${v}`} style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
+                <span style={{ color: INK.secondary }}>{k}</span>
+                <span style={{ fontWeight: 600 }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Summary card — follows the hovered beam, and stays pinned to the last
@@ -796,8 +1053,11 @@ export default function MapCanvas({
 
       {/* DCR legend when in DCR mode — rendered from the (editable) bands so the
           legend can never drift from the fill colors. Click ✎ to reband. */}
-      {colorMode === 'dcr' && (
-        <DcrScaleLegend bands={dcrBands} thresholds={dcrThresholds} onChange={onDcrThresholdsChange} />
+      {/* Both DCR modes read the same bands, so they share one legend — flipping between
+          the app's DCR and S-Concrete's must not also change the scale underneath. */}
+      {(colorMode === 'dcr' || colorMode === 'sconcreteDcr') && (
+        <DcrScaleLegend bands={dcrBands} thresholds={dcrThresholds} onChange={onDcrThresholdsChange}
+          colors={dcrColors} onColorsChange={onDcrColorsChange} />
       )}
 
       {/* S-Concrete pass/fail legend */}
@@ -851,13 +1111,17 @@ export default function MapCanvas({
 /** DCR-scale legend for the plan. Read-only chips by default; when the Map passes
  *  editable thresholds + an onChange it also offers a ✎ slider panel to move the
  *  green/lime/amber/red cut-points, recolouring the whole plan live. */
-function DcrScaleLegend({ bands, thresholds, onChange }: {
+function DcrScaleLegend({ bands, thresholds, onChange, colors, onColorsChange }: {
   bands: readonly DcrBand[];
   thresholds?: [number, number, number];
   onChange?: (t: [number, number, number]) => void;
+  /** The four band colours, when the host lets them be edited. */
+  colors?: readonly string[];
+  onColorsChange?: (c: string[]) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const editable = !!thresholds && !!onChange;
+  const recolourable = !!colors && !!onColorsChange;
   const setT = (i: number, v: number) => {
     if (!thresholds || !onChange) return;
     const lo = i === 0 ? 0.1 : thresholds[i - 1] + 0.05;
@@ -866,6 +1130,28 @@ function DcrScaleLegend({ bands, thresholds, onChange }: {
     t[i] = Math.min(hi, Math.max(lo, Math.round(v * 20) / 20));
     onChange(t);
   };
+  // The swatch IS the colour input — an <input type="color"> stripped of its chrome and
+  // sized to the bar it replaces. That keeps the affordance to zero extra pixels: no
+  // palette popover to build, no second button, and the OS picker does the hard part.
+  const Swatch = ({ i, w, h }: { i: number; w: number; h: number }) => (
+    recolourable ? (
+      <input
+        type="color" value={bands[i].color} aria-label={`Colour for ${bands[i].label}`}
+        title={`${bands[i].label} — click to recolour`}
+        onChange={e => {
+          const next = [0, 1, 2, 3].map(k => colors![k] || bands[k].color);
+          next[i] = e.target.value;
+          onColorsChange!(next);
+        }}
+        style={{
+          width: w, height: h, padding: 0, border: 'none', borderRadius: 2,
+          background: 'none', cursor: 'pointer', flexShrink: 0, appearance: 'none',
+        }}
+      />
+    ) : (
+      <span style={{ display: 'inline-block', width: w, height: h, background: bands[i].color, borderRadius: 2, flexShrink: 0 }} />
+    )
+  );
   return (
     <div style={{ position: 'absolute', bottom: 8, left: 8, background: 'white', borderRadius: 6, padding: '4px 10px', border: `1px solid ${BORDER.default}`, fontSize: 10, color: INK.secondary }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -882,17 +1168,30 @@ function DcrScaleLegend({ bands, thresholds, onChange }: {
       </div>
       {editable && editing && thresholds && (
         <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${BORDER.default}`, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
+          {/* One row per band. The first three carry the cut-point that ENDS them; the
+              fourth is open-ended (≥ t3) and so has a swatch and a label but no slider —
+              there is no fourth cut-point to move, and inventing a dead slider to make
+              the rows look alike would be worse than the asymmetry. */}
           {([0, 1, 2] as const).map(i => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ display: 'inline-block', width: 12, height: 3, background: bands[i].color, borderRadius: 2, flexShrink: 0 }} />
+              <Swatch i={i} w={12} h={10} />
               <input type="range" min={0.1} max={2} step={0.05} value={thresholds[i]}
                 onChange={e => setT(i, parseFloat(e.target.value))}
                 style={{ flex: 1, cursor: 'pointer', accentColor: bands[i].color }} />
               <span style={{ ...MONO_NUM, width: 32, textAlign: 'right' }}>{thresholds[i].toFixed(2)}</span>
             </div>
           ))}
-          <button onClick={() => onChange!([...DEFAULT_DCR_THRESHOLDS] as [number, number, number])}
-            style={{ alignSelf: 'flex-start', marginTop: 2, fontSize: 9, color: INK.muted, background: 'none', border: `1px solid ${BORDER.default}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>Reset</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Swatch i={3} w={12} h={10} />
+            <span style={{ flex: 1, color: INK.muted }}>{bands[3].label}</span>
+            <span style={{ ...MONO_NUM, width: 32, textAlign: 'right', color: INK.muted }}>over</span>
+          </div>
+          <button
+            onClick={() => {
+              onChange!([...DEFAULT_DCR_THRESHOLDS] as [number, number, number]);
+              onColorsChange?.([...MAP_DCR_COLORS]);
+            }}
+            style={{ alignSelf: 'flex-start', marginTop: 2, fontSize: 10, color: INK.muted, background: 'none', border: `1px solid ${BORDER.default}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>Reset</button>
         </div>
       )}
     </div>

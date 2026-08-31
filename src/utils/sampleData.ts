@@ -1,6 +1,17 @@
+/**
+ * The project the app opens on before anything is imported.
+ *
+ * Two hand-written ACI beams — a rectangular one and a T-beam — chosen so the empty
+ * app still shows a working member, a flexure/shear/torsion result and a Calc Sheet.
+ * Both are deliberately ordinary, mid-utilisation sections: this is a starting point
+ * and a smoke test, NOT a validation fixture. Numbers pinned against S-Concrete live in
+ * the engine tests, and nothing here should be treated as a checked reference.
+ */
+
 import type { Project } from '../types';
 import { defaultSettings } from './projectSettings';
 
+/** Seed project loaded on first run and by File → New Project. */
 export const defaultProject: Project = {
   id: 'proj-001',
   name: 'Office Building Frame',

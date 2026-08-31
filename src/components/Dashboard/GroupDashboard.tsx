@@ -10,7 +10,7 @@ import type { RebarLayout } from '../../types';
 import { membersForGroup, type DashboardPayload } from '../../utils/dashboardPayload';
 import SectionCard from './SectionCard';
 import { DCRChip, DcrHistogram } from './dashboardShared';
-import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg , ICON } from '../../theme';
+import { ACCENT, BORDER, INK, STATUS, SURFACE, MONO_NUM, LABEL_STYLE, dcrColor, dcrBg , ICON, Z } from '../../theme';
 import { Icon } from '../common/Icon';
 
 const hdrBtn: CSSProperties = {
@@ -18,11 +18,45 @@ const hdrBtn: CSSProperties = {
   background: 'white', fontSize: 11, cursor: 'pointer', color: INK.base, fontWeight: 600,
   display: 'inline-flex', alignItems: 'center', gap: 5,
 };
-const GRID = 'minmax(0, 1fr) 42px 42px 42px 52px 56px 34px';
+/**
+ * One header statistic — its label and the thing the label names ("Beams flagged" and
+ * its ✕/⚠ tallies; "DCR distribution" and its histogram).
+ *
+ * Stacked by default, which is what the app's dashboard wants: it has the height and
+ * not much spare width. A host with the opposite problem sets `--gd-stat-cols` to a
+ * two-track list and the value moves BESIDE its label instead of under it, halving this
+ * header's height.
+ *
+ * A grid rather than a flex row because `grid-template-columns` accepts an arbitrary
+ * string in csstype and `flex-direction` does not — so this needs no cast to hold a
+ * `var()`. The single-column default plus a 2px row gap reproduces the old
+ * `margin-bottom: 2` on the label exactly, so nothing moves where the variable is unset.
+ */
+const statStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'var(--gd-stat-cols, 1fr)',
+  alignItems: 'center',
+  gap: 'var(--gd-stat-gap, 2px)',
+};
+// Beam · M⁺ · M⁻ · V · T · DCR · Status · ⚠
+//
+// T earns its 42px: the DCR column is worstOf(), which counts torsion, so without a
+// torsion column a torsion-governed beam shows three green mode chips beside a red DCR
+// and nothing on the row explains it. In the demo's 174-beam model that is 43 beams.
+const GRID = 'minmax(0, 1fr) 42px 42px 42px 42px 52px 56px 34px';
+// The compact list drops the trailing ⚠ count column: the clauses it stood for are on
+// the Status cell's tooltip instead, so the column was spending 34px to say "there is
+// something to hover" next to the thing you would hover.
+//
+// Status gets 84px rather than the full variant's 56px because it now carries the count
+// too — "Warning (1)" does not fit in 56px and wrapped onto a second line, which pushed
+// the row taller than every other row in the table. The 34px saved on ⚠ more than pays
+// for it, so the list is still narrower than it was.
+const GRID_LIST = 'minmax(0, 1fr) 42px 42px 42px 42px 52px 84px';
 
 export default function GroupDashboard({
   payload, selectedGroupId, onSelectGroup, onApplyRebar,
-  canPopOut, onPopOut, onClose, closeLabel = '✕',
+  canPopOut, onPopOut, onClose, closeLabel = '✕', variant = 'full',
   onOpenMember, onHoverMember, onMoveMember, onCreateGroupForMember,
   onSuggestAll, onToggleCurtailmentNote, onSetOppositeTop, onSetMidThirdTop, onSetEndThirdBot, onSetReviewed,
 }: {
@@ -30,6 +64,10 @@ export default function GroupDashboard({
   selectedGroupId: string | null;
   onSelectGroup: (id: string | null) => void;
   onApplyRebar: (groupId: string, rebar: RebarLayout) => void;
+  /** 'full' (default) = header + card grid + resizable beam list, as the app shows it.
+   *  'list' = the selected group's beam list ONLY, filling the box. For hosts that
+   *  already show the group's card somewhere else and do not want it twice. */
+  variant?: 'full' | 'list';
   canPopOut?: boolean;
   onPopOut?: () => void;
   onClose?: () => void;
@@ -73,6 +111,11 @@ export default function GroupDashboard({
   // Right-click row menu (move to group / new group). Kept local so the dashboard
   // works the same in-app or popped out; the host decides what the callbacks do.
   const [rowMenu, setRowMenu] = useState<{ memberId: string; x: number; y: number } | null>(null);
+  // In `list` the beam rows are dense: no per-beam clause chips underneath, no ⚠ column.
+  // Nothing is lost — every clause and its full message moves onto the Status cell, which
+  // is the cell that already tells you there is a problem, so that is where you point.
+  const compact = variant === 'list';
+  const grid = compact ? GRID_LIST : GRID;
   const canContext = !!onMoveMember || !!onCreateGroupForMember;
 
   // Draggable divider between the card grid (top) and the beam-list detail (bottom).
@@ -120,7 +163,8 @@ export default function GroupDashboard({
   return (
     <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, flex: 1, width: '100%', background: SURFACE.app }}
       onMouseLeave={() => onHoverMember?.(null)}>
-      {/* Header */}
+      {/* Header — the list variant's host supplies its own title bar. */}
+      {variant === 'full' && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${BORDER.default}`, background: 'white', flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <Icon name="groupDashboard" size={ICON.sm} />Group Dashboard
@@ -141,8 +185,10 @@ export default function GroupDashboard({
           <button onClick={onClose} title="Close" style={{ ...hdrBtn, fontWeight: 700 }}>{closeLabel}</button>
         )}
       </div>
+      )}
 
       {/* Card grid */}
+      {variant === 'full' && (
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(248px, 1fr))', gap: 10, alignContent: 'start' }}>
         {groups.length === 0 && (
           <div style={{ color: INK.muted, fontSize: 12, padding: 20 }}>No design groups yet — create groups in the Design panel first.</div>
@@ -162,9 +208,11 @@ export default function GroupDashboard({
           />
         ))}
       </div>
+      )}
 
-      {/* Draggable divider — drop it where you like; the beam list keeps that height. */}
-      {selGroup && (
+      {/* Draggable divider — drop it where you like; the beam list keeps that height.
+          Nothing to divide in the list variant: the list IS the panel. */}
+      {variant === 'full' && selGroup && (
         <div
           onMouseDown={startDetailDrag}
           title="Drag to resize the beam list"
@@ -176,15 +224,17 @@ export default function GroupDashboard({
 
       {/* Selected-group detail (bottom half) — height set by the divider above. */}
       {selGroup && (
-        <div style={{ flexShrink: 0, height: detailHClamped, overflow: 'auto', background: 'white' }}>
+        <div style={variant === 'list'
+          ? { flex: 1, minHeight: 0, overflow: 'auto', background: 'white' }
+          : { flexShrink: 0, height: detailHClamped, overflow: 'auto', background: 'white' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 12px', position: 'sticky', top: 0, background: 'white', borderBottom: `1px solid ${BORDER.default}`, zIndex: 1 }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: selGroup.color ?? INK.muted }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: INK.strong }}>{selGroup.label}</span>
             <span style={{ fontSize: 11, color: INK.muted }}>{selMembers.length} beam{selMembers.length === 1 ? '' : 's'}</span>
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 16 }}>
               {/* Beams with problems in this group, beside the histogram. */}
-              <div>
-                <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>Beams flagged</div>
+              <div style={statStyle}>
+                <div style={LABEL_STYLE}>Beams flagged</div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', height: 30 }}>
                   {reviewed ? (
                     <span title="Engineer sign-off — this group's NG/warnings are accepted" style={{ fontSize: 12, fontWeight: 700, color: STATUS.ok, background: STATUS.okBg, padding: '2px 7px', borderRadius: 5 }}>✓ Reviewed</span>
@@ -201,41 +251,72 @@ export default function GroupDashboard({
                   </>)}
                 </div>
               </div>
-              <div>
-                <div style={{ ...LABEL_STYLE, marginBottom: 2 }}>DCR distribution</div>
+              <div style={statStyle}>
+                <div style={LABEL_STYLE}>DCR distribution</div>
                 <DcrHistogram values={govDCRs} />
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, padding: '5px 12px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
-            {['Beam', 'M⁺', 'M⁻', 'V', 'DCR', 'Status', '⚠'].map(h => <span key={h} style={LABEL_STYLE}>{h}</span>)}
+          <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, padding: '5px 12px', borderBottom: '1px solid #f3f4f6', background: SURFACE.subtle }}>
+            {(compact ? ['Beam', 'M⁺', 'M⁻', 'V', 'T', 'DCR', 'Status'] : ['Beam', 'M⁺', 'M⁻', 'V', 'T', 'DCR', 'Status', '⚠'])
+              .map(h => <span key={h} style={LABEL_STYLE}>{h}</span>)}
           </div>
           {selMembers.map(m => {
-            const showWarns = !reviewed && m.warnings.length > 0;
+            const showWarns = !compact && !reviewed && m.warnings.length > 0;
+            // Every clause and message on one string, for the Status cell's tooltip.
+            // Codes lead each line so the list scans as clauses, which is what an
+            // engineer is looking for — the prose is the second half.
+            const statusTip = reviewed
+              ? 'Engineer-reviewed — verdict accepted'
+              : m.warnings.length
+                ? m.warnings.map(w => `${w.code.replace(/^(EC2|ACI)\s+/, '')} — ${w.message}`).join('\n')
+                : m.status === 'OK' ? 'All checks pass' : undefined;
             return (
             <Fragment key={m.id}>
             <div
               title={onOpenMember ? 'Double-click to open the member · right-click to move to another group' : undefined}
-              style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: showWarns ? 'none' : '1px solid #f3f4f6', cursor: onOpenMember ? 'pointer' : 'default' }}
+              style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: showWarns ? 'none' : '1px solid #f3f4f6', cursor: onOpenMember ? 'pointer' : 'default' }}
               onMouseEnter={e => { onHoverMember?.(m.id); (e.currentTarget as HTMLDivElement).style.background = SURFACE.subtle; }}
               onMouseLeave={e => { onHoverMember?.(null); (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
               onDoubleClick={() => onOpenMember?.(m.id)}
               onContextMenu={canContext ? (e => { e.preventDefault(); setRowMenu({ memberId: m.id, x: e.clientX, y: e.clientY }); }) : undefined}
             >
               <span style={{ fontSize: 12, color: INK.base, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
-              <DCRChip label="M⁺" value={m.modeDCRs.flexPos} />
-              <DCRChip label="M⁻" value={m.modeDCRs.flexNeg} />
-              <DCRChip label="V" value={m.modeDCRs.shear} />
-              <span style={{ ...MONO_NUM, fontSize: 11, fontWeight: 700, color: dcrColor(m.maxDCR), background: dcrBg(m.maxDCR), padding: '1px 5px', borderRadius: 4, justifySelf: 'start' }}>{m.maxDCR.toFixed(2)}</span>
+              {/* Unlabelled: the M⁺ / M⁻ / V / T heading is directly above this column,
+                  so a label on every row restates it once per beam and costs a line of
+                  height each time. The mode survives as the value's tooltip, for when the
+                  header has scrolled out of a long list. */}
+              <DCRChip label="M⁺" value={m.modeDCRs.flexPos} showLabel={false} />
+              <DCRChip label="M⁻" value={m.modeDCRs.flexNeg} showLabel={false} />
+              <DCRChip label="V" value={m.modeDCRs.shear} showLabel={false} />
+              <DCRChip label="T" value={m.modeDCRs.torsion} showLabel={false} />
+              <span title="Governing DCR — the worst of every mode on this row, torsion included" style={{ ...MONO_NUM, fontSize: 11, fontWeight: 700, color: dcrColor(m.maxDCR), background: dcrBg(m.maxDCR), padding: '1px 5px', borderRadius: 4, justifySelf: 'start' }}>{m.maxDCR.toFixed(2)}</span>
               {/* Reviewed group: a beam's NG/Warning verdict reads "Reviewed"; passing
                   beams stay "OK" and warnings are hidden. */}
               {reviewed && m.status !== 'OK' ? (
-                <span title="Engineer-reviewed — verdict accepted" style={{ fontSize: 10, fontWeight: 700, color: STATUS.ok }}>Reviewed</span>
+                <span title={statusTip} style={{ fontSize: 10, fontWeight: 700, color: STATUS.ok }}>Reviewed</span>
               ) : (
-                <span style={{ fontSize: 10, fontWeight: 700, color: m.status === 'OK' ? STATUS.ok : m.status === 'NG' ? STATUS.fail : STATUS.warn }}>{m.status}</span>
+                <span
+                  title={statusTip}
+                  style={{
+                    fontSize: 10, fontWeight: 700,
+                    color: m.status === 'OK' ? STATUS.ok : m.status === 'NG' ? STATUS.fail : STATUS.warn,
+                    // A dotted underline is the only hint that a verdict carries the
+                    // clauses behind it. Without it the tooltip is undiscoverable, which
+                    // is the usual way "hover for detail" fails.
+                    borderBottom: compact && m.warnings.length && !reviewed ? '1px dotted currentColor' : undefined,
+                    cursor: compact && m.warnings.length && !reviewed ? 'help' : undefined,
+                    justifySelf: 'start',
+                    // A one-line verdict, always: a wrapped "Warning (1)" makes that one
+                    // row taller than the rest and the table stops scanning as a table.
+                    whiteSpace: 'nowrap',
+                  }}
+                >{m.status}{compact && !reviewed && m.warnings.length ? ` (${m.warnings.length})` : ''}</span>
               )}
-              <span title={reviewed ? 'Reviewed — warnings accepted' : m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: !reviewed && m.warnings.length ? STATUS.warn : INK.muted }}>{reviewed || !m.warnings.length ? '—' : `${m.warnings.length}⚠`}</span>
+              {!compact && (
+                <span title={reviewed ? 'Reviewed — warnings accepted' : m.warnings.map(w => w.message).join('\n')} style={{ fontSize: 10, fontWeight: 700, color: !reviewed && m.warnings.length ? STATUS.warn : INK.muted }}>{reviewed || !m.warnings.length ? '—' : `${m.warnings.length}⚠`}</span>
+              )}
             </div>
             {/* Visible warning-code chips per beam (e.g. §9.2.3(2), §6.3.2) — hover any
                 chip for its full message. Errors read red, warnings amber. */}
@@ -245,7 +326,7 @@ export default function GroupDashboard({
                   const isErr = w.severity === 'error';
                   return (
                     <span key={i} title={w.message}
-                      style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'help',
+                      style={{ fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'help',
                         color: isErr ? STATUS.fail : STATUS.warn, background: isErr ? STATUS.failBg : STATUS.warnBg }}>
                       {w.code.replace(/^(EC2|ACI)\s+/, '')}
                     </span>
@@ -291,7 +372,7 @@ function RowMenu({ x, y, groups, onMove, onCreateOwn, onClose }: {
   }, [onClose]);
   const item: CSSProperties = { padding: '7px 14px', cursor: 'pointer', color: INK.strong, display: 'flex', alignItems: 'center', gap: 6 };
   return (
-    <div ref={ref} style={{ position: 'fixed', left: x, top: y, zIndex: 9999, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', fontSize: 12, minWidth: 190, maxHeight: 320, overflow: 'auto', paddingBottom: 4 }}>
+    <div ref={ref} style={{ position: 'fixed', left: x, top: y, zIndex: Z.popover, background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', fontSize: 12, minWidth: 190, maxHeight: 320, overflow: 'auto', paddingBottom: 4 }}>
       <div style={{ padding: '6px 14px 4px', fontSize: 10, color: INK.muted, textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #f3f4f6' }}>Change group</div>
       {onCreateOwn && (
         <div style={item}

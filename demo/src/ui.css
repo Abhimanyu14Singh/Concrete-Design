@@ -1,0 +1,682 @@
+/* ═══════════════════════════════════════════════════════════════════════════════
+   ui.css — the Template's design system, carried over verbatim except for the
+   :root block below and the additions at the very bottom. Every colour, radius and
+   size in here is the Template's. Do not "tidy" values in this file: the point of
+   the demo is to see that system on real content, so any drift is a wrong answer.
+
+   New shell classes live in shell.css, kept separate for exactly that reason.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* The Inter the real app bundles. Copied next to the bundle by build.mjs; if the
+   file is missing the stack simply falls through to Segoe, which is the other half
+   of the toggle anyway. */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/dist/inter.woff2') format('woff2-variations');
+}
+
+:root {
+  /* One definition of each family. The mono stack used to be
+     `ui-monospace, "SFMono-Regular", Menlo, monospace` — every named face there is
+     macOS-only, so on Windows all three miss and the generic `monospace` resolves to
+     Courier New, a SERIF typewriter face. That is why the calc sheet, loads table,
+     section info and About equations came out serif in the desktop app. Consolas ships
+     with Windows and Cascadia Mono with newer builds, so name both before the
+     fallback. */
+  --sans-segoe: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sans-inter: "Inter Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sans: var(--sans-inter);
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", "SFMono-Regular", Menlo, monospace;
+}
+/* The font toggle. Set on <html> in BOTH windows — a detached panel is a separate
+   document, so it cannot inherit this and has to be told; `font` travels as a prop
+   like any other piece of state. Only the sans face changes: numbers stay mono in
+   both, which is why the tables look identical either way. */
+:root[data-font="segoe"] { --sans: var(--sans-segoe); }
+:root[data-font="inter"] { --sans: var(--sans-inter); }
+/* Scoped to .sdash-root so nothing leaks into the host page (the Dash app). The
+   mount container (#root / #sdash-root) provides the height. */
+.sdash-root, .sdash-root *, .sdash-root *::before, .sdash-root *::after { box-sizing: border-box; }
+.sdash-root { position: relative; display: flex; flex-direction: column; height: 100%; user-select: none; font-family: var(--sans); font-size: 12px; color: #1f2328; background: #fff; }
+/* Portal.jsx mounts the floating windows on <body>, OUTSIDE .sdash-root, so they
+   inherit nothing from it — every portalled popup fell back to the browser default,
+   which is serif. Typography only: layout still belongs to each window's own class. */
+.sdash-portal { font-family: var(--sans); font-size: 12px; color: #1f2328; user-select: none; }
+.sdash-pm-cap { font-size: 11px; font-weight: 700; color: #374151; padding: 2px 2px 6px; text-align: center; }
+.sdash-pm-empty { display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px; text-align: center; padding: 16px; }
+.sdash-pm-slider { display: flex; align-items: center; gap: 6px; padding: 4px 6px 2px; font-size: 9px; font-weight: 700; color: #9ca3af; }
+.sdash-pm-slider .sdash-srange { flex: 1; }
+.sdash-qty-stats { display: flex; gap: 6px; padding: 2px 2px 6px; }
+.sdash-qty-card { flex: 1; background: #f1f3f5; border-radius: 5px; padding: 5px 7px; display: flex; flex-direction: column; }
+.sdash-qty-lbl { font-size: 9px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .04em; }
+.sdash-qty-val { font-size: 15px; font-weight: 800; color: #1f2937; }
+.sdash-qty-val em { font-size: 10px; font-weight: 700; color: #6b7280; font-style: normal; }
+.sdash-qty-sub { font-size: 10px; font-weight: 600; color: #6b7280; }
+.sdash-qty-pierow { display: flex; align-items: center; gap: 8px; padding: 6px 2px 2px; }
+.sdash-qty-legend { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sdash-qty-legrow { display: flex; align-items: center; gap: 5px; font-size: 10px; }
+.sdash-qty-legname { flex: 1; font-weight: 600; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sdash-qty-legpct { font-weight: 700; color: #6b7280; }
+.sdash-pm-tabs { display: flex; gap: 3px; padding: 2px 2px 0; }
+.sdash-pm-tab { flex: 1; font-size: 10px; font-weight: 700; color: #6b7280; background: #f1f3f5; border: none; border-radius: 4px; padding: 3px 0; cursor: pointer; }
+.sdash-pm-tab.on { background: #2563eb; color: #fff; }
+.sdash-pm-tab:disabled { opacity: 0.4; cursor: default; }
+
+/* ── top toolbar ── */
+/* chrome layers, highest first in DOM order: a popover opened from the topbar must
+   paint above the mode bar and legend below it, never behind them */
+.sdash-topbar { position: relative; z-index: 30; height: 52px; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #eceef0; flex-shrink: 0; }
+.sdash-brand { display: inline-flex; align-items: center; font-weight: 700; font-size: 20px; letter-spacing: -.02em; color: #0f172a; }
+.sdash-pill { display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 9px; margin: 0 5px; background: #0f172a; border-radius: 999px; color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .06em; }
+.sdash-tabs { display: flex; align-items: flex-end; gap: 3px; align-self: flex-end; margin-bottom: -1px; }
+.sdash-tab { display: flex; align-items: center; padding: 0 15px; height: 33px; border: 1px solid #e5e7eb; border-bottom: none; border-radius: 9px 9px 0 0; background: #f3f4f6; color: #6b7280; cursor: pointer; }
+.sdash-tab:hover { background: #eceef0; }
+.sdash-tab.active { height: 37px; background: #fff; color: #2563eb; box-shadow: inset 0 2px 0 #2563eb; }
+.sdash-tab[data-disabled] { color: #c3c8ce; cursor: default; }
+.sdash-spacer { flex: 1; }
+/* equal-flex sides keep the Setup/Schedule/List tabs centered in the top bar */
+.sdash-topbar-side { flex: 1 1 0; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sdash-topbar-right { justify-content: flex-end; }
+.sdash-resync { padding: 5px 12px; border: 1px solid #e5e7eb; border-radius: 999px; color: #374151; cursor: pointer; }
+.sdash-resync:hover { background: #f6f7f8; }
+.sdash-code { padding: 5px 28px 5px 12px; border: 1px solid #c7d2fe; border-radius: 999px; color: #2563eb; font: inherit; font-size: 12px; font-weight: 600; background: #fff; cursor: pointer; -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; }
+.sdash-code:hover { background-color: #eef2ff; }
+.sdash-actions { display: flex; align-items: center; gap: 6px; }
+.sdash-actions-div { width: 1px; height: 22px; background: #e5e7eb; margin: 0 2px; }
+.sdash-actbtn { width: 34px; height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 999px; background: transparent; color: #374151; cursor: pointer; }
+.sdash-actbtn:hover { background: #e2e8f0; }
+.sdash-actbtn-accent { border-color: #c7d2fe; color: #2563eb; background: #eef2ff; }
+.sdash-actbtn-accent:hover { background: #e0e7ff; }
+/* Connect/Pull/Push travel together; Connect turns green while linked to ETABS */
+.sdash-actgroup { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: #f1f5f9; }
+.sdash-actbtn-connected { border-color: #86efac; color: #15803d; background: #dcfce7; }
+.sdash-actbtn-connected:hover { background: #bbf7d0; }
+/* progress spinner (auto-size / design buttons) */
+@keyframes sdash-spin { to { transform: rotate(360deg); } }
+.sdash-spin { transform-origin: 50% 50%; animation: sdash-spin 0.7s linear infinite; }
+
+/* ── mode / tool toolbar ── */
+.sdash-modebar { position: relative; z-index: 20; height: 56px; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid #eceef0; flex-shrink: 0; }
+/* two-row density: each group keeps its buttons but stacks them two deep, so
+   groups stay whole and adjacent while the bar takes ~half the width */
+.sdash-modebar--tworow { height: auto; min-height: 56px; padding-top: 8px; padding-bottom: 8px; align-items: center; }
+.sdash-modebar--tworow .sdash-pillgroup { display: grid; grid-auto-flow: row; grid-template-columns: repeat(var(--cols, 4), auto); grid-template-rows: 34px 34px; align-items: center; gap: 2px 3px; border-radius: 16px; }
+.sdash-modebar--tworow .sdash-pillgroup > *:only-child { grid-row: 1 / span 2; }
+/* measurement pass: force one-row so we can read the natural width in any mode */
+.sdash-modebar[data-measuring] .sdash-pillgroup { display: inline-flex !important; }
+.sdash-modebar-toggle { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid #e5e7eb; border-radius: 7px; background: #fff; color: #64748b; cursor: pointer; z-index: 5; }
+.sdash-modebar-toggle:hover { background: #f1f5f9; color: #334155; }
+.sdash-modebar-toggle.up { transform: translateY(-50%) rotate(180deg); }
+/* Floating control toolbar — the old top bar + mode/tools bar, folded into ONE
+   transparent row that floats over the canvas (no logo, no tabs, no container).
+   pointer-events pass through the empty gaps so the canvas stays interactive. */
+/* inset 12px INSIDE the canvas box (vp edge = 12px top / 14px sides from root),
+   so the groups float over the canvas content but clear the canvas border */
+.sdash-floatpanel { position: absolute; top: 24px; left: 26px; right: 26px; z-index: 30; background: none; border: none; box-shadow: none; padding: 0; pointer-events: none; }
+.sdash-modebar--infp { height: auto; min-height: 0; padding: 0; border-bottom: none; width: 100%; }
+/* Toolbar-layout cycler: pinned to the bar's top-right corner so it sits in exactly
+   the same place at every density and at both row counts (the bar grows downward).
+   The 26px right padding below is the space reserved for it. */
+.sdash-modebar--infp { padding-right: 26px; }
+.sdash-modebar--infp .sdash-modebar-toggle { position: absolute; right: 0; top: 4px; transform: none; margin: 0; align-self: auto; }
+/* the chevron shows which of the four layouts is active */
+.sdash-modebar--infp .sdash-modebar-toggle svg { transition: transform .14s; }
+.sdash-modebar-toggle.dens-two svg { transform: rotate(180deg); }
+.sdash-modebar-toggle.dens-compact svg { transform: rotate(90deg); }
+.sdash-modebar-toggle.dens-collapsed svg { transform: rotate(-90deg); }
+/* the button GROUPS stay visible (semi-transparent frosted pills) — only the outer
+   container is gone; click pass-through so the canvas stays live between groups */
+.sdash-modebar--infp .sdash-pillgroup { background: rgba(226,231,238,.89); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.sdash-modebar--infp .sdash-pillgroup-act { background: rgba(235,231,248,.89); }
+.sdash-modebar--infp .sdash-pillgroup, .sdash-modebar--infp .sdash-code, .sdash-modebar--infp .sdash-modebar-toggle { pointer-events: auto; }
+/* File + Connect/Pull pinned left, the rest pinned right; mode groups centered between */
+.sdash-fp-conn { margin-right: auto; }
+.sdash-fp-actright { margin-left: auto; display: flex; }
+/* fully collapsed: ONE pill of chips, centred — no left/right pinning. The extra
+   left padding balances the space reserved for the layout cycler on the right. */
+.sdash-modebar--collapsed { padding-left: 26px; }
+.sdash-collapsed-bar { gap: 2px; }
+/* S-Concrete results picker (Pull S-Concrete DCRs) */
+.sdash-batch-pop { right: 0; left: auto; min-width: 268px; max-width: 340px; }
+.sdash-batch-list { max-height: 240px; overflow-y: auto; margin-top: 6px; }
+.sdash-batch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sdash-batch-empty { margin: 8px 0 2px; font-size: 11.5px; color: #9ca3af; }
+.sdash-batch-path { display: flex; align-items: center; gap: 6px; }
+.sdash-batch-path input { flex: 1; min-width: 0; height: 28px; padding: 0 9px; font: inherit; font-size: 11.5px; color: #1f2328; border: 1px solid #dde1e6; border-radius: 999px; outline: none; }
+.sdash-batch-path input:focus { border-color: #2563eb; }
+/* Section window: every value on the drawing is a stepper (left = down, right = up).
+   The dotted underline is the affordance; its colour is the legend the value
+   belongs to, so the strip reads the same way the schedule does. */
+.sdash-sect-step { cursor: pointer; padding: 1px 3px; border-radius: 4px; border-bottom: 2px dotted #cbd5e1; user-select: none; white-space: nowrap; }
+.sdash-sect-step:hover { background: #eef2ff; border-bottom-style: solid; }
+.sdash-sect-step:active { background: #e0e7ff; }
+.sdash-sect-dims, .sdash-sect-pair { display: inline-flex; align-items: center; gap: 2px; }
+.sdash-sect-x { color: #9ca3af; }
+.sdash-sect-unit, .sdash-sect-lbl { color: #94a3b8; font-size: 11px; }
+/* a DCR mode button whose value is being recomputed */
+.sdash-modebtn.busy { color: #2563eb; }
+/* design-code picker popover (opened by the gear button in the view-settings group) */
+.sdash-code-pop { min-width: 150px; display: flex; flex-direction: column; gap: 2px; }
+.sdash-code-pop-title { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px 5px; }
+.sdash-code-opt { padding: 6px 10px; border-radius: 7px; cursor: pointer; font-size: 12px; color: #334155; }
+.sdash-code-opt:hover { background: #f1f5f9; }
+.sdash-code-opt.on { background: #eef2ff; color: #2563eb; font-weight: 600; }
+.sdash-lc-pop { min-width: 220px; max-width: 340px; max-height: 340px; overflow-y: auto; }
+.sdash-lc-pop .sdash-code-opt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* AutoDetail detailing pills (segmented, matches the mode pill-groups) */
+.sdash-dseg { display: inline-flex; gap: 2px; background: #f1f5f9; border-radius: 999px; padding: 2px; margin-left: auto; }
+.sdash-dseg-btn { min-width: 26px; height: 22px; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: #475569; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.sdash-dseg-btn:hover { background: #e2e8f0; }
+.sdash-dseg-btn.on { background: #2563eb; color: #fff; }
+/* Detailing edit-mode legend — clickable option groups that set the selection */
+.sdash-detleg { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; }
+.sdash-detleg-grp { display: inline-flex; align-items: center; gap: 6px; }
+.sdash-detleg-lbl { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; }
+.sdash-detleg-opts { display: inline-flex; gap: 2px; }
+.sdash-detleg-opt { min-width: 26px; height: 24px; padding: 0 6px; border: 1px solid #e2e8f0; border-radius: 7px; background: #fff; color: #334155; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.sdash-detleg-opt:hover { background: #eef2ff; border-color: #c7d2fe; color: #2563eb; }
+/* two-line detailing demarcation in a cell (cover-splice-layers / hooks◆) */
+.sdash-cellval-det { white-space: pre-line; line-height: 1.0; font-size: 5.5px; font-weight: 600; text-align: center; }
+.sdash-pillgroup { display: flex; align-items: center; gap: 3px; background: #f1f5f9; border-radius: 999px; padding: 4px; }
+/* the design-action group (auto-group / stacking / auto-size / auto-detail /
+   revert) reads as a distinct family — light-purple container + purple icons */
+.sdash-pillgroup-act { background: #f3f0ff; }
+.sdash-pillgroup-act .sdash-toolbtn { color: #7c3aed; }
+.sdash-pillgroup-act .sdash-toolbtn:hover { background: #e9e2ff; }
+.sdash-pillgroup-act .sdash-toolbtn.on { color: #6d28d9; background: #e9e2ff; }
+.sdash-modebtn { width: 36px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 999px; color: #475569; cursor: pointer; }
+.sdash-modebtn:hover { background: #e2e8f0; }
+.sdash-modebtn.active:hover { filter: brightness(1.06); }
+.sdash-modebtn[data-overlay] { box-shadow: inset 0 0 0 2px #f59e0b; }
+/* Shift-click tab set. Deliberately NOT a ring: right-click's value overlay already
+   owns the inset amber ring, and the active mode owns the filled hue. A dot under the
+   icon reads as "this one is in a list" without competing with either, and survives
+   being combined with both. */
+.sdash-modebtn.tabbed { position: relative; }
+.sdash-modebtn.tabbed::after { content: ""; position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%); width: 12px; height: 3px; border-radius: 2px; background: #6366f1; }
+.sdash-modebtn.tabbed.active::after { background: #fff; opacity: .9; }
+.sdash-toolwrap { position: relative; display: flex; }
+/* ── collapsed toolbar: one icon per group ── */
+.sdash-grpchip { gap: 2px; padding: 0 7px 0 9px; }
+.sdash-grpchip.on { color: #2563eb; background: #e0e7ff; }
+.sdash-grpchip > svg:last-child { opacity: .45; }
+/* the group dropdown: icon + name, so the collapsed bar is where names are learned */
+.sdash-grp-pop { left: 0; min-width: 186px; max-height: 60vh; overflow-y: auto; padding: 6px; }
+.sdash-grp-pop-r { left: auto; right: 0; }
+/* load case, expanded in place inside the Forces menu */
+.sdash-grp-sep { height: 1px; background: #eceef0; margin: 5px 2px; }
+.sdash-grp-sub-head .sdash-grp-val { flex: 1; text-align: right; font-style: normal; font-size: 11px; font-weight: 600; color: #94a3b8; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sdash-grp-sub-head > svg:last-child { flex: none; opacity: .5; transition: transform .12s; }
+.sdash-grp-sub-head.open > svg:last-child { transform: rotate(180deg); }
+.sdash-grp-sub { max-height: 240px; overflow-y: auto; margin: 2px 0 2px 8px; padding-left: 8px; border-left: 2px solid #eceef0; }
+.sdash-grp-sub .sdash-grp-opt { font-weight: 500; font-size: 11.5px; padding: 4px 8px; }
+.sdash-grp-opt.is-empty { color: #9ca3af; cursor: default; }
+.sdash-grp-opt.is-empty:hover { background: none; }
+.sdash-grp-opt { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; color: #334155; white-space: nowrap; }
+.sdash-grp-opt:hover { background: #f1f5f9; }
+.sdash-grp-opt.on { background: #e0e7ff; color: #2563eb; }
+.sdash-grp-opt svg { flex: none; opacity: .85; }
+.sdash-grp-opt.on svg { opacity: 1; }
+/* right-click overlay marker, same affordance the mode buttons use */
+.sdash-grp-opt[data-overlay] { box-shadow: inset 0 0 0 1.5px #f59e0b; }
+.sdash-toolbtn { min-width: 36px; height: 34px; padding: 0 9px; display: flex; align-items: center; justify-content: center; gap: 5px; border: none; background: transparent; font: inherit; border-radius: 999px; color: #475569; cursor: pointer; font-weight: 700; font-size: 13px; }
+.sdash-toolbtn:hover { background: #e2e8f0; }
+.sdash-toolbtn.on { color: #2563eb; background: #e0e7ff; }
+/* a button that opens a panel: shows a muted down-chevron as the affordance */
+.sdash-toolbtn.has-panel { gap: 2px; padding-right: 7px; }
+.sdash-toolbtn.has-panel > svg:last-child { opacity: .45; margin-left: -1px; }
+
+/* ── popovers ── */
+.sdash-pop { position: absolute; top: 42px; z-index: 40; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.16); padding: 13px 14px; }
+.sdash-sf-pop { left: 0; width: 300px; display: flex; flex-direction: column; gap: 13px; }
+.sdash-disp-pop { right: 0; width: 200px; }
+
+/* ── Section window ────────────────────────────────────────────────────── */
+.sdash-sect-body { display: flex; flex-direction: column; padding: 0 !important; }
+/* the value strip reads at the same size as the legend it mirrors (12px) */
+.sdash-sect-info { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 14px; padding: 8px 12px 10px; font-size: 12px; color: #64748b; border-top: 1px solid #f0f1f3; font-family: var(--mono); }
+.sdash-sect-info b { color: #1f2937; }
+/* reinforcing config tab */
+.sdash-cfg-body { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px !important; overflow: auto; }
+.sdash-cfg-note { font-size: 10px; color: #94a3b8; margin-bottom: 6px; line-height: 1.4; }
+.sdash-cfg-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 12px; color: #334155; }
+.sdash-cfg-sel { height: 26px; padding: 0 6px; border: 1px solid #e2e8f0; border-radius: 7px; background: #fff; font: inherit; font-size: 11.5px; color: #334155; cursor: pointer; }
+.sdash-cfg-seg { display: inline-flex; border: 1px solid #e2e8f0; border-radius: 7px; overflow: hidden; }
+.sdash-cfg-segbtn { border: 0; border-left: 1px solid #eceef0; background: #fff; color: #64748b; font: inherit; font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer; }
+.sdash-cfg-segbtn:first-child { border-left: 0; }
+.sdash-cfg-segbtn.on { background: #2563eb; color: #fff; }
+.sdash-cfg-spin { display: inline-flex; align-items: center; border: 1px solid #e2e8f0; border-radius: 7px; overflow: hidden; }
+.sdash-cfg-spin span { min-width: 26px; text-align: center; font: 700 12px var(--mono); color: #1f2937; }
+.sdash-cfg-spin button { border: 0; background: #fff; color: #64748b; width: 22px; height: 24px; cursor: pointer; font-size: 13px; }
+.sdash-cfg-spin button:first-child { border-right: 1px solid #eceef0; }
+.sdash-cfg-spin button:last-child { border-left: 1px solid #eceef0; }
+.sdash-cfg-spin button:hover, .sdash-cfg-segbtn:hover:not(.on) { background: #f1f5f9; }
+/* loads table tab */
+.sdash-loads-body { display: flex; flex-direction: column; padding: 8px 0 0 !important; }
+.sdash-loads-filters { display: flex; gap: 12px; padding: 0 12px 8px; }
+.sdash-loads-fgroup { display: inline-flex; gap: 4px; }
+.sdash-loads-chip { border: 1px solid #e2e8f0; background: #fff; color: #94a3b8; border-radius: 999px; font: 600 10px var(--sans); padding: 3px 9px; cursor: pointer; }
+.sdash-loads-chip.on { border-color: #c7d2fe; background: #eef2ff; color: #2563eb; }
+.sdash-loads-tablewrap { flex: 1; overflow: auto; border-top: 1px solid #f0f1f3; }
+.sdash-loads-table { border-collapse: collapse; font-family: var(--mono); font-size: 11px; width: 100%; }
+.sdash-loads-table th { position: sticky; top: 0; background: #f8fafc; color: #64748b; font-weight: 700; padding: 4px 6px; text-align: right; white-space: nowrap; border-bottom: 1px solid #e5e7eb; z-index: 1; }
+.sdash-loads-table td { padding: 3px 6px; text-align: right; white-space: nowrap; color: #334155; border-bottom: 1px solid #f4f5f7; font-variant-numeric: tabular-nums; }
+.sdash-loads-table th:nth-child(-n+4), .sdash-loads-table td:nth-child(-n+4) { text-align: left; }
+.sdash-loads-table td.cmb { max-width: 120px; overflow: hidden; text-overflow: ellipsis; color: #475569; }
+.sdash-loads-table .bx { background: #eff6ff; } .sdash-loads-table th.bx { background: #dbeafe; }
+.sdash-loads-table .rx { background: #fef2f2; } .sdash-loads-table th.rx { background: #fee2e2; }
+.sdash-loads-note { padding: 6px 12px; font-size: 10px; color: #94a3b8; border-top: 1px solid #f0f1f3; }
+/* calc sheet tab */
+.sdash-calc-body { overflow: auto; padding: 10px !important; display: flex; flex-direction: column; gap: 8px; }
+.sdash-calc-card { border: 1px solid #d0d8e4; border-radius: 4px; overflow: hidden; }
+.sdash-calc-hdr { display: flex; align-items: center; justify-content: space-between; background: #2d3f50; color: #fff; padding: 4px 10px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.sdash-calc-hdr .ref { font-size: 10px; font-weight: 400; color: #b0c8e0; letter-spacing: 0; text-transform: none; }
+.sdash-calc-lines { padding: 6px 10px; font-family: var(--mono); font-size: 11px; line-height: 1.75; color: #111827; background: #fff; }
+.sdash-calc-dcr { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 10px; background: #eef3f9; border-top: 2px solid #c0cfe0; font-family: var(--mono); font-size: 11px; }
+.sdash-calc-dcr .gov { font-family: var(--sans); font-size: 10px; font-style: italic; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── About / reference view ────────────────────────────────────────────── */
+.ab-wrap { display: flex; gap: 18px; height: 100%; padding: 16px 18px; overflow: hidden; }
+.ab-nav { position: sticky; top: 0; width: 180px; flex: 0 0 auto; align-self: flex-start; max-height: 100%; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 10px; background: #fff; }
+.ab-nav-title { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #9ca3af; padding: 0 6px 8px; }
+.ab-nav-link { display: block; width: 100%; text-align: left; border: 0; border-left: 2px solid #e5e7eb; background: transparent; color: #475569; font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer; }
+.ab-nav-link:hover { color: #2563eb; border-left-color: #2563eb; background: #f8fafc; }
+.ab-body { flex: 1; overflow-y: auto; padding-right: 8px; max-width: 780px; }
+.ab-h1 { font-size: 21px; font-weight: 750; color: #0f172a; border-bottom: 3px solid #0f172a; padding-bottom: 6px; margin: 28px 0 10px; scroll-margin-top: 8px; }
+.ab-h1:first-child { margin-top: 4px; }
+.ab-h2 { font-size: 14.5px; font-weight: 700; color: #1e293b; margin: 18px 0 6px; }
+.ab-lead { font-size: 14px; font-weight: 500; color: #334155; line-height: 1.55; margin: 4px 0 10px; }
+.ab-p { font-size: 13px; color: #475569; line-height: 1.6; margin: 6px 0; }
+.ab-aci { font-size: 12.5px; color: #1e293b; background: #f1f5f9; border-left: 3px solid #2563eb; border-radius: 0 6px 6px 0; padding: 8px 12px; margin: 8px 0; line-height: 1.5; }
+.ab-aci-c { display: inline-block; font: 700 10px var(--mono); color: #2563eb; background: #e0e7ff; border-radius: 4px; padding: 2px 6px; margin-right: 8px; }
+.ab-eq { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; color: #0f172a; background: #f8fafc; border: 1px solid #eceff3; border-radius: 8px; padding: 10px 12px; margin: 8px 0; overflow-x: auto; white-space: pre; }
+.ab-note { font-size: 12px; line-height: 1.5; border-radius: 8px; padding: 9px 12px; margin: 8px 0; }
+.ab-note.info { color: #155e75; background: #ecfeff; border: 1px solid #a5f3fc; }
+.ab-note.warn { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; }
+.ab-tablewrap { overflow-x: auto; margin: 8px 0; }
+.ab-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.ab-table th { text-align: left; background: #f1f5f9; color: #475569; font-weight: 700; padding: 6px 9px; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
+.ab-table td { padding: 5px 9px; color: #334155; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+.ab-table tr:hover td { background: #f8fafc; }
+
+/* ── Axial window ──────────────────────────────────────────────────────── */
+.sdash-axial-title { font-size: 11px; font-weight: 700; color: #475569; margin-left: 6px; font-family: var(--mono); }
+.sdash-axial-refbtn { border: 1px solid #e2e8f0; background: #fff; color: #94a3b8; border-radius: 6px; font: 700 9px/1 var(--mono); padding: 4px 6px; cursor: pointer; margin-right: 6px; }
+.sdash-axial-refbtn.on { border-color: #c7d2fe; color: #2563eb; background: #eef2ff; }
+.sdash-axial-body { display: flex; flex-direction: column; padding: 0 !important; }
+.sdash-axial-legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 10px 8px; font-size: 10px; color: #64748b; border-top: 1px solid #f0f1f3; }
+.sdash-axial-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.sdash-axial-legend i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+.sdash-axial-legend .dim { color: #94a3b8; }
+/* ── log window ── */
+.sdash-log-body { display: flex; flex-direction: column; padding: 0 !important; }
+.sdash-log-bar { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-bottom: 1px solid #f0f1f3; flex-shrink: 0; }
+.sdash-log-chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; font: 600 10.5px/1 inherit; color: #64748b; background: #f1f5f9; border: 1px solid transparent; border-radius: 999px; cursor: pointer; }
+.sdash-log-chip:hover { background: #e2e8f0; }
+.sdash-log-chip.on { background: #eef2ff; border-color: #c7d2fe; color: #2563eb; }
+.sdash-log-chip:disabled { opacity: .45; cursor: default; }
+.sdash-log-chip b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.sdash-log-chip.danger.on { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.sdash-log-chip.warning.on { background: #fffbeb; border-color: #fde68a; color: #b45309; }
+.sdash-log-chip.success.on { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+.sdash-log-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 0; }
+.sdash-log-row { display: grid; grid-template-columns: 62px 8px 1fr; align-items: baseline; gap: 6px; padding: 4px 10px; font-size: 11.5px; color: #334155; line-height: 1.35; }
+.sdash-log-row:nth-child(even) { background: #fafbfc; }
+.sdash-log-time { color: #94a3b8; font: 10.5px/1.4 var(--mono); }
+.sdash-log-dot { width: 6px; height: 6px; border-radius: 50%; background: #cbd5e1; transform: translateY(-1px); }
+.sdash-log-row.success .sdash-log-dot { background: #22c55e; }
+.sdash-log-row.warning .sdash-log-dot { background: #f59e0b; }
+.sdash-log-row.danger .sdash-log-dot { background: #ef4444; }
+.sdash-log-row.danger .sdash-log-text { color: #b91c1c; }
+.sdash-log-text { word-break: break-word; }
+
+/* ── File menu ─────────────────────────────────────────────────────────── */
+.sdash-file-pop { left: 0; width: 232px; padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.sdash-file-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: none; border-radius: 7px; background: transparent; color: #334155; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.sdash-file-item:hover { background: #f1f5f9; }
+.sdash-file-item svg { color: #64748b; flex: none; }
+.sdash-file-divider { height: 1px; background: #eceef0; margin: 4px 2px; }
+.sdash-file-sec { display: flex; flex-direction: column; gap: 1px; padding: 4px 0 2px; }
+.sdash-file-sublabel { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #9ca3af; padding: 2px 9px 3px; }
+.sdash-file-recent { display: block; width: 100%; padding: 5px 9px 5px 22px; border: none; border-radius: 6px; background: transparent; color: #475569; font: inherit; font-size: 11.5px; font-family: var(--mono); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.sdash-file-recent:hover { background: #f1f5f9; color: #0f172a; }
+.sdash-file-empty { padding: 4px 9px 4px 22px; font-size: 11px; color: #a0aec0; font-style: italic; }
+
+/* ── Save-changes confirm dialog ───────────────────────────────────────── */
+.sdash-confirm-backdrop { position: fixed; inset: 0; z-index: 6000; background: rgba(15,23,42,.28); display: flex; align-items: center; justify-content: center; }
+.sdash-confirm { width: 340px; max-width: 90vw; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 18px 48px rgba(0,0,0,.24); padding: 18px 18px 14px; }
+.sdash-confirm-msg { font-size: 13.5px; font-weight: 600; color: #1f2937; line-height: 1.4; margin-bottom: 14px; }
+.sdash-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sdash-confirm-btn { height: 30px; padding: 0 13px; border: 1px solid #e2e8f0; border-radius: 999px; background: #fff; color: #334155; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer; }
+.sdash-confirm-btn:hover { background: #f6f7f8; }
+.sdash-confirm-btn.ghost { border-color: transparent; color: #94a3b8; }
+.sdash-confirm-save { width: auto; padding: 0 15px; }
+
+/* ── Pull from ETABS panel ─────────────────────────────────────────────── */
+.sdash-pull-pop { left: 0; right: auto; width: min(720px, 94vw); display: flex; flex-direction: column; gap: 10px; }
+.sdash-pull-head { display: flex; align-items: center; justify-content: space-between; }
+.sdash-pull-x { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px; background: transparent; color: #9ca3af; cursor: pointer; }
+.sdash-pull-x:hover { background: #f1f5f9; color: #475569; }
+.sdash-pull-warn { font-size: 11px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 9px; }
+/* tabs */
+.sdash-pull-tabs { display: flex; gap: 4px; border-bottom: 1px solid #e5e7eb; }
+.sdash-pull-tab { border: none; background: transparent; padding: 6px 12px 8px; margin-bottom: -1px; font: inherit; font-size: 12px; font-weight: 600; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; }
+.sdash-pull-tab:hover { color: #334155; }
+.sdash-pull-tab.on { color: #2563eb; border-bottom-color: #2563eb; }
+/* filters + cell-size slider */
+.sdash-pull-filters { display: flex; flex-direction: column; gap: 8px; }
+.sdash-pull-frow { display: flex; align-items: center; gap: 10px; }
+.sdash-pull-search { flex: 1; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; background: #f1f5f9; border-radius: 8px; color: #64748b; }
+.sdash-pull-search input { flex: 1; border: none; background: transparent; outline: none; font: inherit; font-size: 12px; color: #0f172a; }
+/* pull panel: results availability */
+.sdash-pull-runfilter { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #64748b; cursor: pointer; }
+.sdash-pull-runfilter b { color: #1f2937; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sdash-pull-cell.norun { opacity: .45; }
+.sdash-pull-cell.norun .sdash-pull-name { text-decoration: line-through; text-decoration-color: #cbd5e1; }
+.sdash-pull-sizerow { display: flex; align-items: center; gap: 10px; }
+.sdash-pull-sizelabel { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: #9ca3af; }
+.sdash-pull-sizerow .sdash-srange { flex: 1; max-width: 200px; }
+/* uniform CONTIGUOUS grid of evenly-sized cells (shared borders, no gaps);
+   --pw/--ph set by the size slider. Cells carry only right+bottom borders; the
+   wrapper supplies the top+left edge, so internal lines never double up. */
+.sdash-pull-gridwrap { overflow: auto; height: 300px; max-height: 56vh; border: 1px solid #dbe3ec; border-radius: 8px; background: #fff; }
+.sdash-pull-grid { display: grid; grid-template-columns: repeat(auto-fill, var(--pw, 130px)); grid-auto-rows: var(--ph, 32px); gap: 0; padding: 0; user-select: none; align-content: start; justify-content: start; }
+.sdash-pull-cell { display: flex; align-items: center; gap: 5px; height: var(--ph, 32px); min-width: 0; padding: 0 8px 0 6px; border: none; border-right: 1px solid #e5e9ee; border-bottom: 1px solid #e5e9ee; background: #fff; color: #334155; font-size: 11px; font-family: var(--mono); cursor: pointer; overflow: hidden; }
+.sdash-pull-cell:hover { background: #eef2f6; }
+.sdash-pull-cell .sdash-pull-tag { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 3px; font-size: 9px; font-weight: 800; font-family: inherit; color: #fff; background: #64748b; flex: none; }
+.sdash-pull-cell.combo .sdash-pull-tag { background: #2563eb; }
+.sdash-pull-cell.case  .sdash-pull-tag { background: #0d9488; }
+.sdash-pull-cell.group .sdash-pull-tag { background: #9333ea; }
+.sdash-pull-cell .sdash-pull-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sdash-pull-cell.on { background: #2563eb; color: #fff; border-right-color: #1e56d6; border-bottom-color: #1e56d6; }
+.sdash-pull-cell.on:hover { background: #1d4ed8; }
+.sdash-pull-cell.on .sdash-pull-tag { background: rgba(255,255,255,.28); }
+.sdash-pull-empty { grid-column: 1 / -1; padding: 14px; font-size: 11px; color: #9ca3af; font-style: italic; }
+.sdash-pull-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #f0f1f3; padding-top: 9px; }
+.sdash-pull-count { font-size: 10px; color: #9ca3af; line-height: 1.3; }
+.sdash-pull-actions { display: flex; align-items: center; gap: 6px; }
+.sdash-pull-run { width: auto; padding: 0 14px; }
+.sdash-set-pop { right: 0; width: 240px; display: flex; flex-direction: column; gap: 9px; }
+.sdash-setrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sdash-pop-note { font-size: 9px; line-height: 1.35; color: #6b7280; }
+.sdash-setlabel { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; font-weight: 600; }
+.sdash-setlabel svg { opacity: .7; }
+.sdash-setinput { width: 74px; padding: 4px 12px; font: inherit; color: #1f2328; border: 1px solid #dde1e6; border-radius: 999px; outline: none; text-align: right; }
+.sdash-setinput:focus { border-color: #2563eb; }
+.sdash-pop-sec { display: flex; flex-direction: column; gap: 7px; }
+.sdash-pop-h { font-size: 11px; font-weight: 700; letter-spacing: .3px; color: #9ca3af; }
+
+/* ── unified popup controls: pill button, pill row, on/off toggle ── */
+.sdash-pill { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 30px; height: 28px; padding: 0 11px; border: none; border-radius: 999px; background: #eef2f6; color: #475569; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer; }
+.sdash-pill.icon { padding: 0; width: 30px; }
+.sdash-pill:hover { background: #e2e8f0; }
+.sdash-pill.active { background: #2563eb; color: #fff; }
+.sdash-pill svg { display: block; }
+.sdash-pillrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.sdash-matglyph { font-weight: 800; font-size: 12px; line-height: 1; }
+.sdash-pilltext { font-weight: 600; font-size: 11px; }
+.sdash-unit { font-size: 10px; font-weight: 600; color: #9ca3af; }
+.sdash-toggle { position: relative; width: 36px; height: 20px; flex: none; border: none; padding: 0; border-radius: 999px; background: #cbd5e1; cursor: pointer; transition: background .15s; }
+.sdash-toggle.on { background: #2563eb; }
+.sdash-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+.sdash-toggle.on::after { left: 18px; }
+.sdash-toggle.disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── setting sliders (native inputs; single + dual-thumb) ── */
+.sdash-sliderrow { display: flex; align-items: center; gap: 9px; }
+.sdash-slabel { flex: none; width: 20px; display: inline-flex; align-items: center; justify-content: center; color: #475569; }
+/* FIXED width, not min-width: the readout sits in the same flex row as the slider, so
+   a long value used to steal width from it and the track visibly shrank mid-drag. */
+.sdash-sval { flex: 0 0 88px; width: 88px; text-align: right; font-size: 11px; font-weight: 700; color: #2563eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* blue-on-blue thumbs, no white stroke */
+.sdash-srange { flex: 1; min-width: 0; height: 4px; border-radius: 999px; background: #e2e8f0; -webkit-appearance: none; appearance: none; }
+.sdash-srange::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #2563eb; cursor: pointer; }
+.sdash-srange::-moz-range-thumb { width: 14px; height: 14px; border: none; border-radius: 50%; background: #2563eb; cursor: pointer; }
+/* dual-thumb: two overlaid inputs share one track; a fill shows the span */
+.sdash-range { flex: 1; position: relative; height: 18px; min-width: 0; }
+.sdash-range::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 4px; transform: translateY(-50%); background: #e2e8f0; border-radius: 999px; }
+.sdash-range-fill { position: absolute; top: 50%; height: 4px; transform: translateY(-50%); background: #93c5fd; border-radius: 999px; pointer-events: none; }
+.sdash-range input[type=range] { position: absolute; left: 0; top: 0; width: 100%; height: 18px; margin: 0; background: none; pointer-events: none; -webkit-appearance: none; appearance: none; }
+.sdash-range input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 14px; height: 14px; border-radius: 50%; background: #2563eb; cursor: pointer; }
+.sdash-range input[type=range]::-moz-range-thumb { pointer-events: auto; width: 14px; height: 14px; border: none; border-radius: 50%; background: #2563eb; cursor: pointer; }
+.sdash-sliderrow.disabled { opacity: .4; pointer-events: none; }
+
+/* Run button — the action at the top of a settings panel */
+.sdash-run-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 30px; border: none; border-radius: 999px; background: #2563eb; color: #fff; font: inherit; font-weight: 700; font-size: 12px; cursor: pointer; }
+.sdash-run-btn:hover { background: #1d4ed8; }
+.sdash-run-btn:disabled { opacity: .6; cursor: default; }
+
+/* lock-to-type indicator + refusal toast */
+.sdash-lockmark { font-size: 8px; line-height: 1; margin-right: 1px; }
+/* bottom-right toast notifications — replaces the old top alert-banner overlay.
+   Fed by window.SDash.notify (status/errors from Python) and local flashWarn. */
+.sdash-notes { position: fixed; right: 16px; bottom: 16px; z-index: 6500; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
+.sdash-note { pointer-events: auto; max-width: 340px; font-size: 12px; font-weight: 600; line-height: 1.35; color: #1f2937; background: #fff; border: 1px solid #e5e7eb; border-left: 3px solid #64748b; border-radius: 10px; padding: 9px 13px; box-shadow: 0 10px 30px rgba(0,0,0,.16); cursor: pointer; animation: sdash-note-in .18s ease-out; }
+.sdash-note.note-success { border-left-color: #16a34a; }
+.sdash-note.note-warning { border-left-color: #d97706; }
+.sdash-note.note-danger  { border-left-color: #dc2626; }
+.sdash-note.note-info    { border-left-color: #2563eb; }
+@keyframes sdash-note-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* native Push-to-ETABS prompt (reuses the .sdash-confirm shell) */
+.sdash-push { width: 380px; }
+.sdash-push-h { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: #1f2937; margin-bottom: 12px; }
+.sdash-push-msg { font-size: 12.5px; color: #334155; line-height: 1.45; margin-bottom: 14px; }
+.sdash-push-msg.warn { color: #b45309; }
+.sdash-push-lbl { display: block; font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: #64748b; margin-bottom: 5px; }
+.sdash-push-inp { width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; font-family: var(--mono); font-size: 12.5px; color: #1f2937; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; }
+.sdash-push-inp:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+.sdash-push-sub { font-size: 11px; color: #94a3b8; margin: 6px 0 16px; line-height: 1.4; }
+/* Push dialog — explicit grade/bar → ETABS material mapping */
+.sdash-push-wide { width: 520px; }
+.sdash-mm { max-height: 46vh; overflow-y: auto; margin-bottom: 12px; padding-right: 2px; }
+.sdash-mm-group { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #64748b; margin: 10px 0 5px; }
+.sdash-mm-group:first-child { margin-top: 0; }
+.sdash-mm-note { font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; color: #94a3b8; }
+.sdash-mm-row { display: grid; grid-template-columns: 130px 1fr 72px; align-items: center; gap: 8px; margin-bottom: 5px; }
+.sdash-mm-lbl { font-size: 12px; color: #1f2937; font-family: var(--mono); display: flex; flex-direction: column; }
+.sdash-mm-cells { font-size: 10px; color: #94a3b8; font-family: inherit; }
+.sdash-mm-sel { height: 30px; box-sizing: border-box; padding: 0 8px; font-size: 12px; color: #1f2937; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; }
+.sdash-mm-sel.wide { width: 100%; }
+.sdash-mm-sel:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+.sdash-mm-inp { height: 30px; box-sizing: border-box; width: 100%; padding: 0 8px; font-family: var(--mono); font-size: 12px; border: 1px solid #2563eb; border-radius: 7px; background: #fff; }
+.sdash-mm-flag { font-size: 10px; color: transparent; }
+.sdash-mm-flag.warn { color: #b45309; font-weight: 700; }
+.sdash-mm-ec { border-top: 1px solid #e2e8f0; padding-top: 10px; margin-bottom: 4px; }
+.sdash-mm-tbd { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #334155; margin: 4px 0 14px; cursor: pointer; }
+.sdash-mm-tbd input { accent-color: #2563eb; }
+.sdash-batch-modes { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.sdash-batch-mode { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; cursor: pointer; }
+.sdash-batch-mode.on { border-color: #2563eb; background: rgba(37,99,235,.05); }
+.sdash-batch-mode input { margin-top: 2px; accent-color: #2563eb; }
+.sdash-batch-mode span { display: flex; flex-direction: column; }
+.sdash-batch-mode b { font-size: 12.5px; font-weight: 700; color: #1f2937; }
+.sdash-batch-mode em { font-style: normal; font-size: 11px; color: #94a3b8; margin-top: 1px; }
+.sdash-pop-h2 { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #9ca3af; margin-bottom: 6px; }
+.sdash-chiprow { display: flex; flex-wrap: wrap; gap: 5px; }
+.sdash-chiprow-eq .sdash-chip { flex: 1; text-align: center; }
+.sdash-chip { padding: 4px 9px; border: 1px solid #e5e7eb; border-radius: 6px; color: #374151; background: #fff; cursor: pointer; font-weight: 600; }
+.sdash-chip:hover { background: #f0f4ff; }
+.sdash-chip.active { color: #2563eb; background: #eff4ff; }
+.sdash-chip.active-solid { color: #fff; background: #2563eb; border-color: #2563eb; }
+.sdash-slider-row { display: flex; align-items: center; gap: 9px; }
+.sdash-slider-row input { flex: 1; accent-color: #2563eb; }
+.sdash-slider-val { min-width: 52px; text-align: right; font-weight: 700; color: #2563eb; }
+.sdash-pop-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #f0f1f3; padding-top: 10px; font-size: 11px; color: #9ca3af; }
+.sdash-seg { display: flex; border: 1px solid #e5e7eb; border-radius: 7px; overflow: hidden; }
+.sdash-seg-item { flex: 1; text-align: center; padding: 5px 0; font-size: 12px; font-weight: 600; color: #4b5563; cursor: pointer; }
+.sdash-seg-item.active { color: #fff; background: #2563eb; }
+
+/* ── body / canvas ── */
+.sdash-body { flex: 1; display: flex; min-height: 0; padding: 0; }
+.sdash-vp { flex: 1; position: relative; overflow: hidden; background: #fafbfc; border: 1px solid #eef0f2; border-radius: 8px; cursor: default; }
+.sdash-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.sdash-cell { position: absolute; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 600; border: 1px solid rgba(255,255,255,.55); overflow: hidden; white-space: nowrap; cursor: cell; }
+.sdash-cell-alt { font-weight: 700; }
+.sdash-cell-blank { background: #fcfdfe; border-color: rgba(15,23,42,.05); }
+.sdash-head-sel { color: #1f2937 !important; background: #c3c9d0 !important; }
+/* a collapsed slot whose members' designs disagree — the value on the face is
+   the governing one, not a shared fact. Corner wedge reads at any zoom. */
+.sdash-cell-mixed::after { content: ""; position: absolute; top: 0; right: 0; border-width: 0 5px 5px 0; border-style: solid; border-color: transparent rgba(15,23,42,.55) transparent transparent; }
+.sdash-cell-split { padding: 0; }
+/* b and h read vertically: each half of a split cell is only ~half a cell wide
+   (~15px at default zoom), which clips a horizontal dimension. Rotated, the
+   full value fits against the cell's height. Same treatment as the stack names
+   in the classic Design/Section tabs. */
+.sdash-cell-split .sdash-half { flex: 1; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.sdash-cell-split .sdash-half:first-child { border-right: 1px solid rgba(255,255,255,.6); }
+/* the rotation lives on the value span (NOT the half): a transform on the half
+   would make it a stacking context and trap the z-index:5 escape, dropping the
+   rotated text below the hatches / off-joint lines. */
+.sdash-half-val { position: relative; z-index: 5; writing-mode: vertical-rl; transform: rotate(180deg); }
+.sdash-axis-name { position: absolute; font-size: 9px; font-weight: 600; color: #4b5563; background: #e6e8eb; border: 1px solid rgba(255,255,255,.55); overflow: hidden; display: flex; align-items: center; cursor: cell; }
+.sdash-axis-name:hover { color: #2563eb; }
+.sdash-axis-l { left: 0; width: 54px; justify-content: center; }
+.sdash-axis-r { width: 44px; justify-content: center; }
+.sdash-col-head { position: absolute; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #4b5563; background: #e6e8eb; border: 1px solid rgba(255,255,255,.55); overflow: hidden; cursor: cell; }
+.sdash-col-head:hover { color: #2563eb; }
+.sdash-selall { position: absolute; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #6b7280; background: #e6e8eb; border: 1px solid rgba(255,255,255,.55); cursor: pointer; z-index: 2; }
+.sdash-dropline { position: absolute; width: 3px; background: #2563eb; border-radius: 2px; z-index: 4; pointer-events: none; }
+.sdash-col-head-grp { color: #1f2937; }
+/* split header: group band on top (muted group colour), type code below */
+.sdash-col-head-split { flex-direction: column; padding: 0; }
+.sdash-head-grp { width: 100%; flex: 1; display: flex; align-items: center; justify-content: center;
+                  color: #fff; font-size: 7px; font-weight: 700; letter-spacing: .2px; overflow: hidden; }
+/* count sits BELOW the type code, not beside it */
+.sdash-head-type { width: 100%; flex: 1; display: flex; flex-direction: column; align-items: center;
+                   justify-content: center; overflow: hidden; line-height: 1.05; }
+/* transposed: the stack header is a wide-short band → lay the count to the RIGHT */
+.sdash-head-h .sdash-head-type { flex-direction: row; gap: 3px; }
+.sdash-head-h .sdash-grp-rep { flex-direction: row; gap: 3px; }
+.sdash-grp-rep { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+.sdash-grp-badge { font-size: 8px; font-weight: 800; opacity: .6; }
+.sdash-rule { position: absolute; height: 1px; background: #d5d9de; pointer-events: none; }
+.sdash-rule-edge { background: #9aa1a9; }
+.sdash-selrect { position: absolute; border: 2px solid #2563eb; background: rgba(37,99,235,.10); pointer-events: none; box-shadow: 0 0 0 1px rgba(255,255,255,.6) inset; }
+/* edit-lock indicator: a clipped black triangle in the cell's top-left corner */
+.sdash-cell-lock { position: absolute; width: 0; height: 0; border-top: 9px solid #111827; border-right: 9px solid transparent; pointer-events: none; z-index: 3; }
+/* overlap error: two columns modelled in one place → diagonal red hatch */
+.sdash-cell-conflict { position: absolute; pointer-events: none; z-index: 2; background: repeating-linear-gradient(45deg, #dc2626 0 3px, transparent 3px 7px); }
+/* storey misalignment / stub: the frame's joint doesn't sit on a floor line → a
+   dark-grey line through the cell's middle (a displaced floor line), NOT a hatch,
+   so it reads independently of any overlap hatch underneath */
+.sdash-cell-offjoint { position: absolute; pointer-events: none; z-index: 3; background: #374151; }
+/* cell value text sits ABOVE the hatches + off-joint lines (which are drawn as
+   sibling overlays over the fill). z-index escapes the cell's non-stacking-context
+   box up to the stage, landing above the z2/z3 overlays. */
+.sdash-cellval { position: relative; z-index: 5; }
+/* two multi-story columns overlapping the same location → orange hatch on the
+   primary's cell; splits with the yellow off-joint hatch when both apply */
+.sdash-cell-overlap { position: absolute; pointer-events: none; z-index: 2; background: repeating-linear-gradient(45deg, #f97316 0 3px, transparent 3px 7px); }
+/* verified-DCR drift: the section changed after it was sent to S-Concrete → a
+   solid black border round the cell (or the whole joined multi-story run) */
+.sdash-cell-stale { position: absolute; z-index: 6; pointer-events: none; border: 2px solid #111827; }
+/* multi-story member value: one label centred over the whole joined run (lands
+   between cells for even spans). Sits above the cell fill + hatch, below lock. */
+.sdash-cell-mval { position: absolute; z-index: 4; pointer-events: none; display: flex; align-items: center; justify-content: center;
+  font-size: 8px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+
+/* bottom-right canvas info overlay */
+/* model stats, bottom-LEFT — the bottom-right corner belongs to the toasts */
+/* one vertical column of chips in the bottom-left corner (the bottom-right belongs
+   to the toasts) — narrow, so it never crowds the canvas */
+.sdash-canvas-info { position: absolute; bottom: 10px; left: 12px; z-index: 6; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; pointer-events: auto; background: #f1f5f9; border-radius: 8px; padding: 7px 10px; }
+.sdash-stat { display: inline-flex; align-items: center; gap: 4px; color: #94a3b8; font-size: 11px; line-height: 1; cursor: default; }
+.sdash-stat b { font-weight: 700; font-variant-numeric: tabular-nums; color: #64748b; }
+.sdash-stat.strong { color: #64748b; }
+.sdash-stat.strong b { color: #1f2937; }
+.sdash-stat.warn { color: #d97706; }
+.sdash-stat.warn b { color: #b45309; }
+.sdash-canvas-info-line { color: #94a3b8; font-size: 11px; }
+.sdash-canvas-info-line.strong { color: #475569; font-weight: 600; }
+
+/* canvas control clusters */
+.sdash-ctrls-wrap { position: absolute; top: 50%; left: 0; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+/* single clean vertical view bar: fit · zoom +/− · cell-resize arrows · transpose */
+/* canvas view bar — a tab that extends flush off the left edge of the window;
+   buttons match the standard toolbar-button size (34px) */
+.sdash-vbar { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 6px 5px 5px; background: #fff; border: 1px solid #e5e7eb; border-left: none; border-radius: 0 14px 14px 0; box-shadow: 2px 1px 5px rgba(15,23,42,.12); }
+.sdash-vbtn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; border-radius: 999px; color: #475569; font: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.sdash-vbtn:hover { background: #f1f5f9; color: #111827; }
+.sdash-vbtn.on { background: #2563eb; color: #fff; }
+.sdash-vbtn.on:hover { background: #1d4ed8; }
+.sdash-vsep { width: 15px; height: 1px; background: #eceef0; margin: 1px 0; }
+
+/* plan window */
+/* floating windows sit above the entire app (fixed to the viewport) so they
+   can't be lost behind the top toolbar or clipped by the canvas */
+.sdash-planwin { position: fixed; top: 0; left: 0; z-index: 4000; background: #fff; border: none; border-radius: 12px; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; }
+.sdash-planwin-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #eef0f2; cursor: move; background: #fafbfc; color: #2563eb; }
+.sdash-planwin-close { display: inline-flex; color: #9aa1a9; cursor: pointer; }
+.sdash-planwin-close:hover { color: #e5473b; }
+.sdash-planwin-fit { display: inline-flex; color: #9aa1a9; cursor: pointer; margin-right: 8px; }
+.sdash-planwin-fit:hover { color: #2563eb; }
+.sdash-planwin-fit.on { color: #2563eb; }
+.sdash-planwin-body { padding: 6px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.sdash-planwin-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 55%, #c9ced4 55%, #c9ced4 70%, transparent 70%); }
+
+/* legend */
+.sdash-legend { position: relative; z-index: 15; min-height: 60px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 16px; padding: 8px 18px; border-top: 1px solid #eceef0; flex-shrink: 0; }
+/* force legend: gradient over the value range + inline min/max range slider */
+.sdash-force-legend { display: flex; flex-direction: column; gap: 5px; width: 260px; }
+.sdash-force-bar { height: 10px; border-radius: 999px; border: 1px solid rgba(15,23,42,.08); }
+.sdash-force-legend .sdash-sliderrow { gap: 0; }
+.sdash-force-legend .sdash-sval { color: #475569; }
+.sdash-legend-labelwrap { position: relative; display: inline-flex; }
+.sdash-legend-label { font-weight: 700; color: #374151; background: #f1f5f9; border-radius: 999px; padding: 4px 13px; }
+.sdash-legend-label.editable { cursor: pointer; }
+.sdash-legend-label.editable:hover { background: #e2e8f0; }
+.sdash-legend-pop { top: auto; bottom: 100%; left: 0; right: auto; margin-bottom: 8px; width: 220px; }
+.sdash-legend-pill { width: 82px; padding: 5px 12px; border: none; border-radius: 999px; font-size: 12px; text-align: center; color: #1f2328; background: #f1f5f9; }
+.sdash-legend-pill:focus { outline: none; box-shadow: 0 0 0 2px rgba(59,130,246,.22); }
+.sdash-legend-chips { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
+.sdash-legend-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 5px; border: 1px solid #e5e7eb; border-radius: 999px; background: #fff; }
+.sdash-legend-chip.editable { cursor: pointer; }
+.sdash-legend-chip.editable:hover { background: #f0f4ff; border-color: #c7d2fe; }
+.sdash-legend-swatch { width: 14px; height: 14px; border-radius: 50%; }
+.sdash-legend-secondary { display: flex; align-items: center; gap: 6px; padding-left: 14px; border-left: 1px solid #eceef0; }
+.sdash-legend-seclabel { font-size: 11px; color: #9ca3af; }
+.sdash-status { flex-basis: 100%; text-align: center; color: #9ca3af; font-size: 11px; }
+
+/* list view */
+/* right-click context menu */
+.sdash-menu-backdrop { position: fixed; inset: 0; z-index: 4999; }
+.sdash-menu { position: fixed; z-index: 5000; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.16); padding: 4px; min-width: 150px; }
+.sdash-menu-item { padding: 7px 11px; border-radius: 5px; font-size: 12px; color: #374151; cursor: pointer; white-space: nowrap; }
+.sdash-menu-item:hover { background: #f0f4ff; color: #2563eb; }
+.sdash-menu-item.disabled, .sdash-menu-item.disabled:hover { color: #c3c8ce; background: transparent; cursor: default; }
+.sdash-menu-sep { height: 1px; margin: 4px 6px; background: #eceef1; }
+
+.sdash-list-wrap { flex: 1; overflow: auto; border: 1px solid #eef0f2; border-radius: 8px; background: #fff; }
+.sdash-list { border-collapse: collapse; margin: 0 auto; font-size: 12px; }
+.sdash-list th { position: sticky; top: 0; z-index: 2; background: #f7f8fa; box-shadow: inset 0 -1px 0 #e5e7eb; padding: 10px 14px; font-weight: 700; color: #6b7280; white-space: nowrap; cursor: grab; }
+.sdash-th-inner { display: inline-flex; align-items: center; gap: 6px; }
+.sdash-th-sort { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.sdash-th-sort:hover { color: #2563eb; }
+.sdash-th-arrow { font-size: 10px; }
+.sdash-th-funnel { display: inline-flex; color: #c3c8ce; cursor: pointer; }
+.sdash-th-funnel.on { color: #2563eb; }
+.sdash-th-menu { position: absolute; top: 100%; left: 14px; z-index: 5; margin-top: 2px; display: inline-flex; align-items: center; gap: 6px; padding: 6px; background: #fff; border: 1px solid #e5e7eb; border-radius: 7px; box-shadow: 0 6px 18px rgba(15,23,42,.14); }
+.sdash-th-menu input { width: 120px; padding: 4px 8px; font: inherit; font-weight: 400; color: #1f2328; border: 1px solid #dde1e6; border-radius: 5px; outline: none; }
+.sdash-th-menu input:focus { border-color: #2563eb; }
+.sdash-th-clear { display: inline-flex; color: #9aa1a9; cursor: pointer; }
+.sdash-th-clear:hover { color: #e5473b; }
+.sdash-list td { padding: 9px 14px; border-top: 1px solid #f0f1f3; white-space: nowrap; }
+.sdash-list tr:hover td { background: #f8fafc; }
+.sdash-mark { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.sdash-dot { width: 13px; height: 13px; border-radius: 4px; }
+
+/* A popped-out panel owns the whole OS window, so the floating shell that positions
+   and drags it inside the app is exactly what it must not have: no transform, no
+   fixed size, no shadow, and the OS title bar does the dragging. */
+.sdash-popout { height: 100vh; overflow: hidden; }
+.sdash-popout .sdash-planwin { position: static; transform: none !important;
+  width: 100% !important; height: 100vh !important; border-radius: 0; box-shadow: none;
+  border: none; display: flex; flex-direction: column; }
+.sdash-popout .sdash-planwin-body { flex: 1; min-height: 0; }
+.sdash-popout .sdash-planwin-resize { display: none; }
+.sdash-popout-wait { display: flex; align-items: center; justify-content: center;
+  height: 100vh; color: #94a3b8; font-size: 12px; }

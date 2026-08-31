@@ -1,0 +1,839 @@
+/* ═══════════════════════════════════════════════════════════════════════════════
+   shell.css — everything the Template did not already have a class for: the member
+   list, the panel workspace, the check chips, and the docked state of a panel.
+
+   Deliberately separate from ui.css so the line between "the design system" and
+   "what I added" stays visible. Every value here is taken from the Template's own
+   vocabulary — #2563eb accent, #f1f5f9 wells, 999px pills, 8/10/12px radii, the
+   10px/700/uppercase micro-label — rather than invented.
+
+   ── TYPE SCALE ────────────────────────────────────────────────────────────────
+   Text size is the app's scale (src/theme.ts, `TYPE`) and NOTHING ELSE:
+
+       10  micro — uppercase labels, chip captions, units, footnotes.  THE FLOOR.
+       11  label — field labels, secondary/meta text, table cells.
+       12  body  — the workhorse: rows, inputs, buttons.  .sdash-root's default.
+       13  bodyLg— panel titles, primary row text.
+       16  heading, 20 title — headings and the brand.
+
+   This matters more here than in a normal stylesheet, because half of what these
+   panels render is APP components (GroupDashboard, SectionCard, MapCanvas,
+   MemberEditor…) that size themselves inline off that same scale. A local 9.5px
+   does not read as "slightly smaller", it reads as a seam — the Group Dashboard
+   had a 11.5px group name beside a 12px beam name and a 9.5px meta line beside an
+   11px one, in the same panel, half an inch apart.
+
+   So: no half-pixels, and nothing below 10. If a label feels too loud at 10, make
+   it quieter with colour or weight, not with a size that is off the scale. A tiny
+   `.demo-govtag` was 8px and a table's unit row 8.5px — both were snapped to 10.
+
+   ── WEIGHT ────────────────────────────────────────────────────────────────────
+   Three steps, the app's `WEIGHT`: 400 normal · 600 semibold · 700 bold. Nothing
+   else. 500 and 800 were in here and neither earned itself — 500 is a weight you
+   reach for when 400 looks weak, which is a colour problem, and 800 next to a 700
+   simply reads as "one of these is wrong".
+
+   ── FAMILY ────────────────────────────────────────────────────────────────────
+   Only `var(--sans)`, `var(--mono)` or `inherit`. Never a literal stack.
+   `--sans` is what the Inter/Segoe toggle switches, so a hard-coded family is a
+   control that silently stops working — and the embedded app components inherit
+   the sans face from .sdash-root, which is exactly why the toggle reaches them.
+   Numbers are `var(--mono)` everywhere: DCRs, forces, dimensions, station offsets.
+   (The one literal 'Inter Variable' in ui.css is the @font-face NAME. Leave it.)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+html, body, #root { height: 100%; margin: 0; }
+body { background: #fff; }
+
+/* ── shell frame ───────────────────────────────────────────────────────────── */
+.demo-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.demo-body { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* the top bar is .sdash-topbar; these are the bits inside it the demo adds */
+.demo-brandwrap { display: inline-flex; align-items: center; gap: 2px; }
+.demo-sub { font-size: 11px; color: #9ca3af; margin-left: 10px; }
+.demo-tb-note { font-size: 11px; color: #94a3b8; }
+.demo-tb-note b { color: #475569; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ── member list ───────────────────────────────────────────────────────────── */
+/* The rail itself fills whatever housing RailDock gives it — a pinned column, or an
+   overlay drawer — so it has no width of its own any more. */
+.demo-aside {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0;
+  background: #fff;
+}
+
+/* ── the rail's housing ────────────────────────────────────────────────────── */
+/* Shut: a 34px strip that still carries the fail count, so a collapsed rail is not a
+   blank edge you have to open to learn anything from. */
+.demo-railstrip {
+  flex: none; width: 34px; padding: 10px 0 12px; border: 0;
+  border-right: 1px solid #eceef0; background: #fff; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  color: #94a3b8; font: inherit;
+}
+.demo-railstrip:hover { background: #f8fafc; color: #2563eb; }
+.demo-railstrip-label {
+  writing-mode: vertical-rl; font-size: 10px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+}
+.demo-railstrip-badge {
+  margin-top: auto; min-width: 20px; padding: 2px 5px; border-radius: 999px;
+  background: #fef2f2; color: #b91c1c; font: 700 10px var(--mono);
+}
+
+.demo-raildock { display: flex; min-height: 0; }
+.demo-raildock.pinned { flex: none; border-right: 1px solid #eceef0; }
+/* Overlay: fixed, so it is not clipped by the body's flex row, and above the docked
+   panels but below the floating ones. */
+/* Starts below the top bar (.sdash-topbar is 52px) rather than at 0: the brand, the code
+   selector and the panel toggles must stay reachable with the drawer open, or opening the
+   rail to find a beam also hides the controls you would use next. */
+.demo-raildock.floating {
+  position: fixed; left: 0; top: 52px; bottom: 0; z-index: 4600;
+  box-shadow: 8px 0 28px rgba(15,23,42,.16);
+}
+/* Above floating panels (4000) so the drawer is never half-covered by one, below the
+   context menu (5000) and the confirm dialog (6000). */
+.demo-railbackdrop { position: fixed; left: 0; right: 0; top: 52px; bottom: 0; z-index: 4500; }
+
+.demo-railbody {
+  position: relative; flex: none; display: flex; flex-direction: column;
+  min-height: 0; background: #fff; height: 100%;
+}
+.demo-railhead {
+  flex: none; display: flex; align-items: center; gap: 4px;
+  padding: 6px 6px 0 8px;
+}
+.demo-railcontent { flex: 1; min-height: 0; display: flex; }
+/* The resize edge. 6px of hit area, invisible until you are on it. */
+.demo-railgrip {
+  position: absolute; top: 0; right: -3px; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 2;
+}
+.demo-railgrip:hover { background: rgba(37,99,235,.28); }
+/* a toolbar button whose panel is currently in its own window */
+.sdash-toolbtn { position: relative; }
+.demo-detached-dot {
+  position: absolute; top: 5px; right: 5px; width: 5px; height: 5px;
+  border-radius: 50%; background: #2563eb;
+}
+.demo-aside-h {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 7px; font-size: 10px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: #9ca3af;
+}
+/* filter row — earns its place at import scale, would be noise at six members */
+.demo-filter { display: flex; align-items: center; gap: 6px; padding: 0 10px 8px; }
+.demo-filter-input {
+  flex: 1; min-width: 0; height: 26px; padding: 0 10px;
+  font: inherit; font-size: 12px; color: #1f2328;
+  border: 1px solid #dde1e6; border-radius: 999px; outline: none; background: #fff;
+}
+.demo-filter-input:focus { border-color: #2563eb; }
+.demo-filter-input::placeholder { color: #b6bdc6; }
+
+.demo-list { flex: 1; overflow-y: auto; padding: 0 6px 6px; }
+.demo-norows { padding: 14px 10px; font-size: 11px; color: #9ca3af; font-style: italic; }
+
+/* ── group tree ── */
+/* A group is the unit the app designs in — one cage against the set's envelope — so it
+   is the row that carries the rolled-up DCR, and members hang off it. */
+.demo-grp { margin-bottom: 1px; }
+.demo-grprow {
+  display: grid; grid-template-columns: 10px 8px 1fr auto; align-items: center; gap: 7px;
+  padding: 6px 9px; border-radius: 8px; cursor: pointer;
+}
+.demo-grprow:hover { background: #f1f5f9; }
+.demo-grprow.on { background: #eef2ff; }
+.demo-caret {
+  font-size: 10px; color: #9ca3af; line-height: 1;
+  transition: transform .12s; transform-origin: 50% 50%;
+}
+.demo-caret.open { transform: rotate(90deg); }
+.demo-grpdot { width: 8px; height: 8px; border-radius: 3px; }
+.demo-grpname { min-width: 0; }
+.demo-grplabel {
+  display: block; font-size: 12px; font-weight: 700; color: #1f2937;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.demo-grpmeta { display: block; font-size: 10px; color: #9ca3af; }
+.demo-grpfail { color: #b91c1c; font-weight: 700; }
+/* members sit under their group, indented to the caret's column */
+.demo-grp .demo-mrow { margin-left: 14px; }
+
+.demo-mrow {
+  display: grid; grid-template-columns: 6px 1fr auto; align-items: center; gap: 8px;
+  padding: 5px 9px; border-radius: 8px; cursor: pointer;
+}
+.demo-mrow:hover { background: #f1f5f9; }
+.demo-mrow.on { background: #e0e7ff; }
+.demo-mrow-bar { width: 4px; height: 26px; border-radius: 2px; }
+.demo-mrow-name { min-width: 0; }
+.demo-mrow-id { font-size: 12px; font-weight: 700; color: #1f2937; }
+.demo-mrow.on .demo-mrow-id { color: #2563eb; }
+.demo-mrow-meta {
+  font-size: 10px; color: #94a3b8; font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.demo-mrow-dcr { font: 700 12px var(--mono); font-variant-numeric: tabular-nums; }
+.demo-aside-f {
+  border-top: 1px solid #eceef0; padding: 8px 12px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+/* ── the workspace column ──────────────────────────────────────────────────── */
+/* The header strip that used to sit above the workspace is gone, and .demo-memberbar,
+   .demo-mtitle and the whole .demo-chip family went with it — every number it carried
+   is already shown by the panel that owns it, and the row was ~40px of every window.
+   .demo-mmeta stays: the detached-window bar still uses it. */
+.demo-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.demo-mmeta { font-family: var(--mono); font-size: 11px; color: #64748b; }
+.demo-mmeta b { color: #1f2937; font-weight: 700; }
+
+/* ── the panel workspace ───────────────────────────────────────────────────── */
+/* auto-fit so one panel fills the width and four make a 2×2, with no breakpoints to
+   maintain — the workspace is whatever is left after the list and the strips. */
+/* Columns of tiles with draggable gutters. Flex, not grid: a gutter drag changes two
+   flex fractions, and flex is the only layout where "these two share the space and
+   nothing else moves" is the default rather than something to compute. */
+.demo-workspace {
+  flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 10px;
+  display: flex; background: #fafbfc;
+}
+.demo-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.demo-tile { min-width: 0; min-height: 0; display: flex; }
+.demo-tile > * { flex: 1; min-width: 0; min-height: 0; }
+
+/* Gutters are 10px of hit area with a 2px visible line, so they are grabbable without
+   looking like a 10px border. */
+.demo-gutter { flex: none; position: relative; }
+.demo-gutter::after {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  background: transparent; border-radius: 2px; transition: background .12s;
+}
+.demo-gutter.col { width: 10px; cursor: col-resize; }
+.demo-gutter.col::after { width: 2px; }
+.demo-gutter.row { height: 10px; cursor: row-resize; }
+.demo-gutter.row::after { height: 2px; }
+.demo-gutter:hover::after, .demo-gutter:active::after { background: #93c5fd; }
+
+/* Where a dragged panel will land. */
+.demo-dropind {
+  position: fixed; z-index: 5200; pointer-events: none;
+  background: #2563eb; border-radius: 3px; box-shadow: 0 0 0 3px rgba(37,99,235,.22);
+}
+/* The ghost that follows the cursor. Deliberately small and translucent: a full-size
+   preview covers the drop indicator you are trying to aim with. */
+.demo-dragghost {
+  position: fixed; z-index: 5300; pointer-events: none;
+  padding: 6px 12px; border-radius: 8px;
+  background: rgba(37,99,235,.94); color: #fff;
+  font-size: 12px; font-weight: 700; letter-spacing: .01em;
+  box-shadow: 0 10px 28px rgba(15,23,42,.28);
+  transform: translate(10px, 10px);
+}
+.demo-dragghost.tear { background: rgba(15,23,42,.94); }
+.demo-dragghost em { font-style: normal; font-weight: 400; opacity: .82; margin-left: 6px; }
+
+.sdash-planwin-head.draggable { cursor: grab; }
+.sdash-planwin-head.draggable:active { cursor: grabbing; }
+.demo-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 6px; min-height: 220px; color: #94a3b8; font-size: 12px;
+}
+.demo-empty b { color: #64748b; font-size: 13px; font-weight: 700; }
+
+/* A DOCKED panel. Same component and the same header as the floating and detached
+   ones — only where it is mounted changes, so it must lose the floating shell's
+   fixed position and transform and take its size from the grid instead. */
+.sdash-planwin.docked {
+  position: static; transform: none; width: auto; height: auto; min-height: 0;
+  border: 1px solid #e5e7eb; box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  /* ui.css gives .sdash-planwin z-index:4000 for the FLOATING case. Resetting position
+     to static is not enough to drop it: a docked panel is a flex item, and z-index
+     applies to flex items whatever their position. Left at 4000 it makes a stacking
+     context that paints over the rail drawer — the panel was visibly behind and still
+     swallowed every click. */
+  z-index: auto;
+}
+.sdash-planwin.docked .sdash-planwin-head { cursor: default; }
+/* floating: give it back the shadow the docked one does not need */
+.sdash-planwin.floating { box-shadow: 0 18px 48px rgba(15,23,42,.22); border: 1px solid #e5e7eb; }
+
+/* header affordances, matching .sdash-planwin-fit's weight */
+.demo-winbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border: 0; padding: 0; background: transparent;
+  border-radius: 4px; color: #9aa1a9; cursor: pointer;
+}
+.demo-winbtn:hover { color: #2563eb; background: #eef2ff; }
+.demo-winbtn.x:hover { color: #e5473b; background: rgba(229,71,59,.10); }
+.demo-winhead-sub { font-family: var(--mono); font-size: 10px; color: #94a3b8; font-weight: 400; }
+
+/* ── panel bodies ──────────────────────────────────────────────────────────── */
+.demo-scroll { height: 100%; overflow: auto; }
+.demo-pad { padding: 10px 12px; }
+
+/* section panel: the drawing centred, with the app's own value strip beneath it */
+/* ── One background, not two ──────────────────────────────────────────────────
+   SectionView paints its own slate ground (#f8fafc) so it reads as a tile when it is one
+   — a card in a grid, a thumbnail. Given a whole panel it is not a tile, it is the
+   surface, and that ground turned into a grey rounded rectangle on the panel's white:
+   every dimension and bar label inside it sat on a second colour, which is what reads as
+   "the text does not fit the background". On a failing group it was worse — the card
+   paints a red status tint and the drawing kept a slate hole in the middle of it.
+
+   `transparent` hands the drawing whatever its host is painting: white here, the status
+   tint on a flagged group. The tint is the point — it is the one signal the card exists
+   to give, and it should run behind the section, not stop at its edge. */
+.demo-draw, .demo-groupcard { --sv-bg: transparent; }
+.demo-draw { display: flex; align-items: center; justify-content: center; height: 100%; }
+/* A wide-short drawing (the elevation) centred in a tall panel is mostly empty space —
+   pin it to the top instead, where it reads as a drawing on a sheet. */
+.demo-draw.top { align-items: flex-start; padding: 14px 8px; }
+/* The editor, denser. MemberEditor exposes its spacing as CSS variables (defaults =
+   the app's current values), so a panel host tightens the form without touching the
+   component or fighting its inline styles with !important. The field cap is the big
+   one: without it a two-digit number gets a 500px input in a wide panel. */
+.demo-editor {
+  --me-card-pad: 9px 12px;
+  --me-card-gap: 8px;
+  --me-head-gap: 6px;
+  --me-row-pad: 1px;
+  --me-field-max: 210px;
+
+  /* Fill the width instead of running one 900px-wide column down the left with dead
+     space beside it. --me-cols is a column WIDTH, not a count: the browser fits as many
+     260px columns as the panel can hold and drops to one when it cannot hold two, so a
+     tile three-across, a floating panel and a maximised second monitor are all the same
+     rule with no breakpoint to keep in sync.
+
+     260px is chosen from the form, not picked round: a card is 24px of padding, and the
+     widest row inside is an 80px label + 8px gap + an 80px minimum field = 168px before
+     it wraps. 260 leaves the "Cover top / bottom / side" trio (120px each) room to sit
+     one per line rather than truncating, and keeps a capped field close to its label
+     rather than stranded across a wide row. */
+  --me-cols: 260px;
+  --me-col-gap: 10px;
+}
+/* Detached, the panel IS the window, so it gets the whole viewport width — which is
+   exactly the case that used to be mostly empty. Nothing extra is needed for it: the
+   column rule above already fills whatever width arrives. Trimming the outer padding is
+   the only popout-specific change worth making, because a window has its own frame and
+   does not need a second inset drawn inside it. */
+.sdash-popout .demo-editor.demo-pad { padding: 8px; }
+
+/* The group cage given a whole panel: centre the card and cap its width, so it does not
+   stretch into a letterbox on a wide screen. */
+/* The group cage fills the panel. `max-width: 640px` used to sit on the child, which
+   held the card to a column in the middle of a wide panel while the drawing inside it
+   was separately capped at 560x420 — two independent ceilings on the same picture, so
+   maximising the panel bought nothing but whitespace. Both are gone; the SVG keeps its
+   own aspect ratio, which is the only limit a section drawing should have. */
+.demo-groupcard {
+  height: 100%; overflow: auto; padding: 14px;
+  display: flex; align-items: stretch;
+
+  /* Width of the card's left detail column in layout="split" — the opposite-end,
+     middle-third and end-third cage rows and the ρ line. 196px is what the widest of
+     them needs ("◨ Opp. end 3-#9 · DCR 0.82") without wrapping mid-value; everything
+     past it belongs to the drawing. SectionPanel reserves the same number (SIDE) out of
+     the width it hands the SVG, so the two cannot disagree about where the split is. */
+  --sc-side: 196px;
+}
+.demo-groupcard > div { width: 100%; }
+
+/* S-Concrete Verify. The dashboard is a full-height flex column that scrolls its own
+   card grid and detail pane, so the panel body only has to give it the box and get out
+   of the way — no padding, because the dashboard draws its own header/controls bands
+   edge to edge and a gutter around them would read as a card inside a panel. */
+.demo-sco { height: 100%; min-height: 0; display: flex; overflow: hidden; }
+.demo-sco > div { min-width: 0; }
+
+/* the plan's Filter popover */
+.demo-filterpop {
+  position: fixed; z-index: 5100; min-width: 168px; max-height: 60vh; overflow-y: auto;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15,23,42,.16); padding: 7px 8px;
+}
+.demo-filterhead {
+  display: flex; align-items: center; gap: 6px; padding: 2px 4px 5px;
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: #9ca3af;
+}
+.demo-filterhead > span:first-child { flex: 1; }
+.demo-filterlink {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; font-size: 10px; font-weight: 700; color: #2563eb;
+  text-transform: none; letter-spacing: 0;
+}
+.demo-filterlink:hover { text-decoration: underline; }
+.demo-filterrow {
+  display: flex; align-items: center; gap: 7px;
+  padding: 3px 5px; border-radius: 6px; font-size: 12px; color: #334155; cursor: pointer;
+}
+.demo-filterrow:hover { background: #f1f5f9; }
+.demo-filterrow input { accent-color: #2563eb; cursor: pointer; }
+
+/* plan panel controls */
+.demo-planbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px; border-bottom: 1px solid #f0f1f3; flex: none;
+}
+.demo-planseg { display: inline-flex; gap: 3px; }
+
+/* A chip pair riding IN a panel header, between the title and the subtitle — for a
+   control that says what the panel is SHOWING, which is part of its name rather than an
+   action. Trimmed from the body chip's 3px 9px so the strip is no taller than the 13px
+   title beside it: a header that grows only on one panel is a seam across the workspace. */
+.demo-headseg { display: inline-flex; gap: 3px; flex-shrink: 0; }
+.demo-headseg .sdash-loads-chip { padding: 2px 8px; }
+
+/* Grouping, given a real panel instead of the app's narrow right-hand tab. Both of these
+   are the app's own layout choices, correct where the app puts them and wrong at this
+   width — so they are variables there (defaults = the app's values) rather than a fork.
+
+   --gp-primary-flex  "Group selection" shares the row with Delete All and Auto-Group
+                      instead of taking one to itself. `auto` sizes it to its label and
+                      lets all three share the slack, so nothing truncates; the row still
+                      wraps on its own if the panel is genuinely too narrow for three.
+   --ag-pool-align    0 instead of `auto`, so the Cluster-by chips and the Pool chips sit
+                      together rather than being flung to opposite edges of a wide panel
+                      with a gulf between them. */
+.demo-groups {
+  --gp-primary-flex: 1 1 auto;
+  --ag-pool-align: 0;
+}
+
+/* The key for the two CATEGORICAL colour schemes (concrete / steel grade). MapCanvas
+   draws its own legend for the continuous ramps but has nothing to say about grades,
+   so without this the plan is coloured by something with no key at all. One scrolling
+   row, because a wrapping legend would change the panel's height and the canvas is
+   hard-sized from a number that has already been computed. */
+.demo-planlegend {
+  display: flex; align-items: center; gap: 12px; flex: none;
+  padding: 4px 9px; border-bottom: 1px solid #f0f1f3;
+  font-size: 10px; color: #475569; overflow-x: auto; white-space: nowrap;
+}
+.demo-planlegend .demo-swatch { display: inline-flex; align-items: center; gap: 5px; }
+.demo-planlegend .demo-swatch i {
+  width: 10px; height: 10px; border-radius: 3px; flex: none;
+}
+
+/* ── Group Dashboard: suggest bar, then group list ┃ beam list ─────────────── */
+/* Suggest sits in the panel header, so it is sized to that row (22px) rather than to a
+   toolbar's. */
+.demo-suggest {
+  flex: none; height: 22px; padding: 0 10px; border: 0; border-radius: 999px;
+  background: #2563eb; color: #fff; font: inherit; font-size: 11px; font-weight: 700;
+  cursor: pointer; white-space: nowrap;
+}
+.demo-suggest:hover { background: #1d4ed8; }
+.demo-suggest:disabled { opacity: .55; cursor: default; }
+.demo-dashnote {
+  font-size: 11px; font-weight: 400; color: #64748b;
+  min-width: 0; max-width: 46ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Group Dashboard: group list ┃ beam list ───────────────────────────────── */
+.demo-dash { height: 100%; overflow: auto; }
+.demo-dashsplit { display: flex; height: 100%; min-height: 0; }
+.demo-dashdetail {
+  flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden;
+
+  /* The selected group's two header statistics — "Beams flagged" with its ✕/⚠ tallies,
+     and "DCR distribution" with its histogram — read on ONE line each instead of a label
+     stacked over its value. Two auto tracks: the label takes its text, the value takes
+     the rest. Worth doing here and not in the app because the trade runs the other way
+     in each place: the app's dashboard is a tall pane with little spare width, while this
+     panel's header is a sticky strip whose height is subtracted from the beam list under
+     it — so a stacked label costs a row of beams every time you look at a group. */
+  --gd-stat-cols: auto auto;
+  --gd-stat-gap: 8px;
+}
+
+.demo-grouplist {
+  width: 236px; flex: none; min-height: 0; overflow-y: auto;
+  border-right: 1px solid #eceef0; background: #fff; padding: 6px;
+}
+/* Drag handle between the group list and the beam list. A 6px hit strip rather than a
+   1px line — a divider you have to aim at is one people give up on — and transparent
+   until hovered, because the list already draws its own right border and a second
+   permanent bar beside it reads as a rendering fault. The width itself is inline, set
+   from the panel's state; this rule only styles the grip. */
+.demo-dashdiv {
+  flex: none; width: 6px; cursor: col-resize;
+  background: transparent; transition: background 0.12s;
+}
+.demo-dashdiv:hover, .demo-dashdiv:active { background: #c7d2fe; }
+
+.demo-grouprow {
+  display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 8px;
+  width: 100%; padding: 6px 8px; margin-bottom: 1px;
+  border: 0; border-radius: 8px; background: transparent;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.demo-grouprow:hover { background: #f1f5f9; }
+.demo-grouprow.on { background: #e0e7ff; }
+.demo-grouprow.on .demo-grplabel { color: #2563eb; }
+.demo-grouprow-name { min-width: 0; }
+.demo-grouprow-dcr { font: 700 12px var(--mono); font-variant-numeric: tabular-nums; }
+.demo-grpok { color: #15803d; font-weight: 700; }
+.demo-grpwarn { color: #b45309; font-weight: 700; }
+
+/* Narrow: the groups become a horizontal strip above the beam list, so the panel still
+   works tiled three-across without a 236px column eating most of it. */
+.demo-dashsplit.stacked { flex-direction: column; }
+.demo-dashsplit.stacked .demo-grouplist {
+  width: auto; max-height: none; flex: none;
+  display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden;
+  border-right: 0; border-bottom: 1px solid #eceef0; padding: 6px 8px;
+}
+.demo-grouprow.chip {
+  width: auto; flex: none; grid-template-columns: 8px auto auto;
+  border: 1px solid #e5e7eb; border-radius: 999px; margin: 0; padding: 4px 10px;
+  white-space: nowrap;
+}
+.demo-grouprow.chip.on { border-color: #c7d2fe; }
+
+/* force diagram legend row */
+.demo-fd-legend {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 6px 10px; border-top: 1px solid #f0f1f3; font-size: 10px; color: #64748b;
+}
+.demo-fd-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.demo-fd-legend i { width: 11px; height: 3px; border-radius: 2px; display: inline-block; }
+/* The same strip carrying the hover readout instead of the key. Tabular figures and
+   nowrap so the three numbers hold their columns as the pointer sweeps — a readout that
+   reflows on every mouse move is unreadable at exactly the moment you are reading it. */
+.demo-fd-legend.read {
+  color: #0f172a; font-variant-numeric: tabular-nums; flex-wrap: nowrap;
+  overflow: hidden; white-space: nowrap;
+}
+.demo-fd-legend.read span { flex: none; }
+.demo-fd-x { font-weight: 700; color: #2563eb; }
+.demo-fd-hint { color: #cbd5e1; margin-left: auto; }
+
+/* A flex child will not shrink below its content unless told to, so without min-height
+   the scroll box grows to fit all 33 rows and pushes the footnote out of the panel. */
+.sdash-loads-body { height: 100%; min-height: 0; }
+/* the unit under a column heading — quiet, so the quantity still reads first */
+.sdash-loads-table th em {
+  display: block; font-style: normal; font-weight: 400; font-size: 10px; color: #94a3b8;
+}
+.sdash-loads-tablewrap { min-height: 0; }
+
+/* loads table: the row a panel has selected, and the row that governs a check */
+.sdash-loads-table tbody tr { cursor: pointer; }
+.sdash-loads-table tbody tr:hover td { background: #eef2ff; }
+.sdash-loads-table tbody tr.sel td { background: #e0e7ff; color: #1e3a8a; }
+.sdash-loads-table td.gov { font-weight: 700; color: #b91c1c; }
+.demo-govtag {
+  display: inline-block; margin-left: 5px; padding: 0 4px; border-radius: 3px;
+  background: #fee2e2; color: #b91c1c; font: 700 10px var(--sans); letter-spacing: .04em;
+}
+
+
+/* ── warnings ──────────────────────────────────────────────────────────────── */
+.demo-warns { display: flex; flex-direction: column; gap: 5px; }
+.demo-warn {
+  display: flex; gap: 8px; align-items: baseline; font-size: 11px; line-height: 1.4;
+  border-radius: 7px; padding: 6px 9px;
+}
+.demo-warn.warning { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; }
+.demo-warn.error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
+.demo-warn code { font-family: var(--mono); font-size: 10px; opacity: .75; flex: none; }
+.demo-warn em { font-style: normal; opacity: .7; font-size: 10px; }
+
+/* ── detached window ───────────────────────────────────────────────────────── */
+/* ui.css already covers .sdash-popout; this is only the strip that tells you which
+   member you are looking at, since a detached window has no list beside it. */
+.demo-popout-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 7px 12px; border-bottom: 1px solid #eceef0; background: #fafbfc; flex: none;
+}
+.sdash-popout .demo-popout-shell { display: flex; flex-direction: column; height: 100vh; }
+.sdash-popout .demo-popout-shell .sdash-planwin { flex: 1; min-height: 0; height: auto !important; }
+
+/* ── Calc Sheet: the chart hook ─────────────────────────────────────────────── */
+/* Sits in the navy header band, so it is drawn light rather than accent-blue. */
+.demo-calcchart {
+  display: inline-flex; align-items: center; cursor: pointer;
+  color: #b0c8e0; border: 1px solid #55708c; border-radius: 4px;
+  padding: 0 3px; margin-left: 6px;
+}
+.demo-calcchart:hover { color: #fff; border-color: #b0c8e0; }
+.demo-chartback {
+  position: fixed; inset: 0; z-index: 5200; background: rgba(15,23,42,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.demo-chartbox {
+  background: #fff; border-radius: 12px; padding: 14px;
+  box-shadow: 0 24px 64px rgba(15,23,42,.35); max-width: 95vw; max-height: 92vh; overflow: auto;
+}
+/* The N-vs-M window. Three columns wide, and a COLUMN box rather than the default
+   auto-height one: PMDialog measures the space it is given and draws its SVG to fit, so
+   the box has to have a definite size for it to measure. `overflow: hidden` because the
+   diagram is pan-and-zoom — a scrollbar around it would be a second, conflicting way to
+   move the same picture. */
+.demo-chartbox.wide {
+  width: min(1240px, 95vw); height: min(720px, 90vh);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.demo-charthead {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  font-size: 12px; color: #334155;
+}
+.demo-charthead span { font-size: 11px; color: #94a3b8; }
+/* The header's P-M thumbnail. Wider than a 20px icon button because it holds a plot;
+   the hover tint is the same one every window control uses, so it reads as one of them. */
+.demo-pmbtn { width: auto; padding: 0 3px; }
+.demo-pmbtn:hover { background: #eef2ff; }
+
+/* ── application menu (File · View · Help) ─────────────────────────────────────
+   The product's is a native Electron menu, which a browser cannot show. Same three
+   menus, same order, same accelerators, rendered in the top bar. The dropdown itself is
+   the demo's own `Menu` — one menu shape for the whole app, which is also the shape that
+   survives the popout bus. */
+.demo-menubar { display: inline-flex; align-items: center; gap: 1px; margin-left: 6px; }
+.demo-menubtn {
+  border: 0; background: none; font: inherit; font-size: 12px; color: #475569;
+  padding: 4px 9px; border-radius: 6px; cursor: pointer;
+}
+.demo-menubtn:hover { background: #f1f5f9; color: #1f2937; }
+.demo-menubtn.on { background: #eef2ff; color: #2563eb; }
+
+/* ── modals (Push to ETABS, Help) ─────────────────────────────────────────────
+   Above the floating panels (4000) and the rail drawer (4600), below the context menu
+   (5000) — a menu opened FROM a modal must still sit on top of it. */
+.demo-modal-back {
+  position: fixed; inset: 0; z-index: 4800; display: flex;
+  align-items: center; justify-content: center; padding: 32px;
+  background: rgba(15, 23, 42, .34);
+}
+.demo-modal {
+  display: flex; flex-direction: column; min-height: 0;
+  background: #fff; border-radius: 12px; box-shadow: 0 24px 64px rgba(15, 23, 42, .28);
+  max-height: 100%; overflow: hidden;
+}
+.demo-push { width: 660px; max-width: 100%; }
+.demo-help { width: 980px; max-width: 100%; height: 100%; }
+.demo-modal-head {
+  flex: none; display: flex; align-items: baseline; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid #eceef0;
+}
+.demo-modal-title { font-size: 13px; font-weight: 700; color: #0f172a; }
+.demo-modal-sub { font-size: 11px; color: #94a3b8; }
+.demo-modal-sub b { color: #475569; }
+.demo-modal-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
+.demo-modal-foot {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid #eceef0; background: #fafbfc;
+}
+
+/* ── Push to ETABS ──────────────────────────────────────────────────────────── */
+.demo-pushlist { display: flex; flex-direction: column; gap: 6px; }
+.demo-pushrow {
+  display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1px solid #eceef0; border-radius: 8px; background: #fff;
+}
+.demo-pushname { min-width: 0; }
+.demo-pushfield { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; color: #94a3b8; }
+.demo-pushfield.wide { display: flex; margin-top: 12px; }
+.demo-pushfield span { text-transform: uppercase; font-weight: 700; letter-spacing: .06em; white-space: nowrap; }
+.demo-pushfield input {
+  height: 26px; padding: 0 9px; font: inherit; font-family: var(--mono); font-size: 11px;
+  color: #1f2328; border: 1px solid #dde1e6; border-radius: 6px; outline: none; background: #fff;
+  min-width: 0; width: 190px;
+}
+.demo-pushfield.wide input { flex: 1; width: auto; }
+.demo-pushfield input:focus { border-color: #2563eb; }
+/* What the four COM calls would receive — shown, not described, because this is the part
+   that has to be right when the sidecar lands. */
+.demo-pushplan {
+  margin-top: 12px; padding: 8px 10px; border-radius: 8px;
+  background: #f1f5f9; color: #475569; font-size: 11px; line-height: 1.6;
+}
+.demo-pushplan b { color: #1f2937; font-family: var(--mono); }
+.demo-pusherr {
+  margin-top: 8px; padding: 6px 9px; border-radius: 7px; font-size: 11px;
+  color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca;
+}
+.demo-pushnote { font-size: 10px; color: #94a3b8; max-width: 54ch; line-height: 1.5; }
+
+/* the dashboard header's version picker + push button */
+.demo-versionsel {
+  flex: none; height: 22px; max-width: 190px; padding: 0 6px; font: inherit; font-size: 11px;
+  color: #1f2937; border: 1px solid #dde1e6; border-radius: 6px; background: #fff; cursor: pointer;
+}
+.demo-push-btn {
+  flex: none; height: 22px; padding: 0 10px; border: 1px solid #2563eb; border-radius: 999px;
+  background: #fff; color: #2563eb; font: inherit; font-size: 11px; font-weight: 700;
+  cursor: pointer; white-space: nowrap;
+}
+.demo-push-btn:hover:not(:disabled) { background: #eef2ff; }
+.demo-push-btn:disabled { opacity: .45; cursor: default; border-color: #dde1e6; color: #94a3b8; }
+
+/* The active-model picker, in the top bar beside the project settings. Which model the
+   workspace is reading is context for every panel, not a setting of any one of them —
+   which is why it sits here and not on the dashboard. */
+.demo-modelsel {
+  height: 26px; max-width: 210px; padding: 0 7px; font: inherit; font-size: 12px;
+  color: #1f2937; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer;
+}
+/* A pushed model is a snapshot: it has no future, so the workspace stops accepting edits
+   and says so rather than letting one silently fork the version. */
+.demo-rolock {
+  padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+  color: #b45309; background: #fffbeb; border: 1px solid #fde68a; white-space: nowrap;
+}
+
+/* Line-weight slider on the plan bar. The app puts this control on its own map toolbar;
+   here it rides in the panel bar beside the projection toggle, with the app's own range
+   (0–1, step 0.05) and its `slim-range` styling so the two read as the same control. */
+.demo-lineweight {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  color: #94a3b8; cursor: pointer;
+}
+.demo-lineweight .slim-range { width: 84px; }
+
+/* ── Plan histogram ─────────────────────────────────────────────────────────
+   Overlaid on the plan at the bottom-left, above the DCR legend. Absolute over the
+   canvas rather than a row beneath it: the plan is the panel's whole point, and a
+   permanent 100px band under it would cost that on every layout to show something you
+   read occasionally. `pointer-events` is on the panel only, so the map stays draggable
+   everywhere the histogram is not. */
+.demo-hist {
+  position: absolute; left: 8px; bottom: 8px; z-index: 3;
+  width: 252px; padding: 6px 8px 4px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e2e8f0; border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(2px);
+}
+.demo-hist-head { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.demo-hist-by { font-size: 10px; color: #94a3b8; }
+.demo-hist-x, .demo-histbtn {
+  border: 1px solid #e2e8f0; background: white; color: #64748b;
+  border-radius: 4px; font-size: 10px; line-height: 1; cursor: pointer; padding: 2px 5px;
+}
+.demo-hist-x:hover, .demo-histbtn:hover { background: #f8fafc; color: #2563eb; }
+.demo-histbtn { position: absolute; left: 8px; bottom: 8px; z-index: 3; padding: 3px 8px; }
+/* In the DCR modes MapCanvas puts its scale legend in this exact corner. Clearing it is a
+   fixed offset rather than a measurement because the legend is one row of 10px text in
+   every mode that draws it. */
+.demo-hist.raised, .demo-histbtn.raised { bottom: 38px; }
+.demo-hist-svg { display: block; overflow: visible; }
+.demo-hist-bar { fill: #93c5fd; }
+.demo-hist-bar:hover, .demo-hist-bar.on { fill: #2563eb; }
+/* A bar carrying the MAP's colour keeps it on hover — recolouring it would break the one
+   thing it is there to say, at exactly the moment you are pointing at it. So the hover
+   state is an outline instead of a fill. */
+.demo-hist-bar.mapped:hover, .demo-hist-bar.mapped.on { stroke: #0f172a; stroke-width: 1.2; }
+.demo-hist-read {
+  font-size: 10px; color: #475569; margin-top: 3px; min-height: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.demo-hist-read b { color: #0f172a; font-weight: 700; }
+/* The histogram names what it bins rather than offering a picker — the map's colour-by
+   is the picker now. */
+.demo-hist-title { font-size: 10.5px; font-weight: 700; color: #0f172a; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.demo-hist-grid { stroke: #eef2f7; stroke-width: 1; }
+.demo-hist-axis { stroke: #cbd5e1; stroke-width: 1; }
+.demo-hist-tick { font-size: 8px; fill: #94a3b8; font-variant-numeric: tabular-nums; }
+/* An end bar holding clamped out-of-range beams is not the same kind of bar as its
+   neighbours, and saying so in the fill is cheaper than a legend. */
+.demo-hist-bar.clamped { fill: #c7d2fe; }
+.demo-hist-bar.clamped:hover, .demo-hist-bar.clamped.on { fill: #4f46e5; }
+.demo-hist-lim { display: flex; align-items: center; gap: 4px; margin-top: 3px;
+  font-size: 9.5px; color: #94a3b8; }
+.demo-hist-lim input { width: 46px; font: inherit; font-variant-numeric: tabular-nums;
+  padding: 1px 4px; border: 1px solid #e2e8f0; border-radius: 4px; color: #0f172a;
+  background: #fff; text-align: center; }
+.demo-hist-lim input:focus { border-color: #2563eb; outline: none; }
+
+/* ── Preferences dialog ─────────────────────────────────────────────────────
+   Appearance only, applied live — see the note in PreferencesDialog. Narrow and
+   top-anchored so the plan stays visible behind it; judging a colour means seeing it
+   on the drawing it is for. */
+.demo-prefback {
+  position: fixed; inset: 0; z-index: 6000;
+  background: rgba(15, 23, 42, 0.18);
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 78px;
+}
+.demo-prefdlg {
+  width: 520px; background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18); padding: 14px 16px 12px;
+}
+.demo-prefhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.demo-prefhead b { font-size: 14px; color: #0f172a; }
+.demo-prefhead span { font-size: 11px; color: #94a3b8; flex: 1; }
+.demo-prefrow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0; border-top: 1px solid #f1f5f9;
+}
+.demo-prefname { flex: 1; min-width: 0; }
+.demo-prefname b { display: block; font-size: 12px; color: #0f172a; font-weight: 600; }
+.demo-prefname span { display: block; font-size: 10.5px; color: #94a3b8; }
+.demo-prefctl { display: flex; align-items: center; gap: 10px; }
+.demo-prefctl input[type=color] {
+  width: 30px; height: 24px; padding: 0; border: 1px solid #cbd5e1;
+  border-radius: 5px; background: white; cursor: pointer;
+}
+.demo-prefop { display: flex; align-items: center; gap: 6px; }
+.demo-prefop input[type=range] { width: 88px; }
+.demo-prefop span { font-size: 10.5px; color: #64748b; width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+.demo-prefctl select {
+  font-size: 11px; padding: 2px 4px; border: 1px solid #cbd5e1;
+  border-radius: 5px; background: white; color: #0f172a; width: 104px;
+}
+.demo-preffill-na { width: 104px; text-align: center; color: #cbd5e1; font-size: 12px; }
+.demo-preffoot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.demo-prefreset, .demo-prefdone {
+  font-size: 11.5px; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #cbd5e1; background: white; color: #334155;
+}
+.demo-prefdone { background: #2563eb; border-color: #2563eb; color: white; font-weight: 600; }
+.demo-prefreset:hover { background: #f8fafc; }
+
+/* ── Push to ETABS: the stepped run ────────────────────────────────────────────
+   One button per step, lit in order. GREEN is the whole point — a glance has to say
+   how far the push got, including on a run that stopped half way. */
+.demo-pushsteps {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid #eef0f2; background: #fbfcfd;
+}
+.demo-pushstep { display: inline-flex; align-items: center; gap: 6px; }
+.demo-pushstep-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid #cbd5e1; background: #fff; color: #0f172a;
+  border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 11.5px;
+  font-weight: 600; cursor: pointer;
+}
+.demo-pushstep-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
+/* Disabled here means "not your turn yet", not "broken" — so it stays legible rather
+   than greying out to the point of looking like a fault. */
+.demo-pushstep-btn:disabled { cursor: default; opacity: 0.55; }
+.demo-pushstep-btn.done {
+  background: #ecfdf5; border-color: #6ee7b7; color: #047857; opacity: 1;
+}
+.demo-pushstep-btn.running { border-color: #2563eb; color: #2563eb; opacity: 1; }
+.demo-pushstep-btn.failed { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; opacity: 1; }
+.demo-pushstep-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 8px; font-size: 9.5px; font-weight: 700;
+  background: #eef2f7; color: #64748b;
+}
+.demo-pushstep-btn.done .demo-pushstep-n { background: #10b981; color: #fff; }
+.demo-pushstep-btn.running .demo-pushstep-n { background: #2563eb; color: #fff; }
+.demo-pushstep-btn.failed .demo-pushstep-n { background: #b91c1c; color: #fff; }
+.demo-pushstep-err {
+  font-size: 10px; color: #b91c1c; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.demo-pushstep-ok { font-size: 11px; font-weight: 700; color: #047857; margin-left: 4px; }

@@ -12,6 +12,7 @@
 
 import type { Project } from '../types';
 
+/** One import source. Registered by name in `src/adapters/index.ts`. */
 export interface ModelAdapter {
   /** Display name shown in the import dialog. */
   readonly name: string;

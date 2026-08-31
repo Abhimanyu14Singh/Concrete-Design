@@ -27,10 +27,12 @@ function beam(over: { loads?: Member['loads']; stationForces?: Member['stationFo
   };
 }
 
-// Read a `Key\t value` field from the .SCO text.
+// Read a `Key\t value` field from the .SCO text. The key must START a field (line
+// start or straight after a tab) — unanchored, `fcu` matches the tail of the
+// EARLIER `Freezefcu` field and reads its flag instead of the strength.
 function param(text: string, key: string): string | null {
   const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m = text.match(new RegExp(`${esc}\\t ?([^\\t\\n]*)`));
+  const m = text.match(new RegExp(`(?:^|\\t)${esc}\\t ?([^\\t\\r\\n]*)`, 'm'));
   return m ? m[1].trim() : null;
 }
 // Parse the Sectional Loads rows: c1=Nf c2=Tf c3=Vfz c4=Mfy c6=Vfy c7=Mfz … c14=SustFactor.
@@ -96,6 +98,16 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(+param(t, 'Es')!).toBeCloseTo(199948, 0);
   });
 
+  it('writes materials WITHOUT clobbering the fields whose names end in them', () => {
+    // setParam used to match anywhere, so `fy`/`fy2`/`fy3`/`fcu` also hit the
+    // Freeze* booleans that end with those names, and `Es` overwrote `FRPEs` with
+    // the rebar modulus. Every one of these must keep its template value.
+    for (const k of ['Freezefy', 'Freezefy2', 'Freezefy3', 'Freezefcu']) {
+      expect(param(t, k)).toBe('1');           // still a boolean, not a stress
+    }
+    expect(+param(t, 'FRPEs')!).toBeCloseTo(49986.99, 2);  // FRP modulus, not Es
+  });
+
   it('pushes the cylinder fck straight through (C40/50 → 40, C50/60 → 50)', () => {
     const m40 = beam(); m40.material = { ...m40.material, fc: 40 * 145.0377 }; // 40 MPa cyl
     expect(+param(buildEc2BeamSco(m40, project()), 'fcu')!).toBeCloseTo(40, 1);
@@ -108,8 +120,26 @@ describe('buildEc2BeamSco — app inputs are reflected', () => {
     expect(param(t, 'Bm NB(1,1)')).toBe('4');
     expect(param(t, 'Bm DT(1,1)')).toBe('9');   // #9 ≈ 28.65 mm → Ø28 (index 9)
     expect(param(t, 'Bm NT(1,2)')).toBe('0');   // 3 top bars fit one layer → 2nd layer empty
-    expect(param(t, 'Bm NbmFace')).toBe('2');   // side bars
+    // The app stores side bars PER FACE; NbmFace counts BOTH faces, so 2/face → 4.
+    expect(param(t, 'Bm NbmFace')).toBe('4');
     expect(param(t, 'Bm ApplyFace')).toBe('1'); // cage has side bars → design face steel ON
+  });
+
+  it('doubles the per-face skin count into NbmFace, and spaces it over the real depth', () => {
+    // NbmFace is a both-faces total: the sample's 8 bars with SbmFace 180 /
+    // ZbmFace 330 satisfy 2·Z + (n−1)·S = h = 1200 only for n = 4 PER FACE.
+    // Passing the app's per-face count straight through halved the skin steel.
+    const m = beam();
+    m.section = { type: 'rectangular_beam', b: 20, h: 48, coverClear: 1.5, stirrupDia: 4 }; // 1219 mm deep
+    m.rebar = { ...m.rebar, sideBars: [{ numBars: 3, barSize: 5 }] };                        // 3 per face
+    const t3 = buildEc2BeamSco(m, project());
+    expect(param(t3, 'Bm NbmFace')).toBe('6');
+    // Evenly over the clear depth: S = (1219 − 38 − 38)/(3+1) ≈ 286, and the
+    // geometry closes — 2·Z + (n−1)·S = h.
+    const S = +param(t3, 'Bm SbmFace')!;
+    const Z = +param(t3, 'Bm ZbmFace')!;
+    expect(S).toBeCloseTo(286, 0);
+    expect(Math.abs(2 * Z + 2 * S - 1219)).toBeLessThanOrEqual(2);  // both are rounded to mm
   });
 
   it('turns face steel OFF for a beam with no side bars (no S-Concrete-invented skin)', () => {

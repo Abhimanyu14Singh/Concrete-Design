@@ -7,6 +7,7 @@
  */
 import type { ScoFile } from './scoBatch';
 
+/** Settings for one batch run. The output folder is the only required setting. */
 export interface SconcreteRunConfig {
   outDir: string;        // directory to write .SCO files and read the .SCRS
   title?: string;
@@ -15,6 +16,9 @@ export interface SconcreteRunConfig {
                          // slow, and the .SCRS already carries every result the app uses.
 }
 
+/** What a finished batch reports back. `scrsText` is null when the run produced no
+ *  results file — check it before parsing, since a non-zero `exitCode` is not the only
+ *  way a run can fail to produce output. */
 export interface SconcreteRunResult {
   exitCode: number;
   scoCount: number;
@@ -23,6 +27,8 @@ export interface SconcreteRunResult {
   stderr: string;
   pdf?: string;          // path to the produced PDF report, if any
   status?: string;       // final BatchReporter status line
+  /** Artefacts deleted before this run (0 unless it was a clean run). */
+  cleanedCount?: number;
 }
 
 /** Whether S-Concrete / BatchReporter is installed on this machine. */
@@ -59,16 +65,21 @@ export async function generateScoFiles(files: ScoFile[], outDir: string): Promis
   return await ipc()('generate', { outDir, files }) as { outDir: string; scoCount: number };
 }
 
-/** Write .SCO files, launch BatchReporter, and read the resulting .SCRS. */
-export async function runScoBatch(files: ScoFile[], cfg: SconcreteRunConfig): Promise<SconcreteRunResult> {
-  return await ipc()('run', { ...cfg, files }) as SconcreteRunResult;
+/**
+ * Write .SCO files, launch BatchReporter, and read the resulting .SCRS.
+ *
+ * `clean` deletes every S-Concrete artefact (.SCO / .SCRS / Report_*.pdf) in the
+ * output folder BEFORE writing, so the batch reports on exactly this run's files.
+ * Without it the write is additive: BatchReporter reads every .SCO in the folder,
+ * so files from an earlier run still show up in the results.
+ */
+export async function runScoBatch(
+  files: ScoFile[], cfg: SconcreteRunConfig, opts: { clean?: boolean } = {},
+): Promise<SconcreteRunResult> {
+  return await ipc()('run', { ...cfg, files, clean: !!opts.clean }) as SconcreteRunResult;
 }
 
-/**
- * Re-run BatchReporter on the .SCO files ALREADY in cfg.outDir, without writing
- * anything — so manual tweaks the user made to those files (in S-Concrete or a
- * text editor) are preserved. Reads the freshly produced .SCRS back.
- */
-export async function rerunScoBatch(cfg: SconcreteRunConfig): Promise<SconcreteRunResult> {
-  return await ipc()('rerun', { ...cfg }) as SconcreteRunResult;
+/** Delete the S-Concrete artefacts in `outDir` without running anything. */
+export async function cleanScoFolder(outDir: string): Promise<{ removed: string[]; failed: string[]; kept: number }> {
+  return await ipc()('clean', { outDir }) as { removed: string[]; failed: string[]; kept: number };
 }

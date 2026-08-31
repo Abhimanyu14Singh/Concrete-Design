@@ -3,7 +3,7 @@
  * mode of the import wizard and for unit tests. One tower, two stories,
  * a 4×3 column grid of beams in two section sizes.
  */
-import type { ComboForces } from '../../types';
+import type { ComboForces, StationForce } from '../../types';
 import type {
   EtabsConnection, EtabsConnectInfo, EtabsSectionInfo, EtabsMaterialInfo,
   EtabsBeamGeom, EtabsColumnGeom, BeamFilter, UnitInfo,
@@ -16,6 +16,9 @@ const GRID_Y = [0, 28, 56];       // ft
 const STORIES = ['Level 2', 'Level 3'];
 const STORY_Z: Record<string, number> = { 'Level 2': 12, 'Level 3': 24 };
 
+/** The beam grid: deeper girders spanning X, shallower infill spanning Y, on each story.
+ *  Two sections and two group memberships so grouping and filtering have something to
+ *  bite on in the demo. */
 function buildBeams(): EtabsBeamGeom[] {
   const beams: EtabsBeamGeom[] = [];
   let n = 1;
@@ -138,29 +141,61 @@ function buildOpenings(): EtabsOpeningGeom[] {
 const OPENINGS = buildOpenings();
 
 /**
+ * A beam on the outside face of the frame. The slab lands on one side of it only,
+ * so its edge reaction arrives at an eccentricity and the beam carries TORSION —
+ * which is why the demo model has any: with a torque-free frame the torsion check
+ * reads 0.00 on every member and a whole third of the results panel is dead on the
+ * one model a new user is guaranteed to open.
+ */
+function isSpandrel(b: EtabsBeamGeom): boolean {
+  const spansX = b.pt1.y === b.pt2.y;
+  return spansX
+    ? b.pt1.y === GRID_Y[0] || b.pt1.y === GRID_Y[GRID_Y.length - 1]
+    : b.pt1.x === GRID_X[0] || b.pt1.x === GRID_X[GRID_X.length - 1];
+}
+
+/**
  * Simply-supported-with-end-restraint force pattern: linear shear,
  * parabolic moment with hogging at the ends. Magnitude scales with span
  * and combo so colors vary on the plan map.
+ *
+ * Spandrels additionally carry a uniform edge torque, so T is linear like V —
+ * largest at the supports, zero at midspan. 1.25 kip-ft per ft is an edge strip
+ * of roughly 0.5 klf at 2.5 ft eccentricity, which lands a 24 ft girder near
+ * 15 kip-ft at the support: comfortably past the ~8 kip-ft threshold at which
+ * §22.7.1.1 stops letting you neglect torsion, without dominating the design.
  */
 function forcePattern(beam: EtabsBeamGeom, combo: string, nStations = 9): ComboForces {
   const L = beam.lengthFt;
   const comboScale = combo.includes('E') ? 1.25 : 1.0;
   // heavier girders, plus a deterministic per-beam variation
   const seed = beam.name.split('').reduce((s, ch) => s + ch.charCodeAt(0), 0);
-  const w = (beam.section === 'B14X28' ? 3.2 : 1.9) * comboScale * (0.8 + (seed % 7) / 10); // kips/ft
+  const w = (beam.section === 'B14X28' ? 1.75 : 1.05) * comboScale * (0.8 + (seed % 7) / 10); // kips/ft
+  const t = isSpandrel(beam) ? 1.25 * comboScale : 0;  // edge torque, kip-ft per ft
   const Mend = w * L * L / 12;  // hogging at supports
   const stations = Array.from({ length: nStations }, (_, i) => {
     const x = (i / (nStations - 1)) * L;
     const V = w * (L / 2 - x);
     const M = -Mend + (w * L / 2) * x - (w / 2) * x * x;
-    return { x: +x.toFixed(2), V: +V.toFixed(2), M: +M.toFixed(2) };
+    const st: StationForce = { x: +x.toFixed(2), V: +V.toFixed(2), M: +M.toFixed(2) };
+    if (t) st.T = +Math.abs(t * (L / 2 - x)).toFixed(2);
+    return st;
   });
   return { combo, stations };
 }
 
+/**
+ * The demo model. Implements the full read half of EtabsConnection against the
+ * module-level constants above, with no I/O and no async work of substance.
+ *
+ * Everything it returns is DETERMINISTIC — the force pattern is seeded off the beam
+ * name, never randomised — so tests can assert on exact values and the demo model looks
+ * the same on every run. It implements none of the write half.
+ */
 export class MockConnection implements EtabsConnection {
   readonly kind = 'mock' as const;
 
+  /** Always succeeds — the demo model has nothing to attach to. */
   async connect(): Promise<EtabsConnectInfo> {
     return { modelName: 'Sample Tower (demo model)', units: 'kip-ft' };
   }

@@ -1,0 +1,41 @@
+/* Demo-only classes. ui.css is the design system carried over from the app it came
+   from — colours, panels, menus, sliders, dialogs — and it is what you want to keep.
+   What follows is only the small shell this starter needs to show them off: a toolbar
+   and a table. Delete it once you have your own. */
+
+.sdash-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--line, #24303f);
+  background: var(--panel, #131a24);
+}
+.sdash-tb-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--line, #24303f); border-radius: 4px;
+  background: transparent; color: var(--fg-dim, #94a3b8); cursor: pointer;
+}
+.sdash-tb-btn:hover { color: var(--fg, #e2e8f0); border-color: var(--line-hi, #33415a); }
+.sdash-tb-btn.on { color: var(--accent, #38bdf8); border-color: var(--accent, #38bdf8); }
+.sdash-tb-sep { width: 1px; height: 18px; background: var(--line, #24303f); }
+.sdash-tb-note { font-size: 11px; color: var(--fg-dim, #94a3b8); }
+
+.sdash-body { padding: 12px; overflow: auto; }
+.sdash-table { border-collapse: collapse; font-size: 12px; min-width: 240px; }
+.sdash-table th, .sdash-table td {
+  padding: 5px 12px; text-align: left;
+  border-bottom: 1px solid var(--line, #24303f);
+}
+.sdash-table th { color: var(--fg-dim, #94a3b8); font-weight: 600; }
+.sdash-table tbody tr { cursor: pointer; }
+.sdash-table tbody tr:hover { background: rgba(56, 189, 248, 0.06); }
+.sdash-table tbody tr.sel { background: rgba(56, 189, 248, 0.16); }
+.sdash-body.dense .sdash-table th,
+.sdash-body.dense .sdash-table td { padding: 2px 12px; }
+
+/* the close affordance in a panel header, matching .sdash-planwin-fit */
+.sdash-planwin-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 3px;
+  color: var(--fg-dim, #94a3b8); cursor: pointer;
+}
+.sdash-planwin-x:hover { color: #fca5a5; background: rgba(248, 113, 113, 0.12); }

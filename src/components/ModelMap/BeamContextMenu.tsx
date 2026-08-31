@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DesignGroup } from '../../types';
-import { BORDER, INK, MONO_NUM, STATUS } from '../../theme';
+import { BORDER, INK, MONO_NUM, STATUS, Z } from '../../theme';
 
 interface Props {
   memberId: string;
@@ -43,7 +43,7 @@ export default function BeamContextMenu({
   }, [onClose]);
 
   const menuStyle: React.CSSProperties = {
-    position: 'fixed', left: x, top: y, zIndex: 9999,
+    position: 'fixed', left: x, top: y, zIndex: Z.popover,
     background: 'white', border: `1px solid ${BORDER.default}`, borderRadius: 8,
     boxShadow: '0 4px 16px rgba(0,0,0,0.15)', fontSize: 12, minWidth: 180,
     overflow: 'visible',

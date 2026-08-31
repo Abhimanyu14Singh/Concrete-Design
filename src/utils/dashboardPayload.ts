@@ -12,6 +12,8 @@ import { flexSteelRatioPct, steelWeightPerFt } from './autoGroup';
 import { modeDCRs, worstOf } from '../components/Dashboard/dashboardShared';
 import { analyzeGroupCurtailment, analyzeOppositeEnd, regionCageDcr, continuousCage, type GroupCurtailment, type OppositeEndResult } from '../utils/curtailment';
 
+/** One design group, flattened to scalars. No `Member` references and no functions —
+ *  the whole payload has to survive `structuredClone` across the IPC boundary. */
 export interface DashboardGroup {
   id: string;
   label: string;
@@ -63,18 +65,21 @@ export interface DashboardGroup {
   notePinned: { top: boolean; bot: boolean };
 }
 
+/** One member, reduced to what the dashboard grid renders: size, per-mode DCRs, status. */
 export interface DashboardMember {
   id: string;
   label: string;
   groupId: string;
   b: number;
   h: number;
-  modeDCRs: { flexPos: number; flexNeg: number; shear: number; wk?: number };
+  modeDCRs: { flexPos: number; flexNeg: number; shear: number; torsion: number; wk?: number };
   maxDCR: number;
   status: DesignResults['status'];
   warnings: DesignWarning[];
 }
 
+/** The complete state the dashboard window renders from. Pushed main → dashboard on
+ *  every change; the dashboard holds no model of its own. */
 export interface DashboardPayload {
   code: DesignCode;
   units: 'imperial' | 'si';
@@ -82,6 +87,13 @@ export interface DashboardPayload {
   members: DashboardMember[];
 }
 
+/**
+ * An action the dashboard asks the main window to perform (dashboard → main).
+ *
+ * Commands are INTENTIONS, not mutations: the dashboard never owns project state, so it
+ * describes what it wants and the main window applies it and pushes a fresh payload
+ * back. That keeps one source of truth whether the dashboard is inline or popped out.
+ */
 export type DashboardCommand =
   | { type: 'select-group'; groupId: string | null }
   | { type: 'apply-rebar'; groupId: string; rebar: RebarLayout }
@@ -109,9 +121,12 @@ export function buildDashboardPayload(
   members: Member[],
   designResultsById: Record<string, DesignResults>,
   dcrById: Record<string, number>,
-  /** Worst per-mode DCR across ALL load rows, per member — governs the M⁺/M⁻/V
-   *  chips so they never read green while a different row pushes the mode past 1. */
-  modeDcrById: Record<string, { flexPos: number; flexNeg: number; shear: number; wk: number }>,
+  /** Worst per-mode DCR across ALL load rows, per member — governs the M⁺/M⁻/V/T
+   *  chips so they never read green while a different row pushes the mode past 1.
+   *  `torsion` is optional so a caller built before that column existed still compiles;
+   *  it falls back to the governing row's value rather than to zero, because a missing
+   *  torsion number must never be shown as a passing one. */
+  modeDcrById: Record<string, { flexPos: number; flexNeg: number; shear: number; torsion?: number; wk: number }>,
   code: DesignCode,
   units: 'imperial' | 'si',
 ): DashboardPayload {
@@ -205,7 +220,16 @@ export function buildDashboardPayload(
       // Per-mode governing DCRs (worst M⁺/M⁻/V across all rows), not the single
       // representative row — so a mode that peaks on another station reads red here.
       modeDCRs: modeDcrById[m.id]
-        ? { flexPos: modeDcrById[m.id].flexPos, flexNeg: modeDcrById[m.id].flexNeg, shear: modeDcrById[m.id].shear, wk: code === 'EN1992-1-1' ? modeDcrById[m.id].wk : undefined }
+        ? {
+          flexPos: modeDcrById[m.id].flexPos,
+          flexNeg: modeDcrById[m.id].flexNeg,
+          shear: modeDcrById[m.id].shear,
+          // `?? r.DCR_torsion` — the governing row's torsion, not 0. A caller that
+          // does not yet supply a per-mode torsion max understates it slightly (one
+          // row instead of all of them); zero would hide it completely.
+          torsion: modeDcrById[m.id].torsion ?? r.DCR_torsion,
+          wk: code === 'EN1992-1-1' ? modeDcrById[m.id].wk : undefined,
+        }
         : modeDCRs(r, code),
       maxDCR: dcrById[m.id] ?? worstOf(r),
       status: r.status,

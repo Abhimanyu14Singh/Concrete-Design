@@ -4,7 +4,7 @@
  * viewport overflow. No external dependencies.
  */
 import { useState, useRef, useCallback } from 'react';
-import { ACCENT, DARK, FONT, TYPE } from '../../theme';
+import { ACCENT, DARK, FONT, TYPE, Z } from '../../theme';
 
 interface Props {
   text: string;
@@ -26,7 +26,7 @@ const ICON: React.CSSProperties = {
 // Tooltips stay dark (floating-chrome convention) — the one dark surface left.
 const PANEL: React.CSSProperties = {
   position: 'fixed',
-  zIndex: 9999,
+  zIndex: Z.popover,
   maxWidth: 280,
   background: DARK.surface,
   color: DARK.ink,
